@@ -233,11 +233,18 @@ export function DesktopNavigationProvider({
         // `activate: true` to bring the new tab to the foreground.
         const slug = workspaceSlugForPath(path);
         const store = useTabStore.getState();
+        // Sidebar navigation can replace the conversation tab's route. Resume
+        // its last view from workspace history when opening the bare entry.
+        const destination = slug && path === paths.workspace(slug).conversationFlow()
+          ? store.byWorkspace[slug]?.browsingHistory.find(
+              (url) => splitTabUrl(url).pathname === path,
+            ) ?? path
+          : path;
         if (slug && slug !== store.activeWorkspaceSlug) {
-          store.switchWorkspace(slug, path);
+          store.switchWorkspace(slug, destination);
           return;
         }
-        store.openTab(path, title ?? "", { activate: opts?.activate });
+        store.openTab(destination, title ?? "", { activate: opts?.activate });
       },
       getShareableUrl: (path: string) => `${appUrl}${path}`,
     }),
