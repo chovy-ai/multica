@@ -1,3 +1,4 @@
+import { createLocalTiming, createLocalPresentationTiming } from "../local-timing";
 import {
   createAgentActivitySnapshotProjector,
   createAgentSessionEngine,
@@ -47,6 +48,7 @@ export function unsupported(capability: string): never {
 
 export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: AgentGuiInitSnapshot) {
   const workspaceId = init.workspaceId;
+  const presentationTiming = createLocalPresentationTiming();
   const ledger = new RuntimeLedger();
   const modelPreferences = new ModelPreferences();
   const modelListeners = new Set<() => void>();
@@ -508,6 +510,12 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         type: "turn/upserted", live: true, replayAcceptedLiveCompletion: true, turn,
       });
     }
+    if (init.local) for (const turn of result.turns) {
+      const events = transcripts.get(guiId)?.get(turn.turnId) ?? [];
+      const hasOutput = events.some((event) => ["text", "thinking", "tool_use", "tool_result"].includes(event.type))
+        || detail.messages.some((message) => message.task_id === turn.turnId && message.role === "assistant" && Boolean(message.content));
+      presentationTiming.applied(detail.session.id, turn.turnId, hasOutput, turn.phase === "settled");
+    }
     markAvailability(result.session);
     schedulePersist();
     return withModel(result.session);
@@ -602,10 +610,12 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       [input.agentSessionId]: { agentSessionId: input.agentSessionId, workspaceId, prompts: [{ ...input, id: input.clientSubmitId, createdAtUnixMs: Date.now() }],
         deliveryBarrierTurnId: null, failedPromptId: null, failureMessage: null, inFlight: null, sendNextPromptId: null, suspendReason: null, uncertainDelivery: null },
     } }, [...attachments.values()])[0]!.prompts[0]!;
-    const result = await client.request("queue.enqueue", { sessionId, paused, queued: true, item: { ...encoded, requestId: input.clientSubmitId, display,
+    const timing = init.local ? createLocalTiming({ source: "gui", conversationId: sessionId, requestId: input.clientSubmitId }) : undefined;
+    const enqueue = () => client.request("queue.enqueue", { sessionId, paused, queued: true, item: { ...encoded, requestId: input.clientSubmitId, display,
       ...(selectedModel(session.agent_id, input.agentSessionId) ? { model: selectedModel(session.agent_id, input.agentSessionId)! } : {}),
       permissionMode: selectedPermission(session.agent_id, input.agentSessionId),
     } });
+    const result = await (timing ? timing.measure("gui.submit", enqueue) : enqueue());
     desktopQueue.receive(input.agentSessionId, result);
     return result;
   }
@@ -638,12 +648,14 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         ledger.setSubmission(input.clientSubmitId, { sessionId: session.id, state: "pending" });
         await persist();
         try {
-          const response = await client.request("session.send", {
+          const timing = init.local ? createLocalTiming({ source: "gui", conversationId: session.id, requestId: input.clientSubmitId }) : undefined;
+          const submit = () => client.request("session.send", {
             sessionId: session.id, ...encoded, requestId: input.clientSubmitId,
             ...(input.submitDiagnostics?.queued === true ? { queued: true as const } : {}),
             ...(!recipients.length && selectedModel(session.agent_id, input.agentSessionId) ? { model: selectedModel(session.agent_id, input.agentSessionId)! } : {}),
             ...(init.local && !recipients.length ? { permissionMode: selectedPermission(session.agent_id, input.agentSessionId) } : {}),
           }, { signal });
+          const response = await (timing ? timing.measure("gui.submit", submit) : submit());
           ledger.setSubmission(input.clientSubmitId, { sessionId: session.id, state: "accepted", response });
           await persist();
         } catch (error) {

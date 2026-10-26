@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,12 +16,29 @@ function prompt(requestId: string, content = requestId): LocalQueuedPrompt {
 }
 async function setup(run: typeof runLocalProvider) {
   const root = await mkdtemp(join(tmpdir(), "multica-main-queue-"));
-  const options = { root, apiUrl: "https://queue.test", notify: vi.fn(), chooseDirectory: async () => null, run: vi.fn(run), find: async () => "/test-owned/fake-cli" };
+  const options = { timing: vi.fn<(record: LocalTimingRecord) => void>(), root, apiUrl: "https://queue.test", notify: vi.fn(), chooseDirectory: async () => null, run: vi.fn(run), find: async () => "/test-owned/fake-cli" };
   const service = new LocalConversationService(options); service.setCurrentUser(scope.userId);
   cleanup.push(async () => { await service.stop(); await rm(root, { recursive: true, force: true }); });
   return { service, options };
 }
 describe("Electron-owned conversation queue", () => {
+  it("separates saved queue wait from context preparation and provider execution", async () => {
+    const { service, options } = await setup(async () => ({ output: "done" }));
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    const item = prompt("queued-timing"); item.display.createdAtUnixMs = Date.now() - 30_000;
+    await service.request(scope, "queueEnqueue", { id: entry.id, item, paused: true });
+    expect(options.run).not.toHaveBeenCalled();
+    expect(options.timing.mock.calls.some(([r]) => r.stage === "queue.dispatch")).toBe(false);
+    await service.request(scope, "queueUpdate", { id: entry.id, action: "resume" });
+    await vi.waitFor(() => expect(options.timing.mock.calls.some(([r]) => r.stage === "turn.finished" && r.turnId)).toBe(true));
+    const records = options.timing.mock.calls.map(([r]) => r);
+    expect(records.find((r) => r.stage === "queue.dispatch")?.durationMs).toBeGreaterThanOrEqual(30_000);
+    expect(records.every((r) => r.requestId === item.requestId && r.conversationId === entry.id)).toBe(true);
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: "queue.context", event: "end", outcome: "completed" }),
+      expect.objectContaining({ stage: "turn.persist", event: "end", outcome: "completed" }),
+    ]));
+  });
   it.each(["codex", "claude"] as const)("restores large file and image references before %s dispatch without embedding bytes", async (provider) => {
     const { service, options } = await setup(async () => ({ output: "done" }));
     const entry = await service.request(scope, "create", { provider });

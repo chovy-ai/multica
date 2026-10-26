@@ -12,6 +12,9 @@ import { LocalConversationService } from "./local-conversation-service";
 import { CONTEXT_MCP_NAME, CONTEXT_MCP_TOKEN_ENV, CONTEXT_MCP_TOOLS } from "./local-context-mcp";
 import { runLocalProvider } from "./local-provider-runner";
 import { CREATE_TASK_MENTION_ID } from "@multica/tutti-agent-gui-host/local-protocol";
+import { DeveloperLogExporter, createDeveloperLogTool } from "./developer-log-export";
+import { LocalTimingLog } from "./local-timing-log";
+import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -109,6 +112,28 @@ async function actionClient(context: LocalMulticaContext, conversationId: string
 }
 
 describe("built-in Multica context MCP", () => {
+  it("registers developer log export and advertises it to both providers without cloud login", async () => {
+    const data = await fixture();
+    const log = new LocalTimingLog(join(data.root, "diagnostics"));
+    createLocalTiming({ source: "main", conversationId: data.source.id, provider: "codex" }, log.write).mark("provider.first_text");
+    const exporter = new DeveloperLogExporter({
+      log, exportsRoot: join(data.root, "exports"),
+      runtime: { appVersion: "test", platform: "test", arch: "test", electronVersion: "test", chromeVersion: "test", nodeVersion: "test", packaged: false },
+      assertScope: (scope) => data.service.assertScope(scope),
+      conversations: async (scope) => (await data.service.request(scope, "list", {})).map((entry) => entry.id),
+      chooseSavePath: async () => null,
+    });
+    const context = new LocalMulticaContext({ ...data.options, readProfile: async () => { throw new Error("offline"); }, developerLogTool: (scope, id) => createDeveloperLogTool(exporter, scope, id) });
+    const { client, run } = await actionClient(context, data.source.id);
+    expect(run.mcp?.tools).toContain("export_developer_logs");
+    expect(run.systemPrompt).toContain("use export_developer_logs");
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("export_developer_logs");
+    const result = textResult(await client.callTool({ name: "export_developer_logs", arguments: { request_id: "diagnose" } }));
+    expect(result).toMatchObject({ format: "json", recordCount: 1, filter: { conversationId: data.source.id } });
+    expect(JSON.parse(await readFile(result.path, "utf8")).records[0].stage).toBe("provider.first_text");
+    const denied = await client.callTool({ name: "export_developer_logs", arguments: { request_id: "foreign", conversation_id: "foreign" } });
+    expect(denied.isError).toBe(true);
+  });
   it("exposes task creation only for the current New task mention and returns a scoped server result", async () => {
     const data = await fixture();
     expect((await data.client.listTools()).tools.map((tool) => tool.name)).not.toContain("create_task");

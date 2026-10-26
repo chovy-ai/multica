@@ -32,6 +32,7 @@ export interface SettingsLocation {
  */
 export function resolveSettingsLocation(
   params: URLSearchParams,
+  deviceTabs: readonly string[] = [],
 ): SettingsLocation {
   const tab = params.get("tab") ?? "profile";
   const section = params.get("section");
@@ -41,7 +42,7 @@ export function resolveSettingsLocation(
     case "chat":
       return { tab: "preferences", section: tab, integration: null };
     case "labs":
-      return { tab: "workspace", section: null, integration: null };
+      return { tab: deviceTabs.includes("labs") ? "labs" : "workspace", section: null, integration: null };
     case "github":
       return { tab: "code", section, integration: null };
     case "repositories":

@@ -1,3 +1,4 @@
+import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import { getLocalConversationClient } from "./local-conversation-client";
 import { api } from "@multica/core/api";
 import { chatKeys } from "@multica/core/chat/queries";
@@ -226,7 +227,14 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     }));
     scheduleRemote();
   }
+  const receivedOutput = new Set<string>();
   async function request(method: AgentGuiRpcMethod, raw: unknown): Promise<unknown> {
+    if (method !== "session.send" && method !== "queue.enqueue") return handleRequest(method, raw);
+    const params = raw as Record<string, any>;
+    const timing = createLocalTiming({ source: "renderer", conversationId: params.sessionId, requestId: params.requestId ?? params.item?.requestId });
+    return timing.measure("renderer.request", () => handleRequest(method, raw));
+  }
+  async function handleRequest(method: AgentGuiRpcMethod, raw: unknown): Promise<unknown> {
     assertCurrent(); const params = raw as Record<string, any>;
     switch (method) {
       case "queue.enqueue": {
@@ -306,7 +314,13 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       case "task.messages": {
         const id = knownTurns.get(params.taskId); if (!id) throw new Error("Execution is outside the loaded conversations");
         const entry = await read(id);
-        return (entry.turns.find((turn) => turn.id === params.taskId)?.events ?? []).map((event) => ({ ...event, task_id: params.taskId, issue_id: "", chat_session_id: entry.id }));
+        const turn = entry.turns.find((turn) => turn.id === params.taskId);
+        if (turn?.events.some((event) => ["text", "thinking", "tool_use", "tool_result"].includes(event.type)) && !receivedOutput.has(turn.id)) {
+          receivedOutput.add(turn.id);
+          if (receivedOutput.size > 512) receivedOutput.delete(receivedOutput.values().next().value!);
+          createLocalTiming({ source: "renderer", conversationId: entry.id, turnId: turn.id, requestId: turn.requestId, provider: entry.provider }).mark("renderer.first_output_received");
+        }
+        return (turn?.events ?? []).map((event) => ({ ...event, task_id: params.taskId, issue_id: "", chat_session_id: entry.id }));
       }
       case "models.list": {
         const result = await local("models", { provider: localProviderId(params.agentId) });

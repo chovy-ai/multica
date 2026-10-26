@@ -791,7 +791,15 @@
   "labs": {
     "section_placeholder_title": "暂无实验",
     "section_placeholder_description": "实验性功能上线后会出现在这里。当前实验室页面是空的。",
-    "toast_failed": "更新设置失败"
+    "toast_failed": "更新设置失败",
+    "logs_title": "开发日志",
+    "logs_description": "导出当前工作区本机会话最近 24 小时内保留的日志，包含阶段耗时、错误类别和运行环境。",
+    "logs_privacy": "不包含消息正文、工具内容、图片和凭据，日志仅保存在本机。",
+    "logs_export": "导出日志",
+    "logs_exporting": "正在导出…",
+    "logs_exported": "开发日志已导出",
+    "logs_failed": "日志导出失败，请尝试其他保存位置。",
+    "logs_saved": "已保存 {{filename}} · {{count}} 条记录"
   },
   "github": {
     "master_description_off": "GitHub 功能已暂停，已有数据保留。",

@@ -796,7 +796,15 @@
   "labs": {
     "section_placeholder_title": "No experiments yet",
     "section_placeholder_description": "Experimental settings will land here as they ship. Today this tab is intentionally empty.",
-    "toast_failed": "Failed to update setting"
+    "toast_failed": "Failed to update setting",
+    "logs_title": "Developer logs",
+    "logs_description": "Export retained logs from the last 24 hours for local conversations in this workspace, including stage timings, error categories and runtime versions.",
+    "logs_privacy": "Message text, tool payloads, images and credentials are excluded. Logs stay on this device.",
+    "logs_export": "Export logs",
+    "logs_exporting": "Exporting…",
+    "logs_exported": "Developer logs exported",
+    "logs_failed": "Could not export logs. Try another save location.",
+    "logs_saved": "Saved {{filename}} · {{count}} records"
   },
   "github": {
     "master_description_off": "GitHub features are paused. Existing data is kept.",

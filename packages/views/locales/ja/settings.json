@@ -791,7 +791,15 @@
   "labs": {
     "section_placeholder_title": "まだ実験機能はありません",
     "section_placeholder_description": "実験的な設定はリリースされ次第ここに表示されます。現在このタブは意図的に空にしてあります。",
-    "toast_failed": "設定を更新できませんでした"
+    "toast_failed": "設定を更新できませんでした",
+    "logs_title": "開発ログ",
+    "logs_description": "このワークスペースのローカル会話について、過去24時間の保持済みログを出力します。各段階の所要時間、エラー分類、実行環境を含みます。",
+    "logs_privacy": "メッセージ本文、ツールの内容、画像、認証情報は含まれません。ログはこのデバイスに保存されます。",
+    "logs_export": "ログを出力",
+    "logs_exporting": "出力中…",
+    "logs_exported": "開発ログを出力しました",
+    "logs_failed": "ログを出力できませんでした。別の保存先をお試しください。",
+    "logs_saved": "{{filename}} を保存しました · {{count}} 件"
   },
   "github": {
     "master_description_off": "GitHub 機能は停止中です。既存データは保持されています。",

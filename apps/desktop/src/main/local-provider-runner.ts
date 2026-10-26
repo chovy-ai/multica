@@ -1,3 +1,4 @@
+import type { LocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import { spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -115,25 +116,36 @@ function imageFreeContent(content: unknown): unknown {
   return Array.isArray(content) ? content.filter((block) => inlineOutputImages([block]).length === 0) : content;
 }
 
-export async function runLocalProvider(input: { provider: LocalProviderId; cwd: string; content: string; model?: string | null; permissionMode?: LocalPermissionMode; resume?: string; systemPrompt?: string; env?: NodeJS.ProcessEnv; mcp?: ContextMcpRegistration; onSessionId?: (id: string) => void; titleOnly?: boolean }, emit: Emit, signal: AbortSignal, executable?: string): Promise<{ output: string; sessionId?: string }> {
-  const binary = executable ?? await findLocalProvider(input.provider);
+export async function runLocalProvider(input: { timing?: LocalTiming; provider: LocalProviderId; cwd: string; content: string; model?: string | null; permissionMode?: LocalPermissionMode; resume?: string; systemPrompt?: string; env?: NodeJS.ProcessEnv; mcp?: ContextMcpRegistration; onSessionId?: (id: string) => void; titleOnly?: boolean }, emit: Emit, signal: AbortSignal, executable?: string): Promise<{ output: string; sessionId?: string }> {
+  const measure = <T>(stage: Parameters<LocalTiming["measure"]>[0], action: () => Promise<T>) => input.timing ? input.timing.measure(stage, action) : action();
+  const binary = await measure("provider.lookup", async () => executable ?? await findLocalProvider(input.provider));
   if (!binary) throw new Error(`${input.provider === "codex" ? "Codex" : "Claude Code"} is not installed on this computer.`);
   if (signal.aborted) throw new Error("Execution cancelled");
   const env = input.env ?? process.env;
   let systemPrompt = input.systemPrompt;
-  const native = input.provider === "codex" ? await readCodexConfiguration(binary, input.cwd, env, signal) : undefined;
+  const native = input.provider === "codex" ? await measure("provider.config", () => readCodexConfiguration(binary, input.cwd, env, signal)) : undefined;
   if (native && systemPrompt) systemPrompt = [native.developerInstructions, systemPrompt].filter(Boolean).join("\n\n");
-  const extensions = native ? { codexMcpServers: native.mcpServerNames } : { claudePlugins: await readClaudePluginSettings(input.cwd, env) };
+  const extensions = native ? { codexMcpServers: native.mcpServerNames } : { claudePlugins: await measure("provider.config", () => readClaudePluginSettings(input.cwd, env)) };
   if (signal.aborted) throw new Error("Execution cancelled");
   return new Promise((resolve, reject) => {
     // Only an explicit per-conversation selection overrides native permission settings.
     const child = spawn(binary, providerArgs(input.provider, input.model, input.resume, systemPrompt, input.mcp, input.titleOnly, input.permissionMode, extensions), { cwd: input.cwd, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+    child.once("spawn", () => input.timing?.mark("provider.spawn"));
+    child.stdout.on("data", () => { input.timing?.activity(); input.timing?.once("provider.first_stdout"); });
     const parser = new ProviderStream(input.provider, emit);
     const lines = createInterface({ input: child.stdout });
     let stderr = "";
     let force: ReturnType<typeof setTimeout> | undefined;
-    lines.on("line", (line) => { const previous = parser.sessionId; parser.accept(line); if (parser.sessionId && parser.sessionId !== previous) input.onSessionId?.(parser.sessionId); });
-    child.stderr.on("data", (data: Buffer) => { stderr = (stderr + data.toString()).slice(-6000); });
+    lines.on("line", (line) => {
+      try {
+        const event = JSON.parse(line);
+        if (typeof event?.type === "string") input.timing?.once("provider.first_event");
+        if (event?.type === "turn.completed" || event?.type === "result") input.timing?.mark("provider.result");
+      } catch { /* Non-JSON CLI output is not a protocol event. */ }
+      const previous = parser.sessionId; parser.accept(line);
+      if (parser.sessionId && parser.sessionId !== previous) input.onSessionId?.(parser.sessionId);
+    });
+    child.stderr.on("data", (data: Buffer) => { input.timing?.activity(); input.timing?.once("provider.first_stderr"); stderr = (stderr + data.toString()).slice(-6000); });
     const stop = () => {
       if (!child.pid || child.exitCode !== null) return;
       if (process.platform === "win32") { child.kill(); return; }
@@ -143,13 +155,14 @@ export async function runLocalProvider(input: { provider: LocalProviderId; cwd: 
     signal.addEventListener("abort", stop, { once: true });
     child.on("error", reject);
     child.on("close", (code) => {
+      input.timing?.mark("provider.exit", { outcome: signal.aborted ? "cancelled" : code !== 0 || parser.error ? "failed" : "completed" });
       signal.removeEventListener("abort", stop); if (force) clearTimeout(force); lines.close();
       if (signal.aborted) reject(new Error("Execution cancelled"));
       else if (code !== 0 || parser.error) reject(new Error(parser.error || stderr.trim() || `Provider exited (${code})`));
       else resolve({ output: parser.output, sessionId: parser.sessionId });
     });
     child.stdin.on("error", () => {});
-    child.stdin.end(input.content);
+    child.stdin.end(input.content, () => input.timing?.mark("provider.input_written"));
   });
 }
 

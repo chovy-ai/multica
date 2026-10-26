@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +46,22 @@ const reply = (uuid: string | undefined, text: string) => ({ type: "assistant", 
 const result = (uuid: string | undefined, text: string) => ({ type: "result", user_message_uuid: uuid, result: text, is_error: false });
 
 describe("Claude foreground replies and background task ownership", () => {
+  it("records initial SDK setup and reused-session delivery as separate stages", async () => {
+    const f = await setup(); const records = vi.fn();
+    for (const n of [1, 2]) {
+      const timing = createLocalTiming({ source: "main", conversationId: "c", turnId: `turn-${n}` }, records);
+      const running = f.worker.run({ ...f.input, timing }, f.emit, new AbortController().signal, f.observer);
+      await vi.waitFor(() => expect(f.received).toHaveLength(n));
+      if (n == 1) f.push({ type: "system", subtype: "task_started", task_id: "background", description: "Fixture background task" });
+      f.push(reply(f.received[n - 1]!.uuid, "PRIVATE_REPLY"));
+      f.push(result(f.received[n - 1]!.uuid, "PRIVATE_REPLY")); await running;
+    }
+    const stages = (id: string) => records.mock.calls.map(([record]) => record).filter((r) => r.turnId === id).map((r) => r.stage);
+    expect(stages("turn-1")).toEqual(expect.arrayContaining(["provider.lookup", "provider.config", "provider.sdk_ready", "provider.input_yielded", "provider.first_event", "provider.result"]));
+    expect(stages("turn-2")).toEqual(expect.arrayContaining(["provider.refresh", "provider.input_yielded", "provider.first_event", "provider.result"]));
+    expect(stages("turn-2")).not.toContain("provider.sdk_ready");
+    expect(JSON.stringify(records.mock.calls)).not.toContain("PRIVATE_REPLY");
+  });
   it("refreshes a background shell's output while it runs, without another model message", async () => {
     const f = await setup(); const first = await f.begin();
     const root = await mkdtemp(join(tmpdir(), "multica-live-output-"));

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
 import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/tutti-agent-gui-host/local-protocol";
 import { mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +18,7 @@ const scope = { userId: "user", workspaceId: "workspace" };
 async function setup(run: typeof runLocalProvider = async () => ({ output: "Reply", sessionId: "native-thread" }), prepareContext?: (currentScope: typeof scope, signal: AbortSignal) => Promise<LocalExecutionContext>) {
   const root = await mkdtemp(join(tmpdir(), "multica-local-conversations-"));
   const usage = { read: vi.fn(async () => ({ provider: "claude" as const, context: { usedTokens: 120, limitTokens: 1000, model: null, updatedAt: null }, account: { status: "unavailable" as const, plan: null, windows: [], updatedAt: null } })), reset: vi.fn() };
-  const options = { root, apiUrl: "https://example.test", notify: vi.fn(), chooseDirectory: vi.fn(async () => "/selected-directory"), find: vi.fn(async () => "/test-owned/fake-cli"), run: vi.fn(run), fork: vi.fn<typeof forkLocalProvider>(async () => "native-branch"), usage, prepareContext };
+  const options = { timing: vi.fn<(record: LocalTimingRecord) => void>(), root, apiUrl: "https://example.test", notify: vi.fn(), chooseDirectory: vi.fn(async () => "/selected-directory"), find: vi.fn(async () => "/test-owned/fake-cli"), run: vi.fn(run), fork: vi.fn<typeof forkLocalProvider>(async () => "native-branch"), usage, prepareContext };
   const service = new LocalConversationService(options); service.setCurrentUser(scope.userId);
   cleanups.push(async () => { await service.stop(); await rm(root, { recursive: true, force: true }); });
   return { service, options };
@@ -50,6 +51,39 @@ describe("local conversation persistence and execution", () => {
     await vi.waitFor(async () => expect((await service.request(nextScope, "read", { id: next.id })).turns[0]?.status).toBe("completed"));
     expect(factory).toHaveBeenCalledTimes(2);
     await service.stop(); expect(pools[1]!.stop).toHaveBeenCalledOnce();
+  });
+  it("correlates concurrent turn stages and preserves request behavior without logging content", async () => {
+    const { service, options } = await setup(async (input, emit) => {
+      input.onSessionId?.("fake-native-session");
+      emit({ type: "text", content: "PRIVATE_REPLY" });
+      emit({ type: "text", content: "PRIVATE_REPLY_2" });
+      return { output: "PRIVATE_REPLY" };
+    }, async () => ({ env: { TOKEN: "PRIVATE_TOKEN" }, systemPrompt: "PRIVATE_PROMPT", dispose: async () => {} }));
+    const a = await service.request(scope, "create", { provider: "codex" });
+    const b = await service.request(scope, "create", { provider: "claude" });
+    const accepted = await Promise.all([a, b].map((entry, i) => service.request(scope, "send", { id: entry.id, requestId: `request-${i}`, content: "PRIVATE_INPUT" })));
+    await vi.waitFor(() => expect(options.timing.mock.calls.filter(([r]) => r.stage === "turn.finished")).toHaveLength(2));
+    for (const [i, reply] of accepted.entries()) {
+      const records = options.timing.mock.calls.map(([r]) => r).filter((r) => r.turnId === reply.turnId);
+      expect(records.every((r) => r.requestId === `request-${i}` && r.conversationId === [a, b][i]!.id)).toBe(true);
+      expect(records.map((r) => r.stage)).toEqual(expect.arrayContaining(["turn.persist", "context.prepare", "provider.session_ready", "provider.first_output", "provider.first_text", "images.recover", "turn.save", "turn.finished"]));
+      expect(records.filter((r) => r.stage === "provider.first_text")).toHaveLength(1);
+      expect(records.at(-1)).toMatchObject({ outcome: "completed" });
+    }
+    expect(JSON.stringify(options.timing.mock.calls)).not.toContain("PRIVATE_");
+  });
+  it("records preparation failures and terminates their timing span", async () => {
+    const { service, options } = await setup(undefined, async () => { throw new Error("fetch failed PRIVATE_TOKEN"); });
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    await service.request(scope, "send", { id: entry.id, content: "hello", requestId: "failed-request" });
+    await vi.waitFor(() => expect(options.timing.mock.calls.some(([r]) => r.stage === "turn.finished")).toBe(true));
+    expect(options.run).not.toHaveBeenCalled();
+    expect(options.timing.mock.calls.map(([r]) => r)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: "context.prepare", event: "end", outcome: "failed", failure: "transport" }),
+      expect.objectContaining({ stage: "turn.finished", outcome: "failed" }),
+    ]));
+    expect(JSON.stringify(options.timing.mock.calls)).not.toContain("PRIVATE_TOKEN");
+
   });
   it("advertises supported IPC methods with the same account scope as conversation reads", async () => {
     const { service, options } = await setup();
@@ -392,7 +426,7 @@ describe("local conversation persistence and execution", () => {
     const created = await service.request(scope, "create", { provider: "codex" });
     await service.request(scope, "send", { id: created.id, content: "Read a task" });
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: created.id })).turns[0]?.status).toBe(failed ? "failed" : "completed"));
-    expect(prepare).toHaveBeenCalledWith(scope, expect.any(AbortSignal), { conversationId: created.id, references: [], askUser: expect.any(Function), readAvatarFile: expect.any(Function) });
+    expect(prepare).toHaveBeenCalledWith(scope, expect.any(AbortSignal), { conversationId: created.id, references: [], timing: expect.objectContaining({ mark: expect.any(Function), measure: expect.any(Function) }), askUser: expect.any(Function), readAvatarFile: expect.any(Function) });
     expect(options.run).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt: expect.stringContaining(context.systemPrompt), env: context.env, content: "Read a task" }), expect.any(Function), expect.any(AbortSignal));
     expect(context.dispose).toHaveBeenCalledOnce();
     await service.flush();
