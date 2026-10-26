@@ -1,13 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 import {
   radiusScaleViolations,
   radiusViolations,
+  radiusSourceFiles,
 } from "./check-ui-radius-tokens.mjs";
 
 const probe = resolve("packages/views/zz-radius-probe.tsx");
+
+test("excludes published Agent GUI bundles while retaining authored public scripts and GUI source", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "multica-radius-sources-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const authored = ["apps/web/public/handwritten.js", "apps/desktop/src/renderer/public/handwritten.js", "packages/views/tutti-agent-gui/panel.tsx"];
+  const generated = ["apps/web/public/tutti-agent-gui/assets/index.js", "apps/desktop/src/renderer/public/tutti-agent-gui/assets/index.js"];
+  for (const file of [...authored, ...generated]) {
+    const path = join(root, file); await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, 'const classes = "rounded-[4px]";');
+  }
+  const files = radiusSourceFiles(root, root);
+  assert.deepEqual(files.map((path) => relative(root, path).split(sep).join("/")).sort(), authored.sort());
+  assert.equal(files.flatMap((path) => radiusViolations('const classes = "rounded-[4px]";', path)).length, authored.length);
+});
 
 test("rejects bare radius utilities, including directions, variants, and templates", () => {
   const source = `
