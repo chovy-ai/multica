@@ -158,7 +158,7 @@ function SideConversation(props: Props & { sessionId: string; onSide(id: string)
     }}>{props.chinese ? "执行转入的消息" : "Run transferred message"}</Button>}</div>}
     <div className="relative flex min-h-0 flex-1 flex-col">
       <TuttiAgentGuiPanel serviceFactory={factory} workspaceId={props.scope.workspaceId} workspaceSlug={props.slug} userId={props.scope.userId} activeSessionId={props.sessionId} selectedAgentId={localTargetId(session?.provider ?? props.provider)} active={props.visible} onRestoreDraftApplied={() => {}} onSelectSession={() => {}} onOpenTask={props.onOpenTask} onShowMessage={props.onShowMessage} />
-      {session && session.turns.length === 0 && !session.side?.pending && <div className="pointer-events-none absolute inset-x-4 top-1/3 flex flex-col items-center gap-3 text-center text-body text-muted-foreground"><MessagesSquare className="size-6" aria-hidden="true" /><p>{props.chinese ? (session.side?.quote ? "围绕选中的内容继续提问" : "在旁支里继续探索") : (session.side?.quote ? "Ask a follow-up about your selection" : "Continue exploring in this side conversation")}</p></div>}
+      {session && session.messages.length === 0 && session.turns.length === 0 && !session.side?.pending && <div className="pointer-events-none absolute inset-x-4 top-1/3 flex flex-col items-center gap-3 text-center text-body text-muted-foreground"><MessagesSquare className="size-6" aria-hidden="true" /><p>{props.chinese ? (session.side?.quote ? "围绕选中的内容继续提问" : "在旁支里继续探索") : (session.side?.quote ? "Ask a follow-up about your selection" : "Continue exploring in this side conversation")}</p></div>}
     </div>
   </div>;
 }
