@@ -146,6 +146,9 @@ vi.mock("./freeze-flush", () => ({ flushFreezeBreadcrumb: vi.fn() }));
 vi.mock("./platform/auth-session-bridge", () => ({
   DesktopAuthSessionBridge: () => null,
 }));
+vi.mock("./platform/settings-host-bridge", () => ({
+  DesktopSettingsHostBridge: () => null,
+}));
 vi.mock("./platform/session-teardown", () => ({
   tearDownOnLogout: vi.fn(),
   tearDownOnSessionExpiry: vi.fn(),
