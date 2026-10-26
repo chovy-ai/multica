@@ -4,7 +4,7 @@ import type { AgentGuiInitSnapshot } from "../packages/tutti-agent-gui-host/src/
 import type { ChatSession } from "../packages/core/types";
 
 for (const [provider, initialView] of [["codex", "home"], ["codex", "draft"], ["claude", "home"], ["claude", "draft"], ["codex", "side"]] as const) {
-  test(`keeps the ${provider} ${initialView} welcome send button on the right`, async ({ page }) => {
+  test(`keeps the ${provider} ${initialView} welcome artwork unclipped and send button on the right`, async ({ page }) => {
     const at = "2026-10-24T10:00:00Z";
     const name = provider === "codex" ? "Codex" : "Claude Code";
     const chinese = provider === "codex";
@@ -94,6 +94,34 @@ for (const [provider, initialView] of [["codex", "home"], ["codex", "draft"], ["
         image.complete && image.naturalWidth > 0 && image.naturalHeight > 0)).toBe(true);
     };
     if (initialView !== "side") await expectRecordIcon(provider);
+    const expectArtworkUnclipped = async () => {
+      await expect.poll(() => gui.locator(".agent-gui-vinyl-player__chassis, .agent-gui-vinyl-player__tonearm").evaluateAll((artwork) => {
+        const clipped: string[] = [];
+        for (const image of artwork) {
+          const bounds = image.getBoundingClientRect();
+          for (let parent = image.parentElement; parent; parent = parent.parentElement) {
+            if (!["auto", "scroll", "hidden", "clip"].includes(getComputedStyle(parent).overflowY)) continue;
+            const viewport = parent.getBoundingClientRect();
+            if (bounds.top < viewport.top - 0.5 || bounds.bottom > viewport.bottom + 0.5) {
+              clipped.push(`${image.className} clipped by ${parent.className}`);
+              break;
+            }
+          }
+        }
+        return artwork.length === 2 ? clipped : ["missing artwork"];
+      }), { message: "the entire chassis and tonearm remain inside every clipping viewport" }).toEqual([]);
+    };
+    if (initialView !== "side") {
+      await expectArtworkUnclipped();
+      await page.setViewportSize({ width: 860, height: 650 });
+      await page.locator("iframe").evaluate((frame) => { frame.style.height = "634px"; });
+      await expectArtworkUnclipped();
+      await page.setViewportSize({ width: 600, height: 420 });
+      await page.locator("iframe").evaluate((frame) => { frame.style.height = "404px"; });
+      await expectArtworkUnclipped();
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.locator("iframe").evaluate((frame) => { frame.style.height = "850px"; });
+    }
     await expect(editor).toHaveCount(1);
     const expectSendOnRight = async () => {
       const send = gui.locator(".agent-gui-node__composer-send-button, .agent-gui-node__composer-stop-button");

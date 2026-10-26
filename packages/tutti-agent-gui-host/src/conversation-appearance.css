@@ -47,6 +47,15 @@ html.multica-agent-gui .multica-empty-conversation-welcome .agent-gui-node__empt
   block-size: auto;
 }
 
+/* Intrinsic draft welcomes have no scroll padding to absorb the home offsets. */
+html.multica-agent-gui:not([data-side-pane="true"]) .agent-gui-node__empty-hero-carousel-stage:has(.multica-empty-conversation-welcome) {
+  top: 0;
+}
+
+html.multica-agent-gui:not([data-side-pane="true"]) .agent-gui-node__empty-hero-carousel-stage:has(.multica-empty-conversation-welcome) > .agent-gui-node__empty-hero-carousel-layer {
+  top: var(--agent-gui-hero-carousel-slot-top, 0px);
+}
+
 /* Side drafts keep the normal dock and the source quote supplied by the host. */
 html.multica-agent-gui[data-side-pane="true"] .multica-empty-conversation-welcome,
 html.multica-agent-gui[data-side-pane="true"] .agent-gui-node__empty-hero-carousel-layer {
