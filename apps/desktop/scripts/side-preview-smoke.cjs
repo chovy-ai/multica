@@ -1,19 +1,21 @@
 // Explicit, isolated Electron integration test. Never loads the user's profile.
 if (process.env.MULTICA_RUN_NATIVE_PREVIEW_SMOKE !== "1") process.exit(0);
-const { app, BrowserWindow } = require("electron");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const http = require("node:http");
-const ts = require("typescript");
+void (async () => {
+const { app, BrowserWindow } = await import("electron");
+const { default: assert } = await import("node:assert/strict");
+const { default: fs } = await import("node:fs");
+const { default: os } = await import("node:os");
+const { default: path } = await import("node:path");
+const { default: http } = await import("node:http");
+const { default: ts } = await import("typescript");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "multica-side-preview-"));
 app.setPath("userData", path.join(root, "profile"));
 app.setName("Multica Side Preview Smoke");
 const source = fs.readFileSync(path.join(__dirname, "../src/main/resource-web-preview.ts"), "utf8");
 const modulePath = path.join(root, "resource-web-preview.cjs");
 fs.writeFileSync(modulePath, ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText);
-const { ResourceWebPreview } = require(modulePath);
+const { pathToFileURL } = await import("node:url");
+const { ResourceWebPreview } = (await import(pathToFileURL(modulePath).href)).default;
 let server, window, manager;
 const loaded = async (contents) => { if (!contents.isLoading() && contents.getURL()) return; await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error("Preview load timed out")), 10000); contents.once("did-finish-load", () => { clearTimeout(timer); resolve(); }); }); };
 app.whenReady().then(async () => {
@@ -43,3 +45,5 @@ app.whenReady().then(async () => {
   manager?.dispose(); if (window && !window.isDestroyed()) window.destroy(); server?.close();
   app.once("quit", () => fs.rmSync(root, { recursive: true, force: true })); app.quit();
 });
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -20,7 +20,7 @@ describe("native local provider transport", () => {
       expect(claude).not.toContain("--disable-slash-commands");
     }
   });
-  it.skipIf(process.platform === "win32").each(["codex", "claude"] as const)("transports %s images natively through an explicitly supplied fake CLI", async (provider) => {
+  it.skipIf(process.platform === "win32").each(["codex", "claude"] as const)("sends %s local image paths as text for tool-based reads through a fake CLI", async (provider) => {
     const root = await mkdtemp(join(tmpdir(), "multica-provider-images-"));
     const executable = join(root, "fake-provider");
     const path = join(root, "image with spaces");
@@ -46,16 +46,14 @@ process.stdin.on('end', () => {
 }
 `, { mode: 0o700 });
       for (const resume of [undefined, "owned-session"]) {
-        const result = await runLocalProvider({ provider, cwd: root, env: { PATH: process.env.PATH, HOME: root, CLAUDE_CONFIG_DIR: root }, content: "Describe the attached image", resume, images: [{ path, mimeType: "image/png", data: bytes.toString("base64") }] }, () => {}, new AbortController().signal, executable);
+        const result = await runLocalProvider({ provider, cwd: root, env: { PATH: process.env.PATH, HOME: root, CLAUDE_CONFIG_DIR: root }, content: `Describe the attached image at ${JSON.stringify(path)}`, resume }, () => {}, new AbortController().signal, executable);
         const received = JSON.parse(result.output);
-        if (provider === "codex") {
-          expect(received.args.slice(-2)).toEqual(["--image", path]);
-          expect(received.images).toEqual([bytes.toString("base64")]);
-          expect(received.input).toBe("Describe the attached image");
-        } else {
-          expect(received.args.slice(-2)).toEqual(["--input-format", "stream-json"]);
-          expect(JSON.parse(received.input)).toMatchObject({ session_id: resume ?? "", message: { content: [{ type: "text", text: "Describe the attached image" }, { type: "image", source: { type: "base64", media_type: "image/png", data: bytes.toString("base64") } }] } });
-          expect(received.args).not.toContain("--image");
+        expect(received.input).toBe(`Describe the attached image at ${JSON.stringify(path)}`);
+        expect(received.input).not.toContain(bytes.toString("base64"));
+        expect(received.images).toEqual([]);
+        expect(received.args).not.toContain("--image");
+        expect(received.args).not.toContain("--input-format");
+        if (provider === "claude") {
           expect(JSON.parse(received.args[received.args.indexOf("--settings") + 1])).toEqual({ enabledPlugins: { "fixture@market": false }, syncClaudeAiPlugins: false });
           expect(received.args).toContain("--strict-mcp-config");
         }
@@ -90,7 +88,7 @@ process.stdin.on('end', () => {
   it("keeps the built-in MCP while blocking inherited MCP servers on new and resumed invocations", () => {
     const mcp = { url: "http://127.0.0.1:32100/mcp", claudeConfigPath: "/private/run/mcp.json" };
     for (const resume of [undefined, "owned-session"]) {
-      const codex = providerArgs("codex", undefined, resume, undefined, mcp, false, "default", [], { codexMcpServers: ["external", "has.dot"] }).join(" ");
+      const codex = providerArgs("codex", undefined, resume, undefined, mcp, false, "default", { codexMcpServers: ["external", "has.dot"] }).join(" ");
       expect(codex).toContain(`mcp_servers.${CONTEXT_MCP_NAME}=`); expect(codex).toContain('bearer_token_env_var="MULTICA_CONTEXT_MCP_TOKEN"');
       expect(codex).toContain('mcp_servers={"external"={enabled=false},"has.dot"={enabled=false}}');
       expect(codex).toContain("--disable plugins");

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalConversationService } from "../../../main/local-conversation-service";
+import type { runLocalProvider } from "../../../main/local-provider-runner";
 import { createLocalConversationParentService } from "./local-conversation-service";
 import type { LocalConversationClient } from "@multica/tutti-agent-gui-host/local-protocol";
 import { CREATE_TASK_MENTION_ID } from "@multica/tutti-agent-gui-host/local-protocol";
@@ -32,7 +33,7 @@ beforeEach(() => {
 async function setup(getSelectionIntent?: () => string) {
   const root = await mkdtemp(join(tmpdir(), "multica-local-bridge-"));
   const listeners = new Set<Parameters<LocalConversationClient["subscribe"]>[0]>();
-  const run = vi.fn(async () => ({ output: "LOCAL_RESULT", sessionId: "native-thread" }));
+  const run = vi.fn<typeof runLocalProvider>(async () => ({ output: "LOCAL_RESULT", sessionId: "native-thread" }));
   const usage = { read: vi.fn(async () => ({ provider: "claude" as const, context: { usedTokens: 120, limitTokens: 1000, model: null, updatedAt: null }, account: { status: "unavailable" as const, plan: null, windows: [], updatedAt: null } })), reset: vi.fn() };
   const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, find: async () => "/test/fake", chooseDirectory: async () => null, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)) });
   service.setCurrentUser("user");
@@ -48,6 +49,30 @@ async function setup(getSelectionIntent?: () => string) {
   return { bridge, run, service, usage, client, onLocalSelect };
 }
 describe("local providers and official agent invocation routing", () => {
+  it.each([
+    ["large cases.pos", "application/octet-stream", 7_600_000],
+    ["pasted screenshot.png", "image/png", 128],
+  ])("returns a compact path reference for %s and reads bytes only on preview", async (name, mimeType, size) => {
+    const { bridge, client } = await setup();
+    const request = vi.spyOn(client, "request");
+    const attachment = await bridge.request("attachment.upload", { file: new File([new Uint8Array(size).fill(65)], name, { type: mimeType }) });
+    expect(attachment.url.startsWith("file://")).toBe(true);
+    expect(JSON.stringify(attachment).length).toBeLessThan(2000);
+    expect(request.mock.calls.some(([, method]) => method === "fileRead")).toBe(false);
+    const session = await bridge.request("session.create", { agentId: "local:claude" });
+    const content = `Read [@${name}](${attachment.markdown_url})`;
+    const queued = await bridge.request("queue.enqueue", { sessionId: session.id, queued: true, paused: true, item: {
+      requestId: "large-file", content, attachmentIds: [attachment.id],
+      display: { id: "large-file", createdAtUnixMs: 1, content: [{ type: "text", text: content }] },
+    } });
+    expect(queued.items).toHaveLength(1);
+    expect(JSON.stringify(queued).length).toBeLessThan(3000);
+    const detail = await bridge.request("session.load", { sessionId: session.id });
+    expect(detail.promptQueue?.items[0]?.attachmentIds).toEqual([attachment.id]);
+    const preview = await bridge.request("attachment.read", { attachmentId: attachment.id });
+    expect(preview).toMatchObject({ name, mimeType });
+    expect(atob(preview.data)).toHaveLength(size);
+  });
   it("hands queued work to Electron before tab disposal and reloads its live state", async () => {
     const { bridge, service, run } = await setup();
     let finish!: () => void;
@@ -92,29 +117,32 @@ describe("local providers and official agent invocation routing", () => {
     resume(); await pending;
     expect(onLocalSelect.mock.calls).toEqual([[next.id, "claude"]]);
   });
-  it("passes Codex image bytes through the desktop bridge and preserves queued attachments when moving to Side", async () => {
-    const { bridge, service, run } = await setup();
+  it("passes Codex image paths through the desktop bridge and preserves queued attachments when moving to Side", async () => {
+    const { bridge, service, run, client } = await setup();
     const scope = { userId: "user", workspaceId: "ws" };
     const source = await bridge.request("session.create", { agentId: "local:codex" });
     const data = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGNQzjxBEmIY1TCqYfhqAAAciFQQmuMXLwAAAABJRU5ErkJggg==";
     const stored = await service.request(scope, "fileStore", { name: "screenshot.png", mimeType: "image/png", data });
     const image = await service.request(scope, "fileRead", stored);
+    const requests = vi.spyOn(client, "request");
     await bridge.request("session.send", { sessionId: source.id, content: "Describe this image", attachmentIds: [stored.id] });
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: source.id })).turns.at(-1)?.status).toBe("completed"));
-    expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "codex", images: [{ path: image.path, mimeType: "image/png", data }],
-      content: expect.stringContaining(`screenshot.png: ${image.path}`) }), expect.any(Function), expect.any(AbortSignal));
+    expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "codex", content: expect.stringContaining(image.path) }), expect.any(Function), expect.any(AbortSignal));
 
     const requestId = `side:${source.id}:queued-image`;
     const side = await bridge.request("host.openSide", { sessionId: source.id, requestId, pending: { requestId, content: "Queued image question", attachmentIds: [stored.id] } });
     await bridge.request("host.startSide", { sessionId: side.id });
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: side.id })).turns.at(-1)?.status).toBe("completed"));
-    expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "codex", resume: undefined, images: [{ path: image.path, mimeType: "image/png", data }],
+    expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "codex", resume: undefined,
       content: expect.stringContaining("Queued image question") }), expect.any(Function), expect.any(AbortSignal));
+    expect(run.mock.calls.at(-1)?.[0].content).toContain(image.path);
+    expect(run.mock.calls.at(-1)?.[0]).not.toHaveProperty("images");
     const saved = await service.request(scope, "read", { id: side.id });
     expect(saved.messages[0]?.attachmentIds).toEqual([stored.id]);
     expect(saved.side?.pending).toBeUndefined();
     expect((await service.request(scope, "read", { id: source.id })).messages).toHaveLength(2);
     expect(run).toHaveBeenCalledTimes(2);
+    expect(requests.mock.calls.some(([, method]) => method === "fileRead")).toBe(false);
   });
   it("leaves new conversations eligible for remembered defaults and retains inherited Side permissions", async () => {
     const { bridge, service, run } = await setup();

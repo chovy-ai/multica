@@ -1,7 +1,7 @@
 // @vitest-environment node
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalConversationService } from "./local-conversation-service";
 import type { runLocalProvider } from "./local-provider-runner";
@@ -22,7 +22,7 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   return { service, options };
 }
 describe("local conversation persistence and execution", () => {
-  it.each(["codex", "claude"] as const)("passes saved image bytes to new and resumed %s turns without carrying attachments into unrelated messages", async (provider) => {
+  it.each(["codex", "claude"] as const)("passes saved image paths to new and resumed %s turns without carrying attachments into unrelated messages", async (provider) => {
     const { service, options } = await setup();
     const image = Buffer.from("test-owned image bytes");
     const stored = await service.request(scope, "fileStore", { name: "screenshot.png", mimeType: "image/png", data: image.toString("base64") });
@@ -31,7 +31,11 @@ describe("local conversation persistence and execution", () => {
     for (const attached of [true, false, true]) {
       await service.request(scope, "send", { id: entry.id, content: "Describe the attachment", ...(attached ? { attachmentIds: [stored.id] } : {}) });
       await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns.at(-1)?.status).toBe("completed"));
-      expect(options.run.mock.calls.at(-1)?.[0].images).toEqual(attached ? [{ path: file.path, mimeType: "image/png", data: image.toString("base64") }] : undefined);
+      const input = options.run.mock.calls.at(-1)?.[0];
+      expect(input).not.toHaveProperty("images");
+      expect(input?.content.includes(file.path)).toBe(attached);
+      expect(input?.content).not.toContain(image.toString("base64"));
+      if (attached) expect(input?.content).toContain("image viewing tool");
     }
     expect(options.run.mock.calls[2]?.[0].resume).toBe("native-thread");
     const saved = await service.request(scope, "read", { id: entry.id });
@@ -450,10 +454,33 @@ describe("local conversation persistence and execution", () => {
     const file = await service.request(scope, "fileStore", { name: "notes.txt", mimeType: "text/plain", data: Buffer.from("private notes").toString("base64") });
     expect(await service.request(scope, "fileRead", file)).toMatchObject({ name: "notes.txt", data: Buffer.from("private notes").toString("base64") });
     await expect(service.request(scope, "fileRead", { id: "../../other-account" })).rejects.toThrow("identifier");
+    await expect(service.request(scope, "fileInfo", { id: "../../other-account" })).rejects.toThrow("identifier");
+    await expect(service.request({ ...scope, workspaceId: "other" }, "fileInfo", file)).rejects.toThrow("ENOENT");
     await expect(service.request({ ...scope, workspaceId: "other" }, "read", { id: created.id })).rejects.toThrow("not found");
     service.setCurrentUser("other-user");
     await expect(service.request(scope, "list", {})).rejects.toThrow("no longer active");
     expect(await service.request({ ...scope, userId: "other-user" }, "list", {})).toEqual([]);
+  });
+  it("keeps historical attachment paths readable and rejects unsafe persisted filenames", async () => {
+    const { service } = await setup();
+    const stored = await service.request(scope, "fileStore", { name: "legacy.png", mimeType: "image/png", data: Buffer.from("legacy pixels").toString("base64") });
+    const info = await service.request(scope, "fileInfo", stored);
+    const legacyPath = join(dirname(info.path), stored.id);
+    await rename(info.path, legacyPath);
+    const metadata = { name: info.name, mimeType: info.mimeType };
+    await writeFile(`${legacyPath}.json`, JSON.stringify(metadata));
+    expect(await service.request(scope, "fileInfo", stored)).toMatchObject({ path: legacyPath, size: 13 });
+    expect(await service.request(scope, "fileRead", stored)).toMatchObject({ data: Buffer.from("legacy pixels").toString("base64") });
+    await writeFile(`${legacyPath}.json`, JSON.stringify({ ...metadata, storageName: "../../outside.png" }));
+    await expect(service.request(scope, "fileInfo", stored)).rejects.toThrow("Invalid stored file path");
+  });
+  it("stores JSON attachment bytes separately from their JSON metadata", async () => {
+    const { service } = await setup();
+    const content = '{"test":"user-owned content"}';
+    const file = await service.request(scope, "fileStore", { name: "config.json", mimeType: "application/json", data: Buffer.from(content).toString("base64") });
+    const loaded = await service.request(scope, "fileRead", file);
+    expect(loaded.path.endsWith(".json")).toBe(true);
+    expect(Buffer.from(loaded.data, "base64").toString("utf8")).toBe(content);
   });
   it("records independently named cloud executions without invoking a local provider", async () => {
     const { service, options } = await setup();

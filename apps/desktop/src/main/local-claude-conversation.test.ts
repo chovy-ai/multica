@@ -107,14 +107,14 @@ describe("Claude foreground replies and background task ownership", () => {
     f.push({ type: "system", subtype: "task_notification", task_id: "shell", status: "completed", summary: "Inspect releases", output_file: path, usage: { total_tokens: 0, tool_uses: 1, duration_ms: 500 } });
     await vi.waitFor(() => expect(f.observer.tasks).toHaveBeenLastCalledWith([expect.objectContaining({ status: "completed", output: "v2.1.0\nnode v24\n", usage: { totalTokens: 0, toolUses: 1, durationMs: 500 }, completedAt: expect.any(String) })]));
   });
-  it("delivers image bytes as native image blocks on both initial and follow-up messages", async () => {
+  it("delivers image paths as text on both initial and follow-up messages", async () => {
     const f = await setup();
-    const images = [{ path: "/test-owned/image", mimeType: "image/png" as const, data: Buffer.from("test image").toString("base64") }];
+    const path = "/test-owned/image with spaces.png";
     for (const content of ["Describe the image", "Compare this image"]) {
-      const pending = f.worker.run({ ...f.input, content, images }, f.emit, new AbortController().signal, f.observer);
+      const pending = f.worker.run({ ...f.input, content: `${content} at ${JSON.stringify(path)}` }, f.emit, new AbortController().signal, f.observer);
       await vi.waitFor(() => expect(f.received).toHaveLength(content === "Describe the image" ? 1 : 2));
       const message = f.received.at(-1)!;
-      expect(message.message.content).toEqual([{ type: "text", text: content }, { type: "image", source: { type: "base64", media_type: "image/png", data: images[0]!.data } }]);
+      expect(message.message.content).toBe(`${content} at ${JSON.stringify(path)}`);
       f.push({ type: "system", subtype: "task_started", task_id: "owned-background", description: "Keep the test transport open" });
       f.push(reply(message.uuid, "Image received"));
       await pending;

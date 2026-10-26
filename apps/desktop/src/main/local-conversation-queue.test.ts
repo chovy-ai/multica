@@ -21,14 +21,40 @@ async function setup(run: typeof runLocalProvider) {
   return { service, options };
 }
 describe("Electron-owned conversation queue", () => {
+  it.each(["codex", "claude"] as const)("restores large file and image references before %s dispatch without embedding bytes", async (provider) => {
+    const { service, options } = await setup(async () => ({ output: "done" }));
+    const entry = await service.request(scope, "create", { provider });
+    const files = await Promise.all([
+      service.request(scope, "fileStore", { name: "cases.pos", mimeType: "application/octet-stream", data: Buffer.alloc(7_600_000, 65).toString("base64") }),
+      service.request(scope, "fileStore", { name: "pasted image", mimeType: "image/png", data: Buffer.from("test pixels").toString("base64") }),
+    ]);
+    const metadata = await Promise.all(files.map((file) => service.request(scope, "fileInfo", file)));
+    expect(metadata[0]?.path.endsWith(".pos")).toBe(true);
+    expect(metadata[1]?.path.endsWith(".png")).toBe(true);
+    const item = { ...prompt("persisted-files", "Read the local files"), attachmentIds: files.map((file) => file.id) };
+    await service.request(scope, "queueEnqueue", { id: entry.id, item, paused: true });
+    await service.stop();
+    const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId); cleanup.unshift(() => reopened.stop());
+    const restored = await reopened.request(scope, "read", { id: entry.id });
+    expect(restored.promptQueue?.items[0]?.attachmentIds).toEqual(item.attachmentIds);
+    expect(JSON.stringify(restored).length).toBeLessThan(10000);
+    const requests = vi.spyOn(reopened, "request");
+    await reopened.request(scope, "queueUpdate", { id: entry.id, action: "resume" });
+    await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
+    const input = options.run.mock.calls[0]![0];
+    for (const file of metadata) expect(input.content).toContain(file.path);
+    expect(input.content.length).toBeLessThan(5000);
+    expect(input).not.toHaveProperty("images");
+    expect(requests.mock.calls.some(([, method]) => method === "fileRead")).toBe(false);
+  });
   it.each(["codex", "claude"] as const)("identifies the dispatching %s prompt without hiding a waiting successor", async (provider) => {
     let allowAdmission!: () => void;
     let finish!: () => void;
     const admission = new Promise<void>((resolve) => { allowAdmission = resolve; });
     const running = new Promise<void>((resolve) => { finish = resolve; });
     const { service, options } = await setup(async () => { await running; return { output: "done" }; });
-    options.find = async () => { await admission; return "/test-owned/fake-cli"; };
     const entry = await service.request(scope, "create", { provider });
+    options.find = async () => { await admission; return "/test-owned/fake-cli"; };
     try {
       const receipt = await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("first") });
       expect(receipt).toMatchObject({ dispatchingRequestId: "first" });
@@ -57,7 +83,7 @@ describe("Electron-owned conversation queue", () => {
     options.notify.mockClear(); finish();
     await vi.waitFor(() => expect(options.run).toHaveBeenCalledTimes(2));
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns.at(-1)?.status).toBe("completed"));
-    expect(options.run.mock.calls[1]?.[0]).toMatchObject({ resume: "saved-native", model: "saved-model", permissionMode: "auto", images: [{ data: Buffer.from("fake image").toString("base64") }] });
+    expect(options.run.mock.calls[1]?.[0]).toMatchObject({ resume: "saved-native", model: "saved-model", permissionMode: "auto", content: expect.stringContaining("image viewing tool") });
     await service.request(scope, "queueEnqueue", { id: entry.id, item: second });
     expect(options.run).toHaveBeenCalledTimes(2);
   });

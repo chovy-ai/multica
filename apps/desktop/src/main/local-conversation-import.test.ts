@@ -10,7 +10,7 @@ import type { NativeHistoryReader, NativeHistorySession } from "./local-native-h
 import type { LocalConversation } from "@multica/tutti-agent-gui-host/local-protocol";
 
 const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); vi.unstubAllEnvs(); });
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.unstubAllEnvs(); });
 const scope = { userId: "test-user", workspaceId: "test-workspace" };
 async function temp() { const root = await mkdtemp(join(tmpdir(), "multica-import-")); cleanups.push(() => rm(root, { recursive: true, force: true })); return root; }
 function session(id: string, cwd: string): NativeHistorySession {

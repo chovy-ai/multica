@@ -749,6 +749,34 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
     expect(request.mock.calls.filter(([method]) => method === "attachment.upload")).toHaveLength(1);
   });
 
+  it.each([["file", "data"], ["image", "data"], ["file", "blob"], ["image", "blob"]] as const)("keeps local %s uploads from %s compact with lazy image previews", async (type, transport) => {
+    const data = backend(); const original = data.request.getMockImplementation()!;
+    const url = "file:///private/multica/files/stable-attachment.png";
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") return { ...await original(method, params), local: true, queueOwner: "desktop" };
+      if (method === "attachment.upload") return { ...await original(method, params), url, markdown_url: url };
+      if (method === "queue.enqueue") return { revision: 1, paused: true, items: [params.item] };
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true }); handles.push(handle); await handle.initialize();
+    const blobUrl = transport === "blob" ? URL.createObjectURL(new Blob(["fixture pixels"])) : undefined;
+    let prepared: Awaited<ReturnType<NonNullable<typeof handle.runtime.uploadPromptContent>>>;
+    try {
+      prepared = await handle.runtime.uploadPromptContent!({ workspaceId: init.workspaceId,
+        content: [{ type, name: "attachment.png", mimeType: type === "image" ? "image/png" : "application/octet-stream", ...(blobUrl ? { url: blobUrl } : { data: btoa("fixture pixels") }) }] });
+    } finally { if (blobUrl) URL.revokeObjectURL(blobUrl); }
+    expect(prepared.content[0]).toMatchObject({ attachmentId: "attachment-1", data: undefined });
+    if (type === "image") expect(prepared.content[0]).toHaveProperty("url", undefined);
+    handle.runtime.getSessionEngine(init.workspaceId).activateSession({ mode: "new", agentSessionId: "gui-session", agentTargetId: agent.id,
+      requestId: "activation-path", clientSubmitId: "submit-path", initialContent: prepared.content });
+    await vi.waitFor(() => expect(data.request.mock.calls.some(([method]) => method === "queue.enqueue")).toBe(true));
+    const item = data.request.mock.calls.find(([method]) => method === "queue.enqueue")?.[1].item;
+    expect(item.attachmentIds).toEqual(["attachment-1"]);
+    expect(JSON.stringify(item).includes("base64")).toBe(false);
+    expect(JSON.stringify(item).length).toBeLessThan(3000);
+    expect(item.content).toContain(type === "image" ? "[Image attachment:" : url);
+  });
+
   it("waits for server identity when a new GUI conversation subscribes before creation completes", async () => {
     const data = backend();
     const original = data.request.getMockImplementation()!;
@@ -825,6 +853,7 @@ describe("session projection cursors and execution messages", () => {
     ] };
     const projected = projectDetail(detail, undefined, new Map(), new RuntimeLedger());
     expect(projected.messages[0]?.payload).toMatchObject({ text: "Can you see it?", content: [{ type: "text", text: "Can you see it?" }, { type: "image", attachmentId: "image" }] });
+    expect((projected.messages[0]?.payload.content as { url?: string }[])[1]?.url).toBeUndefined();
     expect(detail.messages[0]?.content).toBe(content);
     const cloud = projectDetail({ ...detail, session }, undefined, new Map(), new RuntimeLedger());
     expect(cloud.messages[0]?.payload.text).toBe(content);

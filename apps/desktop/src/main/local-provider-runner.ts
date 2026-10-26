@@ -10,37 +10,23 @@ import { CODEX_PLUGIN_ISOLATION_ARGS, codexMcpIsolationArgs, readClaudePluginSet
 import { CONTEXT_MCP_NAME, CONTEXT_MCP_TOKEN_ENV, CONTEXT_MCP_TOOLS, type ContextMcpRegistration } from "./local-context-mcp";
 import { inlineOutputImages } from "./local-output-images";
 
-export interface LocalProviderImage {
-  path: string;
-  mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
-  data: string;
-}
-
-export function claudeMessageContent(input: { content: string; images?: readonly LocalProviderImage[] }) {
-  if (!input.images?.length) return input.content;
-  return [{ type: "text" as const, text: input.content }, ...input.images.map((image) => ({
-    type: "image" as const, source: { type: "base64" as const, media_type: image.mimeType, data: image.data },
-  }))];
-}
-
-export function providerArgs(provider: LocalProviderId, model?: string | null, resume?: string, systemPrompt?: string, mcp?: ContextMcpRegistration, titleOnly = false, permissionMode: LocalPermissionMode = "default", imagePaths: readonly string[] = [], extensions: { codexMcpServers?: string[]; claudePlugins?: ClaudePluginSettings } = {}): string[] {
+export function providerArgs(provider: LocalProviderId, model?: string | null, resume?: string, systemPrompt?: string, mcp?: ContextMcpRegistration, titleOnly = false, permissionMode: LocalPermissionMode = "default", extensions: { codexMcpServers?: string[]; claudePlugins?: ClaudePluginSettings } = {}): string[] {
   if (!isLocalPermissionMode(permissionMode)) throw new Error("Invalid permission mode");
   const permissions = titleOnly || permissionMode === "default" ? [] : provider === "codex"
     ? [permissionMode === "auto" ? "--approve-for-me" : "--dangerously-bypass-approvals-and-sandbox"]
     : ["--permission-mode", permissionMode === "auto" ? "auto" : "bypassPermissions"];
   if (titleOnly && (resume || mcp)) throw new Error("Title generation must use an independent session");
-  if (titleOnly && imagePaths.length) throw new Error("Title generation cannot include image attachments");
   if (mcp && extensions.codexMcpServers?.includes(CONTEXT_MCP_NAME)) throw new Error(`Native Codex settings use the reserved Multica MCP name ${CONTEXT_MCP_NAME}. Rename that native entry before using this conversation.`);
   if (provider === "codex") return [...permissions, "exec", ...(resume ? ["resume"] : []), "--json", "--skip-git-repo-check", ...(systemPrompt ? ["--config", `developer_instructions=${JSON.stringify(systemPrompt)}`] : []),
     ...CODEX_PLUGIN_ISOLATION_ARGS, ...codexMcpIsolationArgs(extensions.codexMcpServers ?? []),
     ...(titleOnly ? ["--ephemeral", "--sandbox", "read-only", "--disable", "shell_tool", "--disable", "unified_exec"] : []),
     ...(mcp ? ["--config", `mcp_servers.${CONTEXT_MCP_NAME}={url=${JSON.stringify(mcp.url)},bearer_token_env_var=${JSON.stringify(CONTEXT_MCP_TOKEN_ENV)},enabled=true,required=true,default_tools_approval_mode="auto"${mcp.tools?.includes("ask_user_question") ? ",tool_timeout_sec=3600" : ""}}`] : []),
-    ...(model ? ["--model", model] : []), ...(resume ? [resume] : []), "-", ...imagePaths.flatMap((path) => ["--image", path])];
+    ...(model ? ["--model", model] : []), ...(resume ? [resume] : []), "-"];
   return ["--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", ...permissions, ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     "--strict-mcp-config", "--settings", JSON.stringify(extensions.claudePlugins ?? { enabledPlugins: {}, syncClaudeAiPlugins: false }),
     ...(titleOnly ? ["--no-session-persistence", "--tools", "", "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands"] : []),
     ...(mcp ? ["--mcp-config", mcp.claudeConfigPath, "--system-prompt-snapshot", "off", "--allowedTools", (mcp.tools ?? CONTEXT_MCP_TOOLS).map((tool) => `mcp__${CONTEXT_MCP_NAME}__${tool}`).join(",")] : []),
-    ...(model ? ["--model", model] : []), ...(resume ? ["--resume", resume] : []), ...(imagePaths.length ? ["--input-format", "stream-json"] : [])];
+    ...(model ? ["--model", model] : []), ...(resume ? ["--resume", resume] : [])];
 }
 
 export async function findLocalProvider(provider: LocalProviderId): Promise<string | null> {
@@ -129,7 +115,7 @@ function imageFreeContent(content: unknown): unknown {
   return Array.isArray(content) ? content.filter((block) => inlineOutputImages([block]).length === 0) : content;
 }
 
-export async function runLocalProvider(input: { provider: LocalProviderId; cwd: string; content: string; images?: LocalProviderImage[]; model?: string | null; permissionMode?: LocalPermissionMode; resume?: string; systemPrompt?: string; env?: NodeJS.ProcessEnv; mcp?: ContextMcpRegistration; onSessionId?: (id: string) => void; titleOnly?: boolean }, emit: Emit, signal: AbortSignal, executable?: string): Promise<{ output: string; sessionId?: string }> {
+export async function runLocalProvider(input: { provider: LocalProviderId; cwd: string; content: string; model?: string | null; permissionMode?: LocalPermissionMode; resume?: string; systemPrompt?: string; env?: NodeJS.ProcessEnv; mcp?: ContextMcpRegistration; onSessionId?: (id: string) => void; titleOnly?: boolean }, emit: Emit, signal: AbortSignal, executable?: string): Promise<{ output: string; sessionId?: string }> {
   const binary = executable ?? await findLocalProvider(input.provider);
   if (!binary) throw new Error(`${input.provider === "codex" ? "Codex" : "Claude Code"} is not installed on this computer.`);
   if (signal.aborted) throw new Error("Execution cancelled");
@@ -141,7 +127,7 @@ export async function runLocalProvider(input: { provider: LocalProviderId; cwd: 
   if (signal.aborted) throw new Error("Execution cancelled");
   return new Promise((resolve, reject) => {
     // Only an explicit per-conversation selection overrides native permission settings.
-    const child = spawn(binary, providerArgs(input.provider, input.model, input.resume, systemPrompt, input.mcp, input.titleOnly, input.permissionMode, input.images?.map((image) => image.path), extensions), { cwd: input.cwd, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+    const child = spawn(binary, providerArgs(input.provider, input.model, input.resume, systemPrompt, input.mcp, input.titleOnly, input.permissionMode, extensions), { cwd: input.cwd, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
     const parser = new ProviderStream(input.provider, emit);
     const lines = createInterface({ input: child.stdout });
     let stderr = "";
@@ -163,9 +149,7 @@ export async function runLocalProvider(input: { provider: LocalProviderId; cwd: 
       else resolve({ output: parser.output, sessionId: parser.sessionId });
     });
     child.stdin.on("error", () => {});
-    child.stdin.end(input.provider === "claude" && input.images?.length
-      ? `${JSON.stringify({ type: "user", session_id: input.resume ?? "", parent_tool_use_id: null, message: { role: "user", content: claudeMessageContent(input) } })}\n`
-      : input.content);
+    child.stdin.end(input.content);
   });
 }
 

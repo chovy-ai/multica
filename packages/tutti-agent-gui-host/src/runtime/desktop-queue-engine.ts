@@ -1,4 +1,5 @@
 import type { AgentSessionEngine, EngineQueuedPrompt, PromptQueueRecord } from "@tutti-os/agent-activity-core";
+import { selectEngineSubmitWouldBeVisibleInQueue } from "@tutti-os/agent-activity-core";
 import type { LocalPromptQueue } from "../local-protocol";
 type SubmitInput = Parameters<AgentSessionEngine["submitPrompt"]>[0];
 
@@ -21,10 +22,18 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
     if (!options.enabled()) return state;
     if (cached && state === lastBase && revision === lastRevision) return cached;
     const records = { ...state.promptQueue.recordsBySessionId };
+    const submits = { ...state.pendingIntents.submitsByClientSubmitId };
     for (const id of new Set([...queues.keys(), ...pending.keys()])) {
       const queue = queues.get(id);
-      const items = queue?.items.map((item) => item.display) ?? [];
+      const dispatching = queue?.paused || queue?.error ? undefined : queue?.dispatchingRequestId;
+      const items: EngineQueuedPrompt[] = queue?.items.map((item) => item.requestId === dispatching ? { ...item.display, visibleInQueue: false } : item.display) ?? [];
       const prompts = [...items, ...(pending.get(id) ?? []).filter((item) => !items.some((existing) => existing.clientSubmitId === item.clientSubmitId))];
+      for (const prompt of prompts) if (prompt.visibleInQueue === false) {
+        const clientSubmitId = prompt.clientSubmitId || prompt.id;
+        submits[clientSubmitId] = { agentSessionId: id, clientSubmitId, workspaceId: base.identity.workspaceId,
+          content: prompt.content, status: "requested", requestedAtUnixMs: prompt.createdAtUnixMs, expiresAtUnixMs: Number.MAX_SAFE_INTEGER,
+          acceptedSessionVersion: null, errorCode: null, errorMessage: null, errorReason: null, turnId: null };
+      }
       records[id] = { agentSessionId: id, workspaceId: base.identity.workspaceId, prompts,
         deliveryBarrierTurnId: null, failedPromptId: queue?.error ? prompts[0]?.id ?? null : null,
         failureMessage: queue?.error ?? null, inFlight: null, sendNextPromptId: null,
@@ -32,7 +41,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       } satisfies PromptQueueRecord;
     }
     lastBase = state; lastRevision = revision;
-    return cached = { ...state, promptQueue: { ...state.promptQueue, recordsBySessionId: records } };
+    return cached = { ...state, promptQueue: { ...state.promptQueue, recordsBySessionId: records }, pendingIntents: { ...state.pendingIntents, submitsByClientSubmitId: submits } };
   };
   const publish = () => { revision++; for (const listener of listeners) listener(snapshot()); };
   const receive = (id: string, queue?: LocalPromptQueue) => {
@@ -50,16 +59,18 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       if (!options.enabled()) return base.submitPrompt(input);
       if (!input.content.length || !input.clientSubmitId) return { accepted: false, queued: false };
       const id = input.agentSessionId;
-      const display: EngineQueuedPrompt = { ...input, id: input.clientSubmitId, createdAtUnixMs: Date.now(), visibleInQueue: true };
+      const queued = selectEngineSubmitWouldBeVisibleInQueue(snapshot(), id);
+      const display: EngineQueuedPrompt = { ...input, id: input.clientSubmitId, createdAtUnixMs: Date.now(), visibleInQueue: queued };
       pending.set(id, [...(pending.get(id) ?? []), display]); publish();
       void options.enqueue(input).then((queue) => {
         pending.set(id, (pending.get(id) ?? []).filter((item) => item.id !== display.id)); receive(id, queue); publish();
       }).catch((error) => {
         // Keep an unconfirmed admission visible; never clear the user's text.
         const current = queues.get(id) ?? { revision: 0, paused: true, items: [] };
+        pending.set(id, (pending.get(id) ?? []).map((item) => item.id === display.id ? { ...item, visibleInQueue: true } : item));
         queues.set(id, { ...current, paused: true, error: error instanceof Error ? error.message : String(error) }); publish(); options.error(error);
       });
-      return { accepted: true, queued: true };
+      return { accepted: true, queued };
     },
     dispatch(intent, dispatchOptions) {
       if (options.enabled() && "agentSessionId" in intent && typeof intent.agentSessionId === "string") {

@@ -64,8 +64,8 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   const local = <M extends import("@multica/tutti-agent-gui-host/local-protocol").LocalConversationMethod>(method: M, params: import("@multica/tutti-agent-gui-host/local-protocol").LocalConversationMethods[M]["params"]) => { assertCurrent(); return client.request(scope, method, params); };
   const read = (id: string) => local("read", { id });
   const fileAttachment = async (id: string): Promise<Attachment> => {
-    const file = await local("fileRead", { id });
-    const url = `data:${file.mimeType};base64,${file.data}`;
+    const file = await local("fileInfo", { id });
+    const url = file.url;
     return { id, workspace_id: scope.workspaceId, issue_id: null, comment_id: null, chat_session_id: null, chat_message_id: null, uploader_type: "user", uploader_id: scope.userId,
       filename: file.name, content_type: file.mimeType, size_bytes: file.size, url, download_url: url, markdown_url: url, created_at: new Date().toISOString() };
   };
@@ -247,8 +247,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
         const files: string[] = Array.isArray(params.attachmentIds) ? params.attachmentIds : [];
         const ids = [...new Set(refs.filter((ref) => ref.kind === "agent").map((ref) => ref.id as string))];
         if (!ids.length) {
-          const paths = await Promise.all(files.map(async (id) => { const file = await local("fileRead", { id }); return `${file.name}: ${file.path}`; }));
-          const sent = await local("send", { id: entry.id, content: params.content, prompt: paths.length ? `${content}\n\nAttached local files:\n${paths.join("\n")}` : content, references: refs, attachmentIds: files, model: params.model, permissionMode: params.permissionMode, requestId: params.requestId });
+          const sent = await local("send", { id: entry.id, content: params.content, prompt: content, references: refs, attachmentIds: files, model: params.model, permissionMode: params.permissionMode, requestId: params.requestId });
           return { message_id: sent.messageId, task_id: sent.turnId, created_at: sent.createdAt };
         }
         const state = await remoteWorkspace();
