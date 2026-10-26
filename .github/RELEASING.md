@@ -18,6 +18,36 @@ When raising the security floor, update all Go workflows and the pinned
 Go builder image in `Dockerfile` together so shipped binaries also receive
 the fixes.
 
+## macOS trial builds
+
+Use **Actions → macOS Desktop Build → Run workflow** to build a selected branch.
+Choose `arm64` for Apple Silicon, `x64` for Intel, or `both` (the default).
+Each architecture builds on a matching GitHub-hosted Mac runner. This manual
+workflow only packages macOS; it does not run the tag-based Release workflow.
+
+For the personal fork, the equivalent CLI command is:
+
+```sh
+gh workflow run desktop-smoke.yml --repo chovy-ai/multica --ref main -f architecture=both
+```
+
+When the run finishes, download `multica-macos-<architecture>-<run number>` from
+its **Artifacts** section. It contains a DMG, a ZIP, `SHA256SUMS.txt`, and
+`build-info.txt` identifying the source commit. Artifacts are retained for
+14 days. Verify a download after extracting the artifact archive with
+`shasum -a 256 -c SHA256SUMS.txt`, then open the DMG to install the app.
+
+These trial builds use ad-hoc signing and are not notarized. No Apple
+credentials or publishing token are required; macOS may require explicit
+approval to open the downloaded app. The embedded updater targets the repository
+that ran the workflow instead of the upstream repository. The workflow uploads
+build artifacts only: it does not create a GitHub Release or publish an update
+feed. Developer ID signing and notarization remain part of the separate formal
+release process.
+
+The workflow verifies vendor integrity, packaging scripts, and installer
+archives. These checks do not replace the full test and typecheck CI workflow.
+
 ## Emergency vulnerability-scan bypass
 
 Use the bypass only when `govulncheck` itself or its live vulnerability database
