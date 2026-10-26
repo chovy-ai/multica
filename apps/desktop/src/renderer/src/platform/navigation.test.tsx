@@ -92,6 +92,80 @@ function acmeGroup() {
 }
 
 describe("openInNewTab", () => {
+  it.each(["codex", "claude"])(
+    "resumes the last %s conversation when the sidebar reopens a flow navigated away from",
+    (provider) => {
+      const getAdapter = renderProvider();
+      act(() => getAdapter().openInNewTab!("/acme/conversations", "", { activate: true }));
+      const selectedUrl = `/acme/conversations?provider=${provider}&session=last-conversation`;
+      act(() => getAdapter().replace(selectedUrl));
+      act(() => getAdapter().push("/acme/projects"));
+      expect(acmeGroup().tabs.some((tab) => tab.resourceKey === "/acme/conversations")).toBe(false);
+
+      act(() => getAdapter().openInNewTab!("/acme/conversations", "", { activate: true }));
+
+      expect(getActiveTab(useTabStore.getState())?.url).toBe(selectedUrl);
+    },
+  );
+
+  it("returns to the existing conversation tab with its selection intact", () => {
+    const getAdapter = renderProvider();
+    const store = useTabStore.getState();
+    const selectedUrl = "/acme/conversations?provider=claude&session=selected";
+    act(() => getAdapter().openInNewTab!(selectedUrl, "", { activate: true }));
+    const conversationTabId = acmeGroup().activeTabId;
+    act(() => getAdapter().openInNewTab!("/acme/projects", "", { activate: true }));
+    act(() => store.setActiveTab(conversationTabId));
+    expect(getActiveTab(useTabStore.getState())?.url).toBe(selectedUrl);
+    act(() => getAdapter().openInNewTab!("/acme/projects", "", { activate: true }));
+    act(() => getAdapter().openInNewTab!("/acme/conversations", "", { activate: true }));
+    expect(getActiveTab(useTabStore.getState())?.id).toBe(conversationTabId);
+    expect(getActiveTab(useTabStore.getState())?.url).toBe(selectedUrl);
+  });
+
+  it.each([
+    "/acme/conversations?provider=claude&session=explicit",
+    "/acme/conversations?provider=codex",
+    "/acme/conversations#explicit-anchor",
+  ])("honors an explicit conversation destination: %s", (destination) => {
+    const getAdapter = renderProvider();
+    act(() => getAdapter().push("/acme/conversations?provider=claude&session=previous"));
+    act(() => getAdapter().push("/acme/projects"));
+    act(() => getAdapter().openInNewTab!(destination, "", { activate: true }));
+    expect(getActiveTab(useTabStore.getState())?.url).toBe(destination);
+  });
+
+  it("remembers an explicitly cleared selection instead of reopening the previous conversation", () => {
+    const getAdapter = renderProvider();
+    act(() => getAdapter().push("/acme/conversations?provider=claude&session=previous"));
+    act(() => getAdapter().replace("/acme/conversations?provider=claude"));
+    act(() => getAdapter().push("/acme/projects"));
+    act(() => getAdapter().openInNewTab!("/acme/conversations", "", { activate: true }));
+    expect(getActiveTab(useTabStore.getState())?.url).toBe("/acme/conversations?provider=claude");
+  });
+
+  it("uses the destination workspace's conversation history on a workspace switch", () => {
+    const store = useTabStore.getState();
+    const acmeUrl = "/acme/conversations?provider=codex&session=acme-conversation";
+    const butterUrl = "/butter/conversations?provider=claude&session=butter-conversation";
+    store.switchWorkspace("butter", butterUrl);
+    store.navigateActiveSession("/butter/projects");
+    store.switchWorkspace("acme", acmeUrl);
+    store.navigateActiveSession("/acme/projects");
+    const getAdapter = renderProvider();
+
+    act(() => getAdapter().openInNewTab!("/butter/conversations", "", { activate: true }));
+    expect(getActiveTab(useTabStore.getState())?.url).toBe(butterUrl);
+    act(() => getAdapter().openInNewTab!("/acme/conversations", "", { activate: true }));
+    expect(getActiveTab(useTabStore.getState())?.url).toBe(acmeUrl);
+  });
+
+  it("opens a blank conversation on the first visit", () => {
+    const getAdapter = renderProvider();
+    act(() => getAdapter().openInNewTab!("/acme/conversations", "", { activate: true }));
+    expect(getActiveTab(useTabStore.getState())?.url).toBe("/acme/conversations");
+  });
+
   it("opens a background tab (active tab unchanged) for a same-workspace path", () => {
     const getAdapter = renderProvider();
     const activeBefore = acmeGroup().activeTabId;
