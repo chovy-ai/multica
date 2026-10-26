@@ -12,6 +12,7 @@ import { LocalConversationService } from "./local-conversation-service";
 import { CONTEXT_MCP_TOKEN_ENV } from "./local-context-mcp";
 import { providerArgs, runLocalProvider } from "./local-provider-runner";
 import { CREATE_TASK_MENTION_ID } from "@multica/tutti-agent-gui-host/local-protocol";
+import { readAvatarFile } from "./local-avatar-file";
 
 type Row = Record<string, unknown>;
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -30,7 +31,7 @@ async function fixture() {
   const resources: Record<string, Row> = {
     "/api/issues/task": { id: "task", workspace_id: "workspace", title: "Original", status: "todo", revision: 3 },
     "/api/projects/project": { id: "project", workspace_id: "workspace", title: "Project" },
-    "/api/agents/reviewer": { id: "reviewer", workspace_id: "workspace", name: "Reviewer", instructions: "Review code", custom_env: { API_KEY: "private-key" }, remote_mcp_daemon_token: "private-daemon-token" },
+    "/api/agents/reviewer": { id: "reviewer", workspace_id: "workspace", name: "Reviewer", avatar_url: null, instructions: "Review code", custom_env: { API_KEY: "private-key" }, remote_mcp_daemon_token: "private-daemon-token" },
     "/api/agents/foreign": { id: "foreign", workspace_id: "other", name: "Foreign" },
     "/api/squads/team": { id: "team", workspace_id: "workspace", name: "Team", leader_id: "reviewer" },
     "/api/skills/skill": { id: "skill", workspace_id: "workspace", name: "Skill", content: "Review instructions" },
@@ -218,13 +219,39 @@ describe("scoped Multica workspace operations", () => {
 });
 
 describe("automatic workspace MCP registration", () => {
+  it("registers the avatar upload tool when the conversation supplies a bounded image reader", async () => {
+    const f = await fixture();
+    const context = new LocalMulticaContext({ root: join(f.root, "avatar-context"), apiUrl: "https://example.test", cliPath: join(f.root, "missing-cli"), workspaceOperations: true,
+      readProfile: async () => ({ userId: "user", token: "test-token", serverUrl: "https://example.test" }), verifyAccount: async () => "user" });
+    const execution = await context.prepare(scope, new AbortController().signal, {
+      conversationId: f.source.id, references: [], readAvatarFile: vi.fn(),
+    });
+    cleanups.push(() => execution.dispose());
+    expect(execution.mcp?.tools).toContain("upload_agent_avatar");
+  });
   it("exposes operations over real MCP with scoped HTTP credentials and preserves the New task action", async () => {
     const f = await fixture(); const seenHeaders: Row[] = [];
+    const imagePath = join(f.root, "avatar.png");
+    const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jh3sAAAAASUVORK5CYII=", "base64");
+    await writeFile(imagePath, imageBytes);
+    const readImage = vi.fn((path: string, signal: AbortSignal) => readAvatarFile(path, [f.root], signal));
+    const uploads: File[] = [];
     const api = createServer(async (incoming, response) => {
       seenHeaders.push({ authorization: incoming.headers.authorization, workspace: incoming.headers["x-workspace-id"] });
       if (incoming.headers.authorization !== "Bearer cloud-private" || incoming.headers["x-workspace-id"] !== "workspace") { response.writeHead(403).end(); return; }
       const chunks: Buffer[] = []; for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
       try {
+        if (incoming.url === "/api/upload-file") {
+          const request = new Request("http://test/api/upload-file", { method: "POST", headers: { "Content-Type": incoming.headers["content-type"]! }, body: new Uint8Array(Buffer.concat(chunks)) });
+          const form = await request.formData();
+          expect([...form.keys()]).toEqual(["file"]);
+          const file = form.get("file") as File; uploads.push(file);
+          expect(file.name).toBe("avatar.png"); expect(file.type).toBe("image/png");
+          expect(Buffer.from(await file.arrayBuffer())).toEqual(imageBytes);
+          response.setHeader("Content-Type", "application/json");
+          response.end(JSON.stringify({ id: "avatar-image", url: "https://storage.example/workspaces/workspace/avatar-image.png" }));
+          return;
+        }
         const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
         const result = await f.request(incoming.method as "GET" | "POST", incoming.url!, body, new AbortController().signal);
         response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(result));
@@ -262,7 +289,7 @@ if(args.includes('app-server')) {
 }
 `, { mode: 0o700 });
     for (const references of [[], [{ kind: "issue" as const, id: CREATE_TASK_MENTION_ID }]]) {
-      const execution = await context.prepare(scope, new AbortController().signal, { conversationId: f.source.id, references });
+      const execution = await context.prepare(scope, new AbortController().signal, { conversationId: f.source.id, references, readAvatarFile: readImage });
       cleanups.push(() => execution.dispose());
       const client = new Client({ name: "workspace-operation-test", version: "1" });
       await client.connect(new StreamableHTTPClientTransport(new URL(execution.mcp!.url), { requestInit: { headers: { Authorization: `Bearer ${execution.env[CONTEXT_MCP_TOKEN_ENV]}` } } }));
@@ -271,9 +298,13 @@ if(args.includes('app-server')) {
       expect(catalog.tools.find((tool) => tool.name === "update_task")?.annotations?.readOnlyHint).toBe(false);
       expect(catalog.tools.find((tool) => tool.name === "delete_workspace_item")?.annotations?.destructiveHint).toBe(true);
       expect(catalog.tools.find((tool) => tool.name === "workspace_info")?.annotations?.readOnlyHint).toBe(true);
+      expect(catalog.tools.find((tool) => tool.name === "upload_agent_avatar")?.annotations?.readOnlyHint).toBe(false);
+      const avatar = payload(await client.callTool({ name: "upload_agent_avatar", arguments: { agent_id: "reviewer", file_path: imagePath, request_id: "avatar-over-mcp" } }));
+      expect(avatar).toMatchObject({ agent_id: "reviewer", attachment_id: "avatar-image", status: "updated" });
       expect(execution.systemPrompt).toContain("Submission is not completion");
       const claudeArgs = providerArgs("claude", undefined, undefined, execution.systemPrompt, execution.mcp);
       expect(claudeArgs[claudeArgs.indexOf("--allowedTools") + 1]).toContain("mcp__multica_desktop_context__invoke_agent");
+      expect(claudeArgs[claudeArgs.indexOf("--allowedTools") + 1]).toContain("mcp__multica_desktop_context__upload_agent_avatar");
       expect(claudeArgs).not.toContain("--dangerously-skip-permissions");
       const created = payload(await client.callTool({ name: "create_task", arguments: { title: "Requested task", request_id: "create-once" } }));
       expect(created.id).toBe(taskId);
@@ -291,12 +322,14 @@ if(args.includes('app-server')) {
       }
     }
     expect(seenHeaders.length).toBeGreaterThan(0); expect(seenHeaders.every((entry) => entry.workspace === "workspace")).toBe(true);
+    expect(uploads).toHaveLength(1); expect(readImage).toHaveBeenCalledOnce();
   }, 20_000);
   it("keeps local operations available offline without exposing cloud mutation tools or using another profile", async () => {
     const f = await fixture();
     const context = new LocalMulticaContext({ root: join(f.root, "offline"), apiUrl: "https://example.test", cliPath: join(f.root, "missing-cli"), workspaceOperations: true, readProfile: async () => { throw new Error("Offline"); }, localActions: () => f.options.local! });
-    const run = await context.prepare(scope, new AbortController().signal); cleanups.push(() => run.dispose());
+    const run = await context.prepare(scope, new AbortController().signal, { conversationId: f.source.id, references: [], readAvatarFile: vi.fn() }); cleanups.push(() => run.dispose());
     expect(run.mcp?.tools).toContain("fork_conversation"); expect(run.mcp?.tools).not.toContain("create_task"); expect(run.mcp?.tools).not.toContain("invoke_agent");
+    expect(run.mcp?.tools).not.toContain("upload_agent_avatar");
     expect(f.requests).toHaveLength(0);
   });
 });

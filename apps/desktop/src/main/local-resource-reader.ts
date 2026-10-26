@@ -1,10 +1,14 @@
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { LocalPreviewFile, LocalPreviewLocation } from "@multica/tutti-agent-gui-host/local-protocol";
+import { readAvatarFile } from "./local-avatar-file";
 
 /** Only dialog-selected roots and this conversation's working directory are readable. */
 export class LocalResourceReader {
   constructor(private directory: string) {}
+  async avatar(path: string, cwd: string | undefined, signal: AbortSignal) {
+    return readAvatarFile(path, [...(cwd ? [cwd] : []), ...await this.roots()], signal);
+  }
   private async roots(): Promise<string[]> {
     try { const roots: unknown = JSON.parse(await readFile(join(this.directory, "preview-roots.json"), "utf8")); return Array.isArray(roots) ? roots.filter((item): item is string => typeof item === "string") : []; }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
