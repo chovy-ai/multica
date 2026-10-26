@@ -100,6 +100,9 @@ describe("bucketDiagnosticPath", () => {
   });
 
   it("drops query string and hash — they can carry resource ids", () => {
+    expect(bucketDiagnosticPath("/acme/conversations?session=private-session#message")).toBe(
+      "/:slug/conversations",
+    );
     expect(bucketDiagnosticPath("/acme/issues?issue=MUL-1#comment-3")).toBe(
       "/:slug/issues",
     );
