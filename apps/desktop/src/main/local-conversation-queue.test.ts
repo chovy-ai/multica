@@ -53,8 +53,8 @@ describe("Electron-owned conversation queue", () => {
     const admission = new Promise<void>((resolve) => { allowAdmission = resolve; });
     const running = new Promise<void>((resolve) => { finish = resolve; });
     const { service, options } = await setup(async () => { await running; return { output: "done" }; });
-    options.find = async () => { await admission; return "/test-owned/fake-cli"; };
     const entry = await service.request(scope, "create", { provider });
+    options.find = async () => { await admission; return "/test-owned/fake-cli"; };
     try {
       const receipt = await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("first") });
       expect(receipt).toMatchObject({ dispatchingRequestId: "first" });

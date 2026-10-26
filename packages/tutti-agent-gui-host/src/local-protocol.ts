@@ -101,6 +101,7 @@ export interface LocalPromptBlock {
 export interface LocalPromptQueue {
   revision: number;
   paused: boolean;
+  dispatchingRequestId?: string;
   error?: string;
   items: LocalQueuedPrompt[];
 }

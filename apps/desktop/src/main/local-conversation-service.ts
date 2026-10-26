@@ -270,6 +270,7 @@ export class LocalConversationService {
           return queue;
         });
         this.drainQueue(scope, entry);
+        if (method !== "queueSide") result = this.queueSnapshot(scope, entry);
         break;
       }
       case "folderProjects": result = this.folderProjects.get(this.key(scope)) ?? []; break;
@@ -308,11 +309,11 @@ export class LocalConversationService {
         const entry = session();
         await this.claudeConversations.get(`${this.key(scope)}:${entry.id}`)?.worker.stopBackground(); result = undefined; break;
       }
-      case "list": result = [...rows.values()].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)).map((entry) => ({ ...entry, messages: entry.messages.slice(-1), turns: entry.turns.filter((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running")) })); break;
+      case "list": result = [...rows.values()].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)).map((entry) => ({ ...entry, promptQueue: this.queueSnapshot(scope, entry), messages: entry.messages.slice(-1), turns: entry.turns.filter((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running")) })); break;
       case "read": {
         const entry = session();
         await this.recoverOutputImages(scope, entry);
-        result = entry; break;
+        result = { ...entry, promptQueue: this.queueSnapshot(scope, entry) }; break;
       }
       case "models": result = await localProviderModels(provider(params.provider)); break;
       case "fileStore": {
@@ -660,11 +661,21 @@ export class LocalConversationService {
     finally { if (this.queueLocks.get(key) === operation) this.queueLocks.delete(key); }
   }
 
+  private queueSnapshot(scope: LocalConversationScope, entry: LocalConversation): LocalConversation["promptQueue"] {
+    const queue = entry.promptQueue;
+    if (!queue) return undefined;
+    const requestId = this.queueDispatches.get(`${this.key(scope)}:${entry.id}`);
+    return requestId && !queue.paused && !queue.error && queue.items.some((item) => item.requestId === requestId)
+      ? { ...queue, dispatchingRequestId: requestId } : queue;
+  }
+
   private drainQueue(scope: LocalConversationScope, entry: LocalConversation): void {
     if (this.stopping || scope.userId !== this.activeUser) return;
     const key = `${this.key(scope)}:${entry.id}`;
-    if (this.queueDrains.has(key) || entry.archived || entry.promptQueue?.paused || !entry.promptQueue?.items.length) return;
+    if (this.queueDrains.has(key) || entry.archived || entry.promptQueue?.paused || !entry.promptQueue?.items.length || this.runsHasSession(entry) || entry.turns.some((turn) => turn.status === "running")) return;
     this.queueDrains.add(key);
+    this.queueDispatches.set(key, entry.promptQueue.items[0]!.requestId);
+    entry.promptQueue.revision++; this.changed(scope, entry);
     const operation = this.queueMutation(scope, entry, async () => {
       const queue = entry.promptQueue!;
       if (this.stopping || entry.archived || queue.paused || !queue.items.length || this.runsHasSession(entry) || entry.turns.some((turn) => turn.status === "running")) return;
@@ -699,6 +710,7 @@ export class LocalConversationService {
       if (scope.userId === this.activeUser) this.options.notify(scope, entry.id);
       console.warn("[local-conversations] Could not persist queue progress");
     }).finally(() => {
+      this.queueDispatches.delete(key);
       this.queueDrains.delete(key); this.executions.delete(operation);
       // Fast fake/local completions can settle before the admission write.
       if (!entry.promptQueue?.paused && entry.promptQueue?.items.length && !this.runsHasSession(entry) && !entry.turns.some((turn) => turn.status === "running")) this.drainQueue(scope, entry);
