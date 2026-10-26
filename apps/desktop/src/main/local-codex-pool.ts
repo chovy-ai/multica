@@ -42,23 +42,23 @@ export class LocalCodexPool {
       const env = Object.fromEntries(Object.entries(input.env ?? process.env).filter(([key]) => !key.toUpperCase().startsWith("MULTICA_")));
       env[CONTEXT_MCP_TOKEN_ENV] = this.bridge.token;
       const basis = digest([scope, binary, env]);
-      const create = (): Slot => {
+      const create = (recordTiming = false): Slot => {
         const worker = new LocalCodexWorker(binary, input.cwd, env, this.bridge, this.unloadGraceMs);
-        created.add(worker); input.timing?.mark("provider.pool_create");
+        if (recordTiming) { created.add(worker); input.timing?.mark("provider.pool_create"); }
         return { worker, busy: 0, basis };
       };
       if (!this.slots.length) {
-        this.slots.push(create(), create());
+        this.slots.push(create(true), create(true));
         // The standby handshake runs concurrently and never delays the active instance or submits a prompt.
         await timed("provider.handshake", () => this.slots[0]!.worker.rpc.ready);
       }
       for (const slot of this.slots) if (!slot.busy && !slot.worker.available) {
-        await slot.worker.stop(); Object.assign(slot, create());
+        await slot.worker.stop(); Object.assign(slot, create(true));
       }
       let probe = this.slots.find((slot) => slot.basis === basis && slot.worker.available);
       if (!probe) {
         probe = await timed("provider.pool_wait", () => this.idle(signal));
-        await probe.worker.stop(); Object.assign(probe, create());
+        await probe.worker.stop(); Object.assign(probe, create(true));
       }
       let native = await timed("provider.config", () => probe!.worker.config(input.cwd));
       const version = () => digest([basis, native, [...(input.mcp?.tools ?? [])].sort(), Boolean(input.mcp)]);
@@ -69,7 +69,7 @@ export class LocalCodexPool {
         slot = this.slots.find((value) => !value.epoch && value.basis === basis && value.worker.available);
         if (!slot) {
           slot = await timed("provider.pool_wait", () => this.idle(signal));
-          await slot.worker.stop(); Object.assign(slot, create());
+          await slot.worker.stop(); Object.assign(slot, create(true));
           await timed("provider.handshake", () => slot!.worker.rpc.ready);
           // Config may have changed again while both old generations were draining.
           native = await timed("provider.config", () => slot!.worker.config(input.cwd)); epoch = version();

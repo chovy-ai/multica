@@ -126,6 +126,23 @@ describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
     expect(log.find((r) => r.method === "thread/resume")?.params).toMatchObject({ threadId: result.sessionId, excludeTurns: true });
   });
 
+  it("keeps standby maintenance out of a different turn's timing span", async () => {
+    const { root, pool, input, calls, update } = await setup();
+    const signal = new AbortController().signal;
+    const first = pool.run("scope", input("holdOld"), vi.fn(), signal); void first.catch(() => {});
+    await wait(async () => expect((await calls()).filter((r) => r.method === "turn/start")).toHaveLength(1));
+    await update(2);
+    const records: LocalTimingRecord[] = [];
+    const timing = createLocalTiming({ source: "main", conversationId: "new-conversation" }, (record) => records.push(record));
+    const second = pool.run("scope", input("holdNew", { timing }), vi.fn(), signal); void second.catch(() => {});
+    await wait(async () => expect((await calls()).filter((r) => r.method === "turn/start")).toHaveLength(2));
+    expect(records.filter((r) => r.stage === "provider.pool_create")).toHaveLength(1);
+    await writeFile(join(root, "holdOld.release"), "go"); await first;
+    await wait(async () => expect((await calls()).filter((r) => r.method === "launch")).toHaveLength(4));
+    expect(records.filter((r) => r.stage === "provider.pool_create")).toHaveLength(1);
+    await writeFile(join(root, "holdNew.release"), "go"); await second;
+  });
+
   it("multiplexes independent threads and cancels only the requested turn", async () => {
     const { root, pool, input, calls } = await setup();
     const a = new AbortController(); const b = new AbortController(); const ea = vi.fn(); const eb = vi.fn();
