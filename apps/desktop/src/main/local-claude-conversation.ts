@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute } from "node:path";
 import type { Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { LocalBackgroundTask, LocalConversationEvent } from "@multica/tutti-agent-gui-host/local-protocol";
 import { CONTEXT_MCP_NAME } from "./local-context-mcp";
-import { claudeMessageContent, findLocalProvider, ProviderStream, type runLocalProvider } from "./local-provider-runner";
+import { findLocalProvider, ProviderStream, type runLocalProvider } from "./local-provider-runner";
 import { readClaudePluginSettings } from "./local-provider-extensions";
 import { readBackgroundTaskOutput } from "./local-background-task-output";
 
@@ -118,7 +118,7 @@ export class LocalClaudeConversation {
       }
       signal.throwIfAborted(); this.controller.signal.throwIfAborted();
       this.frameOwner = run;
-      this.queue.push({ type: "user", uuid: run.id, session_id: this.sessionId ?? input.resume ?? "", parent_tool_use_id: null, message: { role: "user", content: claudeMessageContent(input) } });
+      this.queue.push({ type: "user", uuid: run.id, session_id: this.sessionId ?? input.resume ?? "", parent_tool_use_id: null, message: { role: "user", content: input.content } });
       this.wake?.();
       const value = await result;
       return value;

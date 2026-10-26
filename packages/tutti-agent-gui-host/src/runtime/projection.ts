@@ -130,7 +130,7 @@ export function projectDetail(
         ...(message.attachments?.length ? {
           attachments: message.attachments.map((attachment) => ({
             attachmentId: attachment.id, name: attachment.filename,
-            mimeType: attachment.content_type, url: attachment.markdown_url || attachment.url,
+            mimeType: attachment.content_type, url: detail.session.agent_id.startsWith("local:") && attachment.content_type.startsWith("image/") ? undefined : attachment.markdown_url || attachment.url,
             sizeBytes: attachment.size_bytes,
           })),
           content: [
@@ -139,7 +139,7 @@ export function projectDetail(
               type: attachment.content_type.startsWith("image/") ? "image" : "file",
               attachmentId: attachment.id, name: attachment.filename,
               mimeType: attachment.content_type,
-              url: attachment.markdown_url || attachment.url,
+              url: detail.session.agent_id.startsWith("local:") && attachment.content_type.startsWith("image/") ? undefined : attachment.markdown_url || attachment.url,
             })),
           ],
         } : {}),

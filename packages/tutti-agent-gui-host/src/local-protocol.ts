@@ -143,6 +143,7 @@ export interface LocalConversationMethods {
   directory: { params: { id: string }; result: LocalConversation };
   send: { params: { id: string; content: string; prompt?: string; references?: { kind: "session" | "issue" | "agent"; id: string }[]; attachmentIds?: string[]; model?: string; permissionMode?: LocalPermissionMode; requestId?: string }; result: { messageId: string; turnId: string; createdAt: string; replayed?: boolean } };
   fileStore: { params: { name: string; mimeType: string; data: string }; result: { id: string } };
+  fileInfo: { params: { id: string }; result: { name: string; mimeType: string; path: string; url: string; size: number } };
   fileRead: { params: { id: string }; result: { name: string; mimeType: string; data: string; path: string; size: number } };
   imageRead: { params: { id: string; path: string }; result: LocalPreviewFile };
   cancel: { params: { id: string; turnId: string }; result: LocalConversationTurn };

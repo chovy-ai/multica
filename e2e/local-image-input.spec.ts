@@ -14,6 +14,7 @@ for (const provider of ["codex", "claude"] as const) for (const entry of ["paste
     const snapshot: AgentGuiInitSnapshot = { workspaceId: session.workspace_id, workspaceSlug: "test", userId: session.creator_id, locale: "en", theme: "dark", local: true, hostActive: true, hostVisible: true, agents: [], sessions: [session], activeSessionId: session.id, selectedAgentId: session.agent_id,
       executionTargets: [{ id: session.agent_id, provider, name: provider === "codex" ? "Codex" : "Claude Code", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true }] };
     const files: any[] = [], sends: any[] = [];
+    const fileData = new Map<string, string>();
     const availableImages = new Set<string>();
     let port: MessagePort;
     window.addEventListener("test-complete-image", () => {
@@ -36,14 +37,16 @@ for (const provider of ["codex", "claude"] as const) for (const entry of ["paste
           ]), tasks: sends.map((_send, index) => ({ id: `turn-${index}`, chat_session_id: session.id, status: "completed", created_at: at, completed_at: at })), pending: {} }; break;
           case "attachment.upload": {
             const file = request.params.file as File;
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            const url = `data:${file.type};base64,${btoa(String.fromCharCode(...bytes))}`;
-            result = { id: `image-${files.length + 1}`, filename: file.name, content_type: file.type, size_bytes: file.size, url, markdown_url: url, download_url: url, created_at: at };
+            const dataUrl = await new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsDataURL(file); });
+            const id = `image-${files.length + 1}`;
+            fileData.set(id, dataUrl.split(",")[1]!);
+            const url = `file:///private/multica/files/${id}`;
+            result = { id, filename: file.name, content_type: file.type, size_bytes: file.size, url, markdown_url: url, download_url: url, created_at: at };
             files.push(result); document.body.dataset.uploadCount = String(files.length); break;
           }
           case "attachment.read": {
             const file = files.find((file) => file.id === request.params.attachmentId)!;
-            result = { data: file.url.split(",")[1], name: file.filename, mimeType: file.content_type }; break;
+            result = { data: fileData.get(file.id), name: file.filename, mimeType: file.content_type }; break;
           }
           case "session.send": sends.push(request.params); document.body.dataset.sends = JSON.stringify(sends); result = { message_id: `user-${sends.length - 1}`, task_id: `turn-${sends.length - 1}`, created_at: at }; break;
           case "storage.read": result = localStorage.getItem(request.params.key); break;
@@ -139,13 +142,13 @@ for (const provider of ["codex", "claude"] as const) for (const entry of ["paste
     await expect(dialog).not.toBeVisible();
   }
   if (entry === "upload") {
-    await editor.fill("Read the local image and text file");
+    await editor.fill("Read the local images and cases file");
     const chooser = page.waitForEvent("filechooser");
     await gui.getByTestId("agent-gui-composer-add-content-trigger").click();
     await (await chooser).setFiles([
       { name: "second screenshot.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") },
       { name: "third screenshot.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") },
-      { name: "notes with spaces.txt", mimeType: "text/plain", buffer: Buffer.from("Test-owned local file") },
+      { name: "cases with spaces.pos", mimeType: "application/octet-stream", buffer: Buffer.alloc(7_600_000, 65) },
     ]);
     await expect(page.locator("body")).toHaveAttribute("data-upload-count", "5");
     await expect(gui.getByTestId("agent-gui-composer-image-draft")).toHaveCount(2);
@@ -154,6 +157,9 @@ for (const provider of ["codex", "claude"] as const) for (const entry of ["paste
     await page.evaluate(() => window.dispatchEvent(new Event("test-complete-image")));
     const sent = await page.locator("body").evaluate((body) => JSON.parse(body.dataset.sends!));
     expect([...sent[2].attachmentIds].sort()).toEqual(["image-3", "image-4", "image-5"]);
+    expect(sent[2].content.length).toBeLessThan(2000);
+    expect(sent[2].content).toContain("file:///private/multica/files/image-5");
+    expect(sent[2].content.includes("base64")).toBe(false);
     const cards = gui.locator('.agent-gui-conversation__user-image-thumbnail');
     for (const card of await cards.all()) {
       const bounds = await card.boundingBox();

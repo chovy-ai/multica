@@ -807,7 +807,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         registerAttachments([attachment]);
         return { ...block, data: undefined, attachmentId: attachment.id, assetId: attachment.id,
           name: attachment.filename, mimeType: attachment.content_type, sizeBytes: attachment.size_bytes,
-          url: attachment.markdown_url || attachment.url, uploadStatus: "uploaded" };
+          url: init.local && block.type === "image" ? undefined : attachment.markdown_url || attachment.url, uploadStatus: "uploaded" };
       }));
       return { content };
     },
