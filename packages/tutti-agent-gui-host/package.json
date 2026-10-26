@@ -10,6 +10,7 @@
     "./side-context": "./src/side-context.ts",
     "./protocol": "./src/protocol.ts",
     "./local-protocol": "./src/local-protocol.ts",
+    "./local-timing": "./src/local-timing.ts",
     "./html-preview": "./src/html-preview-contract.ts"
   },
   "scripts": {

@@ -791,7 +791,15 @@
   "labs": {
     "section_placeholder_title": "아직 실험 기능이 없습니다",
     "section_placeholder_description": "실험적 설정은 출시되는 대로 여기에 표시됩니다. 현재 이 탭은 의도적으로 비어 있습니다.",
-    "toast_failed": "설정을 업데이트하지 못했습니다"
+    "toast_failed": "설정을 업데이트하지 못했습니다",
+    "logs_title": "개발 로그",
+    "logs_description": "이 작업 공간의 로컬 대화에서 최근 24시간 동안 보관된 로그를 내보냅니다. 단계별 소요 시간, 오류 유형, 실행 환경이 포함됩니다.",
+    "logs_privacy": "메시지 본문, 도구 내용, 이미지, 인증 정보는 제외됩니다. 로그는 이 기기에만 저장됩니다.",
+    "logs_export": "로그 내보내기",
+    "logs_exporting": "내보내는 중…",
+    "logs_exported": "개발 로그를 내보냈습니다",
+    "logs_failed": "로그를 내보내지 못했습니다. 다른 저장 위치를 선택해 보세요.",
+    "logs_saved": "{{filename}} 저장됨 · {{count}}개 기록"
   },
   "github": {
     "master_description_off": "GitHub 기능이 일시 중지되었습니다. 기존 데이터는 유지됩니다.",

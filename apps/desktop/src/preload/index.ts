@@ -102,6 +102,9 @@ function subscribeToMainRendererChannel<T>(
 }
 
 const desktopAPI = {
+  developerLogs: {
+    export: (scope) => ipcRenderer.invoke("developer-logs:export", scope),
+  } satisfies import("../shared/developer-logs").DeveloperLogsClient,
   settingsHost: {
     subscribe: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, request: import("../shared/settings-host").SettingsHostMessage) => listener(request);

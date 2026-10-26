@@ -17,6 +17,7 @@ export interface ClaudeRunObserver {
 }
 interface Run {
   id: ReturnType<typeof randomUUID>; parser: ProviderStream; observer: ClaudeRunObserver;
+  timing?: Input["timing"];
   settled: boolean; resultSeen: boolean; finalReply: boolean;
   resolve(value: Result): void; reject(error: Error): void; release(): void; session?(id: string): void;
 }
@@ -80,7 +81,7 @@ export class LocalClaudeConversation {
     const result = new Promise<Result>((resolve, reject) => {
       const abort = () => { void this.stop(); };
       run = { id: randomUUID(), parser: new ProviderStream("claude", emit), observer, resolve, reject,
-        settled: false, resultSeen: false, finalReply: false, release: () => signal.removeEventListener("abort", abort), session: input.onSessionId };
+        timing: input.timing, settled: false, resultSeen: false, finalReply: false, release: () => signal.removeEventListener("abort", abort), session: input.onSessionId };
       signal.addEventListener("abort", abort, { once: true });
     });
     this.active = run; this.runs.push(run);
@@ -88,13 +89,13 @@ export class LocalClaudeConversation {
     void result.catch(() => {});
     try {
       if (!this.query) {
-        const binary = await this.deps.find();
+        const binary = await (input.timing ? input.timing.measure("provider.lookup", () => this.deps.find()) : this.deps.find());
         if (!binary) throw new Error("Claude Code is not installed on this computer.");
         signal.throwIfAborted();
         const mcpServers = await this.mcpServers(input);
-        const settings = await this.deps.pluginSettings(input.cwd, input.env ?? process.env);
+        const settings = await (input.timing ? input.timing.measure("provider.config", () => this.deps.pluginSettings(input.cwd, input.env ?? process.env)) : this.deps.pluginSettings(input.cwd, input.env ?? process.env));
         this.model = input.model; this.permission = input.permissionMode;
-        this.query = await this.deps.query(this.messages(), {
+        const createQuery = (): Promise<Query> => this.deps.query(this.messages(), {
           pathToClaudeCodeExecutable: binary, cwd: input.cwd, env: input.env,
           abortController: this.controller, includePartialMessages: true,
           settingSources: ["user", "project", "local"],
@@ -104,11 +105,13 @@ export class LocalClaudeConversation {
           ...(input.systemPrompt ? { systemPrompt: { type: "preset", preset: "claude_code", append: input.systemPrompt, snapshot: false } } : {}),
           mcpServers, allowedTools: [`mcp__${CONTEXT_MCP_NAME}__*`],
         });
+        this.query = await (input.timing ? input.timing.measure("provider.sdk_ready", createQuery) : createQuery());
         this.pump = this.consume().finally(() => this.dispose());
         void this.pump.catch(() => {});
       } else {
         // Strict MCP mode keeps dynamic updates limited to this Multica execution.
-        const changed = await this.query.setMcpServers(await this.mcpServers(input));
+        const refresh = async () => this.query!.setMcpServers(await this.mcpServers(input));
+        const changed = await (input.timing ? input.timing.measure("provider.refresh", refresh) : refresh());
         if (Object.keys(changed.errors).length) throw new Error("Could not refresh Multica context for this message");
         if (input.model !== this.model) { await this.query.setModel(input.model ?? undefined); this.model = input.model; }
         if (input.permissionMode !== this.permission) {
@@ -136,12 +139,16 @@ export class LocalClaudeConversation {
   private async *messages(): AsyncGenerator<SDKUserMessage> {
     while (!this.controller.signal.aborted) {
       const message = this.queue.shift();
-      if (message) yield message;
+      if (message) {
+        this.runs.find((run) => run.id === message.uuid)?.timing?.mark("provider.input_yielded");
+        yield message;
+      }
       else await new Promise<void>((resolve) => { this.wake = resolve; if (this.queue.length || this.controller.signal.aborted) resolve(); });
     }
   }
   private finish(run: Run, error?: Error): void {
     if (run.settled) return;
+    run.timing?.mark("provider.result", { outcome: this.controller.signal.aborted ? "cancelled" : error ? "failed" : "completed" });
     run.settled = true; run.release(); if (this.active === run) this.active = undefined;
     if (error) run.reject(error);
     else run.resolve({ output: run.parser.output, sessionId: this.sessionId });
@@ -192,6 +199,7 @@ export class LocalClaudeConversation {
         // SDK envelopes are narrowed below; ignore subagent transcript frames.
         const event = message as unknown as Record<string, any>;
         if (event.parent_tool_use_id) continue;
+        if (event.type === "system" && event.subtype === "init") this.active?.timing?.once("provider.first_event");
         if (typeof event.session_id === "string" && event.session_id !== this.sessionId) { this.sessionId = event.session_id; this.active?.session?.(event.session_id); }
         if (event.type === "user") this.captureTaskOutput(event);
         if (event.type === "system" && ["task_started", "task_progress", "task_updated", "background_tasks_changed", "task_notification"].includes(event.subtype)) {
@@ -245,6 +253,7 @@ export class LocalClaudeConversation {
         const bound = typeof uuid === "string" ? this.runs.find((run) => run.id === uuid) : undefined;
         if (bound) this.frameOwner = bound;
         const owner = bound ?? (event.type === "result" ? this.runs.find((run) => !run.resultSeen) : this.frameOwner ?? this.active);
+        if (owner && !owner.settled) { owner.timing?.activity(); owner.timing?.once("provider.first_event"); }
         if (event.type === "result") {
           if (!owner) continue;
           owner.resultSeen = true;

@@ -3,6 +3,7 @@ import { CONTEXT_MCP_TOKEN_ENV } from "./local-context-mcp";
 import { CodexContextBridge } from "./local-codex-context-bridge";
 import { LocalCodexWorker, type CodexInput } from "./local-codex-worker";
 import type { runLocalProvider } from "./local-provider-runner";
+import type { LocalTimingStage } from "@multica/tutti-agent-gui-host/local-timing";
 
 type Emit = Parameters<typeof runLocalProvider>[1];
 interface Slot { worker: LocalCodexWorker; epoch?: string; busy: number; basis: string }
@@ -27,33 +28,39 @@ export class LocalCodexPool {
 
   async run(scope: string, input: CodexInput, emit: Emit, signal: AbortSignal): Promise<{ output: string; sessionId: string }> {
     if (input.provider !== "codex" || input.titleOnly) throw new Error("The Codex pool is restricted to local dialogue turns");
+    const timed = <T>(stage: LocalTimingStage, action: () => Promise<T>) => input.timing ? input.timing.measure(stage, action) : action();
+    const created = new Set<LocalCodexWorker>();
     const admitted = this.admission.catch(() => {}).then(async () => {
       signal.throwIfAborted();
       if (this.stopping) throw new Error("Codex dialogue pool stopped");
-      const binary = await this.find();
+      const binary = await timed("provider.lookup", () => this.find());
       if (!binary) throw new Error("Codex is not installed on this computer.");
-      await this.bridge.start();
+      await timed("provider.bridge", () => this.bridge.start());
       signal.throwIfAborted();
       if (this.stopping) throw new Error("Codex dialogue pool stopped");
       // Per-run Multica credentials/paths must never become another thread's inherited environment.
       const env = Object.fromEntries(Object.entries(input.env ?? process.env).filter(([key]) => !key.toUpperCase().startsWith("MULTICA_")));
       env[CONTEXT_MCP_TOKEN_ENV] = this.bridge.token;
       const basis = digest([scope, binary, env]);
-      const create = (): Slot => ({ worker: new LocalCodexWorker(binary, input.cwd, env, this.bridge, this.unloadGraceMs), busy: 0, basis });
+      const create = (recordTiming = false): Slot => {
+        const worker = new LocalCodexWorker(binary, input.cwd, env, this.bridge, this.unloadGraceMs);
+        if (recordTiming) { created.add(worker); input.timing?.mark("provider.pool_create"); }
+        return { worker, busy: 0, basis };
+      };
       if (!this.slots.length) {
-        this.slots.push(create(), create());
+        this.slots.push(create(true), create(true));
         // The standby handshake runs concurrently and never delays the active instance or submits a prompt.
-        await this.slots[0]!.worker.rpc.ready;
+        await timed("provider.handshake", () => this.slots[0]!.worker.rpc.ready);
       }
       for (const slot of this.slots) if (!slot.busy && !slot.worker.available) {
-        await slot.worker.stop(); Object.assign(slot, create());
+        await slot.worker.stop(); Object.assign(slot, create(true));
       }
       let probe = this.slots.find((slot) => slot.basis === basis && slot.worker.available);
       if (!probe) {
-        probe = await this.idle(signal);
-        await probe.worker.stop(); Object.assign(probe, create());
+        probe = await timed("provider.pool_wait", () => this.idle(signal));
+        await probe.worker.stop(); Object.assign(probe, create(true));
       }
-      let native = await probe.worker.config(input.cwd);
+      let native = await timed("provider.config", () => probe!.worker.config(input.cwd));
       const version = () => digest([basis, native, [...(input.mcp?.tools ?? [])].sort(), Boolean(input.mcp)]);
       let epoch = version();
       if (this.slots.every((value) => !value.epoch && value.basis === basis)) for (const value of this.slots) value.epoch = epoch;
@@ -61,11 +68,11 @@ export class LocalCodexPool {
       if (!slot) {
         slot = this.slots.find((value) => !value.epoch && value.basis === basis && value.worker.available);
         if (!slot) {
-          slot = await this.idle(signal);
-          await slot.worker.stop(); Object.assign(slot, create());
-          await slot.worker.rpc.ready;
+          slot = await timed("provider.pool_wait", () => this.idle(signal));
+          await slot.worker.stop(); Object.assign(slot, create(true));
+          await timed("provider.handshake", () => slot!.worker.rpc.ready);
           // Config may have changed again while both old generations were draining.
-          native = await slot.worker.config(input.cwd); epoch = version();
+          native = await timed("provider.config", () => slot!.worker.config(input.cwd)); epoch = version();
         }
         slot.epoch = epoch;
       }
@@ -74,11 +81,12 @@ export class LocalCodexPool {
       if (input.resume && this.threads.has(input.resume)) throw new Error("This Codex thread already has an active turn");
       if (input.resume) this.threads.add(input.resume);
       this.latest = { create, epoch };
+      if (!created.has(slot.worker)) input.timing?.mark("provider.pool_reused");
       this.active = slot; slot.busy++;
       return { slot, native };
     });
     this.admission = admitted;
-    const { slot, native } = await admitted;
+    const { slot, native } = await timed("provider.pool_admission", () => admitted);
     let threadId = input.resume;
     try { return await slot.worker.run({ ...input, onSessionId: (id) => { threadId = id; this.threads.add(id); input.onSessionId?.(id); } }, native, emit, signal); }
     finally {

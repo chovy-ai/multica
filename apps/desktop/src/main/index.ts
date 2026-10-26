@@ -1,3 +1,5 @@
+import { LocalTimingLog } from "./local-timing-log";
+import { DeveloperLogExporter, createDeveloperLogTool } from "./developer-log-export";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, screen } from "electron";
 import { homedir } from "os";
 import { join } from "path";
@@ -143,6 +145,8 @@ function freezeBreadcrumbPath(): string {
 
 let mainWindow: BrowserWindow | null = null;
 let localConversations: LocalConversationService | null = null;
+let localTimingLog: LocalTimingLog | undefined;
+let developerLogs: DeveloperLogExporter | undefined;
 const issueWindows = new Set<BrowserWindow>();
 const authSessionCoordinator = new AuthSessionCoordinator<BrowserWindow>(
   (window) => {
@@ -413,6 +417,7 @@ function createWindow(): BrowserWindow {
   //
   // Gated by `is.dev` to keep production logs clean — packaged builds ship
   // failures to crash-reporting separately.
+  window.webContents.on("console-message", ({ message }) => localTimingLog?.console(message));
   if (devLog) {
     // Forward every renderer-side console.* call. The detail object also
     // carries source URL + line — included so a thrown stack trace from
@@ -664,9 +669,12 @@ if (!gotTheLock) {
           file: (id) => localConversations!.request(scope, "fileRead", { id }),
         }),
         localActions: (scope) => ({ request: (method, params) => localConversations!.request(scope, method, params) }),
+        developerLogTool: (scope, conversationId) => createDeveloperLogTool(developerLogs!, scope, conversationId),
       });
       await queryContext.initialize();
+      localTimingLog = new LocalTimingLog(join(app.getPath("userData"), "local-conversations", "diagnostics"));
       localConversations = new LocalConversationService({
+        timing: localTimingLog.write,
         root: join(app.getPath("userData"), "local-conversations"),
         apiUrl: runtimeConfigResult.config.apiUrl,
         generateTitle: generateLocalConversationTitle,
@@ -684,7 +692,23 @@ if (!gotTheLock) {
           return result.canceled ? null : result.filePaths[0] ?? null;
         },
       });
+      developerLogs = new DeveloperLogExporter({
+        log: localTimingLog,
+        exportsRoot: join(app.getPath("userData"), "local-conversations", "diagnostics", "exports"),
+        runtime: { appVersion: getAppVersion(), platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, chromeVersion: process.versions.chrome, nodeVersion: process.versions.node, packaged: app.isPackaged },
+        assertScope: (scope) => localConversations!.assertScope(scope),
+        conversations: async (scope) => (await localConversations!.request(scope, "list", {})).map((conversation) => conversation.id),
+        chooseSavePath: async (filename) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return null;
+          const result = await dialog.showSaveDialog(mainWindow, { defaultPath: join(app.getPath("downloads"), filename), filters: [{ name: "JSON", extensions: ["json"] }] });
+          return result.canceled ? null : result.filePath ?? null;
+        },
+      });
     }
+    ipcMain.handle("developer-logs:export", (event, scope: LocalConversationScope) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !developerLogs) throw new Error("Developer logs require the active main window");
+      return developerLogs.save(scope);
+    });
     let resourcePreview: ResourceWebPreview | undefined;
     ipcMain.handle("resource-preview:request", (event, scope: LocalConversationScope, command: import("../shared/resource-preview").WebPreviewCommand) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Preview requires the active main window");
@@ -700,7 +724,7 @@ if (!gotTheLock) {
     app.on("before-quit", (event) => {
       if (localShutdown || !localConversations) return;
       event.preventDefault(); localShutdown = true;
-      void localConversations.stop().catch(() => console.warn("[local-conversations] Could not finish saving before exit")).finally(() => app.quit());
+      void localConversations.stop().catch(() => console.warn("[local-conversations] Could not finish saving before exit")).finally(async () => { await localTimingLog?.flush(); app.quit(); });
     });
 
     electronApp.setAppUserModelId(

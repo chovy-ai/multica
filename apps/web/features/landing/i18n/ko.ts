@@ -194,6 +194,11 @@ export function createKoDict(
       label: "FAQ",
       headline: "자주 묻는 질문.",
       items: [
+      {
+        question: "로컬 대화의 응답이 느릴 때 어떻게 확인하나요?",
+        answer:
+          "데스크톱 앱의 설정 → 이 기기 → Labs에서 개발 로그를 내보낼 수 있습니다. Codex와 Claude Code도 내장 MCP로 현재 대화의 소요 시간을 내보낼 수 있습니다. 로컬 JSON 파일에는 단계별 소요 시간, 오류 유형, 실행 환경 버전이 포함되며 메시지 본문, 이미지, 인증 정보는 제외됩니다.",
+      },
         {
           question: "Multica는 어떤 코딩 에이전트를 지원하나요?",
           answer:

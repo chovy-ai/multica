@@ -796,7 +796,15 @@
   "labs": {
     "section_placeholder_title": "Aucune expérimentation pour l'instant",
     "section_placeholder_description": "Les réglages expérimentaux apparaîtront ici au fil des livraisons. Aujourd'hui, cet onglet est volontairement vide.",
-    "toast_failed": "Échec de la mise à jour du réglage"
+    "toast_failed": "Échec de la mise à jour du réglage",
+    "logs_title": "Journaux de développement",
+    "logs_description": "Exporter les journaux conservés des conversations locales de cet espace sur les dernières 24 heures : durée des étapes, catégories d’erreurs et versions de l’environnement.",
+    "logs_privacy": "Le texte des messages, le contenu des outils, les images et les identifiants sont exclus. Les journaux restent sur cet appareil.",
+    "logs_export": "Exporter les journaux",
+    "logs_exporting": "Exportation…",
+    "logs_exported": "Journaux de développement exportés",
+    "logs_failed": "Impossible d’exporter les journaux. Essayez un autre emplacement.",
+    "logs_saved": "{{filename}} enregistré · {{count}} entrées"
   },
   "github": {
     "master_description_off": "Les fonctionnalités GitHub sont en pause. Les données existantes sont conservées.",

@@ -194,6 +194,11 @@ export function createEnDict(
     headline: "Questions & answers.",
     items: [
       {
+        question: "How can I diagnose a slow local conversation?",
+        answer:
+          "In the desktop app, open Settings → This device → Labs to export developer logs. The built-in MCP also lets Codex and Claude Code export timings for the current conversation. These local JSON files contain stage timings, error categories and runtime versions; message content, images and credentials are excluded.",
+      },
+      {
         question: "What coding agents does Multica support?",
         answer:
           "Multica supports 27 coding tools out of the box: Antigravity, Claude Code, CodeBuddy, CodeArts, Codex, Copilot, Cursor, DeepSeek Harness, DevEco Code, Dim, Grok, Hermes, Kimi, Kiro CLI, MiniMax Code, Muse Code, Oh-My-Pi, OpenClaw, OpenCode, Pi, Qoder, Qoder CN, Qwen Code, QwenPaw, Reasonix, Trae CLI, and ZeroClaw. The daemon auto-detects whichever CLIs you already have installed and registers a runtime for each one. Since the source code is public, you can also add your own backends. Self-hosted deployments can also configure Qoder Cloud Agents as a managed remote runtime for issue runs, using a QCA PAT and an existing QCA agent.",

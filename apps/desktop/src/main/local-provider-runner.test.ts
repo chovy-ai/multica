@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -143,7 +144,11 @@ process.stdin.on('data', (data) => input += data);
 process.stdin.on('end', () => process.stdout.write(JSON.stringify({type: 'item.completed', item: {id: 'reply', type: 'agent_message', text: JSON.stringify({args: process.argv.slice(2), workspace: process.env.MULTICA_WORKSPACE_ID, input})}}) + '\\n'));
 }
 `, { mode: 0o700 });
-      const result = await runLocalProvider({ provider: "codex", cwd: root, content: "authored task question", permissionMode: "auto", systemPrompt: "scoped Multica lookup", env: { ...process.env, MULTICA_WORKSPACE_ID: "owned-workspace" } }, () => {}, new AbortController().signal, executable);
+      const records = vi.fn();
+      const timing = createLocalTiming({ source: "main", conversationId: "fake", requestId: "timing-test" }, records);
+      const result = await runLocalProvider({ timing, provider: "codex", cwd: root, content: "authored task question", permissionMode: "auto", systemPrompt: "scoped Multica lookup", env: { ...process.env, MULTICA_WORKSPACE_ID: "owned-workspace" } }, () => {}, new AbortController().signal, executable);
+      expect(records.mock.calls.map(([record]) => record.stage)).toEqual(expect.arrayContaining(["provider.lookup", "provider.config", "provider.spawn", "provider.input_written", "provider.first_stdout", "provider.first_event", "provider.exit"]));
+      expect(JSON.stringify(records.mock.calls)).not.toContain("authored task question");
       expect(JSON.parse(result.output)).toMatchObject({ workspace: "owned-workspace", input: "authored task question", args: expect.arrayContaining(["--approve-for-me", 'mcp_servers={"external"={enabled=false}}', `developer_instructions=${JSON.stringify("Existing user rules\n\nscoped Multica lookup")}`]) });
     } finally { await rm(root, { recursive: true, force: true }); }
   });

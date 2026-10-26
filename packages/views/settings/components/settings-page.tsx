@@ -282,7 +282,7 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
   const allEntries = groups.flatMap((group) =>
     group.subgroups.flatMap((subgroup) => subgroup.entries),
   );
-  const location = resolveSettingsLocation(navigation.searchParams);
+  const location = resolveSettingsLocation(navigation.searchParams, extraDeviceTabs.map((tab) => tab.value));
   const candidate =
     location.tab === "billing" && !billingEnabled ? "workspace" : location.tab;
   const active =

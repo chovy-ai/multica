@@ -254,6 +254,13 @@ describe("SettingsPage information architecture", () => {
       }),
     ).not.toBeInTheDocument();
   });
+  it("opens the device Labs tab when the desktop supplies it", () => {
+    navigationState.search = "tab=labs";
+    const icon = () => null;
+    renderWithI18n(<SettingsPage extraDeviceTabs={[{ value: "labs", label: "Labs", icon, content: <div>Developer log export</div> }]} />);
+    expect(screen.getByText("Developer log export")).toBeInTheDocument();
+    expect(within(nav()).getByRole("link", { name: "Labs" })).toHaveAttribute("aria-current", "page");
+  });
 
   it("opens old issue bookmarks in preferences", () => {
     navigationState.search = "tab=issue";

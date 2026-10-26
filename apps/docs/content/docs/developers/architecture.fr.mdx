@@ -129,3 +129,17 @@ L'assigné d'une tâche est polymorphe et peut désigner un membre, un agent ou 
 
 - [Contribuer](/developers/contributing) — environnements locaux, worktrees et emplacement des tests.
 - [Conventions de développement](/developers/conventions) — les contrats du dépôt en matière de nommage, de terminologie et de textes en chinois.
+
+## Diagnostic des conversations locales
+
+Sur le bureau, ouvrez **Paramètres → Cet appareil → Labs → Journaux de développement**
+pour enregistrer les durées conservées des dernières 24 heures pour le compte et
+l’espace sélectionnés. Le JSON inclut les versions de l’environnement, les catégories
+d’erreurs et les durées : attente, initialisation, première sortie, outils et sauvegarde.
+
+Codex et Claude Code reçoivent automatiquement l’outil MCP `export_developer_logs`.
+Par défaut, il couvre la conversation actuelle et les 60 dernières minutes ;
+`scope=workspace` sélectionne l’espace actuel. Réutilisez `request_id` lors d’une
+nouvelle tentative. Le texte, les données des outils, les images et les identifiants
+sont exclus ; aucun envoi automatique n’a lieu. Élargir la période ne restaure pas
+les journaux déjà supprimés par rotation.
