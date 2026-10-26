@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./frame-messaging": "./src/frame-messaging.ts",
     "./message-resource-links": "./src/message-resource-links.ts",
     "./resource-reference": "./src/resource-reference.ts",
     "./side-context": "./src/side-context.ts",

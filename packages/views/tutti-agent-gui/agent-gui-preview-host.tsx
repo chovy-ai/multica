@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { agentGuiMessageTargetOrigin, isAgentGuiFrameMessage } from "@multica/tutti-agent-gui-host/frame-messaging";
 
 /** Promote the owning GUI frame without moving or recreating its browsing context. */
 export function AgentGuiPreviewHost({ iframe, enabled, isCurrent, children }: {
@@ -11,11 +12,11 @@ export function AgentGuiPreviewHost({ iframe, enabled, isCurrent, children }: {
   const current = useRef({ enabled, isCurrent }); current.current = { enabled, isCurrent };
   const close = useCallback(() => {
     setExpanded(false);
-    iframe.current?.contentWindow?.postMessage({ type: "multica:agent-gui:preview-close", version: 1 }, window.location.origin === "null" ? "*" : window.location.origin);
+    iframe.current?.contentWindow?.postMessage({ type: "multica:agent-gui:preview-close", version: 1 }, agentGuiMessageTargetOrigin());
   }, [iframe]);
   useEffect(() => {
     const receive = (event: MessageEvent) => {
-      if (event.source !== iframe.current?.contentWindow || event.origin !== window.location.origin || !current.current.isCurrent()) return;
+      if (!isAgentGuiFrameMessage(event, iframe.current?.contentWindow ?? null) || !current.current.isCurrent()) return;
       const value = event.data;
       if (value?.type !== "multica:agent-gui:preview-state" || value.version !== 1 || typeof value.expanded !== "boolean") return;
       if (value.expanded && !current.current.enabled) return;

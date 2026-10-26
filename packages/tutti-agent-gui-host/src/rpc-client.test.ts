@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createAgentGuiRpcClient } from "./rpc-client";
+import { connectAgentGuiHost, createAgentGuiRpcClient } from "./rpc-client";
 
 const cleanup: Array<() => void> = [];
-afterEach(() => { for (const dispose of cleanup.splice(0)) dispose(); vi.useRealTimers(); });
+afterEach(() => { for (const dispose of cleanup.splice(0)) dispose(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 function connection() {
   const channel = new MessageChannel();
@@ -14,6 +14,28 @@ function connection() {
 }
 
 describe("Agent GUI private-port client", () => {
+  it("connects to its actual parent when a packaged file page sends an opaque origin", async () => {
+    vi.useFakeTimers();
+    const parent = { postMessage: vi.fn() };
+    const frame = Object.assign(new EventTarget(), { parent, location: { protocol: "file:", origin: "file://" } });
+    vi.stubGlobal("window", frame);
+    const port = Object.assign(new EventTarget(), { postMessage: vi.fn(), start: vi.fn(), close() {} });
+    const result = connectAgentGuiHost().then((connection) => { cleanup.push(connection.dispose); return "connected"; }, (error: unknown) => (error as { code: string }).code);
+    frame.dispatchEvent(Object.assign(new Event("message"), {
+      source: {}, origin: "null", ports: [port], data: { type: "multica:agent-gui:connect", snapshot: {} },
+    }));
+    frame.dispatchEvent(Object.assign(new Event("message"), {
+      source: parent, origin: "https://untrusted.invalid", ports: [port], data: { type: "multica:agent-gui:connect", snapshot: {} },
+    }));
+    expect(port.start).not.toHaveBeenCalled();
+    frame.dispatchEvent(Object.assign(new Event("message"), {
+      source: parent, origin: "null", ports: [port], data: { type: "multica:agent-gui:connect", snapshot: {} },
+    }));
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await result).toBe("connected");
+    expect(port.start).toHaveBeenCalledOnce();
+  });
+
   it("keeps model discovery pending through the runtime's full claim and execution windows", async () => {
     vi.useFakeTimers();
     const port = Object.assign(new EventTarget(), { postMessage: vi.fn(), start() {}, close() {} });

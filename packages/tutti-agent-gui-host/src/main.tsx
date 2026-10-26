@@ -4,6 +4,7 @@ import { AgentGUIStartupShell } from "@tutti-os/agent-gui/startup-shell";
 import { Button } from "@tutti-os/ui-system/components";
 import { AgentGuiApplication } from "./application";
 import { connectAgentGuiHost } from "./rpc-client";
+import { agentGuiMessageTargetOrigin } from "./frame-messaging";
 import { createMulticaAgentGuiRuntime } from "./runtime";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/inter/wght-italic.css";
@@ -17,7 +18,7 @@ const root = createRoot(document.getElementById("app")!);
 
 function RenderedView({ children }: { children: ReactNode }) {
   useEffect(() => {
-    window.parent.postMessage({ type: "multica:agent-gui:rendered", version: 1 }, window.location.origin === "null" ? "*" : window.location.origin);
+    window.parent.postMessage({ type: "multica:agent-gui:rendered", version: 1 }, agentGuiMessageTargetOrigin());
   }, []);
   return children;
 }

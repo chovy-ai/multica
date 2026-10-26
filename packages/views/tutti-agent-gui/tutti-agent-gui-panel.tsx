@@ -10,6 +10,7 @@ import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useWSReconnect } from "@multica/core/realtime";
 import type { Agent, ChatSession } from "@multica/core/types";
 import type { AgentGuiHostEvent, AgentGuiInitSnapshot, AgentGuiRpcMethod } from "@multica/tutti-agent-gui-host/protocol";
+import { agentGuiMessageTargetOrigin, isAgentGuiFrameMessage } from "@multica/tutti-agent-gui-host/frame-messaging";
 import { useLocale, useT } from "../i18n";
 import { useAppForeground } from "../common/use-app-foreground";
 import type { RestoreDraftRequest } from "../chat/components/use-chat-draft-restore";
@@ -118,7 +119,7 @@ export function TuttiAgentGuiPanel(props: Props) {
     };
     waitForRender();
     const ready = async (event: MessageEvent) => {
-      if (!current() || event.source !== iframe.current?.contentWindow || event.origin !== window.location.origin || event.data?.version !== 1) return;
+      if (!current() || !isAgentGuiFrameMessage(event, iframe.current?.contentWindow ?? null) || event.data?.version !== 1) return;
       if (event.data.type === "multica:agent-gui:rendered") {
         if (port) { clearTimeout(timer); setStatus("ready"); }
         return;
@@ -165,7 +166,7 @@ export function TuttiAgentGuiPanel(props: Props) {
         };
         port.start();
         iframe.current!.contentWindow!.postMessage({ type: "multica:agent-gui:connect", snapshot: initial },
-          window.location.origin === "null" ? "*" : window.location.origin, [channel.port2]);
+          agentGuiMessageTargetOrigin(), [channel.port2]);
       } catch { if (alive) setStatus("error"); }
       finally { connecting = false; }
     };
