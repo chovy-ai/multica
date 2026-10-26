@@ -1,31 +1,43 @@
-name: Desktop Smoke Build
+name: macOS Desktop Build
 
 on:
   workflow_dispatch:
+    inputs:
+      architecture:
+        description: "Mac architecture (arm64: Apple Silicon, x64: Intel)"
+        type: choice
+        options:
+          - both
+          - arm64
+          - x64
+        default: both
+        required: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: macos-desktop-${{ github.ref }}-${{ inputs.architecture }}
+  cancel-in-progress: true
+
 jobs:
   desktop:
+    name: macOS (${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux
-          - os: windows-latest
-            target: win
-    runs-on: ${{ matrix.os }}
+        arch: ${{ inputs.architecture == 'both' && fromJSON('["arm64","x64"]') || fromJSON(format('["{0}"]', inputs.architecture)) }}
+    runs-on: ${{ matrix.arch == 'x64' && 'macos-15-intel' || 'macos-15' }}
+    timeout-minutes: 60
+    env:
+      TARGET_ARCH: ${{ matrix.arch }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Install rpmbuild (Linux)
-        if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -48,15 +60,61 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Package Desktop installers (${{ matrix.target }})
-        working-directory: apps/desktop
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: node scripts/package.mjs --${{ matrix.target }} --x64 --arm64 --publish never
+      - name: Verify vendored GUI sources
+        run: node vendor/tutti/sync.mjs --verify
 
-      - name: Upload Desktop artifacts (${{ matrix.target }})
+      - name: Verify Desktop packaging scripts
+        run: |
+          pnpm --filter @multica/desktop exec vitest run scripts/package.test.mjs scripts/mac-update-floor.test.mjs
+          node --test apps/desktop/scripts/bundle-cli.node-test.mjs
+
+      - name: Package macOS installers
+        working-directory: apps/desktop
+        run: |
+          node scripts/package.mjs --mac dmg zip "--${TARGET_ARCH}" --publish never \
+            -c.mac.identity=- \
+            "-c.publish.owner=${GITHUB_REPOSITORY_OWNER}" \
+            "-c.publish.repo=${GITHUB_REPOSITORY#*/}"
+
+      - name: Verify installers and record checksums
+        working-directory: apps/desktop/dist
+        shell: bash
+        run: |
+          shopt -s nullglob
+          dmg=(multica-desktop-*-mac-"${TARGET_ARCH}".dmg)
+          zip=(multica-desktop-*-mac-"${TARGET_ARCH}".zip)
+          if (( ${#dmg[@]} != 1 || ${#zip[@]} != 1 )); then
+            echo "::error::Expected one DMG and one ZIP for ${TARGET_ARCH}."
+            exit 1
+          fi
+          test -s "${dmg[0]}"
+          test -s "${zip[0]}"
+          unzip -tq "${zip[0]}"
+          shasum -a 256 "${dmg[0]}" "${zip[0]}" > SHA256SUMS.txt
+          printf 'repository=%s\ncommit=%s\narchitecture=%s\nrun=%s/%s/actions/runs/%s\nsigning=ad-hoc\nnotarized=false\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$TARGET_ARCH" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > build-info.txt
+
+      - name: Upload macOS installers
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.target }}
-          path: apps/desktop/dist
+          name: multica-macos-${{ matrix.arch }}-${{ github.run_number }}
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/SHA256SUMS.txt
+            apps/desktop/dist/build-info.txt
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Build summary
+        shell: bash
+        run: |
+          {
+            printf '### macOS %s\n\n' "$TARGET_ARCH"
+            printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
+            printf 'Download `multica-macos-%s-%s` from this run\047s Artifacts section.\n\n' "$TARGET_ARCH" "$GITHUB_RUN_NUMBER"
+            printf 'Includes DMG, ZIP, SHA256SUMS.txt and build-info.txt.\n\n'
+            printf 'This is an ad-hoc signed, unnotarized trial build. No GitHub Release is published.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
