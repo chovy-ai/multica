@@ -120,3 +120,13 @@ it("opens a web tab in the same workspace and closes its native view with the ta
   fireEvent.click(screen.getByRole("button", { name: "关闭 example.com" }));
   await waitFor(() => expect(preview.request.mock.calls.some(([, command]) => command.action === "close")).toBe(true));
 });
+it("hides the empty Side hint once the list summary keeps only a message from a finished turn", async () => {
+  sessions.push({ ...sessions[0]!, id: "answered-side", title: "Main conversation · Side", side: { sourceId: "main", requestId: "answered", context: [], quote: "Selected text" }, messages: [{ id: "answer", role: "assistant", content: "Done", turnId: "turn", createdAt: "2026-10-24" }], turns: [] });
+  sessions.push({ ...sessions[0]!, id: "empty-side", title: "Main conversation · Side", side: { sourceId: "main", requestId: "empty", context: [], quote: "Selected text" } });
+  const { ref } = setup();
+  act(() => ref.current!.openSide("answered-side"));
+  await screen.findByRole("textbox", { name: "Side draft answered-side" });
+  expect(screen.queryByText("围绕选中的内容继续提问")).not.toBeInTheDocument();
+  act(() => ref.current!.openSide("empty-side"));
+  expect(await screen.findByText("围绕选中的内容继续提问")).toBeVisible();
+});
