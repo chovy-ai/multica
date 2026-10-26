@@ -228,3 +228,40 @@ git diff --check
 31 项相关测试、类型检查、以上范围 lint、桌面构建通过。测试覆盖项目身份、旧会话兼容、归属持久化与清除、分叉继承、搜索、折叠、项目内新建、保存失败和移动后草稿保留。桌面完整重启后，将一个既有空白本机会话移入官方“Bug列表”项目，实窗显示项目组与“未分配项目”两组；折叠与项目名称搜索生效，右侧当前对话保持显示。随后通过同一菜单将验收会话移回“未分配项目”。本次验收未发送模型消息。
 
 截图：[项目分组](../../.tmp/local-conversations/08-project-groups.png)。项目归属只保存在本机，折叠状态暂不跨重启保存；本次未增加拖拽移动或本机目录分组模式。
+
+
+## Desktop runtime compatibility
+
+Local conversation requests first query the main process's `capabilities` endpoint.
+It returns `protocolVersion` and the supported IPC method names. The shared method
+registry is exhaustive over `LocalConversationMethods`, and the main dispatcher
+has an exhaustive switch. Additive methods keep the protocol version; incompatible
+request/response semantics require a version bump. Do not treat package versions
+as protocol compatibility.
+
+The renderer shares one in-flight capability check per account/workspace. A missing
+method or incompatible/malformed response produces a persistent restart notice;
+known unsupported operations are rejected before dispatch. Legacy main processes
+without a handshake can still handle their existing requests. An unknown-method
+failure is converted to an actionable error and is never replayed through another
+mutation. Permission and I/O failures remain distinct from version errors.
+
+Attachment hydration is independent for each file. Missing/unreadable attachments
+or unsupported metadata lookup preserve the rest of the transcript and working
+attachments, with a display-only unavailable note. Stored messages and attachment
+IDs are unchanged. Reopening the conversation retries file reads; refreshing a
+renderer does not update a running main process. Attachment recovery never falls
+back to transferring entire files over IPC.
+
+The development launcher intentionally does not force-restart Electron while
+agent work may be running. After main/preload changes, finish or stop active work,
+then fully restart the desktop development process. Do not use renderer HMR or a
+standalone build as evidence that the running main process has updated.
+
+Relevant regression checks:
+
+```sh
+pnpm --filter @multica/desktop exec vitest run src/renderer/src/platform/local-conversation-client.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-runtime-notice.test.tsx src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/pages/local-side-workspace.test.tsx src/main/local-conversation-service.test.ts
+pnpm --filter @multica/desktop typecheck
+pnpm --filter @multica/desktop build
+```

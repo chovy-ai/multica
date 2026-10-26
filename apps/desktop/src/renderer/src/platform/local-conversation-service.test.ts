@@ -41,12 +41,13 @@ async function setup(getSelectionIntent?: () => string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   const values = new Map<string, string>();
   const onLocalSelect = vi.fn();
+  const onShowMessage = vi.fn();
   const bridge = createLocalConversationParentService({ queryClient: qc, workspaceId: "ws", workspaceSlug: "workspace", userId: "user", isCurrent: () => true, resolveAvatar: (value) => value,
-    onSelectSession: vi.fn(), onLocalSelect, getSelectionIntent, onOpenTask: vi.fn(), onShowMessage: vi.fn(),
+    onSelectSession: vi.fn(), onLocalSelect, getSelectionIntent, onOpenTask: vi.fn(), onShowMessage,
     storage: { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: (key) => { values.delete(key); } },
   }, client);
   cleanups.push(async () => { bridge.dispose(); qc.clear(); await service.stop(); await rm(root, { recursive: true, force: true }); });
-  return { bridge, run, service, usage, client, onLocalSelect };
+  return { bridge, run, service, usage, client, onLocalSelect, onShowMessage };
 }
 describe("local providers and official agent invocation routing", () => {
   it.each([
@@ -286,5 +287,57 @@ describe("local providers and official agent invocation routing", () => {
     release({ task_id: "crossed-task" });
     await vi.waitFor(() => expect(mock.api.cancelTaskById).toHaveBeenCalledWith("crossed-task"));
     await vi.waitFor(async () => expect((await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: session.id })).turns[0]).toMatchObject({ status: "cancelled", remote: { taskId: "crossed-task" } }));
+  });
+});
+
+
+describe("recoverable local attachment hydration", () => {
+  it.each(["missing", "old-runtime"])("preserves history and saved attachment references with a %s attachment reader", async (failure) => {
+    const { bridge, service, client, onShowMessage } = await setup();
+    const scope = { userId: "user", workspaceId: "ws" };
+    const file = await service.request(scope, "fileStore", { name: "screen.png", mimeType: "image/png", data: Buffer.from("test-owned bytes").toString("base64") });
+    const session = await service.request(scope, "create", { provider: "codex" });
+    await service.request(scope, "send", { id: session.id, content: "Keep this text", attachmentIds: [file.id] });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: session.id })).turns[0]?.status).toBe("completed"));
+    const original = client.request.bind(client);
+    client.request = vi.fn(async (scope, method, params) => {
+      if (failure === "old-runtime" && method === "capabilities") throw new Error("Unknown local conversation request");
+      if (method === "fileInfo") throw new Error(failure === "old-runtime" ? "Unknown local conversation request" : "ENOENT: missing file");
+      return original(scope, method, params);
+    }) as typeof client.request;
+    const detail = await bridge.request("session.load", { sessionId: session.id });
+    expect(detail.messages).toHaveLength(2);
+    expect(detail.messages[0]?.content).toContain("Keep this text");
+    expect(detail.messages[0]?.content).toContain("attachment(s) could not be loaded");
+    expect(detail.messages[1]?.content).toBe("LOCAL_RESULT");
+    expect(detail.messages[0]?.attachments).toBeUndefined();
+    await bridge.request("session.load", { sessionId: session.id });
+    expect(onShowMessage).toHaveBeenCalledTimes(1);
+    const saved = await service.request(scope, "read", { id: session.id });
+    expect(saved.messages[0]).toMatchObject({ content: "Keep this text", attachmentIds: [file.id] });
+    expect(client.request).not.toHaveBeenCalledWith(scope, "fileRead", expect.anything());
+    if (failure === "missing") {
+      client.request = original;
+      const recovered = await bridge.request("session.load", { sessionId: session.id });
+      expect(recovered.messages[0]?.attachments).toHaveLength(1);
+      expect(recovered.messages[0]?.content).toBe("Keep this text");
+    }
+  });
+  it("keeps working attachments beside a failed one and does not hide session authorization failures", async () => {
+    const { bridge, service, client } = await setup(); const scope = { userId: "user", workspaceId: "ws" };
+    const files = await Promise.all(["first", "second"].map((name) => service.request(scope, "fileStore", { name: `${name}.png`, mimeType: "image/png", data: Buffer.from(name).toString("base64") })));
+    const session = await service.request(scope, "create", { provider: "codex" });
+    await service.request(scope, "send", { id: session.id, content: "Two pictures", attachmentIds: files.map((file) => file.id) });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: session.id })).turns[0]?.status).toBe("completed"));
+    const original = client.request.bind(client);
+    client.request = vi.fn(async (scope, method, params) => {
+      if (method === "fileInfo" && (params as { id: string }).id === files[0]!.id) throw new Error("Unreadable attachment");
+      return original(scope, method, params);
+    }) as typeof client.request;
+    const detail = await bridge.request("session.load", { sessionId: session.id });
+    expect(detail.messages[0]?.attachments?.map((file) => file.id)).toEqual([files[1]!.id]);
+    expect(detail.messages[0]?.content).toContain("1 attachment(s)");
+    service.setCurrentUser("another-user");
+    await expect(bridge.request("session.load", { sessionId: session.id })).rejects.toThrow();
   });
 });

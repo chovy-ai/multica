@@ -1,3 +1,4 @@
+import { LOCAL_CONVERSATION_METHODS } from "@multica/tutti-agent-gui-host/local-protocol";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -38,7 +39,7 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   source = { id: "source", title: "Original", provider: "codex", cwd: "/owned/work", providerSessionId: "native", model: null, pinned: false, archived: false, createdAt: "2026-01-01", updatedAt: "2026-01-01", messages: [{ id: "message", role: "assistant", content: "Result", turnId: "turn", createdAt: "2026-01-01" }], turns: [] };
   mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source] : method === "providers" ? [{ id: "codex", available: true }] : undefined);
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: unknown) => method === "folderProjects" ? mock.folderError ? Promise.reject(mock.folderError) : Promise.resolve(mock.folders) : mock.request(scope, method, params), subscribe: () => () => {} } } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: unknown) => method === "capabilities" ? Promise.resolve({ protocolVersion: 1, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : method === "folderProjects" ? mock.folderError ? Promise.reject(mock.folderError) : Promise.resolve(mock.folders) : mock.request(scope, method, params), subscribe: () => () => {} } } });
   qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
 });
 afterEach(() => { cleanup(); qc.clear(); useProjectVisibilityStore.setState({ hiddenByScope: {} }); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.removeItem("multica_local_conversation_width"); localStorage.removeItem("multica-side-workspace:user:workspace"); });

@@ -1,3 +1,4 @@
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/tutti-agent-gui-host/local-protocol";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -215,6 +216,7 @@ export class LocalConversationService {
     };
     let result: unknown;
     switch (method) {
+      case "capabilities": result = { protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }; break;
       case "queueEnqueue": case "queueUpdate": case "queueSide": {
         const entry = session();
         if (method === "queueUpdate" && (params.action === "stop" || params.action === "sendNow")) {
@@ -571,7 +573,10 @@ export class LocalConversationService {
         if (turn.status !== "running" && turn.status !== "completed" && entry.promptQueue) { entry.promptQueue.paused = true; entry.promptQueue.error = turn.error; entry.promptQueue.revision++; }
         await this.save(scope); this.changed(scope, entry); this.drainQueue(scope, entry); result = undefined; break;
       }
-      default: throw new Error("Unknown local conversation request");
+      default: {
+        const unsupported: never = method;
+        throw new Error(`Unknown local conversation request: ${String(unsupported)}`);
+      }
     }
     this.key(scope);
     return structuredClone(result) as LocalConversationMethods[M]["result"];

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/tutti-agent-gui-host/local-protocol";
 import { mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -22,6 +23,12 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   return { service, options };
 }
 describe("local conversation persistence and execution", () => {
+  it("advertises supported IPC methods with the same account scope as conversation reads", async () => {
+    const { service, options } = await setup();
+    expect(await service.request(scope, "capabilities", {})).toEqual({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) });
+    expect(options.run).not.toHaveBeenCalled();
+    await expect(service.request({ ...scope, userId: "other" }, "capabilities", {})).rejects.toThrow();
+  });
   it.each(["codex", "claude"] as const)("passes saved image paths to new and resumed %s turns without carrying attachments into unrelated messages", async (provider) => {
     const { service, options } = await setup();
     const image = Buffer.from("test-owned image bytes");
