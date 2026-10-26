@@ -1,0 +1,65 @@
+import type {
+  IssueManagerIssueSummary,
+  IssueManagerRun,
+  IssueManagerTaskSummary
+} from "../../../contracts/index.ts";
+import { isIssueManagerTuttiModePlanIssue } from "../../../services/controllerModel.ts";
+
+export function resolveIssueManagerIssueAcceptanceTaskId(input: {
+  latestRun: IssueManagerRun | null;
+  selectedIssue: IssueManagerIssueSummary | null;
+  selectedTaskId: string | null;
+  tasks: readonly IssueManagerTaskSummary[];
+}): string | null {
+  if (
+    isIssueManagerTuttiModePlanIssue(input.selectedIssue) ||
+    input.selectedIssue?.status !== "pending_acceptance" ||
+    input.latestRun?.status !== "completed" ||
+    input.selectedTaskId
+  ) {
+    return null;
+  }
+
+  return resolveIssueManagerIssueRunTaskId({
+    latestRun: input.latestRun,
+    selectedIssue: input.selectedIssue,
+    tasks: input.tasks
+  });
+}
+
+export function resolveIssueManagerIssueRunTaskId(input: {
+  latestRun: IssueManagerRun | null;
+  selectedIssue: IssueManagerIssueSummary | null;
+  tasks: readonly IssueManagerTaskSummary[];
+}): string | null {
+  if (!input.selectedIssue) {
+    return null;
+  }
+
+  const taskId = input.latestRun?.taskId?.trim() ?? "";
+  if (!taskId) {
+    return null;
+  }
+
+  const visibleTask = input.tasks.find((task) => task.taskId === taskId);
+  const issueTitle = input.selectedIssue.title.trim();
+  const taskTitle = visibleTask?.title.trim() ?? "";
+  if (visibleTask && taskTitle !== "" && taskTitle !== issueTitle) {
+    return null;
+  }
+
+  return taskId;
+}
+
+export function resolveIssueManagerVisibleSubtasks(input: {
+  hiddenIssueRunTaskId: string | null;
+  tasks: readonly IssueManagerTaskSummary[];
+}): IssueManagerTaskSummary[] {
+  const hiddenTaskId = input.hiddenIssueRunTaskId?.trim() ?? "";
+  return input.tasks.filter((task) => {
+    return (
+      (task.supersededAtUnix ?? 0) <= 0 &&
+      (!hiddenTaskId || task.taskId !== hiddenTaskId)
+    );
+  });
+}

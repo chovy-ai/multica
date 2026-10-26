@@ -1,0 +1,704 @@
+import type { WorkspaceFileReference } from "@tutti-os/workspace-file-reference/contracts";
+import type {
+  AgentActivityActivateSessionResult,
+  AgentActivityComposerOptions,
+  AgentActivitySendInputResult,
+  AgentActivitySessionSettings,
+  AgentActivitySnapshot,
+  AgentActivityTurnCancelResponse,
+  AgentPromptContentBlock
+} from "@tutti-os/agent-activity-core";
+import type {
+  WorkspaceUserProject,
+  WorkspaceUserProjectDefaultSelection,
+  WorkspaceUserProjectMoveInput,
+  WorkspaceUserProjectPathCheck,
+  WorkspaceUserProjectSelectionPreparation,
+  WorkspaceUserProjectSelectionPreparationInput,
+  WorkspaceUserProjectServiceSnapshot
+} from "@tutti-os/workspace-user-project/contracts";
+
+export const TUTTI_EXTERNAL_AT_PROVIDER_IDS = {
+  agentGeneratedFile: "agent-generated-file",
+  agentSession: "agent-session",
+  agentTarget: "agent-target",
+  file: "file",
+  workspaceApp: "workspace-app",
+  workspaceIssue: "workspace-issue"
+} as const;
+
+export type TuttiExternalAtProviderId =
+  (typeof TUTTI_EXTERNAL_AT_PROVIDER_IDS)[keyof typeof TUTTI_EXTERNAL_AT_PROVIDER_IDS];
+
+export const tuttiExternalAtProviderIds = [
+  TUTTI_EXTERNAL_AT_PROVIDER_IDS.file,
+  TUTTI_EXTERNAL_AT_PROVIDER_IDS.workspaceIssue,
+  TUTTI_EXTERNAL_AT_PROVIDER_IDS.workspaceApp,
+  TUTTI_EXTERNAL_AT_PROVIDER_IDS.agentTarget,
+  TUTTI_EXTERNAL_AT_PROVIDER_IDS.agentSession,
+  TUTTI_EXTERNAL_AT_PROVIDER_IDS.agentGeneratedFile
+] as const satisfies readonly TuttiExternalAtProviderId[];
+
+export interface TuttiExternalAtQueryInput {
+  keyword: string;
+  maxResults?: number;
+  providers?: readonly TuttiExternalAtProviderId[];
+}
+
+export interface TuttiExternalAtQueryDirectoryInput {
+  /** Empty string addresses the provider-owned root directory. */
+  directoryPath: string;
+  maxResults?: number;
+  providerId: TuttiExternalAtProviderId;
+}
+
+export interface TuttiExternalAtDirectoryDescriptor {
+  /** Canonical provider-owned directory path used for direct-child queries. */
+  path: string;
+  /** Number of direct children when the provider can determine it. */
+  childCount?: number | null;
+}
+
+export interface TuttiExternalAtQueryResult {
+  providerId: TuttiExternalAtProviderId;
+  itemId: string;
+  label: string;
+  subtitle?: string;
+  thumbnailUrl?: string | null;
+  insert: TuttiExternalAtInsertResult;
+  directory?: TuttiExternalAtDirectoryDescriptor;
+}
+
+export interface TuttiExternalAtResolveInput {
+  providerId: TuttiExternalAtProviderId;
+  entityId: string;
+  scope?: Readonly<Record<string, string>>;
+}
+
+export interface TuttiExternalAtResolveResult {
+  label?: string;
+  presentation?: TuttiExternalAtMentionPresentation;
+}
+
+export interface TuttiExternalAtInvalidation {
+  providerIds?: readonly TuttiExternalAtProviderId[];
+  entityIds?: readonly string[];
+  revision?: number;
+}
+
+export interface TuttiExternalAtMentionPresentation {
+  agentProviderId?: string;
+  agentIconUrl?: string;
+  iconUrl?: string;
+  thumbnailUrl?: string;
+  subtitle?: string;
+  description?: string;
+  participant?: string;
+  status?: string;
+  statusDataStatus?: string;
+  statusLabel?: string;
+  statusPulse?: string;
+  userAvatarPlaceholderUrl?: string;
+}
+
+export type TuttiExternalAtInsertResult =
+  | {
+      kind: "mention";
+      mention: {
+        entityId: string;
+        label: string;
+        scope?: Record<string, string>;
+        presentation?: TuttiExternalAtMentionPresentation;
+      };
+    }
+  | {
+      kind: "markdown-link";
+      label: string;
+      href: string;
+    }
+  | {
+      kind: "text";
+      text: string;
+    };
+
+export interface TuttiExternalFileSelectInput {
+  multiple?: boolean;
+}
+
+export type TuttiExternalFileSelectResult = WorkspaceFileReference[];
+
+export interface TuttiExternalFileOpenInput {
+  mode?: "auto" | "preview" | "reveal";
+  mtimeMs?: number | null;
+  name?: string;
+  path: string;
+  sizeBytes?: number | null;
+}
+
+export interface TuttiExternalFileUploadInput {
+  purpose?: "app-asset";
+  name?: string;
+  mimeType?: string;
+  onProgress?: (progress: TuttiExternalFileUploadProgress) => void;
+  signal?: AbortSignal;
+}
+
+export interface TuttiExternalUploadedFile {
+  path: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface TuttiExternalFileUploadProgress {
+  loadedBytes: number;
+  ratio: number;
+  totalBytes: number;
+}
+
+export const tuttiExternalManagedAiModelProviderIds = [
+  "agnes",
+  "openai",
+  "anthropic"
+] as const;
+
+export type TuttiExternalManagedAiModelProviderId =
+  (typeof tuttiExternalManagedAiModelProviderIds)[number];
+
+export interface TuttiExternalManagedAiModel {
+  id: string;
+  name?: string;
+  provider: TuttiExternalManagedAiModelProviderId;
+}
+
+export interface TuttiExternalPermissionRequestInput {
+  permission: "managed-ai-models";
+  nonce: string;
+  providers?: readonly TuttiExternalManagedAiModelProviderId[];
+  scopes: readonly string[];
+  state: string;
+}
+
+export interface TuttiExternalPermissionRequestResult {
+  code: string;
+  contextToken?: string;
+  expiresAt?: string;
+  models?: readonly TuttiExternalManagedAiModel[];
+  providers?: readonly TuttiExternalManagedAiModelProviderId[];
+}
+
+export interface TuttiExternalSettingsOpenInput {
+  provider?: TuttiExternalManagedAiModelProviderId;
+  tab?: "models";
+}
+
+export interface TuttiExternalBrowserOpenUrlInput {
+  url: string;
+}
+
+export type TuttiExternalWorkspaceFeature =
+  | "app-center"
+  | "issue-manager"
+  | "message-center"
+  | "agent-connect"
+  | "agent-chat"
+  | "agent-manage";
+
+export const tuttiExternalWorkspaceAgentProviders = [
+  "claude-code",
+  "codex",
+  "cursor",
+  "nexight",
+  "hermes",
+  "openclaw"
+] as const;
+
+export type TuttiExternalWorkspaceAgentProvider =
+  (typeof tuttiExternalWorkspaceAgentProviders)[number];
+
+export interface TuttiExternalWorkspaceOpenFeatureInput {
+  autoSubmit?: boolean;
+  draftPrompt?: string;
+  feature: TuttiExternalWorkspaceFeature;
+  provider?: TuttiExternalWorkspaceAgentProvider;
+}
+
+export interface TuttiExternalWorkspaceOpenRouteIntent {
+  kind: "open-route";
+  params?: Record<string, string>;
+  /**
+   * Origin-root path for the app launch origin. It must start with "/".
+   */
+  route: string;
+  state?: Record<string, unknown>;
+}
+
+export interface TuttiExternalReferenceOpenInput {
+  href: string;
+}
+
+export type TuttiExternalReferenceSelection =
+  | {
+      selectionKind: "path";
+      reference: WorkspaceFileReference;
+    }
+  | {
+      selectionKind: "workspace-reference";
+      displayName: string;
+      fileCount?: number;
+      groupId?: string;
+      id: string;
+      source: "app";
+      workspaceId: string;
+    };
+
+export type TuttiExternalReferenceSelectResult =
+  TuttiExternalReferenceSelection[];
+
+export type TuttiExternalAgentAvailabilityStatus =
+  | "ready"
+  | "checking"
+  | "coming_soon"
+  | "not_installed"
+  | "auth_required"
+  | "unavailable";
+
+export interface TuttiExternalAgentTarget {
+  agentTargetId: string;
+  availability: {
+    pendingAction?: "install" | "login" | "refresh" | null;
+    reason?: string | null;
+    status: TuttiExternalAgentAvailabilityStatus;
+  };
+  description?: string | null;
+  /**
+   * Host-resolved presentation URL. This may be a data URL for Host-local
+   * assets. Consumers must retain a fallback when the URL cannot be rendered.
+   */
+  iconUrl: string;
+  name: string;
+  provider: string;
+}
+
+export interface TuttiExternalAgentTargetCatalog {
+  agents: TuttiExternalAgentTarget[];
+  capturedAtUnixMs: number | null;
+  error: string | null;
+  status: "idle" | "loading" | "ready" | "error";
+}
+
+export interface TuttiExternalAgentActivityComposerOptionsInput {
+  agentTargetId: string;
+  cwd?: string | null;
+  provider: string;
+  settings?: AgentActivitySessionSettings | null;
+}
+
+export interface TuttiExternalAgentActivityActivateSessionInput {
+  agentSessionId: string;
+  agentTargetId: string;
+  clientSubmitId: string;
+  cwd?: string | null;
+  initialContent: AgentPromptContentBlock[];
+  initialDisplayPrompt?: string | null;
+  /**
+   * Host-owned navigation request. When true, the workspace owner opens its
+   * Agent GUI on the activated session after activation succeeds. Missing
+   * preserves the existing activate-without-navigation behavior.
+   */
+  reveal?: boolean;
+  settings?: AgentActivitySessionSettings;
+  title?: string;
+  visible?: boolean;
+}
+
+export interface TuttiExternalAgentActivitySendInput {
+  agentSessionId: string;
+  clientSubmitId: string;
+  content: AgentPromptContentBlock[];
+  displayPrompt?: string | null;
+  guidance?: boolean;
+}
+
+export interface TuttiExternalAgentActivityCancelTurnInput {
+  agentSessionId: string;
+  turnId: string;
+}
+
+/**
+ * Explicit composer picks a launcher persists into the canonical per-target
+ * composer-defaults ledger. Absent fields stay untouched; null clears a field.
+ */
+export interface TuttiExternalAgentActivityRememberComposerDefaultsInput {
+  agentTargetId: string;
+  defaults: {
+    codexSaverMode?: boolean;
+    rtkSaverMode?: boolean;
+    model?: string | null;
+    permissionModeId?: string | null;
+    reasoningEffort?: string | null;
+    speed?: string | null;
+  };
+}
+
+export type TuttiExternalAgentActivityActivateSessionResult =
+  AgentActivityActivateSessionResult;
+export type TuttiExternalAgentActivityComposerOptions =
+  AgentActivityComposerOptions;
+export type TuttiExternalAgentActivitySendResult = AgentActivitySendInputResult;
+export type TuttiExternalAgentActivityCancelTurnResult =
+  AgentActivityTurnCancelResponse;
+export type TuttiExternalAgentActivitySnapshot = AgentActivitySnapshot;
+
+export interface TuttiExternalUserProjectCreateInput {
+  name: string;
+}
+
+export interface TuttiExternalUserProjectPathInput {
+  path: string;
+}
+
+export interface TuttiExternalUserProjectRememberDefaultSelectionInput {
+  path: string | null;
+}
+
+export const tuttiExternalLogLevels = [
+  "debug",
+  "info",
+  "warn",
+  "error"
+] as const;
+
+export type TuttiExternalLogLevel = (typeof tuttiExternalLogLevels)[number];
+
+export interface TuttiExternalLogInput {
+  details?: Record<string, unknown>;
+  event: string;
+  level?: TuttiExternalLogLevel;
+}
+
+export interface TuttiExternalPdfMargin {
+  bottom?: string;
+  left?: string;
+  right?: string;
+  top?: string;
+}
+
+export type TuttiExternalPdfPageSize =
+  | "A4"
+  | "Letter"
+  | {
+      height: number;
+      width: number;
+    };
+
+export interface TuttiExternalPdfPrintHtmlInput {
+  baseUrl?: string;
+  html: string;
+  margin?: TuttiExternalPdfMargin;
+  pageSize?: TuttiExternalPdfPageSize;
+  preferCSSPageSize?: boolean;
+  printBackground?: boolean;
+  title?: string;
+}
+
+export interface TuttiExternalPdfPrintHtmlResult {
+  bytes: Uint8Array;
+}
+
+export interface TuttiExternalBridge {
+  app: {
+    getContext(): Promise<unknown>;
+    subscribe(listener: (context: unknown) => void): () => void;
+  };
+  activity: {
+    reportActive(): Promise<void>;
+  };
+  agentActivity: {
+    activateSession(
+      input: TuttiExternalAgentActivityActivateSessionInput
+    ): Promise<TuttiExternalAgentActivityActivateSessionResult>;
+    cancelTurn(
+      input: TuttiExternalAgentActivityCancelTurnInput
+    ): Promise<TuttiExternalAgentActivityCancelTurnResult>;
+    getComposerOptions(
+      input: TuttiExternalAgentActivityComposerOptionsInput
+    ): Promise<TuttiExternalAgentActivityComposerOptions>;
+    getSnapshot(): Promise<TuttiExternalAgentActivitySnapshot>;
+    listTargets(): Promise<TuttiExternalAgentTargetCatalog>;
+    rememberComposerDefaults(
+      input: TuttiExternalAgentActivityRememberComposerDefaultsInput
+    ): Promise<void>;
+    sendInput(
+      input: TuttiExternalAgentActivitySendInput
+    ): Promise<TuttiExternalAgentActivitySendResult>;
+  };
+  browser: {
+    openUrl(input: TuttiExternalBrowserOpenUrlInput): Promise<void>;
+  };
+  at: {
+    query(
+      input: TuttiExternalAtQueryInput
+    ): Promise<TuttiExternalAtQueryResult[]>;
+    queryDirectory?(
+      input: TuttiExternalAtQueryDirectoryInput
+    ): Promise<TuttiExternalAtQueryResult[]>;
+    resolve?(
+      input: TuttiExternalAtResolveInput
+    ): Promise<TuttiExternalAtResolveResult | null>;
+    subscribe?(
+      listener: (event: TuttiExternalAtInvalidation) => void
+    ): () => void;
+  };
+  files: {
+    select(
+      input?: TuttiExternalFileSelectInput
+    ): Promise<TuttiExternalFileSelectResult>;
+    open(input: TuttiExternalFileOpenInput): Promise<void>;
+    upload(
+      file: Blob | File,
+      input?: TuttiExternalFileUploadInput
+    ): Promise<TuttiExternalUploadedFile>;
+  };
+  permissions: {
+    request(
+      input: TuttiExternalPermissionRequestInput
+    ): Promise<TuttiExternalPermissionRequestResult>;
+  };
+  settings: {
+    open(input?: TuttiExternalSettingsOpenInput): Promise<void>;
+  };
+  workspace: {
+    onLaunchIntent(
+      listener: (intent: TuttiExternalWorkspaceOpenRouteIntent) => void
+    ): () => void;
+    openFeature(input: TuttiExternalWorkspaceOpenFeatureInput): Promise<void>;
+  };
+  references: {
+    select?(): Promise<TuttiExternalReferenceSelectResult>;
+    open(input: TuttiExternalReferenceOpenInput): Promise<void>;
+  };
+  pdf: {
+    printHtmlToPdf(
+      input: TuttiExternalPdfPrintHtmlInput
+    ): Promise<TuttiExternalPdfPrintHtmlResult>;
+  };
+  userProjects: {
+    checkPath(
+      input: TuttiExternalUserProjectPathInput
+    ): Promise<WorkspaceUserProjectPathCheck>;
+    create(
+      input: TuttiExternalUserProjectCreateInput
+    ): Promise<WorkspaceUserProject>;
+    getDefaultSelection(): Promise<WorkspaceUserProjectDefaultSelection | null>;
+    getSnapshot(): Promise<WorkspaceUserProjectServiceSnapshot>;
+    list(): Promise<{ projects: WorkspaceUserProject[] }>;
+    move(input: WorkspaceUserProjectMoveInput): Promise<void>;
+    remove(input: TuttiExternalUserProjectPathInput): Promise<void>;
+    prepareSelection(
+      input: WorkspaceUserProjectSelectionPreparationInput
+    ): Promise<WorkspaceUserProjectSelectionPreparation>;
+    refresh(): Promise<WorkspaceUserProjectServiceSnapshot>;
+    rememberDefaultSelection(
+      input: TuttiExternalUserProjectRememberDefaultSelectionInput
+    ): Promise<void>;
+    selectDirectory(): Promise<{ path: string } | null>;
+    /**
+     * Subscribes to user-project snapshots. Implementations replay the latest
+     * known snapshot after registration, then emit future snapshots.
+     */
+    subscribe(
+      listener: (snapshot: WorkspaceUserProjectServiceSnapshot) => void
+    ): () => void;
+    use(
+      input: TuttiExternalUserProjectPathInput
+    ): Promise<WorkspaceUserProject>;
+  };
+  logs: {
+    write(input: TuttiExternalLogInput): void;
+  };
+}
+
+export type TuttiExternalRendererRequest =
+  | {
+      appId: string;
+      input: TuttiExternalAgentActivityActivateSessionInput;
+      operation: "agentActivity.activateSession";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalAgentActivityCancelTurnInput;
+      operation: "agentActivity.cancelTurn";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalAgentActivityComposerOptionsInput;
+      operation: "agentActivity.getComposerOptions";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      operation: "agentActivity.getSnapshot";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      operation: "agentActivity.listTargets";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalAgentActivityRememberComposerDefaultsInput;
+      operation: "agentActivity.rememberComposerDefaults";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalAgentActivitySendInput;
+      operation: "agentActivity.sendInput";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalAtResolveInput;
+      operation: "at.resolve";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalAtQueryInput;
+      operation: "at.query";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalAtQueryDirectoryInput;
+      operation: "at.queryDirectory";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalFileSelectInput;
+      operation: "files.select";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalFileOpenInput;
+      operation: "files.open";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalSettingsOpenInput;
+      operation: "settings.open";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalReferenceOpenInput;
+      operation: "references.open";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      operation: "references.select";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalUserProjectPathInput;
+      operation: "userProjects.checkPath";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalUserProjectCreateInput;
+      operation: "userProjects.create";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      operation: "userProjects.getDefaultSelection";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      operation: "userProjects.getSnapshot";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      operation: "userProjects.list";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: WorkspaceUserProjectMoveInput;
+      operation: "userProjects.move";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalUserProjectPathInput;
+      operation: "userProjects.remove";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: WorkspaceUserProjectSelectionPreparationInput;
+      operation: "userProjects.prepareSelection";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      operation: "userProjects.refresh";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalUserProjectRememberDefaultSelectionInput;
+      operation: "userProjects.rememberDefaultSelection";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      operation: "userProjects.selectDirectory";
+      requestId: string;
+      workspaceId: string;
+    }
+  | {
+      appId: string;
+      input: TuttiExternalUserProjectPathInput;
+      operation: "userProjects.use";
+      requestId: string;
+      workspaceId: string;
+    };

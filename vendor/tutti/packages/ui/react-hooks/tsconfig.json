@@ -1,0 +1,9 @@
+{
+  "extends": "../../configs/tsconfig/base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "types": ["node", "react"],
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"]
+}

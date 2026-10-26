@@ -1,0 +1,16 @@
+{
+  "name": "@tutti-os/client-tuttid-ts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tutti-os/event-protocol": "workspace:*",
+    "@tutti-os/event-stream-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4"
+  }
+}

@@ -1,0 +1,516 @@
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction
+} from "react";
+import {
+  createMentionPaletteStateAdapter,
+  makeAtPanelKeyDown
+} from "@tutti-os/ui-rich-text/at-panel";
+import type {
+  AgentComposerDraft,
+  AgentGUIComposerSettingsVM
+} from "../model/agentGuiNodeTypes";
+import type { AgentRichTextEditorHandle } from "../agentRichText/AgentRichTextEditor";
+import {
+  exitAgentFileMentionSuggestion,
+  type AgentContextMentionItem,
+  type AgentFileMentionSuggestionState
+} from "../agentRichText/agentFileMentionExtension";
+import { isAgentRichTextImeComposing } from "../agentRichText/agentRichTextIme";
+import { AGENT_MENTION_FILTER_TAB_ORDER } from "../agentMentionSearchHelpers";
+import {
+  agentMentionItemKey,
+  isAgentMentionItemDisabled
+} from "../AgentFileMentionPalette";
+import { MENTION_PALETTE_DISMISS_INTERACTION_SELECTOR } from "./AgentComposerChrome";
+import { updateAgentComposerDraft } from "../model/agentComposerDraft";
+import {
+  type AgentMentionFilterId,
+  type AgentMentionGroupId,
+  type AgentMentionSearchState,
+  AgentMentionSearchController
+} from "../AgentMentionSearchController";
+
+interface Input {
+  workspaceId: string;
+  currentUserId?: string | null;
+  selectedProjectPath: string;
+  selectedProjectSectionKey: string;
+  draftContent: AgentComposerDraft;
+  fileMentionSuggestion: AgentFileMentionSuggestionState | null;
+  setFileMentionSuggestion: Dispatch<
+    SetStateAction<AgentFileMentionSuggestionState | null>
+  >;
+  mentionControllerRef: RefObject<AgentMentionSearchController | null>;
+  editorHandleRef: RefObject<AgentRichTextEditorHandle | null>;
+  draftPromptRef: RefObject<string>;
+  setPaletteDraftPrompt: Dispatch<SetStateAction<string>>;
+  setIsPaletteOpen: Dispatch<SetStateAction<boolean>>;
+  onDraftContentChange: (draft: AgentComposerDraft) => void;
+  showFileMentionPalette: boolean;
+  mentionHighlightedKey: string | null;
+  mentionSearchState: AgentMentionSearchState;
+  setMentionHighlightedKey: Dispatch<SetStateAction<string | null>>;
+  setShouldCenterMentionHighlight: Dispatch<SetStateAction<boolean>>;
+  setShouldResetMentionHighlightToFilter: Dispatch<SetStateAction<boolean>>;
+  autoMentionHighlightedKeyRef: RefObject<string | null>;
+  composerSettings: AgentGUIComposerSettingsVM;
+  isSendingTurn: boolean;
+  isSubmittingPrompt: boolean;
+  showStopButton: boolean;
+  isActive: boolean;
+  onSettingsChange: (settings: { planMode?: boolean }) => void;
+  handleSlashPaletteKeyDown: (event: KeyboardEvent) => boolean;
+  handleSlashCommandMenuKeyDown: (event: KeyboardEvent) => boolean;
+  showPalette: boolean;
+  workspaceReferencePickerOpen: boolean;
+  composerRef: RefObject<HTMLFormElement | null>;
+  paletteContentRef: RefObject<HTMLDivElement | null>;
+  shouldCenterMentionHighlight: boolean;
+}
+
+function useStableEventCallback<Args extends unknown[], Result>(
+  callback: (...args: Args) => Result
+): (...args: Args) => Result {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  return useCallback((...args: Args) => callbackRef.current(...args), []);
+}
+
+export function useComposerMentionActions(input: Input) {
+  const {
+    workspaceId,
+    currentUserId,
+    selectedProjectPath,
+    selectedProjectSectionKey,
+    draftContent,
+    fileMentionSuggestion,
+    setFileMentionSuggestion,
+    mentionControllerRef,
+    editorHandleRef,
+    draftPromptRef,
+    setPaletteDraftPrompt,
+    setIsPaletteOpen,
+    onDraftContentChange,
+    showFileMentionPalette,
+    mentionHighlightedKey,
+    mentionSearchState,
+    setMentionHighlightedKey,
+    setShouldCenterMentionHighlight,
+    setShouldResetMentionHighlightToFilter,
+    autoMentionHighlightedKeyRef,
+    composerSettings,
+    isSendingTurn,
+    isSubmittingPrompt,
+    showStopButton,
+    isActive,
+    onSettingsChange,
+    handleSlashPaletteKeyDown,
+    handleSlashCommandMenuKeyDown,
+    showPalette,
+    workspaceReferencePickerOpen,
+    composerRef,
+    paletteContentRef,
+    shouldCenterMentionHighlight
+  } = input;
+  const replaceActiveFileMentionTrigger = useCallback(
+    (replacement: string): boolean => {
+      if (!fileMentionSuggestion) {
+        return false;
+      }
+      const triggerLength = Math.max(
+        fileMentionSuggestion.range.to - fileMentionSuggestion.range.from,
+        fileMentionSuggestion.text.length
+      );
+      const nextDraft =
+        triggerLength > 0
+          ? editorHandleRef.current?.replaceTextBeforeSelection(
+              triggerLength,
+              replacement
+            )
+          : null;
+      if (nextDraft === null || nextDraft === undefined) {
+        return false;
+      }
+      draftPromptRef.current = nextDraft;
+      setPaletteDraftPrompt(nextDraft);
+      onDraftContentChange(
+        updateAgentComposerDraft(draftContent, { prompt: nextDraft })
+      );
+      return true;
+    },
+    [draftContent, fileMentionSuggestion, onDraftContentChange]
+  );
+
+  const navigateIntoFileMentionItem = useCallback(
+    (item: AgentContextMentionItem): boolean => {
+      if (
+        item.kind === "file" &&
+        item.mentionNavigation === "workspace-folder" &&
+        fileMentionSuggestion?.query
+      ) {
+        if (!replaceActiveFileMentionTrigger("@")) {
+          return false;
+        }
+        mentionControllerRef.current?.updateQuery({
+          workspaceId,
+          currentUserId,
+          query: "",
+          sectionKey: selectedProjectSectionKey || null,
+          sessionCwd: selectedProjectPath || null
+        });
+      }
+      return (
+        mentionControllerRef.current?.selectFileMentionNavigationItem(item) ??
+        false
+      );
+    },
+    [
+      currentUserId,
+      fileMentionSuggestion,
+      replaceActiveFileMentionTrigger,
+      selectedProjectPath,
+      selectedProjectSectionKey,
+      workspaceId
+    ]
+  );
+
+  const selectFileMention = useCallback(
+    (entry: AgentContextMentionItem): void => {
+      if (entry.kind === "file" && entry.mentionNavigation) {
+        navigateIntoFileMentionItem(entry);
+        return;
+      }
+      fileMentionSuggestion?.command(entry);
+      if (fileMentionSuggestion) {
+        exitAgentFileMentionSuggestion(fileMentionSuggestion.editor);
+      }
+      mentionControllerRef.current?.close();
+      setFileMentionSuggestion(null);
+      setIsPaletteOpen(false);
+    },
+    [fileMentionSuggestion, navigateIntoFileMentionItem]
+  );
+
+  const closeFileMentionPalette = useCallback((): void => {
+    if (fileMentionSuggestion) {
+      exitAgentFileMentionSuggestion(fileMentionSuggestion.editor);
+    }
+    mentionControllerRef.current?.close();
+    setFileMentionSuggestion(null);
+    setIsPaletteOpen(false);
+  }, [fileMentionSuggestion]);
+
+  const clearActiveFileMentionTrigger = useCallback((): void => {
+    replaceActiveFileMentionTrigger("");
+  }, [replaceActiveFileMentionTrigger]);
+  const closeOpenPalette = useCallback((): void => {
+    if (showFileMentionPalette) {
+      closeFileMentionPalette();
+      return;
+    }
+    setIsPaletteOpen(false);
+  }, [closeFileMentionPalette, showFileMentionPalette]);
+
+  const createFileMentionPaletteAdapter = useCallback(
+    (highlightedKey: string | null = mentionHighlightedKey) =>
+      createMentionPaletteStateAdapter({
+        state: mentionSearchState,
+        highlightedKey,
+        categoryCycleOrder:
+          mentionSearchState.mode === "browse"
+            ? mentionSearchState.categories
+            : AGENT_MENTION_FILTER_TAB_ORDER,
+        getItemKey: agentMentionItemKey,
+        isItemDisabled: isAgentMentionItemDisabled,
+        callbacks: {
+          onHighlightChange: (key) => {
+            setShouldCenterMentionHighlight(true);
+            autoMentionHighlightedKeyRef.current = null;
+            setMentionHighlightedKey(key);
+          },
+          onActiveCategoryIdChange: (categoryId) => {
+            mentionControllerRef.current?.setFilter(
+              categoryId as AgentMentionFilterId
+            );
+            setShouldResetMentionHighlightToFilter(true);
+            setShouldCenterMentionHighlight(false);
+          },
+          onExpandGroup: (groupId) => {
+            mentionControllerRef.current?.expandGroup(
+              groupId as AgentMentionGroupId
+            );
+          },
+          onSelectItem: selectFileMention
+        }
+      }),
+    [mentionHighlightedKey, mentionSearchState, selectFileMention]
+  );
+
+  const moveFileMentionSelection = useCallback(
+    (delta: 1 | -1): void => {
+      createFileMentionPaletteAdapter().moveSelection(delta);
+    },
+    [createFileMentionPaletteAdapter]
+  );
+
+  const handleMentionHighlightChange = useCallback((key: string): void => {
+    autoMentionHighlightedKeyRef.current = null;
+    setMentionHighlightedKey(key);
+  }, []);
+
+  const cycleFileMentionFilter = useCallback(
+    (delta: 1 | -1 = 1): void => {
+      createFileMentionPaletteAdapter().cycleCategory(delta);
+    },
+    [createFileMentionPaletteAdapter]
+  );
+
+  const navigateFileMentionHierarchy = useCallback(
+    (delta: 1 | -1): boolean => {
+      if (delta === -1) {
+        return mentionControllerRef.current?.exitFileMentionBrowse() ?? false;
+      }
+      const item = createFileMentionPaletteAdapter().selectedItem;
+      if (!item || item.kind !== "file") {
+        return false;
+      }
+      if (
+        item.mentionNavigation !== "agent-generated-folder" &&
+        item.mentionNavigation !== "workspace-folder"
+      ) {
+        return false;
+      }
+      return navigateIntoFileMentionItem(item);
+    },
+    [createFileMentionPaletteAdapter, navigateIntoFileMentionItem]
+  );
+
+  const handleFileMentionKeyDown = useCallback(
+    (event: KeyboardEvent): boolean => {
+      if (!showFileMentionPalette) {
+        return false;
+      }
+      return makeAtPanelKeyDown({
+        close: closeFileMentionPalette,
+        commitSelection: () => {
+          // No highlighted/committable entry (e.g. the search has zero
+          // results): Enter has nothing to select, so treat it as
+          // dismissing the empty panel instead of a silent no-op. This
+          // matches Escape's behavior and mirrors the "clear the active
+          // mention context" contract — a second Enter afterwards then
+          // falls through to the normal submit handler.
+          const result = createFileMentionPaletteAdapter().commitHighlighted();
+          if (result.type === "none") {
+            closeFileMentionPalette();
+          }
+        },
+        cycleFilter: cycleFileMentionFilter,
+        moveSelection: moveFileMentionSelection,
+        navigateHierarchy: navigateFileMentionHierarchy
+      })(event);
+    },
+    [
+      closeFileMentionPalette,
+      createFileMentionPaletteAdapter,
+      cycleFileMentionFilter,
+      moveFileMentionSelection,
+      navigateFileMentionHierarchy,
+      showFileMentionPalette
+    ]
+  );
+
+  // Shift+Tab toggles descriptor-advertised plan mode.
+  const handlePlanModeToggleKeyDown = useCallback(
+    (event: KeyboardEvent): boolean => {
+      if (
+        event.key !== "Tab" ||
+        !event.shiftKey ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        return false;
+      }
+      if (
+        !composerSettings.supportsPlanMode ||
+        isSendingTurn ||
+        isSubmittingPrompt ||
+        showStopButton ||
+        composerSettings.isSettingsLoading
+      ) {
+        return false;
+      }
+      event.preventDefault();
+      onSettingsChange({ planMode: !composerSettings.draftSettings.planMode });
+      return true;
+    },
+    [
+      composerSettings.draftSettings.planMode,
+      composerSettings.isSettingsLoading,
+      composerSettings.supportsPlanMode,
+      onSettingsChange,
+      isSendingTurn,
+      isSubmittingPrompt,
+      showStopButton
+    ]
+  );
+
+  const handlePaletteKeyDown = useStableEventCallback(
+    (event: KeyboardEvent): boolean =>
+      handleFileMentionKeyDown(event) ||
+      handleSlashPaletteKeyDown(event) ||
+      handleSlashCommandMenuKeyDown(event) ||
+      handlePlanModeToggleKeyDown(event)
+  );
+
+  useEffect(() => {
+    if (!showPalette || workspaceReferencePickerOpen) {
+      return;
+    }
+    const handleDocumentKeyDown = (event: KeyboardEvent): void => {
+      const eventTarget = event.target;
+      if (!(eventTarget instanceof Node)) {
+        return;
+      }
+      const isComposerEvent =
+        composerRef.current?.contains(eventTarget) ?? false;
+      const isPaletteEvent =
+        paletteContentRef.current?.contains(eventTarget) ?? false;
+      if (!isComposerEvent && !isPaletteEvent) {
+        return;
+      }
+      if (isAgentRichTextImeComposing(event)) {
+        return;
+      }
+      if (handlePaletteKeyDown(event)) {
+        event.stopPropagation();
+      }
+    };
+
+    document.addEventListener("keydown", handleDocumentKeyDown, {
+      capture: true
+    });
+    return () => {
+      document.removeEventListener("keydown", handleDocumentKeyDown, {
+        capture: true
+      });
+    };
+  }, [handlePaletteKeyDown, showPalette, workspaceReferencePickerOpen]);
+
+  const handleFileMentionSuggestionChange = useCallback(
+    (state: AgentFileMentionSuggestionState | null): void => {
+      setFileMentionSuggestion(state);
+      if (!state) {
+        mentionControllerRef.current?.close();
+        return;
+      }
+      setIsPaletteOpen(true);
+      mentionControllerRef.current?.updateQuery({
+        workspaceId,
+        currentUserId,
+        query: state.query,
+        sectionKey: selectedProjectSectionKey || null,
+        sessionCwd: selectedProjectPath || null
+      });
+    },
+    [currentUserId, selectedProjectPath, selectedProjectSectionKey, workspaceId]
+  );
+
+  useEffect(() => {
+    if (!showFileMentionPalette && shouldCenterMentionHighlight) {
+      setShouldCenterMentionHighlight(false);
+    }
+  }, [shouldCenterMentionHighlight, showFileMentionPalette]);
+
+  useEffect(() => {
+    if (!isActive) {
+      closeFileMentionPalette();
+      return;
+    }
+    if (!showFileMentionPalette) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      const isInsideComposer = composerRef.current?.contains(target) ?? false;
+      const isInsidePalette =
+        paletteContentRef.current?.contains(target) ?? false;
+      if (
+        target instanceof Element &&
+        target.closest(MENTION_PALETTE_DISMISS_INTERACTION_SELECTOR)
+      ) {
+        closeOpenPalette();
+        return;
+      }
+      if (!isInsideComposer && !isInsidePalette) {
+        closeOpenPalette();
+      }
+    };
+    const handleFocusIn = (event: FocusEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      const isInsideComposer = composerRef.current?.contains(target) ?? false;
+      const isInsidePalette =
+        paletteContentRef.current?.contains(target) ?? false;
+      if (!isInsideComposer && !isInsidePalette) {
+        closeOpenPalette();
+      }
+    };
+    const handleWindowResize = (): void => {
+      closeOpenPalette();
+    };
+    const handleWindowBlur = (): void => {
+      closeOpenPalette();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, {
+      capture: true
+    });
+    document.addEventListener("focusin", handleFocusIn, { capture: true });
+    window.addEventListener("resize", handleWindowResize);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, {
+        capture: true
+      });
+      document.removeEventListener("focusin", handleFocusIn, {
+        capture: true
+      });
+      window.removeEventListener("resize", handleWindowResize);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [
+    closeFileMentionPalette,
+    closeOpenPalette,
+    composerRef,
+    paletteContentRef,
+    showFileMentionPalette,
+    isActive
+  ]);
+
+  return {
+    clearActiveFileMentionTrigger,
+    closeFileMentionPalette,
+    cycleFileMentionFilter,
+    handleFileMentionSuggestionChange,
+    handleFileMentionKeyDown,
+    handlePaletteKeyDown,
+    handleMentionHighlightChange,
+    moveFileMentionSelection,
+    navigateFileMentionHierarchy,
+    navigateIntoFileMentionItem,
+    selectFileMention
+  };
+}

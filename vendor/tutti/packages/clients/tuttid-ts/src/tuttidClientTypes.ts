@@ -1,0 +1,1153 @@
+import type {
+  AddIssueManagerContextRefsRequest,
+  AppendAgentSessionRecordingActivityEventsRequest,
+  AppendAgentSessionRecordingActivityEventsResponse,
+  AgentSessionRecording,
+  AgentSessionReplayTransportPlayback,
+  AgentSessionReplayWorkspaceLaunch,
+  ImportAgentSessionCassettesRequest,
+  ImportAgentSessionCassettesResponse,
+  AccountLoginStartResponse,
+  AccountLoginStatusResponse,
+  AccountProductSummaryResponse,
+  AccountUserInfo,
+  GlobalAgentActivityFilterOptionsResponse,
+  GlobalAgentActivitySessionListResponse,
+  AgentProviderComposerOptionsResponse,
+  AgentProviderRuntimeCatalogResponse,
+  AgentProviderProbeResponse,
+  AgentProviderActionId,
+  AgentProviderActionRunResponse,
+  AppReferenceListRequest,
+  AppReferenceListResponse,
+  AppReferenceSearchRequest,
+  AppReferenceSearchResponse,
+  AgentProviderStatusListResponse,
+  AgentQuickPrompt,
+  AgentQuickPromptListResponse,
+  AgentTargetSetupSnapshot,
+  AgentTargetAccountUsageProbeResult,
+  AuthenticateAgentTargetRuntimeRequest,
+  InstallAgentTargetRuntimeRequest,
+  WorkspaceAgentTurnCancelResponse,
+  WorkspaceAgentSideCapabilities,
+  WorkspaceAgentSideConversation,
+  WorkspaceAgentSideInteractiveResponse,
+  WorkspaceAgentSideTurnCancelResponse,
+  WorkspaceAgentSideTurnResponse,
+  OpenWorkspaceAgentSideConversationRequest,
+  SendWorkspaceAgentSideConversationInputRequest,
+  SubmitWorkspaceAgentSideConversationInteractiveRequest,
+  ClearWorkspaceAgentSessionsResponse,
+  GoalControlWorkspaceAgentSessionResponse,
+  GetWorkspaceAgentSessionGoalResponse,
+  ReconcileWorkspaceAgentSessionGoalResponse,
+  WorkspaceAgentSessionGoalControlRequest,
+  CliCapabilitiesResponse,
+  AgentSessionComposerSettings,
+  GetAgentProviderComposerOptionsRequest,
+  SetAgentProviderRuntimeSelectionRequest,
+  GetWorkspaceAppFactoryAgentTargetComposerOptionsRequest,
+  CompleteIssueManagerRunRequest,
+  CheckUserProjectPathRequest,
+  CreateIssueManagerIssueRequest,
+  CreateIssueManagerRunRequest,
+  StartIssueManagerRunRequest,
+  CreateIssueManagerTaskRequest,
+  CreateIssueManagerTasksRequest,
+  CancelIssueManagerExecutionResponse,
+  CreateIssueManagerTopicRequest,
+  CreateAgentQuickPromptRequest,
+  CreateWorkspaceAgentSessionRequest,
+  StartAgentSessionRecordingRequest,
+  CreateWorkspaceAppFactoryJobRequest,
+  CreateWorkspaceTerminalRequest,
+  DeleteWorkspaceAgentSessionResponse,
+  DeleteWorkspaceAgentSessionsBatchRequest,
+  DeleteWorkspaceAgentSessionsBatchResponse,
+  DeleteIssueManagerContextRefResponse,
+  DeleteIssueManagerIssueResponse,
+  DeleteIssueManagerTaskResponse,
+  DeleteIssueManagerTopicResponse,
+  DeleteWorkspaceFileEntryResponse,
+  DeleteWorkspaceResponse,
+  DeleteWorkspaceAppResponse,
+  DeleteUserProjectRequest,
+  DeleteAgentQuickPromptRequest,
+  DesktopPreferencesStateResponse,
+  DesktopUpdateAdmissionRefreshResult,
+  DesktopUpdateAdmissionRefreshTrigger,
+  DesktopUpdateAdmissionSnapshot,
+  DeletedAgentConversationPurgeResult,
+  EditRetryWorkspaceAgentTurnRequest,
+  ExportWorkspaceAppRequest,
+  ExportWorkspaceAppResponse,
+  ExternalAgentImportResultResponse,
+  ExternalAgentImportScanRequest,
+  ExternalAgentImportScanResponse,
+  ForkWorkspaceAgentSessionRequest,
+  WorkspaceAgentSessionForkOperation,
+  FixWorkspaceAppFactoryJobRequest,
+  HealthStatusResponse,
+  InstallWorkspaceAppRequest,
+  ImportExternalAgentSessionsRequest,
+  LoadLocalWorkspaceAppRequest,
+  IssueManagerContextRefsResponse,
+  IssueManagerAttachmentContentResponse,
+  IssueManagerIssue,
+  IssueManagerIssueDetailResponse,
+  IssueManagerIssueListResponse,
+  IssueManagerReferenceSearchRequest,
+  IssueManagerReferenceSearchResponse,
+  IssueManagerRun,
+  IssueManagerRunEnvelope,
+  IssueManagerRunListResponse,
+  IssueManagerStatus,
+  IssueManagerTask,
+  IssueManagerTaskDetailResponse,
+  IssueManagerTaskListResponse,
+  IssueManagerTopic,
+  IssueManagerTopicListResponse,
+  ListAgentTargetsResponse,
+  AgentTarget,
+  ListWorkspacesResponse,
+  MobileRemoteDevicePairing,
+  MobileRemotePairingChallengeResponse,
+  MobileRemotePairingConfirmResponse,
+  MobileRemotePairingListResponse,
+  MobileRemotePairingStartResponse,
+  CopyWorkspaceFileEntryRequest,
+  MoveWorkspaceFileEntryRequest,
+  MoveUserProjectRequest,
+  MoveAgentQuickPromptRequest,
+  PinUserProjectRequest,
+  RenameWorkspaceFileEntryRequest,
+  RenameAgentSessionRecordingRequest,
+  PrepareWorkspaceAppUploadRequest,
+  PrepareAgentSessionReplayWorkspaceRequest,
+  PrepareWorkspaceAppUploadResponse,
+  PreflightUploadWorkspaceFilesResponse,
+  PutDesktopPreferencesRequest,
+  ImportWorkspaceAppRequest,
+  RecoverWorkspaceAgentEditRetryRequest,
+  ReplaceWorkspaceAppIconRequest,
+  ReloadLocalWorkspaceAppRequest,
+  ResizeWorkspaceTerminalRequest,
+  SendWorkspaceAgentSessionInputResponse,
+  SubmitWorkspaceAgentPlanDecisionRequest,
+  SendWorkspaceAgentSessionInputRequest,
+  SubmitWorkspaceAgentInteractiveRequest,
+  TrackEvent,
+  TrackEventsRequest,
+  UpdateWorkspaceAgentSessionPinRequest,
+  UpdateWorkspaceAgentSessionTitleRequest,
+  UpdateWorkspaceAgentSessionVisibilityRequest,
+  UpdateAgentQuickPromptRequest,
+  UpdateAgentSessionReplayTransportPlaybackRequest,
+  UpdateTuttiModeActivationRequest,
+  UpdateTuttiModeActivationResponse,
+  WorkspaceGitPatchRequest,
+  WorkspaceGitPatchResponse,
+  UpdateIssueManagerIssueRequest,
+  UpdateIssueManagerTaskRequest,
+  UpdateIssueManagerTopicRequest,
+  UploadWorkspaceFilesResponse,
+  UseUserProjectRequest,
+  WriteWorkspaceFileTextRequest,
+  WorkbenchSnapshot,
+  WorkspaceWorkflowSnapshot,
+  DecideWorkspaceWorkflowCheckpointRequest,
+  WorkspaceAgentSession,
+  WorkspaceAgentSessionDetailProjection,
+  WorkspaceAgentEditRetryResponse,
+  TuttiModeActivation,
+  WorkspaceAgentSessionDetailResponse,
+  WorkspaceAgentPlanDecisionResponse,
+  WorkspaceAgentProvider,
+  WorkspaceAgentSessionAttachmentResponse,
+  WorkspaceAgentGeneratedFileListResponse,
+  WorkspaceAgentSessionGitBranchesResponse,
+  WorkspaceGitPatchSupportResponse,
+  WorkspaceAgentSessionWorktreeSupportResponse,
+  WorkspaceManagedWorktreeListResponse,
+  DeleteWorkspaceManagedWorktreeResponse,
+  WorkspaceAgentSessionPageResponse,
+  WorkspaceAgentSessionSectionDeletionCandidatesResponse,
+  WorkspaceAgentSessionSectionPageResponse,
+  WorkspaceAgentSessionSectionsResponse,
+  WorkspaceAgentSessionMessagesResponse,
+  WorkspaceAgentSessionListResponse,
+  WorkspaceDeletedAgentSessionListResponse,
+  RestoreWorkspaceDeletedAgentSessionResponse,
+  WorkspaceFileDirectoryResponse,
+  WorkspaceFileEntryResponse,
+  WorkspaceFileFilterKind,
+  WorkspaceFilePreviewResponse,
+  WorkspaceFileSearchResponse,
+  WorkspaceFileTreeSnapshotResponse,
+  WorkspaceApp,
+  WorkspaceAppFactoryJob,
+  WorkspaceAppFactoryJobListResponse,
+  WorkspaceAppListResponse,
+  WorkspaceAppMentionCandidatesResponse,
+  WorkspaceAppUploadedFile,
+  PublishWorkspaceAppFactoryJobResponse,
+  RollbackWorkspaceAppRequest,
+  WorkspaceSummary,
+  WorkspaceTerminalCloseGuard,
+  WorkspaceTerminalListResponse,
+  WorkspaceTerminalSession,
+  WorkspaceTerminalSnapshot,
+  UserProject,
+  UserProjectListResponse,
+  UserProjectPathCheckResponse
+} from "./generated/index.ts";
+import type { WorkspaceAgentConfigurationClient } from "./workspaceAgentConfigurationClient.ts";
+import type { CollaborationRunsClient } from "./collaborationRunsClient.ts";
+import type { WorkspaceIssueOrchestrationClient } from "./workspaceIssueOrchestrationClient.ts";
+
+export type TuttidRequestOptions = Omit<
+  RequestInit,
+  "body" | "headers" | "method"
+>;
+
+export type AgentCommandRequestOptions = TuttidRequestOptions &
+  (
+    | {
+        agentCommandOrigin: "renderer-engine";
+      }
+    | {
+        agentCommandOrigin?: never;
+      }
+  );
+
+export type TuttidTrackEvent = TrackEvent;
+export type TuttidTrackEventsRequest = TrackEventsRequest;
+
+export interface MobileRemoteAccessClient {
+  startMobileRemotePairing(): Promise<MobileRemotePairingStartResponse>;
+  getMobileRemotePairingChallenge(
+    challengeID: string
+  ): Promise<MobileRemotePairingChallengeResponse>;
+  confirmMobileRemotePairing(
+    challengeID: string
+  ): Promise<MobileRemotePairingConfirmResponse>;
+  listMobileRemotePairings(): Promise<MobileRemotePairingListResponse>;
+  revokeMobileRemotePairing(
+    pairingID: string
+  ): Promise<MobileRemoteDevicePairing>;
+}
+
+export interface TuttidClient
+  extends
+    CollaborationRunsClient,
+    WorkspaceAgentConfigurationClient,
+    WorkspaceIssueOrchestrationClient {
+  getGlobalAgentActivityFilterOptions(): Promise<GlobalAgentActivityFilterOptionsResponse>;
+  listGlobalAgentActivitySessions(
+    filters: GlobalAgentActivityFilters
+  ): Promise<GlobalAgentActivitySessionListResponse>;
+  listAgentQuickPrompts(): Promise<AgentQuickPromptListResponse>;
+  createAgentQuickPrompt(
+    request: CreateAgentQuickPromptRequest
+  ): Promise<AgentQuickPrompt>;
+  updateAgentQuickPrompt(
+    promptID: string,
+    request: UpdateAgentQuickPromptRequest
+  ): Promise<AgentQuickPrompt>;
+  deleteAgentQuickPrompt(
+    promptID: string,
+    request: DeleteAgentQuickPromptRequest
+  ): Promise<void>;
+  moveAgentQuickPrompt(
+    request: MoveAgentQuickPromptRequest
+  ): Promise<AgentQuickPromptListResponse>;
+  listAgentTargets(): Promise<ListAgentTargetsResponse>;
+  probeAgentTargetAccountUsage(
+    agentTargetID: string
+  ): Promise<AgentTargetAccountUsageProbeResult>;
+  setSystemAgentTargetEnabled(
+    agentTargetID: string,
+    enabled: boolean
+  ): Promise<AgentTarget>;
+  getAgentTargetSetup(
+    workspaceID: string,
+    agentTargetID: string
+  ): Promise<AgentTargetSetupSnapshot>;
+  installAgentTargetRuntime(
+    workspaceID: string,
+    agentTargetID: string,
+    request: InstallAgentTargetRuntimeRequest
+  ): Promise<AgentTargetSetupSnapshot>;
+  authenticateAgentTargetRuntime(
+    workspaceID: string,
+    agentTargetID: string,
+    request: AuthenticateAgentTargetRuntimeRequest
+  ): Promise<AgentTargetSetupSnapshot>;
+  startAccountLogin(): Promise<AccountLoginStartResponse>;
+  getAccountLoginStatus(attemptID: string): Promise<AccountLoginStatusResponse>;
+  getAccountUserInfo(): Promise<AccountUserInfo | null>;
+  getAccountProductSummary(): Promise<AccountProductSummaryResponse>;
+  dismissAccountRegistrationCreditsReward(rewardID: string): Promise<void>;
+  logoutAccount(): Promise<void>;
+  listCliCapabilities(
+    workspaceID?: string,
+    options?: { includeHidden?: boolean; includeIntegration?: boolean }
+  ): Promise<CliCapabilitiesResponse>;
+  listWorkspaceAppMentionCandidates(
+    workspaceID: string
+  ): Promise<WorkspaceAppMentionCandidatesResponse>;
+  addWorkspaceIssueContextRefs(
+    workspaceID: string,
+    issueID: string,
+    request: AddIssueManagerContextRefsRequest
+  ): Promise<IssueManagerContextRefsResponse>;
+  addWorkspaceIssueTaskContextRefs(
+    workspaceID: string,
+    issueID: string,
+    taskID: string,
+    request: AddIssueManagerContextRefsRequest
+  ): Promise<IssueManagerContextRefsResponse>;
+  completeWorkspaceIssueTaskRun(
+    workspaceID: string,
+    issueID: string,
+    taskID: string,
+    runID: string,
+    request: CompleteIssueManagerRunRequest
+  ): Promise<IssueManagerRunEnvelope>;
+  completeWorkspaceIssueRun(
+    workspaceID: string,
+    issueID: string,
+    runID: string,
+    request: CompleteIssueManagerRunRequest
+  ): Promise<IssueManagerRunEnvelope>;
+  createWorkspaceIssue(
+    workspaceID: string,
+    request: CreateIssueManagerIssueRequest
+  ): Promise<IssueManagerIssue>;
+  createWorkspaceIssueTopic(
+    workspaceID: string,
+    request: CreateIssueManagerTopicRequest
+  ): Promise<IssueManagerTopic>;
+  createWorkspaceIssueTask(
+    workspaceID: string,
+    issueID: string,
+    request: CreateIssueManagerTaskRequest
+  ): Promise<IssueManagerTask>;
+  createWorkspaceIssueTasks(
+    workspaceID: string,
+    issueID: string,
+    request: CreateIssueManagerTasksRequest
+  ): Promise<IssueManagerTask[]>;
+  createWorkspaceIssueTaskRun(
+    workspaceID: string,
+    issueID: string,
+    taskID: string,
+    request: CreateIssueManagerRunRequest
+  ): Promise<IssueManagerRun>;
+  createWorkspaceIssueRun(
+    workspaceID: string,
+    issueID: string,
+    request: CreateIssueManagerRunRequest
+  ): Promise<IssueManagerRun>;
+  startWorkspaceIssueRun(
+    workspaceID: string,
+    issueID: string,
+    request: StartIssueManagerRunRequest
+  ): Promise<IssueManagerRun>;
+  createWorkspaceFile(
+    workspaceID: string,
+    path: string
+  ): Promise<WorkspaceFileEntryResponse>;
+  readWorkspaceFilePreview(
+    workspaceID: string,
+    path: string
+  ): Promise<WorkspaceFilePreviewResponse>;
+  writeWorkspaceFileText(
+    workspaceID: string,
+    request: WriteWorkspaceFileTextRequest
+  ): Promise<WorkspaceFileEntryResponse>;
+  createWorkspaceFileDirectory(
+    workspaceID: string,
+    path: string
+  ): Promise<WorkspaceFileEntryResponse>;
+  createWorkspace(request: { name: string }): Promise<WorkspaceSummary>;
+  createWorkspaceAgentSession(
+    workspaceID: string,
+    request: CreateWorkspaceAgentSessionRequest,
+    requestOptions?: AgentCommandRequestOptions
+  ): Promise<WorkspaceAgentSession>;
+  forkWorkspaceAgentSession(
+    workspaceID: string,
+    agentSessionID: string,
+    request: ForkWorkspaceAgentSessionRequest,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionForkOperation>;
+  resolveWorkspaceAgentSideCapabilities?(
+    workspaceID: string,
+    agentSessionID: string
+  ): Promise<WorkspaceAgentSideCapabilities>;
+  openWorkspaceAgentSideConversation?(
+    workspaceID: string,
+    agentSessionID: string,
+    request: OpenWorkspaceAgentSideConversationRequest
+  ): Promise<WorkspaceAgentSideConversation>;
+  closeWorkspaceAgentSideConversation?(
+    workspaceID: string,
+    sideAgentSessionID: string
+  ): Promise<void>;
+  sendWorkspaceAgentSideConversationInput?(
+    workspaceID: string,
+    sideAgentSessionID: string,
+    request: SendWorkspaceAgentSideConversationInputRequest
+  ): Promise<WorkspaceAgentSideTurnResponse>;
+  cancelWorkspaceAgentSideConversationTurn?(
+    workspaceID: string,
+    sideAgentSessionID: string,
+    turnID: string
+  ): Promise<WorkspaceAgentSideTurnCancelResponse>;
+  submitWorkspaceAgentSideConversationInteractive?(
+    workspaceID: string,
+    sideAgentSessionID: string,
+    turnID: string,
+    requestID: string,
+    request: SubmitWorkspaceAgentSideConversationInteractiveRequest
+  ): Promise<WorkspaceAgentSideInteractiveResponse>;
+  getWorkspaceAgentSessionForkOperation(
+    workspaceID: string,
+    operationID: string,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionForkOperation>;
+  acknowledgeWorkspaceAgentSessionForkOperation(
+    workspaceID: string,
+    operationID: string,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionForkOperation>;
+  appendAgentSessionRecordingActivityEvents(
+    workspaceID: string,
+    recordingID: string,
+    request: AppendAgentSessionRecordingActivityEventsRequest
+  ): Promise<AppendAgentSessionRecordingActivityEventsResponse>;
+  startAgentSessionRecording(
+    workspaceID: string,
+    request: StartAgentSessionRecordingRequest
+  ): Promise<AgentSessionRecording>;
+  listAgentSessionRecordings(
+    workspaceID: string
+  ): Promise<AgentSessionRecording[]>;
+  importAgentSessionCassettes(
+    workspaceID: string,
+    request: ImportAgentSessionCassettesRequest
+  ): Promise<ImportAgentSessionCassettesResponse>;
+  getAgentSessionRecording(
+    workspaceID: string,
+    recordingID: string
+  ): Promise<AgentSessionRecording>;
+  renameAgentSessionRecording(
+    workspaceID: string,
+    recordingID: string,
+    request: RenameAgentSessionRecordingRequest
+  ): Promise<AgentSessionRecording>;
+  deleteAgentSessionRecording(
+    workspaceID: string,
+    recordingID: string
+  ): Promise<void>;
+  completeAgentSessionRecording(
+    workspaceID: string,
+    recordingID: string
+  ): Promise<AgentSessionRecording>;
+  cancelAgentSessionRecording(
+    workspaceID: string,
+    recordingID: string
+  ): Promise<AgentSessionRecording>;
+  prepareAgentSessionReplayWorkspace(
+    workspaceID: string,
+    request: PrepareAgentSessionReplayWorkspaceRequest
+  ): Promise<AgentSessionReplayWorkspaceLaunch>;
+  getAgentSessionReplayTransportPlayback(
+    cassetteID: string
+  ): Promise<AgentSessionReplayTransportPlayback | null>;
+  updateAgentSessionReplayTransportPlayback(
+    cassetteID: string,
+    request: UpdateAgentSessionReplayTransportPlaybackRequest
+  ): Promise<AgentSessionReplayTransportPlayback>;
+  createWorkspaceTerminal(
+    workspaceID: string,
+    request?: CreateWorkspaceTerminalRequest
+  ): Promise<WorkspaceTerminalSession>;
+  deleteWorkspaceIssue(
+    workspaceID: string,
+    issueID: string
+  ): Promise<DeleteIssueManagerIssueResponse>;
+  deleteWorkspaceIssueTask(
+    workspaceID: string,
+    issueID: string,
+    taskID: string
+  ): Promise<DeleteIssueManagerTaskResponse>;
+  deleteWorkspaceIssueTopic(
+    workspaceID: string,
+    topicID: string
+  ): Promise<DeleteIssueManagerTopicResponse>;
+  deleteWorkspace(workspaceID: string): Promise<DeleteWorkspaceResponse>;
+  deleteWorkspaceFileEntry(
+    workspaceID: string,
+    request: { kind?: WorkspaceFileFilterKind | null; path: string }
+  ): Promise<DeleteWorkspaceFileEntryResponse>;
+  deleteWorkspaceAgentSession(
+    workspaceID: string,
+    agentSessionID: string
+  ): Promise<DeleteWorkspaceAgentSessionResponse>;
+  deleteWorkspaceAgentSessionsBatch(
+    workspaceID: string,
+    request: DeleteWorkspaceAgentSessionsBatchRequest,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<DeleteWorkspaceAgentSessionsBatchResponse>;
+  clearWorkspaceAgentSessions(
+    workspaceID: string
+  ): Promise<ClearWorkspaceAgentSessionsResponse>;
+  listWorkspaceDeletedAgentSessions(
+    workspaceID: string,
+    request?: {
+      cursor?: string;
+      limit?: number;
+      projectPath?: string;
+      projectScope?: "unscoped";
+      railSectionKey?: string;
+      searchQuery?: string;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceDeletedAgentSessionListResponse>;
+  restoreWorkspaceDeletedAgentSession(
+    workspaceID: string,
+    agentSessionID: string,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<RestoreWorkspaceDeletedAgentSessionResponse>;
+  purgeWorkspaceDeletedAgentSession(
+    workspaceID: string,
+    agentSessionID: string,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<DeletedAgentConversationPurgeResult>;
+  purgeWorkspaceDeletedAgentSessions(
+    workspaceID: string,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<DeletedAgentConversationPurgeResult>;
+  moveWorkspaceFileEntry(
+    workspaceID: string,
+    request: MoveWorkspaceFileEntryRequest
+  ): Promise<WorkspaceFileEntryResponse>;
+  renameWorkspaceFileEntry(
+    workspaceID: string,
+    request: RenameWorkspaceFileEntryRequest
+  ): Promise<WorkspaceFileEntryResponse>;
+  copyWorkspaceFileEntry(
+    workspaceID: string,
+    request: CopyWorkspaceFileEntryRequest
+  ): Promise<WorkspaceFileEntryResponse>;
+  getDesktopPreferences(): Promise<DesktopPreferencesStateResponse>;
+  getDesktopUpdateAdmissionSnapshot(
+    requestOptions?: TuttidRequestOptions
+  ): Promise<DesktopUpdateAdmissionSnapshot>;
+  getDesktopUpdateAdmissionStartup(
+    requestOptions?: TuttidRequestOptions
+  ): Promise<DesktopUpdateAdmissionSnapshot>;
+  refreshDesktopUpdateAdmission(
+    trigger: DesktopUpdateAdmissionRefreshTrigger,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<DesktopUpdateAdmissionRefreshResult>;
+  purgeDeletedAgentConversations(): Promise<DeletedAgentConversationPurgeResult>;
+  getHealth(): Promise<HealthStatusResponse>;
+  getStartupWorkspace(): Promise<WorkspaceSummary | null>;
+  getWorkspace(workspaceID: string): Promise<WorkspaceSummary>;
+  getWorkspaceAgentSession(
+    workspaceID: string,
+    agentSessionID: string,
+    projection?: WorkspaceAgentSessionDetailProjection,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionDetailResponse>;
+  getAgentProviderComposerOptions(
+    provider: WorkspaceAgentProvider,
+    request?: GetAgentProviderComposerOptionsRequest,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<AgentProviderComposerOptionsResponse>;
+  getAgentProviderStatuses(request?: {
+    providers?: WorkspaceAgentProvider[];
+    /**
+     * Opt into the network connectivity probe. Off by default so the dock /
+     * startup detection stays local and never blocks on the network; only the
+     * agent-env wizard's network diagnostic sets this.
+     */
+    includeNetwork?: boolean;
+    /**
+     * Opt into cached remote provider CLI update discovery. Off by default so
+     * ordinary readiness reads remain local.
+     */
+    includeUpdates?: boolean;
+    /** Bypass only the daemon provider-readiness cache. */
+    refresh?: boolean;
+    /**
+     * Bypass only cached update metadata when includeUpdates is true. This
+     * does not refresh local readiness.
+     */
+    refreshUpdates?: boolean;
+  }): Promise<AgentProviderStatusListResponse>;
+  getAgentProviderRuntimeCandidates(
+    provider: WorkspaceAgentProvider
+  ): Promise<AgentProviderRuntimeCatalogResponse>;
+  setAgentProviderRuntimeSelection(
+    provider: WorkspaceAgentProvider,
+    request: SetAgentProviderRuntimeSelectionRequest
+  ): Promise<AgentProviderRuntimeCatalogResponse>;
+  probeAgentProvider(
+    provider: WorkspaceAgentProvider
+  ): Promise<AgentProviderProbeResponse>;
+  runAgentProviderAction(
+    provider: WorkspaceAgentProvider,
+    actionID: AgentProviderActionId
+  ): Promise<AgentProviderActionRunResponse>;
+  getWorkspaceIssueDetail(
+    workspaceID: string,
+    issueID: string
+  ): Promise<IssueManagerIssueDetailResponse>;
+  searchWorkspaceIssueReferences(
+    workspaceID: string,
+    request: IssueManagerReferenceSearchRequest
+  ): Promise<IssueManagerReferenceSearchResponse>;
+  getWorkspaceIssueTaskDetail(
+    workspaceID: string,
+    issueID: string,
+    taskID: string
+  ): Promise<IssueManagerTaskDetailResponse>;
+  getWorkspaceIssueTaskRun(
+    workspaceID: string,
+    issueID: string,
+    taskID: string,
+    runID: string
+  ): Promise<IssueManagerRunEnvelope>;
+  getWorkspaceIssueRun(
+    workspaceID: string,
+    issueID: string,
+    runID: string
+  ): Promise<IssueManagerRunEnvelope>;
+  getWorkspaceTerminal(
+    workspaceID: string,
+    terminalID: string
+  ): Promise<WorkspaceTerminalSession>;
+  getWorkspaceTerminalSnapshot(
+    workspaceID: string,
+    terminalID: string
+  ): Promise<WorkspaceTerminalSnapshot>;
+  getWorkspaceWorkbench(workspaceID: string): Promise<WorkbenchSnapshot>;
+  getWorkspaceAgentSessionTuttiModeActivation(
+    workspaceID: string,
+    agentSessionID: string,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<TuttiModeActivation | null>;
+  updateWorkspaceAgentSessionTuttiModeActivation(
+    workspaceID: string,
+    agentSessionID: string,
+    request: UpdateTuttiModeActivationRequest,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<UpdateTuttiModeActivationResponse>;
+  listPendingWorkspaceWorkflows(
+    workspaceID: string,
+    sourceSessionID: string
+  ): Promise<WorkspaceWorkflowSnapshot[]>;
+  listWorkspaceWorkflows(
+    workspaceID: string,
+    sourceSessionID: string
+  ): Promise<WorkspaceWorkflowSnapshot[]>;
+  decideWorkspaceWorkflowCheckpoint(
+    workspaceID: string,
+    workflowID: string,
+    checkpointID: string,
+    request: DecideWorkspaceWorkflowCheckpointRequest
+  ): Promise<WorkspaceWorkflowSnapshot>;
+  listWorkspaceApps(workspaceID: string): Promise<WorkspaceAppListResponse>;
+  listWorkspaceAppReferences(
+    workspaceID: string,
+    appID: string,
+    request: AppReferenceListRequest
+  ): Promise<AppReferenceListResponse>;
+  searchWorkspaceAppReferences(
+    workspaceID: string,
+    appID: string,
+    request: AppReferenceSearchRequest
+  ): Promise<AppReferenceSearchResponse>;
+  prepareWorkspaceAppUpload(
+    workspaceID: string,
+    appID: string,
+    request: PrepareWorkspaceAppUploadRequest
+  ): Promise<PrepareWorkspaceAppUploadResponse>;
+  completeWorkspaceAppUpload(
+    workspaceID: string,
+    appID: string,
+    uploadID: string
+  ): Promise<WorkspaceAppUploadedFile>;
+  cancelWorkspaceAppUpload(
+    workspaceID: string,
+    appID: string,
+    uploadID: string
+  ): Promise<void>;
+  refreshWorkspaceAppCatalog(
+    workspaceID: string
+  ): Promise<WorkspaceAppListResponse>;
+  installWorkspaceApp(
+    workspaceID: string,
+    appID: string,
+    request?: InstallWorkspaceAppRequest
+  ): Promise<WorkspaceApp>;
+  exportWorkspaceApp(
+    workspaceID: string,
+    appID: string,
+    request: ExportWorkspaceAppRequest
+  ): Promise<ExportWorkspaceAppResponse>;
+  importWorkspaceApp(
+    workspaceID: string,
+    request: ImportWorkspaceAppRequest
+  ): Promise<WorkspaceApp>;
+  loadLocalWorkspaceApp(
+    workspaceID: string,
+    request: LoadLocalWorkspaceAppRequest
+  ): Promise<WorkspaceApp>;
+  uninstallWorkspaceApp(
+    workspaceID: string,
+    appID: string
+  ): Promise<WorkspaceApp>;
+  deleteWorkspaceApp(
+    workspaceID: string,
+    appID: string
+  ): Promise<DeleteWorkspaceAppResponse>;
+  launchWorkspaceApp(workspaceID: string, appID: string): Promise<WorkspaceApp>;
+  retryWorkspaceApp(workspaceID: string, appID: string): Promise<WorkspaceApp>;
+  rollbackWorkspaceApp(
+    workspaceID: string,
+    appID: string,
+    request: RollbackWorkspaceAppRequest
+  ): Promise<WorkspaceApp>;
+  replaceWorkspaceAppIcon(
+    workspaceID: string,
+    appID: string,
+    request: ReplaceWorkspaceAppIconRequest
+  ): Promise<WorkspaceApp>;
+  reloadLocalWorkspaceApp(
+    workspaceID: string,
+    appID: string,
+    request?: ReloadLocalWorkspaceAppRequest
+  ): Promise<WorkspaceApp>;
+  listWorkspaceAppFactoryJobs(
+    workspaceID: string
+  ): Promise<WorkspaceAppFactoryJobListResponse>;
+  createWorkspaceAppFactoryJob(
+    workspaceID: string,
+    request: CreateWorkspaceAppFactoryJobRequest
+  ): Promise<WorkspaceAppFactoryJob>;
+  getWorkspaceAppFactoryJob(
+    workspaceID: string,
+    jobID: string
+  ): Promise<WorkspaceAppFactoryJob>;
+  getWorkspaceAppFactoryAgentTargetComposerOptions(
+    workspaceID: string,
+    agentTargetID: string,
+    request?: GetWorkspaceAppFactoryAgentTargetComposerOptionsRequest
+  ): Promise<AgentProviderComposerOptionsResponse>;
+  deleteWorkspaceAppFactoryJob(
+    workspaceID: string,
+    jobID: string
+  ): Promise<WorkspaceAppFactoryJobListResponse>;
+  cancelWorkspaceAppFactoryJob(
+    workspaceID: string,
+    jobID: string
+  ): Promise<WorkspaceAppFactoryJob>;
+  retryWorkspaceAppFactoryJobValidation(
+    workspaceID: string,
+    jobID: string
+  ): Promise<WorkspaceAppFactoryJob>;
+  fixWorkspaceAppFactoryJob(
+    workspaceID: string,
+    jobID: string,
+    request: FixWorkspaceAppFactoryJobRequest
+  ): Promise<WorkspaceAppFactoryJob>;
+  prepareWorkspaceAppFactoryJobModification(
+    workspaceID: string,
+    jobID: string
+  ): Promise<WorkspaceAppFactoryJob>;
+  publishWorkspaceAppFactoryJob(
+    workspaceID: string,
+    jobID: string
+  ): Promise<PublishWorkspaceAppFactoryJobResponse>;
+  startEnabledWorkspaceApps(
+    workspaceID: string
+  ): Promise<WorkspaceAppListResponse>;
+  stopAllWorkspaceApps(workspaceID: string): Promise<WorkspaceAppListResponse>;
+  listWorkspaceIssues(
+    workspaceID: string,
+    request: {
+      pageSize?: number;
+      pageToken?: string;
+      searchQuery?: string;
+      statusFilter?: IssueManagerStatus | "all";
+      topicId: string;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<IssueManagerIssueListResponse>;
+  listWorkspaceIssueTopics(
+    workspaceID: string,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<IssueManagerTopicListResponse>;
+  listWorkspaceIssueTaskRuns(
+    workspaceID: string,
+    issueID: string,
+    taskID: string
+  ): Promise<IssueManagerRunListResponse>;
+  listWorkspaceIssueRuns(
+    workspaceID: string,
+    issueID: string
+  ): Promise<IssueManagerRunListResponse>;
+  listWorkspaceIssueTasks(
+    workspaceID: string,
+    issueID: string,
+    request?: {
+      pageSize?: number;
+      pageToken?: string;
+      searchQuery?: string;
+      statusFilter?: IssueManagerStatus | "all";
+    }
+  ): Promise<IssueManagerTaskListResponse>;
+  listWorkspaceTerminals(
+    workspaceID: string
+  ): Promise<WorkspaceTerminalListResponse>;
+  listWorkspaceAgentSessions(
+    workspaceID: string,
+    request?: {
+      agentTargetId?: string;
+      cursor?: string;
+      limit?: number;
+      searchQuery?: string;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionListResponse>;
+  listWorkspaceAgentSessionSections(
+    workspaceID: string,
+    request?: {
+      agentTargetId?: string;
+      limitPerSection?: number;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionSectionsResponse>;
+  listWorkspaceAgentSessionSectionPage(
+    workspaceID: string,
+    request: {
+      sectionKey: string;
+      agentTargetId?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionSectionPageResponse>;
+  listWorkspaceAgentSessionSectionDeletionCandidates(
+    workspaceID: string,
+    request: {
+      sectionKey: string;
+      agentTargetId?: string;
+      excludePinned?: boolean;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionSectionDeletionCandidatesResponse>;
+  listWorkspaceAgentPinnedSessionPage(
+    workspaceID: string,
+    request?: {
+      agentTargetId?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionPageResponse>;
+  listWorkspaceAgentGeneratedFiles(
+    workspaceID: string,
+    request: {
+      agentTargetIds?: string[];
+      cursor?: string;
+      limit?: number;
+      query?: string;
+      sectionKey: string;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentGeneratedFileListResponse>;
+  scanWorkspaceExternalAgentSessionImports(
+    workspaceID: string,
+    request?: ExternalAgentImportScanRequest
+  ): Promise<ExternalAgentImportScanResponse>;
+  importWorkspaceExternalAgentSessions(
+    workspaceID: string,
+    request: ImportExternalAgentSessionsRequest
+  ): Promise<ExternalAgentImportResultResponse>;
+  listWorkspaceAgentSessionMessages(
+    workspaceID: string,
+    agentSessionID: string,
+    request?: {
+      afterVersion?: number;
+      beforeVersion?: number;
+      order?: "asc" | "desc";
+      limit?: number;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSessionMessagesResponse>;
+  listWorkspaceFileDirectory(
+    workspaceID: string,
+    request?: {
+      includeHidden?: boolean;
+      path?: string;
+    }
+  ): Promise<WorkspaceFileDirectoryResponse>;
+  listWorkspaceRecentFiles(
+    workspaceID: string,
+    request?: {
+      limit?: number;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceFileDirectoryResponse>;
+  getWorkspaceFileTreeSnapshot(
+    workspaceID: string,
+    request?: {
+      includeHidden?: boolean;
+      path?: string;
+      prefetchBudgetMs?: number;
+      prefetchDepth?: number;
+    }
+  ): Promise<WorkspaceFileTreeSnapshotResponse>;
+  listWorkspaces(): Promise<ListWorkspacesResponse>;
+  checkUserProjectPath(
+    request: CheckUserProjectPathRequest
+  ): Promise<UserProjectPathCheckResponse>;
+  listUserProjects(): Promise<UserProjectListResponse>;
+  moveUserProject(
+    request: MoveUserProjectRequest
+  ): Promise<UserProjectListResponse>;
+  pinUserProject(
+    request: PinUserProjectRequest
+  ): Promise<UserProjectListResponse>;
+  openWorkspace(workspaceID: string): Promise<WorkspaceSummary>;
+  removeWorkspaceIssueContextRef(
+    workspaceID: string,
+    issueID: string,
+    contextRefID: string
+  ): Promise<DeleteIssueManagerContextRefResponse>;
+  readWorkspaceIssueAttachment(
+    workspaceID: string,
+    issueID: string,
+    contextRefID: string
+  ): Promise<IssueManagerAttachmentContentResponse>;
+  removeWorkspaceIssueTaskContextRef(
+    workspaceID: string,
+    issueID: string,
+    taskID: string,
+    contextRefID: string
+  ): Promise<DeleteIssueManagerContextRefResponse>;
+  updateWorkspace(
+    workspaceID: string,
+    request: {
+      name: string;
+    }
+  ): Promise<WorkspaceSummary>;
+  updateWorkspaceIssue(
+    workspaceID: string,
+    issueID: string,
+    request: UpdateIssueManagerIssueRequest
+  ): Promise<IssueManagerIssue>;
+  updateWorkspaceIssueTopic(
+    workspaceID: string,
+    topicID: string,
+    request: UpdateIssueManagerTopicRequest
+  ): Promise<IssueManagerTopic>;
+  updateWorkspaceIssueTask(
+    workspaceID: string,
+    issueID: string,
+    taskID: string,
+    request: UpdateIssueManagerTaskRequest
+  ): Promise<IssueManagerTask>;
+  cancelWorkspaceIssueExecution(
+    workspaceID: string,
+    issueID: string
+  ): Promise<CancelIssueManagerExecutionResponse>;
+  cancelTuttiModeExecution(
+    workspaceID: string,
+    issueID: string
+  ): Promise<CancelIssueManagerExecutionResponse>;
+  putWorkspaceWorkbench(
+    workspaceID: string,
+    snapshot: WorkbenchSnapshot
+  ): Promise<WorkbenchSnapshot>;
+  checkWorkspaceTerminalCloseGuard(
+    workspaceID: string,
+    terminalID: string
+  ): Promise<WorkspaceTerminalCloseGuard>;
+  resizeWorkspaceTerminal(
+    workspaceID: string,
+    terminalID: string,
+    request: ResizeWorkspaceTerminalRequest
+  ): Promise<WorkspaceTerminalSession>;
+  cancelWorkspaceAgentTurn(
+    workspaceID: string,
+    agentSessionID: string,
+    turnID: string,
+    requestOptions?: AgentCommandRequestOptions
+  ): Promise<WorkspaceAgentTurnCancelResponse>;
+  editRetry(
+    workspaceID: string,
+    agentSessionID: string,
+    turnID: string,
+    request: EditRetryWorkspaceAgentTurnRequest,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentEditRetryResponse>;
+  recoverEditRetry(
+    workspaceID: string,
+    agentSessionID: string,
+    operationID: string,
+    request: RecoverWorkspaceAgentEditRetryRequest,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentEditRetryResponse>;
+  goalControlWorkspaceAgentSession(
+    workspaceID: string,
+    agentSessionID: string,
+    request: WorkspaceAgentSessionGoalControlRequest,
+    requestOptions?: AgentCommandRequestOptions
+  ): Promise<GoalControlWorkspaceAgentSessionResponse>;
+  getWorkspaceAgentSessionGoal(
+    workspaceID: string,
+    agentSessionID: string
+  ): Promise<GetWorkspaceAgentSessionGoalResponse>;
+  reconcileWorkspaceAgentSessionGoal(
+    workspaceID: string,
+    agentSessionID: string
+  ): Promise<ReconcileWorkspaceAgentSessionGoalResponse>;
+  sendWorkspaceAgentSessionInput(
+    workspaceID: string,
+    agentSessionID: string,
+    request: SendWorkspaceAgentSessionInputRequest,
+    requestOptions?: AgentCommandRequestOptions
+  ): Promise<SendWorkspaceAgentSessionInputResponse>;
+  submitWorkspaceAgentPlanDecision(
+    workspaceID: string,
+    agentSessionID: string,
+    turnID: string,
+    requestID: string,
+    request: SubmitWorkspaceAgentPlanDecisionRequest,
+    requestOptions?: AgentCommandRequestOptions
+  ): Promise<WorkspaceAgentPlanDecisionResponse>;
+  readWorkspaceAgentSessionAttachment(
+    workspaceID: string,
+    agentSessionID: string,
+    attachmentID: string
+  ): Promise<WorkspaceAgentSessionAttachmentResponse>;
+  listWorkspaceAgentSessionGitBranches(
+    workspaceID: string,
+    agentSessionID: string
+  ): Promise<WorkspaceAgentSessionGitBranchesResponse>;
+  listWorkspaceGitBranches(
+    workspaceID: string,
+    workingDirectory: string
+  ): Promise<WorkspaceAgentSessionGitBranchesResponse>;
+  resolveWorkspaceGitPatchSupport(
+    workspaceID: string,
+    cwd: string
+  ): Promise<WorkspaceGitPatchSupportResponse>;
+  resolveWorkspaceAgentSessionWorktreeSupport(
+    workspaceID: string,
+    agentTargetId: string,
+    cwd: string
+  ): Promise<WorkspaceAgentSessionWorktreeSupportResponse>;
+  listWorkspaceManagedWorktrees(
+    workspaceID: string
+  ): Promise<WorkspaceManagedWorktreeListResponse>;
+  deleteWorkspaceManagedWorktree(
+    workspaceID: string,
+    worktreeID: string
+  ): Promise<DeleteWorkspaceManagedWorktreeResponse>;
+  applyWorkspaceGitPatch(
+    workspaceID: string,
+    request: WorkspaceGitPatchRequest
+  ): Promise<WorkspaceGitPatchResponse>;
+  updateWorkspaceAgentSessionSettings(
+    workspaceID: string,
+    agentSessionID: string,
+    request: AgentSessionComposerSettings,
+    requestOptions?: AgentCommandRequestOptions
+  ): Promise<WorkspaceAgentSession>;
+  updateWorkspaceAgentSessionPin(
+    workspaceID: string,
+    agentSessionID: string,
+    request: UpdateWorkspaceAgentSessionPinRequest,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSession>;
+  updateWorkspaceAgentSessionTitle(
+    workspaceID: string,
+    agentSessionID: string,
+    request: UpdateWorkspaceAgentSessionTitleRequest,
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceAgentSession>;
+  updateWorkspaceAgentSessionVisibility(
+    workspaceID: string,
+    agentSessionID: string,
+    request: UpdateWorkspaceAgentSessionVisibilityRequest
+  ): Promise<WorkspaceAgentSession>;
+  submitWorkspaceAgentInteractive(
+    workspaceID: string,
+    agentSessionID: string,
+    requestID: string,
+    request: SubmitWorkspaceAgentInteractiveRequest,
+    requestOptions?: AgentCommandRequestOptions
+  ): Promise<WorkspaceAgentSession>;
+  searchWorkspaceFiles(
+    workspaceID: string,
+    request: {
+      includeHidden?: boolean;
+      includeKinds?: WorkspaceFileFilterKind[];
+      /** 已选文件类型筛选分类 id(全局统一口径);query 可空、filters 非空时即「仅按类型查」。 */
+      filters?: string[];
+      /** 把搜索限定在工作区根下某子路径(左栏选中的「位置」);缺省/空 = 跨整根搜索。 */
+      within?: string;
+      limit?: number;
+      query: string;
+    },
+    requestOptions?: TuttidRequestOptions
+  ): Promise<WorkspaceFileSearchResponse>;
+  preflightUploadWorkspaceFiles(
+    workspaceID: string,
+    request: {
+      sourcePaths: string[];
+      targetDirectoryPath: string;
+    }
+  ): Promise<PreflightUploadWorkspaceFilesResponse>;
+  putDesktopPreferences(
+    request: PutDesktopPreferencesRequest
+  ): Promise<DesktopPreferencesStateResponse>;
+  trackEvents(events: TuttidTrackEvent[]): Promise<void>;
+  deleteUserProject(request: DeleteUserProjectRequest): Promise<void>;
+  useUserProject(request: UseUserProjectRequest): Promise<UserProject>;
+  uploadWorkspaceFiles(
+    workspaceID: string,
+    request: {
+      overwrite?: boolean;
+      sourcePaths: string[];
+      targetDirectoryPath: string;
+    }
+  ): Promise<UploadWorkspaceFilesResponse>;
+  terminateWorkspaceTerminal(
+    workspaceID: string,
+    terminalID: string
+  ): Promise<WorkspaceTerminalSession>;
+}
+
+export interface GlobalAgentActivityFilters {
+  roomIds?: string[];
+  sessionOwnerUserIds?: string[];
+  agentKeys?: string[];
+  activityFromUnixMs?: number;
+  activityToUnixMs?: number;
+}
+
+export interface CreateTuttidClientInput {
+  auth?: string;
+  baseUrl?: string;
+  fetch: typeof fetch;
+}
