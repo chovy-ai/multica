@@ -19,6 +19,7 @@ import { sideExecutionContent } from "@multica/tutti-agent-gui-host/side-context
 import { isLocalPermissionMode, isTaskCreationReference } from "@multica/tutti-agent-gui-host/local-protocol";
 import { userQuestionSchema, userQuestionAnswers, type AskLocalUser } from "./local-user-question";
 import { LocalClaudeConversation } from "./local-claude-conversation";
+import { LocalCodexPool } from "./local-codex-pool";
 import { discoverCodexOutputImages, inlineOutputImages, type OutputImage } from "./local-output-images";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runQueuedCloudTurn, type LocalQueueCloudRequest } from "./local-queued-cloud-run";
@@ -54,6 +55,7 @@ interface Options {
   choosePreview?: (kind: "file" | "directory") => Promise<string | null>;
   run?: typeof runLocalProvider; find?: typeof findLocalProvider;
   claudeConversation?: (onClose: () => Promise<void>) => LocalClaudeConversation;
+  codexPool?: () => Pick<LocalCodexPool, "run" | "stop">;
   fork?: typeof forkLocalProvider;
   history?: NativeHistoryReader;
   generateTitle?: ConversationTitleGenerator;
@@ -80,6 +82,8 @@ export class LocalConversationService {
   private queueDispatches = new Map<string, string>();
   private cancelledTurns = new Set<string>();
   private claudeConversations = new Map<string, ClaudeConversationSession>();
+  private codexPool?: Pick<LocalCodexPool, "run" | "stop">;
+  private codexClosing: Promise<void> = Promise.resolve();
   private forks = new Map<string, { scope: LocalConversationScope; controller: AbortController }>();
   private titleRuns = new Map<string, { scope: LocalConversationScope; controller: AbortController }>();
   private stopping = false;
@@ -91,6 +95,10 @@ export class LocalConversationService {
   constructor(private options: Options) { this.usage = options.usage ?? new LocalProviderUsageReader(); }
   assertScope(scope: LocalConversationScope): void { this.key(scope); }
   setCurrentUser(userId: string | null): void {
+    if (userId !== this.activeUser && this.codexPool) {
+      const pool = this.codexPool; this.codexPool = undefined;
+      this.codexClosing = Promise.allSettled([this.codexClosing, pool.stop()]).then(() => {});
+    }
     if (userId !== this.activeUser) { this.usage.reset(); this.importer?.cancel(); }
     if (this.activeUser && userId !== this.activeUser) for (const [key, scope] of this.scopes) if (scope.userId === this.activeUser) {
       for (const entry of this.documents.get(key)?.values() ?? []) if (entry.promptQueue) { entry.promptQueue.paused = true; entry.promptQueue.revision++; }
@@ -109,6 +117,7 @@ export class LocalConversationService {
     for (const run of this.runs.values()) run.controller.abort();
     for (const fork of this.forks.values()) fork.controller.abort();
     for (const run of this.titleRuns.values()) run.controller.abort();
+    await Promise.allSettled([this.codexClosing, this.codexPool?.stop()]);
     await Promise.allSettled([...this.executions, ...this.imageRecoveries.values(), ...[...this.claudeConversations.values()].map((session) => session.worker.stop()), ...(this.importer ? [this.importer.stop()] : [])]);
     for (const timer of this.pendingWrites.values()) clearTimeout(timer);
     this.pendingWrites.clear();
@@ -854,7 +863,9 @@ export class LocalConversationService {
           entry.messages.push({ id: randomUUID(), role: "assistant", content: output, turnId, createdAt: new Date().toISOString() });
           persistBackground();
         },
-      }) : await (this.options.run ?? runLocalProvider)(input, emit, controller.signal);
+      }) : input.provider === "codex" && (!this.options.run || this.options.codexPool)
+        ? await this.runCodex(scope, input, emit, controller.signal)
+        : await (this.options.run ?? runLocalProvider)(input, emit, controller.signal);
       if (!controller.signal.aborted) {
         entry.providerSessionId = result.sessionId ?? entry.providerSessionId;
         turn.status = "completed";
@@ -876,6 +887,15 @@ export class LocalConversationService {
         this.drainQueue(scope, entry);
       }
     }
+  }
+
+  private async runCodex(scope: LocalConversationScope, input: Parameters<typeof runLocalProvider>[0], emit: Parameters<typeof runLocalProvider>[1], signal: AbortSignal) {
+    await this.codexClosing;
+    signal.throwIfAborted();
+    const key = this.key(scope);
+    if (this.stopping) throw new Error("The application is shutting down");
+    this.codexPool ??= this.options.codexPool?.() ?? new LocalCodexPool(() => (this.options.find ?? findLocalProvider)("codex"));
+    return this.codexPool.run(key, input, emit, signal);
   }
 
   private async storeOutputImage(scope: LocalConversationScope, entry: LocalConversation, turnId: string, image: OutputImage, key: string): Promise<void> {

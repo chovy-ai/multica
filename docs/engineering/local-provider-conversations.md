@@ -43,7 +43,8 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 
 - `packages/tutti-agent-gui-host/src/protocol.ts`：执行目标与云端智能体分离，未改 vendored Tutti 源码。
 - `packages/tutti-agent-gui-host/src/local-protocol.ts`：仅桌面的本机会话 IPC 协议。
-- `apps/desktop/src/main/local-provider-runner.ts`：发现已安装 CLI，解析 Codex / Claude 结构化输出，原生线程续接和取消。
+- `apps/desktop/src/main/local-provider-runner.ts`：发现已安装 CLI、解析一次性执行输出；继续服务标题生成等调用。
+- `apps/desktop/src/main/local-codex-pool.ts`：仅供对话流 Codex 普通轮次使用的双 app-server 实例池。
 - `apps/desktop/src/main/local-provider-fork.ts`：创建独立的原生会话分支，不向模型提交消息。
 - `apps/desktop/src/main/local-conversation-service.ts`：本机持久化、附件、工作目录、执行生命周期。
 - `apps/desktop/src/renderer/src/platform/local-conversation-service.ts`：本机协议和 GUI DTO 适配，官方 @ 请求与结果同步。
@@ -56,9 +57,34 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 
 普通发送不调用云端创建会话或发送消息。CLI 继承本机已配置的账号、模型和权限策略，没有新增跳过审批的参数。Codex 仅从模型缓存读取模型目录；不读取或导出登录凭据。没有修改官方 Server 协议或部署官方后端。
 
+## 在对话流复用 Codex app-server
+
+仅 `LocalConversationService` 的普通 Codex 轮次接入双实例池，包括主对话、Side 和分叉后的普通消息。任务执行、官方聊天、引用已定义智能体的云端执行、标题生成、历史读取与原生分叉继续使用各自原有路径；Claude 执行路径不变。
+
+第一次发送时启动两个本机 `codex app-server --listen stdio://`，分别完成初始化。备用实例的握手与当前实例并行，不提交模型消息，也不要求当前轮次等待备用实例。一个实例通过不同 thread 承载多个会话；同一原生 thread 同时只能有一轮执行。RPC 响应用请求 ID 匹配，输出按 thread ID 与 `turn/start` 返回的 turn ID 路由，避免续接历史事件进入新轮次。停止单轮使用 `turn/interrupt` 并等待终态，不用结束共享进程代替正常取消。
+
+每次接收轮次时读取该工作目录的有效原生配置。配置、账号/工作区、运行环境或本轮 MCP 工具集合改变时，空闲实例先退出，再加载新配置并接收新轮次；旧实例继续处理已经接收的轮次。两个实例都忙时等待空位，不创建第三个实例，不中断旧任务。等待期间再次改变的原生配置在空位释放后重新读取，合并到最新版本。旧实例排空后重建为当前版本的备用实例。
+
+每轮仍创建独立的 Multica MCP 和临时 CLI 配置。`local-codex-context-bridge.ts` 用独立随机路由将请求转发到所属轮次的 MCP，并在主进程内附加该轮凭据；结束时撤销路由。共享子进程只继承桥接令牌，不继承某轮 `MULTICA_*` 环境。原生 thread 配置只包含桥接地址与令牌环境变量名，不保存每轮 MCP 令牌。CLI 路径和工作区等非秘密环境覆盖限定在 thread 配置中。已加载 thread 可能保留旧 MCP 快照，因此轮次结束后取消订阅，并在确认 `thread/closed` 后允许下一轮恢复同一个原生 ID。
+
+`auto` 映射到 `on-request`、`auto_review` 和 `workspace-write`；`full-access` 映射到 `never` 与 `danger-full-access`；默认模式沿用原生策略。保留既有的原生插件和外部 MCP 隔离规则。宿主不将澄清问题当成命令审批；原生返回需要宿主处理、但当前 GUI 不支持的交互请求时，明确拒绝并保存状态提示。
+
+退出应用或切换账号时关闭池和桥接服务。进程崩溃、协议超时或中断无法确认时，受影响的轮次失败，不自动重发可能已经产生副作用的消息；下一次明确发送可以新建实例恢复。共享进程故障会影响该进程内的其他轮次，两个实例不是模型服务的限流或容灾替代品。
+
+验证命令（全部使用测试创建的假 Codex，不调用真实模型）：
+
+```sh
+pnpm --filter @multica/desktop exec vitest run src/main/local-codex-pool.test.ts src/main/local-conversation-service.test.ts src/main/local-conversation-queue.test.ts src/main/local-provider-runner.test.ts
+pnpm --filter @multica/desktop typecheck
+pnpm --filter @multica/desktop exec eslint src/main/local-codex-*.ts src/main/local-conversation-service.ts src/main/local-conversation-service.test.ts
+git diff --check
+```
+
+上述测试验证进程复用、跨会话并发、单轮取消、MCP 凭据隔离、连续配置更新时最多两个存活进程、进程退出后不重放，以及账号切换与关闭。没有将假进程的耗时视为真实模型首响改善的证据；本机真实模型与 Electron 实窗验收需要另行执行。
+
 ## Claude 前台回复与后台任务
 
-Claude 普通会话通过官方 Agent SDK 的双向输入连接本机已安装的 Claude Code，继续使用该 CLI 的登录、用户/项目配置和原生会话。标题推断及 Codex 保持原执行路径。每个本机会话同一时刻只有一个 Claude 进程，后台监控存在时，下一条普通消息交给这个进程，不另起进程并发续接同一个原生 ID。
+Claude 普通会话通过官方 Agent SDK 的双向输入连接本机已安装的 Claude Code，继续使用该 CLI 的登录、用户/项目配置和原生会话。标题推断保持一次性执行路径。每个本机会话同一时刻只有一个 Claude 进程，后台监控存在时，下一条普通消息交给这个进程，不另起进程并发续接同一个原生 ID。
 
 流式 `message_delta.stop_reason=end_turn` 或完整 assistant 的 `stop_reason=end_turn` 表示前台回复边界。后台任务存在时，保存回复并结束前台 turn，保留进程接收后台通知和后续输入。普通结果仍按 `result` 收尾。后台任务以 `background_tasks_changed` 的完整快照校准，`task_notification` 保存完成、失败、停止结果；过期的 task-start 事件不会复活已结束任务。延迟的旧轮次 result 通过用户消息 UUID 关联，不能结束新的前台 turn。
 
