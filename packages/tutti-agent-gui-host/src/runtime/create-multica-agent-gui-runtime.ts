@@ -483,6 +483,8 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     const detail = details.get(guiId)!;
     desktopQueue.receive(guiId, detail.promptQueue);
     const result = projectDetail(detail, executionTargets(workspace).find((entry) => entry.id === detail.session.agent_id), transcripts.get(guiId) ?? new Map(), ledger, init.locale);
+    const unsettled = new Set(Object.values(engine.getSnapshot().sessionLifecycle.turnsById)
+      .filter((turn) => turn.agentSessionId === guiId && turn.phase !== "settled").map((turn) => turn.turnId));
     engine.dispatch({
       type: "session/historyAuthoritativeSnapshotReceived", workspaceId,
       agentSessionId: guiId, childSessions: [], historyRevision: ++historyRevision,
@@ -496,6 +498,14 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       if (turn.phase === "settled" && engine.getSnapshot().sessionLifecycle.sessionsById[guiId]?.activeTurnId === turn.turnId) engine.dispatch({
         type: "turn/projectionReceived", workspaceId, turn, activeTurnId: null,
         hostFencedSameTurnSettlement: true,
+      });
+    }
+    // History snapshots never raise attention. A run this runtime saw unsettled
+    // that history now settles is a real completion: replay it as an accepted
+    // live completion so the conversation list shows its unread mark.
+    for (const turn of Object.values(engine.getSnapshot().sessionLifecycle.turnsById)) {
+      if (turn.agentSessionId === guiId && turn.phase === "settled" && unsettled.has(turn.turnId)) engine.dispatch({
+        type: "turn/upserted", live: true, replayAcceptedLiveCompletion: true, turn,
       });
     }
     markAvailability(result.session);
