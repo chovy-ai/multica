@@ -23,6 +23,34 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   return { service, options };
 }
 describe("local conversation persistence and execution", () => {
+  it("uses the pool only for Codex dialogue turns and closes it on account change and shutdown", async () => {
+    const { service, options } = await setup();
+    const pools: { run: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }[] = [];
+    const factory = vi.fn(() => {
+      const pool = { run: vi.fn(async () => ({ output: "Pooled reply", sessionId: "pooled-thread" })), stop: vi.fn(async () => {}) };
+      pools.push(pool); return pool;
+    });
+    Object.assign(options, { codexPool: factory });
+    const codex = await service.request(scope, "create", { provider: "codex" });
+    const claude = await service.request(scope, "create", { provider: "claude" });
+    await service.request(scope, "send", { id: codex.id, content: "First turn" });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: codex.id })).turns[0]?.status).toBe("completed"));
+    await service.request(scope, "send", { id: codex.id, content: "Continue" });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: codex.id })).turns[1]?.status).toBe("completed"));
+    expect(factory).toHaveBeenCalledOnce(); expect(pools[0]!.run).toHaveBeenCalledTimes(2);
+    expect(pools[0]!.run.mock.calls[1]![1]).toMatchObject({ resume: "pooled-thread" });
+    expect(options.run).not.toHaveBeenCalled();
+    await service.request(scope, "send", { id: claude.id, content: "Claude stays on its current runner" });
+    await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
+    expect(pools[0]!.run).toHaveBeenCalledTimes(2);
+    service.setCurrentUser("another-user"); expect(pools[0]!.stop).toHaveBeenCalledOnce();
+    const nextScope = { ...scope, userId: "another-user" };
+    const next = await service.request(nextScope, "create", { provider: "codex" });
+    await service.request(nextScope, "send", { id: next.id, content: "New account" });
+    await vi.waitFor(async () => expect((await service.request(nextScope, "read", { id: next.id })).turns[0]?.status).toBe("completed"));
+    expect(factory).toHaveBeenCalledTimes(2);
+    await service.stop(); expect(pools[1]!.stop).toHaveBeenCalledOnce();
+  });
   it("advertises supported IPC methods with the same account scope as conversation reads", async () => {
     const { service, options } = await setup();
     expect(await service.request(scope, "capabilities", {})).toEqual({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) });
