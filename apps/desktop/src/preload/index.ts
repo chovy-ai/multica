@@ -102,6 +102,14 @@ function subscribeToMainRendererChannel<T>(
 }
 
 const desktopAPI = {
+  settingsHost: {
+    subscribe: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: import("../shared/settings-host").SettingsHostMessage) => listener(request);
+      ipcRenderer.on("settings-host:request", handler);
+      return () => ipcRenderer.removeListener("settings-host:request", handler);
+    },
+    respond: (reply) => ipcRenderer.invoke("settings-host:reply", reply),
+  } satisfies import("../shared/settings-host").SettingsHostClient,
   resourcePreview: {
     request: (scope, command) => ipcRenderer.invoke("resource-preview:request", scope, command),
     subscribe: (listener) => { const handler = (_event: Electron.IpcRendererEvent, state: import("../shared/resource-preview").WebPreviewState) => listener(state); ipcRenderer.on("resource-preview:changed", handler); return () => ipcRenderer.removeListener("resource-preview:changed", handler); },

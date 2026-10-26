@@ -19,6 +19,10 @@ Multica 原有的工作区 MCP 库、智能体绑定和 daemon 注入用于管�
 
 ## 工具
 
+Settings operations extend this built-in server through a shared capability
+registry. See [Settings MCP](settings-mcp.md) for scope, confirmation, CLI access
+and the distinction between readonly context tools and settings mutations.
+
 | 工具 | 数据及边界 |
 | --- | --- |
 | `current_context` | 当前工作区、会话和本次 @ 引用 ID |

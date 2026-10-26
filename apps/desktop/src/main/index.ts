@@ -11,6 +11,7 @@ import { LocalConversationService } from "./local-conversation-service";
 import { ResourceWebPreview } from "./resource-web-preview";
 import { generateLocalConversationTitle } from "./local-conversation-title-generator";
 import { LocalMulticaContext } from "./local-multica-context";
+import { createDesktopSettingsHost } from "./desktop-settings-host";
 import type { LocalConversationMethod, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
 import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
@@ -153,6 +154,7 @@ const notificationGate = new NotificationGate();
 const mainRendererMessages = new MainRendererMessageQueue();
 let desktopInitialized = false;
 let authSessionGeneration = 0;
+let settingsUserId: string | null | undefined;
 const rendererRouteContexts = new WeakMap<
   Electron.WebContents,
   RendererRouteContext
@@ -654,6 +656,7 @@ if (!gotTheLock) {
         apiUrl: runtimeConfigResult.config.apiUrl,
         appUrl: runtimeConfigResult.config.appUrl,
         workspaceOperations: true,
+        settings: createDesktopSettingsHost(() => mainWindow, () => settingsUserId, () => authSessionGeneration),
         cliPath: bundledCliPath(),
         local: (scope) => ({
           list: () => localConversations!.request(scope, "list", {}),
@@ -818,6 +821,7 @@ if (!gotTheLock) {
       if (!sourceWindow || userId === undefined) return;
 
       if (sourceWindow === mainWindow) {
+        settingsUserId = userId;
         localConversations?.setCurrentUser(userId);
         const accountInvalidated = authSessionCoordinator.reportMain(userId);
         if (accountInvalidated) {

@@ -12,6 +12,9 @@ import { CONTEXT_MCP_NAME, CONTEXT_MCP_TOKEN_ENV, startLocalContextMcp, type Con
 import { createWorkspaceTools, type WorkspaceToolOptions } from "./local-workspace-tools";
 import type { AskLocalUser } from "./local-user-question";
 import type { LocalQueueCloudRequest } from "./local-queued-cloud-run";
+import { SETTINGS_MCP_INSTRUCTIONS } from "@multica/core/settings/operations";
+import { createSettingsTools, type SettingsToolOptions } from "./local-settings-tools";
+import { settingsHttpError } from "./settings-operation-error";
 const executeFile = promisify(execFile);
 const createdTaskSchema = CreateIssueResponseSchema.pick({ id: true, workspace_id: true, identifier: true, title: true, status: true });
 type CreatedTask = { id: string; workspace_id: string; identifier: string; title: string; status: string };
@@ -33,6 +36,7 @@ interface Options {
   verifyAccount?: (token: string, signal: AbortSignal) => Promise<string | null>;
   local?: (scope: LocalConversationScope) => LocalContextReader;
   localActions?: (scope: LocalConversationScope) => NonNullable<WorkspaceToolOptions["local"]>;
+  settings?: Pick<SettingsToolOptions, "host" | "confirm" | "showSecret">;
 }
 
 export interface LocalRunContext { conversationId: string; references: { kind: "session" | "issue" | "agent"; id: string }[]; askUser?: AskLocalUser }
@@ -150,19 +154,16 @@ export class LocalMulticaContext {
           return { id: task.id, identifier: task.identifier, title: task.title, status: task.status, workspace_id: task.workspace_id, href: `mention://issue/${task.id}` };
         },
       } : undefined;
-      const workspaceTools = this.options.workspaceOperations ? createWorkspaceTools({
-        workspaceId: scope.workspaceId, userId: scope.userId, conversationId: current?.conversationId, appUrl: this.options.appUrl,
-        local: this.options.localActions?.(scope),
-        request: async (method, path, body, callSignal) => {
+      const workspaceRequest: WorkspaceToolOptions["request"] = async (method, path, body, callSignal) => {
           if (!token) throw new Error("Cloud Multica operations are unavailable. Reconnect the desktop login/runtime.");
           const response = await fetch(`${this.options.apiUrl.replace(/\/+$/, "")}${path}`, {
             method, headers: { Authorization: `Bearer ${token}`, "X-Workspace-ID": scope.workspaceId, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
             ...(body !== undefined ? { body: JSON.stringify(body) } : {}), redirect: "error", signal: AbortSignal.any([signal, callSignal, AbortSignal.timeout(15000)]),
           });
           if (!response.ok) {
-            let message = "";
-            try { const error = await response.json(); if (typeof error?.error === "string") message = ` ${error.error.replaceAll(token, "[redacted]").slice(0, 400)}`; } catch { /* An error response may have no JSON body. */ }
-            throw new Error(`Multica operation failed (HTTP ${response.status}).${message} Inspect current state before retrying an uncertain write with a new request_id.`);
+            let error: unknown;
+            try { error = await response.json(); } catch { /* An error response may have no JSON body. */ }
+            throw settingsHttpError(response.status, error, token);
           }
           let value: unknown;
           try { value = response.status === 204 ? null : await response.json(); }
@@ -170,11 +171,20 @@ export class LocalMulticaContext {
           callSignal.throwIfAborted();
           const next = response.headers.get("X-Agent-Tasks-Next-Cursor");
           return next && Array.isArray(value) ? { items: value, has_more: true, next_cursor: next } : value;
-        },
+        };
+      const workspaceTools = this.options.workspaceOperations ? createWorkspaceTools({
+        workspaceId: scope.workspaceId, userId: scope.userId, conversationId: current?.conversationId, appUrl: this.options.appUrl,
+        local: this.options.localActions?.(scope), request: workspaceRequest,
       }).filter((tool) => token || ["create_conversation", "update_conversation", "fork_conversation", "create_side_conversation", "list_conversation_branches", "send_conversation_message", "cancel_local_conversation_run"].includes(tool.name)) : [];
+      const settingsTools = this.options.workspaceOperations ? createSettingsTools({
+        ...scope, root: join(this.options.root, "..", "settings-operation-receipts"), cloudAvailable: Boolean(token),
+        request: ({ method, path, body }, signal) => workspaceRequest(method, path, body, signal), ...this.options.settings,
+      }) : [];
+      workspaceTools.push(...settingsTools);
       mcp = await startLocalContextMcp(data, { workspace_id: scope.workspaceId, conversation_id: current?.conversationId,
         references: current?.references.filter((reference) => !isTaskCreationReference(reference)) ?? [], actions: [...new Set([...(actions ? ["create_task"] : []), ...workspaceTools.map((tool) => tool.name)])] }, signal, actions, workspaceTools, current?.askUser);
       env[CONTEXT_MCP_TOKEN_ENV] = mcp.token;
+      env.MULTICA_SETTINGS_MCP_URL = mcp.url;
       const claudeConfigPath = join(directory, "mcp.json");
       await writeFile(claudeConfigPath, JSON.stringify({ mcpServers: { [CONTEXT_MCP_NAME]: { type: "http", url: mcp.url, ...(current?.askUser ? { timeout: 3_600_000 } : {}), headers: { Authorization: `Bearer ${mcp.token}` } } } }), { mode: 0o600 });
       // Human answers must keep this call attached to the running turn.
@@ -186,6 +196,7 @@ export class LocalMulticaContext {
       let installed = true;
       try { await access(this.options.cliPath, constants.X_OK); } catch { installed = false; }
       const systemPrompt = [
+        ...(settingsTools.length ? [SETTINGS_MCP_INSTRUCTIONS, `CLI access to the same Settings registry uses this execution's exact scoped prefix: ${command} settings capabilities; ${command} settings call <settings_tool_name> --input-file <json-file>. Do not use an ambient CLI profile.`] : []),
         "You are running in Multica Desktop's local conversation flow, as an ordinary local coding assistant.",
         ...(current?.askUser ? ["Interactive questions are supported in this conversation, including Side panes. When you need the user's choice or clarification, call multica_desktop_context.ask_user_question and wait for its real result before continuing. It renders selectable options, multiple-choice and free-text answers in the GUI and resumes this same execution. Use this MCP tool rather than a provider-native AskUserQuestion/request_user_input tool that may be unavailable in noninteractive CLI mode, or printing a pretend question card in text. Do not answer on the user's behalf. This is for clarification only, never a replacement for command/tool permission approval."] : []),
         `The current Multica workspace ID is ${JSON.stringify(scope.workspaceId)}. ${workspaceTools.length ? "Workspace context and operation tools are available within this desktop user's permissions." : actions ? "The user selected the New task mention in this message, enabling the create_task MCP tool for this execution." : "This integration is for read-only context queries."}`,
