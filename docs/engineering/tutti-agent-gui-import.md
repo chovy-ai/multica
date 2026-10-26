@@ -50,6 +50,19 @@
 
 源包名、组件名和文件结构作为第三方模块身份保留。目标新增命名只用于宿主、RPC 与 Multica 数据转换。源码、CSS、资源不做机械改名；本地 package metadata overlay 与上游 manifest 分开留存，可根据来源清单复核。
 
+## 桌面文件页面通信
+
+安装版的父页面与编辑器均通过 `file:` 加载，但 Electron 中 `location.origin` 为 `file://`，`MessageEvent.origin` 可序列化为 `null`。握手和全屏预览共用 `frame-messaging.ts`：先校验消息来自准确的父窗口或所属 iframe，再为文件页面接受这两种来源；HTTP(S) 页面继续要求来源完全一致。文件页面发送消息使用 `*` 作为目标来源，不放宽接收端的窗口身份、工作区或协议校验。
+
+安装版通信回归须在 Electron 中运行，浏览器开发服务器无法覆盖此来源差异：
+
+```sh
+pnpm --filter @multica/tutti-agent-gui-host build
+node scripts/check-agent-gui-file.mjs
+```
+
+此检查使用真实构建的编辑器和临时 `file:` 宿主页，验证握手、MessagePort 数据读取、页面渲染、重载及无关 iframe 的拒绝。它创建独立临时用户目录，禁止 HTTP(S) 请求，只使用假工作区数据，不调用真实 Agent 或后端。可传入打包使用的编辑器目录作为第一个参数。macOS 构建流水线在生成安装包后执行此检查，通过后才上传产物。
+
 ## 不变的后端协议
 
 继续使用现有 `/api/agents`、`/api/chat/sessions`、消息分页、发送、取消、固定、删除、标记已读、附件以及业务任务接口，保持已有字段、鉴权、状态和 WebSocket 事件。用户凭据仅留在 Multica 宿主；子文档通过窄 RPC 请求宿主执行已有 API，不获取令牌，不自行实例化另一条服务器连接。

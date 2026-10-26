@@ -188,6 +188,7 @@ describe("isolated Agent GUI document lifetime", () => {
   it("accepts the handshake only from its exact iframe and same origin", async () => {
     render(<TuttiAgentGuiPanel {...props} />, { wrapper: TestProvider });
     await ready("https://other.invalid");
+    await ready("null");
     await ready(window.location.origin, window);
     expect(channels).toHaveLength(0);
     await ready();

@@ -6,6 +6,7 @@ import type {
   AgentGuiRpcMethod,
   AgentGuiRpcMethods,
 } from "./protocol";
+import { agentGuiMessageTargetOrigin, isAgentGuiFrameMessage } from "./frame-messaging";
 
 interface PendingRequest {
   resolve(value: unknown): void;
@@ -145,7 +146,7 @@ export function connectAgentGuiHost(): Promise<{
       reject(new AgentGuiHostError({ code: "connection_timeout", message: "The Agent GUI host did not connect" }));
     }, 20_000);
     const receive = (event: MessageEvent) => {
-      if (event.source !== window.parent || event.origin !== window.location.origin) return;
+      if (!isAgentGuiFrameMessage(event, window.parent)) return;
       if (event.data?.type !== "multica:agent-gui:connect" || !event.ports[0]) return;
       clearTimeout(timer);
       window.removeEventListener("message", receive);
@@ -153,6 +154,6 @@ export function connectAgentGuiHost(): Promise<{
       resolve({ ...connection, snapshot: event.data.snapshot });
     };
     window.addEventListener("message", receive);
-    window.parent.postMessage({ type: "multica:agent-gui:ready", version: 1 }, "*");
+    window.parent.postMessage({ type: "multica:agent-gui:ready", version: 1 }, agentGuiMessageTargetOrigin());
   });
 }

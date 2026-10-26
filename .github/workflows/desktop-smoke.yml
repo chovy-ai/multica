@@ -76,6 +76,10 @@ jobs:
             "-c.publish.owner=${GITHUB_REPOSITORY_OWNER}" \
             "-c.publish.repo=${GITHUB_REPOSITORY#*/}"
 
+      - name: Verify packaged Agent GUI file-page handshake
+        timeout-minutes: 3
+        run: node scripts/check-agent-gui-file.mjs apps/desktop/out/renderer/tutti-agent-gui
+
       - name: Verify installers and record checksums
         working-directory: apps/desktop/dist
         shell: bash
