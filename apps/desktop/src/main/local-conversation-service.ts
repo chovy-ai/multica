@@ -805,7 +805,10 @@ export class LocalConversationService {
           claude = { scope, worker, contexts }; this.claudeConversations.set(key, claude);
         }
       }
-      context = await this.options.prepareContext?.(scope, claude ? AbortSignal.any([controller.signal, claude.worker.signal]) : controller.signal, { conversationId: entry.id, references, askUser: this.askUser(scope, entry, turnId) });
+      context = await this.options.prepareContext?.(scope, claude ? AbortSignal.any([controller.signal, claude.worker.signal]) : controller.signal, {
+        conversationId: entry.id, references, askUser: this.askUser(scope, entry, turnId),
+        readAvatarFile: (path, signal) => new LocalResourceReader(join(this.options.root, this.key(scope))).avatar(path, entry.cwd, signal),
+      });
       if (context && claude) { claude.contexts.add(context); retainedContext = true; }
       this.key(scope);
       if (controller.signal.aborted) throw new Error("Execution cancelled");

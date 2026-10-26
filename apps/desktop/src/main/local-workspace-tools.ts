@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { paths } from "@multica/core/paths";
 import type { LocalConversationMethods } from "@multica/tutti-agent-gui-host/local-protocol";
+import { createAgentAvatarTool, type AgentAvatarOptions } from "./local-agent-avatar";
 
 type Row = Record<string, unknown>;
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -10,6 +11,7 @@ export interface WorkspaceToolOptions {
   userId: string;
   conversationId?: string;
   appUrl?: string;
+  avatar?: Pick<AgentAvatarOptions, "receiptsRoot" | "readFile">;
   request(method: Method, path: string, body: unknown, signal: AbortSignal): Promise<unknown>;
   local?: { request<M extends LocalMethod>(method: M, params: LocalConversationMethods[M]["params"]): Promise<LocalConversationMethods[M]["result"]> };
 }
@@ -67,6 +69,7 @@ function nonempty(value: Row): Row {
 /** Explicit business tools only: no arbitrary HTTP, shell, filesystem or runtime controls. */
 export function createWorkspaceTools(options: WorkspaceToolOptions): WorkspaceMcpTool[] {
   const tools: WorkspaceMcpTool[] = [];
+  if (options.avatar && options.conversationId) tools.push(createAgentAvatarTool({ ...options, ...options.avatar, conversationId: options.conversationId }));
   const writes = new Map<string, { input: string; result: Promise<unknown> }>();
   let workspace: Promise<Row> | undefined;
   const request = async (method: Method, path: string, body: unknown, signal: AbortSignal) => {
