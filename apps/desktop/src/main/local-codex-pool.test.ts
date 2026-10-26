@@ -11,6 +11,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { startLocalContextMcp } from "./local-context-mcp";
 import { LocalContextData } from "./local-context-data";
+import { createLocalTiming, type LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
 
 const wait = (assertion: () => Promise<unknown>) => vi.waitFor(assertion, { timeout: 5000, interval: 20 });
 const cleanups: (() => Promise<void>)[] = [];
@@ -91,6 +92,23 @@ process.on('SIGTERM',exit); process.stdin.on('end',exit);
 }
 
 describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
+  it("records cold startup, reuse, turn acceptance and unload without logging protocol payloads", async () => {
+    const { pool, input } = await setup();
+    const first: LocalTimingRecord[] = []; const second: LocalTimingRecord[] = [];
+    const cold = createLocalTiming({ source: "main", conversationId: "conversation-a", turnId: "turn-a" }, (record) => first.push(record));
+    const warm = createLocalTiming({ source: "main", conversationId: "conversation-b", turnId: "turn-b" }, (record) => second.push(record));
+    const result = await pool.run("scope", input("PRIVATE_PROMPT", { timing: cold }), vi.fn(), new AbortController().signal);
+    await pool.run("scope", input("PRIVATE_PROMPT_2", { timing: warm, resume: result.sessionId }), vi.fn(), new AbortController().signal);
+    expect(first.filter((record) => record.stage === "provider.pool_create")).toHaveLength(2);
+    expect(second.filter((record) => record.stage === "provider.pool_create")).toHaveLength(0);
+    expect(second.filter((record) => record.stage === "provider.pool_reused")).toHaveLength(1);
+    for (const records of [first, second]) {
+      expect(records).toEqual(expect.arrayContaining(["provider.pool_admission", "provider.lookup", "provider.config", "provider.thread_ready", "provider.turn_start", "provider.thread_unload"].map((stage) => expect.objectContaining({ stage, event: "end", outcome: "completed", durationMs: expect.any(Number) }))));
+      expect(records.filter((record) => record.stage === "provider.first_event")).toHaveLength(1);
+      expect(records.findIndex((record) => record.stage === "provider.result")).toBeLessThan(records.findIndex((record) => record.stage === "provider.thread_unload"));
+    }
+    expect(JSON.stringify([first, second])).not.toMatch(/PRIVATE_PROMPT|native instructions|must-not-run|fake-model|private-run-path/);
+  });
   it("prewarms exactly two processes and reuses them across turns without replaying transcript deltas", async () => {
     const { pool, input, calls } = await setup(); const emit = vi.fn();
     const result = await pool.run("scope", input("first", { permissionMode: "auto" }), emit, new AbortController().signal);

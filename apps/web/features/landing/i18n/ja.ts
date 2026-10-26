@@ -194,6 +194,11 @@ export function createJaDict(
       label: "FAQ",
       headline: "よくある質問。",
       items: [
+      {
+        question: "ローカル会話の応答が遅い場合、どう調べられますか？",
+        answer:
+          "デスクトップアプリの「設定 → このデバイス → Labs」から開発ログを出力できます。Codex と Claude Code は内蔵 MCP でも現在の会話の所要時間を出力できます。ローカルの JSON ファイルには段階別の所要時間、エラー分類、実行環境のバージョンが含まれ、メッセージ本文、画像、認証情報は含まれません。",
+      },
         {
           question: "Multica はどのコーディングエージェントに対応していますか?",
           answer:

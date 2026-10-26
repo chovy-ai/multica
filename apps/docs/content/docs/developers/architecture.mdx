@@ -129,3 +129,16 @@ An issue's assignee is polymorphic and may point to a member, agent, or squad. N
 
 - [Contributing](/developers/contributing) — Local environments, worktrees, and test locations.
 - [Development conventions](/developers/conventions) — Repository contracts for naming, terminology, and Chinese copy.
+
+## Local conversation diagnostics
+
+On desktop, open **Settings → This device → Labs → Developer logs → Export logs**
+to save retained timing records from this account/workspace's last 24 hours.
+The JSON includes runtime versions, error categories and timings from queueing
+through provider initialization, first output, tool calls and persistence.
+
+Codex and Claude Code also receive the built-in `export_developer_logs` MCP tool.
+It defaults to the current conversation and last 60 minutes; `scope=workspace`
+selects the current workspace. Reuse `request_id` on retries. Exports contain no
+message text, tool payloads, images or credentials and are never uploaded
+automatically. A longer filter cannot recover records already rotated out.

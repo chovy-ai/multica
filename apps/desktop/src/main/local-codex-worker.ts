@@ -4,6 +4,7 @@ import { CodexRpc, type CodexObject } from "./local-codex-rpc";
 import { CodexTurnStream } from "./local-codex-stream";
 import type { CodexContextBridge } from "./local-codex-context-bridge";
 import type { runLocalProvider } from "./local-provider-runner";
+import { localTimingFailure, type LocalTimingStage } from "@multica/tutti-agent-gui-host/local-timing";
 
 export type CodexInput = Parameters<typeof runLocalProvider>[0];
 type Emit = Parameters<typeof runLocalProvider>[1];
@@ -28,7 +29,8 @@ export class LocalCodexWorker {
   stop(): Promise<void> { return this.rpc.stop(); }
 
   async run(input: CodexInput, native: CodexObject, emit: Emit, signal: AbortSignal): Promise<{ output: string; sessionId: string }> {
-    if (input.resume) await this.unloading.get(input.resume);
+    const timed = <T>(stage: LocalTimingStage, action: () => Promise<T>) => input.timing ? input.timing.measure(stage, action) : action();
+    if (input.resume) await timed("provider.thread_wait", async () => this.unloading.get(input.resume!));
     signal.throwIfAborted();
     const id = randomUUID();
     const env = input.env ?? process.env;
@@ -56,7 +58,7 @@ export class LocalCodexWorker {
     let abort: (() => void) | undefined;
     let interruptTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const setup = await this.rpc.request(input.resume ? "thread/resume" : "thread/start", params, 60_000);
+      const setup = await timed("provider.thread_ready", () => this.rpc.request(input.resume ? "thread/resume" : "thread/start", params, 60_000));
       threadId = setup.thread?.id;
       if (typeof threadId !== "string" || !threadId) throw new Error("Codex returned no thread ID");
       if (this.activeThreads.has(threadId)) throw new Error("This Codex thread already has an active turn");
@@ -84,6 +86,8 @@ export class LocalCodexWorker {
         // Resume can replay old notifications. Only the turn/start response establishes the new turn.
         if (!turnId) { buffered.push(message); return; }
         if ((event.turnId && event.turnId !== turnId) || (event.turn?.id && event.turn.id !== turnId)) return;
+        input.timing?.activity(); input.timing?.once("provider.first_event");
+        if (message.method === "error" && event.willRetry) input.timing?.mark("provider.retry", { failure: localTimingFailure(event.error?.message) });
         if (message.id !== undefined) {
           // The local GUI has no command-approval surface. Never interpret a clarification as approval.
           if (message.method === "item/permissions/requestApproval") this.rpc.respond(message.id, { permissions: {}, scope: "turn" });
@@ -96,12 +100,13 @@ export class LocalCodexWorker {
         stream.accept(message.method, event);
         if (message.method === "error" && !event.willRetry) emit({ type: "status", content: "Codex reported an execution error" });
         if (message.method === "turn/completed") {
+          input.timing?.mark("provider.result", { outcome: event.turn.status === "completed" ? "completed" : event.turn.status === "interrupted" ? "cancelled" : "failed" });
           if (event.turn.status === "completed") resolveTurn();
           else rejectTurn(new Error(event.turn.status === "interrupted" ? "Execution cancelled" : "Codex turn failed"));
         }
       };
       unsubscribe = this.rpc.subscribe(receive);
-      const started = await this.rpc.request("turn/start", { threadId, input: [{ type: "text", text: input.content, text_elements: [] }] });
+      const started = await timed("provider.turn_start", () => this.rpc.request("turn/start", { threadId, input: [{ type: "text", text: input.content, text_elements: [] }] }));
       if (typeof started.turn?.id === "string") turnId = started.turn.id;
       if (!turnId) throw new Error("Codex returned no turn ID");
       for (const message of buffered) receive(message); buffered.length = 0;
@@ -116,7 +121,7 @@ export class LocalCodexWorker {
       if (threadId) {
         this.activeThreads.delete(threadId);
         if (this.retiring && !this.activeThreads.size) void this.rpc.stop();
-        await this.unload(threadId).catch(() => {});
+        await timed("provider.thread_unload", () => this.unload(threadId!)).catch(() => {});
       }
       this.bridge.release(id);
     }

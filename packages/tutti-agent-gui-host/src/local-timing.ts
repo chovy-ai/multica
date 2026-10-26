@@ -5,6 +5,8 @@ export const LOCAL_TIMING_STAGES = [
   "queue.dispatch", "queue.context", "turn.persist", "turn.execute", "turn.result", "attachments.resolve",
   "context.prepare", "context.credentials", "context.mcp", "provider.lookup", "provider.config",
   "provider.spawn", "provider.sdk_ready", "provider.refresh", "provider.input_written", "provider.input_yielded",
+  "provider.pool_admission", "provider.pool_wait", "provider.pool_create", "provider.pool_reused", "provider.bridge", "provider.handshake",
+  "provider.thread_wait", "provider.thread_ready", "provider.turn_start", "provider.thread_unload",
   "provider.first_stdout", "provider.first_stderr", "provider.first_event", "provider.session_ready",
   "provider.first_output", "provider.first_text", "provider.tool", "provider.result", "provider.exit", "provider.failure", "provider.retry",
   "user.question", "images.save", "context.dispose", "images.recover", "turn.save", "turn.finished",

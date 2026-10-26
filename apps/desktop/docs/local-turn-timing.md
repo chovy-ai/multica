@@ -68,16 +68,19 @@ logs, conversation text, tool arguments/results and credentials are excluded.
 GUI submit → renderer bridge → main admission → saved queue
   → queue dispatch/context → persist user turn → resolve attachments
   → prepare Multica credentials/MCP → provider lookup/configuration
-  → spawn CLI or create/refresh Claude SDK query → deliver input
-  → first provider event → first output/text → tool calls/user questions
-  → provider result → process exit/foreground completion
+  → Codex pool admission/config/thread setup or Claude SDK create/refresh
+  → submit turn/input → first provider event
+  → first output/text → tool calls/user questions
+  → provider result → thread unload/process exit/foreground completion
   → save images, dispose context, recover images, persist final turn
   → renderer reads events → GUI applies the output/terminal projection
 ```
 
 These phases overlap: the GUI may display output while the provider is still
-running. Claude can retain its process for background tasks; foreground turn
-completion does not mean that process exited.
+running. Codex dialogue turns reuse the dual app-server pool and unload their
+thread after completion. One-shot CLI calls and persistent Claude SDK queries
+have different lifecycle stages; absent per-turn spawn/exit records are expected
+for a reused process. Foreground completion does not mean that process exited.
 
 ## Reading a trace
 
@@ -96,7 +99,10 @@ Start/end records delimit asynchronous operations and preserve failure outcomes.
 | `queue.dispatch` | `durationMs` is time since the persisted prompt's creation, including intentional pause or waiting behind another turn. It is wall-clock based and can span an app restart. |
 | `queue.context`, `attachments.resolve` | Time spent resolving referenced context and local files. |
 | `context.prepare`, `context.credentials`, `context.mcp` | Total preparation, credential verification and local MCP server registration. MCP registration does not prove the provider has completed its own MCP handshake. |
-| `provider.lookup`, `provider.config` | CLI discovery and native configuration loading. Codex configuration loading includes its separate app-server probe. |
+| `provider.lookup`, `provider.config` | CLI discovery and native configuration loading. Codex dialogue reads configuration through the pooled app-server; one-shot CLI calls use a separate probe. |
+| `provider.pool_admission`, `provider.pool_wait` | Total admission time (including serialization/configuration), and waiting for an idle slot while generations drain. These spans overlap initialization/configuration and must not be added together. |
+| `provider.pool_create`, `provider.pool_reused`, `provider.bridge`, `provider.handshake` | New worker construction, reuse of an existing worker, local MCP bridge startup and app-server handshake. Creation is distinct from OS-confirmed spawn; standby warmup does not imply a model request. |
+| `provider.thread_wait`, `provider.thread_ready`, `provider.turn_start`, `provider.thread_unload` | Waiting for prior thread unload, thread start/resume, turn/start acknowledgement and final unload. The acknowledgement is from the local app-server, not the remote model service. |
 | `provider.spawn` | Operating system confirmed creation of the execution process. |
 | `provider.sdk_ready`, `provider.refresh` | Claude query creation or an existing query's MCP refresh completed. This is not evidence that a network request reached the model. |
 | `provider.input_written`, `provider.input_yielded` | Input was written to CLI stdin or yielded to the Claude SDK. Neither means remote acceptance. |
@@ -128,7 +134,7 @@ Tests inject fake executables/SDK transports and never call a real model:
 
 ```sh
 pnpm --filter @multica/desktop exec vitest run src/main/local-timing-log.test.ts src/main/local-provider-runner.test.ts src/main/local-conversation-service.test.ts src/main/local-conversation-queue.test.ts src/main/local-claude-conversation.test.ts src/main/local-multica-context.test.ts src/renderer/src/platform/local-conversation-service.test.ts
-pnpm --filter @multica/desktop exec vitest run src/main/developer-log-export.test.ts src/main/local-context-mcp.test.ts src/renderer/src/components/labs-settings-tab.test.tsx
+pnpm --filter @multica/desktop exec vitest run src/main/developer-log-export.test.ts src/main/local-context-mcp.test.ts src/main/local-codex-pool.test.ts src/renderer/src/components/labs-settings-tab.test.tsx
 pnpm --filter @multica/views exec vitest run settings/components/settings-page.test.tsx settings/components/settings-navigation.test.ts locales/parity.test.ts
 pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/local-timing.test.ts src/runtime/runtime.test.ts
 pnpm --filter @multica/desktop typecheck
