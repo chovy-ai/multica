@@ -73,7 +73,6 @@ jobs:
         run: |
           node scripts/package.mjs --mac dmg zip "--${TARGET_ARCH}" --publish never \
             -c.mac.identity=- \
-            -c.mac.notarize=false \
             "-c.publish.owner=${GITHUB_REPOSITORY_OWNER}" \
             "-c.publish.repo=${GITHUB_REPOSITORY#*/}"
 
