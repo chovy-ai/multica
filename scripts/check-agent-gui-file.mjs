@@ -10,7 +10,8 @@ import { _electron as electron, expect } from "@playwright/test";
 import ts from "typescript";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const require = createRequire(join(root, "apps/desktop/package.json"));
+// Resolve Electron from the desktop package that declares and installs it.
+const desktopRequire = createRequire(join(root, "apps/desktop/package.json"));
 const gui = resolve(process.argv[2] ?? join(root, "packages/tutti-agent-gui-host/dist"), "index.html");
 await readFile(gui); // Fail early if the production GUI has not been built.
 const temporary = await mkdtemp(join(tmpdir(), "multica-agent-gui-file-"));
@@ -63,7 +64,7 @@ try {
       window.loadFile(${JSON.stringify(join(temporary, "host.html"))});
     });`);
   const { ELECTRON_RUN_AS_NODE: _ignored, ...environment } = process.env;
-  application = await electron.launch({ executablePath: require("electron"), args: [main], env: environment });
+  application = await electron.launch({ executablePath: desktopRequire("electron"), args: [main], env: environment });
   page = await application.firstWindow();
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -86,7 +87,7 @@ try {
   console.log("PASS: packaged file-origin handshake, RPC, rendered view, reload and unrelated-frame rejection");
 } catch (error) {
   if (page) {
-    console.error(await page.evaluate(() => ({ evidence: globalThis.evidence, child: document.querySelector("#gui")?.contentDocument?.body.innerText.slice(0, 1200) })).catch(() => null));
+    console.error(await page.evaluate(() => ({ evidence: globalThis.evidence, child: globalThis.document.querySelector("#gui")?.contentDocument?.body.innerText.slice(0, 1200) })).catch(() => null));
   }
   throw error;
 } finally {
