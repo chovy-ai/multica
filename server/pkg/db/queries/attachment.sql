@@ -301,3 +301,13 @@ ORDER BY id;
 DELETE FROM attachment
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND source_context_id IS NOT NULL;
+
+-- name: CopyChatInvocationAttachments :many
+-- Inputs retain independent attachment bindings when another run is cancelled.
+INSERT INTO attachment (id, workspace_id, chat_session_id, chat_message_id,
+  uploader_type, uploader_id, filename, url, content_type, size_bytes)
+SELECT gen_random_uuid(), source.workspace_id, source.chat_session_id, sqlc.arg('target_message_id'),
+  source.uploader_type, source.uploader_id, source.filename, source.url, source.content_type, source.size_bytes
+FROM attachment AS source
+WHERE source.chat_message_id = sqlc.arg('source_message_id') AND source.workspace_id = sqlc.arg('workspace_id')
+RETURNING id;

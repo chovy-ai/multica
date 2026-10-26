@@ -1,0 +1,2505 @@
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type JSX,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+  type RefObject
+} from "react";
+import { createPortal } from "react-dom";
+import { useComposedInputValue } from "@tutti-os/ui-react-hooks";
+import {
+  ArrowRightIcon,
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CheckIcon,
+  ChevronDownIcon,
+  CloseIcon,
+  FolderFilledIcon,
+  Input,
+  IssueIcon,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+  ScrollArea,
+  SearchIcon,
+  Spinner,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  cn
+} from "@tutti-os/ui-system";
+import { AddLinedIcon, WarningLinedIcon } from "@tutti-os/ui-system/icons";
+import {
+  WorkspaceFilePreviewSurface,
+  type WorkspaceFilePreviewSurfaceState
+} from "@tutti-os/workspace-file-preview/react";
+import {
+  WorkspaceFileEntryIcon,
+  WorkspaceFileManagerCreateDialog,
+  useWorkspaceFileEntryIconUrls,
+  WorkspaceFileManagerContextMenu,
+  type WorkspaceFileEntry,
+  type WorkspaceFileManagerI18nRuntime,
+  type WorkspaceFileOpenWithApplication
+} from "@tutti-os/workspace-file-manager";
+import type {
+  NodeRef,
+  ReferenceLocateTarget,
+  ReferenceNode
+} from "../../../contracts/referenceSource.ts";
+import type {
+  WorkspaceFileReference,
+  WorkspaceFileReferenceCopy
+} from "../../../contracts/index.ts";
+import type { ReferenceSourceAggregator } from "../../../core/referenceSourceAggregator.ts";
+import {
+  nodeRefKey,
+  SOURCE_ROOT_NODE_ID,
+  type ReferenceFilterCategory
+} from "../../../core/index.ts";
+import {
+  useReferenceSourcePickerView,
+  type ReferenceNodePreviewState,
+  type ReferenceGroupedSelection
+} from "../../../react/internal/reference/useReferenceSourcePickerView.ts";
+import { buildReferenceSourcePickerContextMenuItems } from "./referenceSourcePickerContextMenu.tsx";
+import {
+  formatReferenceNodePathText,
+  formatReferencePreviewDateTime,
+  resolveReferencePreviewTimestampMs,
+  resolveReferencePreviewSizeBytes
+} from "./referenceSourcePickerPresentation.ts";
+import {
+  ReferenceSearchResultList,
+  type ReferenceSearchResultActions
+} from "./ReferenceSearchResultList.tsx";
+import { referenceNodeToWorkspaceFileEntry } from "./referenceNodeIconEntry.ts";
+
+export interface ReferenceSourcePickerProps {
+  aggregator: ReferenceSourceAggregator;
+  copy: WorkspaceFileReferenceCopy;
+  renderHeaderActions?: (context: {
+    refresh: () => void;
+    selectTarget: (target: ReferenceLocateTarget) => Promise<boolean>;
+    selectTargets: (
+      targets: readonly ReferenceLocateTarget[]
+    ) => Promise<number>;
+  }) => ReactNode;
+  /** Optional host actions pinned above the source list. Omission preserves the existing sidebar DOM. */
+  renderSidebarActions?: (context: {
+    refresh: () => void;
+    selectTarget: (target: ReferenceLocateTarget) => Promise<boolean>;
+    selectTargets: (
+      targets: readonly ReferenceLocateTarget[]
+    ) => Promise<number>;
+  }) => ReactNode;
+  resolveContentErrorAction?: (
+    error: Error
+  ) => ReferenceSourceContentErrorAction | null;
+  /** 可选:打开时直达某事项/应用分组(展开并聚焦)。 */
+  initialTarget?: ReferenceLocateTarget | null;
+  isNodeSelectable?: (node: ReferenceNode) => boolean;
+  fileManagerCopy?: WorkspaceFileManagerI18nRuntime;
+  hostOs?: NodeJS.Platform;
+  resolveOpenWithApplicationIcon?: (
+    application: WorkspaceFileOpenWithApplication
+  ) => JSX.Element | null;
+  resolveEntryIconUrl?: (
+    entry: WorkspaceFileEntry
+  ) => Promise<string | null | undefined>;
+  onClose: () => void;
+  onConfirm: (refs: WorkspaceFileReference[]) => void;
+  /**
+   * 可选:启用「文件夹=一个 bundle 节点」确认形态。提供时确认走 confirmGrouped,
+   * navigable 源的选中文件夹折叠成 bundle 回调,其余仍为单条文件。
+   */
+  onConfirmBundles?: (result: ReferenceGroupedSelection) => void;
+  open: boolean;
+  purpose?: "directory" | "reference";
+  /**
+   * Directory purpose only. When the user is at the source root with nothing
+   * selected, confirm uses this path ("save/export here" = current location).
+   * Nested folders still confirm via the entered/selected folder.
+   */
+  confirmRootDirectoryPath?: string;
+  workspaceId: string;
+}
+
+export interface ReferenceSourceContentErrorAction {
+  label: string;
+}
+
+/**
+ * 左栏二级分组(应用/任务列表)默认最多展示的条目数;超出则折叠在「拉取更多」之后。
+ * 点击「拉取更多」先展开已加载的隐藏分组;已加载分组全部可见后,若源端仍有续页(cursor),
+ * 再复用同一入口拉取下一页。
+ */
+const SIDEBAR_GROUP_PAGE_SIZE = 5;
+
+type PickerView = ReturnType<typeof useReferenceSourcePickerView>;
+type ReferenceNodeIconUrlState = ReturnType<
+  typeof useWorkspaceFileEntryIconUrls
+>;
+interface ReferenceSourceContextMenuState {
+  node: ReferenceNode;
+  x: number;
+  y: number;
+}
+
+/** react-resizable-panels 命令式句柄(只用到 resize)。 */
+type ResizablePanelHandle = { resize: (size: number) => void };
+
+/**
+ * 双击分割线:把 panel 自动适配到内容自然宽度。
+ * 量 `[data-autofit-label]`(truncate 元素的 scrollWidth = 完整文本宽度)的最右边缘,
+ * 加上尾部控件/内边距,折算成占整体宽度的百分比;resize 内部会按 minSize 再做夹取。
+ */
+function autoFitPanelWidth(
+  groupEl: HTMLElement | null,
+  contentEl: HTMLElement | null,
+  panel: ResizablePanelHandle | null,
+  trailingPx: number
+): void {
+  if (!groupEl || !contentEl || !panel) {
+    return;
+  }
+  const groupWidth = groupEl.clientWidth;
+  if (groupWidth <= 0) {
+    return;
+  }
+  const contentLeft = contentEl.getBoundingClientRect().left;
+  const labels = contentEl.querySelectorAll<HTMLElement>(
+    "[data-autofit-label]"
+  );
+  let maxRight = 0;
+  labels.forEach((label) => {
+    const right =
+      label.getBoundingClientRect().left - contentLeft + label.scrollWidth;
+    if (right > maxRight) {
+      maxRight = right;
+    }
+  });
+  if (maxRight <= 0) {
+    return;
+  }
+  const naturalWidth = maxRight + trailingPx;
+  panel.resize(Math.min(80, (naturalWidth / groupWidth) * 100));
+}
+
+export function ReferenceSourcePicker({
+  aggregator,
+  copy,
+  fileManagerCopy,
+  hostOs = "darwin",
+  initialTarget,
+  isNodeSelectable,
+  onClose,
+  onConfirm,
+  onConfirmBundles,
+  open,
+  purpose = "reference",
+  confirmRootDirectoryPath,
+  renderHeaderActions,
+  renderSidebarActions,
+  resolveContentErrorAction,
+  resolveEntryIconUrl,
+  resolveOpenWithApplicationIcon,
+  workspaceId
+}: ReferenceSourcePickerProps): JSX.Element | null {
+  const titleId = useId();
+  const view = useReferenceSourcePickerView({
+    aggregator,
+    workspaceId,
+    open,
+    initialTarget,
+    isNodeSelectable,
+    onClose,
+    onConfirm,
+    onConfirmBundles,
+    searchResultKind: purpose === "directory" ? "folder" : "file",
+    selectionMode: purpose === "directory" ? "single" : "multiple"
+  });
+  const requestClose = useCallback(() => {
+    if (!view.isConfirming) {
+      onClose();
+    }
+  }, [onClose, view.isConfirming]);
+  const trimmedConfirmRootDirectoryPath =
+    confirmRootDirectoryPath?.trim() ?? "";
+  const atConfirmRootDirectory =
+    purpose === "directory" &&
+    Boolean(trimmedConfirmRootDirectoryPath) &&
+    !view.currentNode;
+  // When "confirm current location" is the workspace root, surface it in the
+  // preview pane so the enabled footer reads as a real selection.
+  const confirmRootDirectoryNode = useMemo((): ReferenceNode | null => {
+    if (!atConfirmRootDirectory || !view.activeSourceId) {
+      return null;
+    }
+    const segments = trimmedConfirmRootDirectoryPath.split("/").filter(Boolean);
+    return {
+      kind: "folder",
+      displayName:
+        view.activeTabLabel.trim() ||
+        segments.at(-1) ||
+        trimmedConfirmRootDirectoryPath,
+      hasChildren: true,
+      contextLabel: trimmedConfirmRootDirectoryPath,
+      ref: {
+        sourceId: view.activeSourceId,
+        nodeId: SOURCE_ROOT_NODE_ID
+      }
+    };
+  }, [
+    atConfirmRootDirectory,
+    trimmedConfirmRootDirectoryPath,
+    view.activeSourceId,
+    view.activeTabLabel
+  ]);
+  const previewNode = view.focusedNode ?? confirmRootDirectoryNode;
+  const canConfirmDirectory =
+    view.selectionCount > 0 ||
+    Boolean(view.currentNode) ||
+    Boolean(trimmedConfirmRootDirectoryPath);
+  const handleConfirm = useCallback(() => {
+    if (view.selectionCount > 0) {
+      void view.confirm();
+      return;
+    }
+    if (purpose !== "directory") {
+      return;
+    }
+    if (view.currentNode) {
+      void view.confirm([view.currentNode]);
+      return;
+    }
+    if (!trimmedConfirmRootDirectoryPath) {
+      return;
+    }
+    const segments = trimmedConfirmRootDirectoryPath.split("/").filter(Boolean);
+    onConfirm([
+      {
+        path: trimmedConfirmRootDirectoryPath,
+        kind: "folder",
+        displayName: segments.at(-1) || trimmedConfirmRootDirectoryPath
+      }
+    ]);
+    onClose();
+  }, [onClose, onConfirm, purpose, trimmedConfirmRootDirectoryPath, view]);
+  const [createDirectoryDialog, setCreateDirectoryDialog] = useState<{
+    errorMessage: string | null;
+    name: string;
+    parent: ReferenceNode | null;
+    submitting: boolean;
+  } | null>(null);
+  const hasVisibleContent = view.isQuery
+    ? view.searchResultCount > 0
+    : view.currentEntries.length > 0;
+  const contentErrorAction = view.contentError
+    ? (resolveContentErrorAction?.(view.contentError) ?? null)
+    : null;
+
+  // 文件类型筛选已下沉为查询参数(view.activeFilters);此处只做切换/清空的转发。
+  const activeFilterSet = new Set(view.activeFilters);
+  const toggleFilter = (id: string) => {
+    const next = new Set(activeFilterSet);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    view.setFilters([...next]);
+  };
+  const clearFilters = () => view.setFilters([]);
+  const searchInput = useComposedInputValue({
+    onCommit: view.setSearchQuery,
+    value: view.searchQuery
+  });
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handleEscapeKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      requestClose();
+    };
+    document.addEventListener("keydown", handleEscapeKeyDown, {
+      capture: true
+    });
+    return () => {
+      document.removeEventListener("keydown", handleEscapeKeyDown, {
+        capture: true
+      });
+    };
+  }, [open, requestClose]);
+
+  useEffect(() => {
+    if (!open) {
+      setCreateDirectoryDialog(null);
+    }
+  }, [open]);
+
+  const openCreateDirectoryDialog = (
+    explicitParent?: ReferenceNode | null
+  ): void => {
+    const focusedDirectory =
+      view.focusedNode?.kind === "folder" ? view.focusedNode : null;
+    setCreateDirectoryDialog({
+      errorMessage: null,
+      name: "",
+      parent:
+        explicitParent === undefined
+          ? (focusedDirectory ?? view.currentNode)
+          : explicitParent,
+      submitting: false
+    });
+  };
+
+  const confirmCreateDirectory = async (): Promise<void> => {
+    if (!createDirectoryDialog || !fileManagerCopy) {
+      return;
+    }
+    const name = createDirectoryDialog.name.trim();
+    if (!name) {
+      setCreateDirectoryDialog((current) =>
+        current
+          ? {
+              ...current,
+              errorMessage: fileManagerCopy.t("createNameRequired")
+            }
+          : null
+      );
+      return;
+    }
+    if (name === "." || name === ".." || /[\\/]/.test(name)) {
+      setCreateDirectoryDialog((current) =>
+        current
+          ? {
+              ...current,
+              errorMessage: fileManagerCopy.t("createNameInvalid")
+            }
+          : null
+      );
+      return;
+    }
+    setCreateDirectoryDialog((current) =>
+      current ? { ...current, errorMessage: null, submitting: true } : null
+    );
+    try {
+      await view.createDirectory(createDirectoryDialog.parent, name);
+      view.setSearchQuery("");
+      setCreateDirectoryDialog(null);
+    } catch {
+      setCreateDirectoryDialog((current) =>
+        current
+          ? {
+              ...current,
+              errorMessage: fileManagerCopy.t("unknownErrorMessage"),
+              submitting: false
+            }
+          : null
+      );
+    }
+  };
+
+  // 三栏可拖拽 + 双击自动适配:layoutRef 量整体宽度,content/panel ref 用于双击适配。
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+  const menuBoundaryRef = useRef<HTMLDivElement | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const sidebarContentRef = useRef<HTMLDivElement | null>(null);
+  const middleContentRef = useRef<HTMLDivElement | null>(null);
+  const sidebarPanelRef = useRef<ResizablePanelHandle | null>(null);
+  const middlePanelRef = useRef<ResizablePanelHandle | null>(null);
+  const [contextMenu, setContextMenu] =
+    useState<ReferenceSourceContextMenuState | null>(null);
+  const [openWithApplications, setOpenWithApplications] = useState<
+    WorkspaceFileOpenWithApplication[]
+  >([]);
+  const [openWithLoading, setOpenWithLoading] = useState(false);
+  const retainedIconEntries = useMemo(
+    () =>
+      collectReferenceNodeIconEntries({
+        childrenByKey: view.childrenByKey,
+        currentEntries: view.currentEntries,
+        expandedKeys: view.expandedKeys,
+        focusedNode: view.focusedNode,
+        selection: view.selection,
+        sidebarGroupsBySource: view.sidebarGroupsBySource
+      }),
+    [
+      view.childrenByKey,
+      view.currentEntries,
+      view.expandedKeys,
+      view.focusedNode,
+      view.selection,
+      view.sidebarGroupsBySource
+    ]
+  );
+  const iconUrls = useWorkspaceFileEntryIconUrls({
+    entries: retainedIconEntries,
+    includeImageThumbnails: resolveEntryIconUrl !== undefined,
+    resolveEntryIconUrl
+  });
+
+  useEffect(() => {
+    if (!contextMenu || !fileManagerCopy) {
+      setOpenWithApplications([]);
+      setOpenWithLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const cachedApplications = view.getCachedOpenWithApplications(
+      contextMenu.node
+    );
+    if (cachedApplications) {
+      setOpenWithApplications(cachedApplications);
+      setOpenWithLoading(false);
+      return;
+    }
+
+    setOpenWithApplications([]);
+    setOpenWithLoading(true);
+    void view
+      .listOpenWithApplications(contextMenu.node)
+      .then((applications) => {
+        if (cancelled) {
+          return;
+        }
+        setOpenWithApplications(applications);
+        setOpenWithLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setOpenWithApplications([]);
+        setOpenWithLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contextMenu?.node, fileManagerCopy]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    function handlePointerDown(event: globalThis.PointerEvent): void {
+      const target = event.target;
+      if (target instanceof Node && contextMenuRef.current?.contains(target)) {
+        return;
+      }
+      if (
+        target instanceof Element &&
+        target.closest("[data-workspace-file-manager-submenu]")
+      ) {
+        return;
+      }
+      setContextMenu(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [contextMenu]);
+
+  const referenceContextMenuItems = useMemo(
+    () =>
+      fileManagerCopy && contextMenu
+        ? buildReferenceSourcePickerContextMenuItems({
+            fileManagerCopy,
+            hostOs,
+            isBusy: view.isOpeningReference,
+            openWithApplications,
+            openWithLoading,
+            resolveOpenWithApplicationIcon,
+            showCreateDirectoryAction:
+              purpose === "directory" &&
+              view.canCreateDirectory &&
+              contextMenu.node.kind === "folder",
+            showOpenAction: purpose === "reference",
+            showOpenWithAction: purpose === "reference",
+            showRevealInFolderAction: purpose === "reference",
+            onCreateDirectory: () => {
+              openCreateDirectoryDialog(contextMenu.node);
+            },
+            onOpen: async () => {
+              await view.openNode(contextMenu.node);
+            },
+            onOpenWithApplication: async (applicationPath) => {
+              await view.openWithApplication(contextMenu.node, applicationPath);
+            },
+            onOpenWithOtherApplication: async () => {
+              await view.openWithOtherApplication(
+                contextMenu.node,
+                fileManagerCopy.t("openWithOtherPickerPrompt")
+              );
+            },
+            onRevealInFolder: async () => {
+              await view.revealNode(contextMenu.node);
+            }
+          })
+        : [],
+    [
+      contextMenu,
+      fileManagerCopy,
+      hostOs,
+      openWithApplications,
+      openWithLoading,
+      purpose,
+      resolveOpenWithApplicationIcon,
+      view
+    ]
+  );
+
+  const openReferenceContextMenu = (
+    event: MouseEvent<HTMLElement>,
+    node: ReferenceNode
+  ): void => {
+    const canOpenReferenceFileMenu =
+      purpose === "reference" && node.kind === "file";
+    const canOpenDirectoryCreateMenu =
+      purpose === "directory" &&
+      view.canCreateDirectory &&
+      node.kind === "folder";
+    if (
+      !fileManagerCopy ||
+      (!canOpenReferenceFileMenu && !canOpenDirectoryCreateMenu)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (canOpenReferenceFileMenu) {
+      view.setFocusedNode(node);
+    }
+    setContextMenu({
+      node,
+      x: event.clientX,
+      y: event.clientY
+    });
+  };
+  const [searchViewportElement, setSearchViewportElement] =
+    useState<HTMLDivElement | null>(null);
+  const searchResultActionsRef = useRef<ReferenceSearchResultActions | null>(
+    null
+  );
+  searchResultActionsRef.current = {
+    isSelectable: view.isSelectable,
+    onContextMenu: openReferenceContextMenu,
+    onFocus: view.setFocusedNode,
+    onOpen: view.openNode,
+    onSingleSelect: view.toggleSingleSelectionAndExpand,
+    onToggle: view.toggleSelection
+  };
+
+  if (!open) {
+    return null;
+  }
+
+  const hasSelectedGroup =
+    view.selectedGroupKey != null || atConfirmRootDirectory;
+  const fitSidebar = () =>
+    autoFitPanelWidth(
+      layoutRef.current,
+      sidebarContentRef.current,
+      sidebarPanelRef.current,
+      36
+    );
+  const fitMiddle = () =>
+    autoFitPanelWidth(
+      layoutRef.current,
+      middleContentRef.current,
+      middlePanelRef.current,
+      56
+    );
+  const handleReferencePickerKeyDownCapture = (
+    event: ReactKeyboardEvent<HTMLDivElement>
+  ): void => {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (
+      event.target instanceof Node &&
+      !event.currentTarget.contains(event.target)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    requestClose();
+  };
+
+  const pickerDialog = (
+    <div
+      className="nodrag fixed inset-0 grid place-items-center bg-[var(--backdrop)] px-3 py-4 backdrop-blur-md [-webkit-app-region:no-drag] sm:px-6 sm:py-8"
+      style={{ zIndex: "var(--z-panel)" }}
+      onClick={requestClose}
+      onKeyDownCapture={handleReferencePickerKeyDownCapture}
+    >
+      <Card
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="nodrag flex h-[min(88vh,46rem)] w-full max-w-5xl flex-col gap-0 overflow-hidden border-[var(--line-1)] bg-[var(--background-fronted)] py-0 text-[var(--text-primary)] shadow-panel [-webkit-app-region:no-drag]"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <CardHeader className="gap-3 px-4 pt-4 pb-4 sm:px-6">
+          <div className="flex items-start justify-between gap-4">
+            <CardTitle id={titleId}>
+              {copy.t(
+                purpose === "directory"
+                  ? "directoryPicker.title"
+                  : "referencePicker.title"
+              )}
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              {renderHeaderActions?.({
+                refresh: view.retryContent,
+                selectTarget: view.selectTarget,
+                selectTargets: view.selectTargets
+              })}
+              <Button
+                aria-label={copy.t("actions.cancel")}
+                disabled={view.isConfirming}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+                onClick={requestClose}
+              >
+                <CloseIcon size={16} />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent className="flex min-h-0 flex-1 overflow-hidden border-t border-[var(--line-1)] p-0">
+          <div ref={layoutRef} className="flex min-h-0 min-w-0 flex-1">
+            <ResizablePanelGroup
+              className="min-h-0 min-w-0 flex-1"
+              orientation="horizontal"
+              // 三栏初始占比(侧边栏更窄,类 Finder)。v4 在三面板下 `defaultSize` 初始布局会因注册时序被忽略而回退等分,
+              // 这里用 `defaultLayout`(按 panel id 指定 flexGrow 权重)作为权威初始布局。
+              defaultLayout={{ sidebar: 2.5, middle: 4.5, preview: 3 }}
+            >
+              <ResizablePanel
+                id="sidebar"
+                className="min-h-0 min-w-0"
+                defaultSize={15}
+                minSize="150px"
+                panelRef={(handle) => {
+                  sidebarPanelRef.current = handle;
+                }}
+              >
+                <SourceSidebar
+                  contentRef={sidebarContentRef}
+                  copy={copy}
+                  headerActions={renderSidebarActions?.({
+                    refresh: view.retryContent,
+                    selectTarget: view.selectTarget,
+                    selectTargets: view.selectTargets
+                  })}
+                  view={view}
+                />
+              </ResizablePanel>
+              <ResizableHandle
+                disableDoubleClick
+                withHandle
+                className="after:bg-[var(--line-1)]"
+                onDoubleClick={fitSidebar}
+              />
+              <ResizablePanel
+                id="middle"
+                className="min-h-0 min-w-0"
+                defaultSize={50}
+                minSize="260px"
+                panelRef={(handle) => {
+                  middlePanelRef.current = handle;
+                }}
+              >
+                <div
+                  ref={menuBoundaryRef}
+                  className="relative flex h-full min-h-0 flex-col"
+                  data-slot="viewport-menu-boundary"
+                  data-workspace-file-menu-boundary=""
+                  style={
+                    {
+                      "--workspace-file-manager-dialog-overlay-z-index":
+                        "100710"
+                    } as CSSProperties
+                  }
+                >
+                  <div className="flex items-center gap-2 border-b border-[var(--line-1)] p-3">
+                    <div className="relative flex-1">
+                      <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
+                      <Input
+                        className="pl-9"
+                        placeholder={copy.t(
+                          purpose === "directory"
+                            ? "directoryPicker.searchPlaceholder"
+                            : "referencePicker.searchPlaceholder"
+                        )}
+                        value={searchInput.value}
+                        onBlur={searchInput.onBlur}
+                        onChange={searchInput.onChange}
+                        onCompositionEnd={searchInput.onCompositionEnd}
+                        onCompositionStart={searchInput.onCompositionStart}
+                      />
+                    </div>
+                    {purpose === "reference" &&
+                    view.capabilities?.filterable &&
+                    view.filterCategories.length > 0 ? (
+                      <FilterCategoryFilter
+                        categories={view.filterCategories}
+                        copy={copy}
+                        selected={activeFilterSet}
+                        onClear={clearFilters}
+                        onToggle={toggleFilter}
+                      />
+                    ) : null}
+                    {purpose === "directory" &&
+                    view.canCreateDirectory &&
+                    fileManagerCopy ? (
+                      <Button
+                        size="sm"
+                        type="button"
+                        variant="secondary"
+                        onClick={() => openCreateDirectoryDialog()}
+                      >
+                        <AddLinedIcon aria-hidden className="size-4" />
+                        {fileManagerCopy.t("createDirectoryLabel")}
+                      </Button>
+                    ) : null}
+                  </div>
+                  <ScrollArea
+                    className="min-h-0 flex-1"
+                    viewportRef={setSearchViewportElement}
+                    viewportProps={{
+                      // 浏览态拉到底部(距底 <120px)续页。查询态由虚拟列表按逻辑末端续页，
+                      // 避免压缩滚动高度后追加结果不再触发原生 scroll 事件。
+                      onScroll: (event) => {
+                        const el = event.currentTarget;
+                        if (
+                          !view.isQuery &&
+                          view.hasMore &&
+                          !view.isLoading &&
+                          !view.isLoadingMore &&
+                          el.scrollHeight - el.scrollTop - el.clientHeight < 120
+                        ) {
+                          view.loadMore();
+                        }
+                      }
+                    }}
+                  >
+                    <div
+                      ref={middleContentRef}
+                      className="flex flex-col gap-[2px] p-3"
+                    >
+                      {view.isLoading ? (
+                        <Feedback>
+                          <Spinner size={16} />
+                        </Feedback>
+                      ) : view.contentError && !hasVisibleContent ? (
+                        <ContentError
+                          action={contentErrorAction}
+                          copy={copy}
+                          onAction={view.retryContent}
+                        />
+                      ) : view.isQuery ? (
+                        // 查询态(关键词或筛选):扁平结果
+                        view.searchResultCount === 0 ? (
+                          <Feedback>
+                            {copy.t(
+                              purpose === "directory"
+                                ? "directoryPicker.emptySearch"
+                                : "referencePicker.emptySearch"
+                            )}
+                          </Feedback>
+                        ) : (
+                          <ReferenceSearchResultList
+                            actionsRef={searchResultActionsRef}
+                            focusedNode={view.focusedNode}
+                            hasMore={view.hasMore}
+                            isLoadingMore={view.isLoading || view.isLoadingMore}
+                            onEndReached={view.loadMore}
+                            resolveEntryIconUrl={resolveEntryIconUrl}
+                            resultCount={view.searchResultCount}
+                            resultIdentity={view.searchResultIdentity}
+                            resultIndex={view.searchResultIndex}
+                            scrollElement={searchViewportElement}
+                            selection={view.selection}
+                          />
+                        )
+                      ) : view.currentEntries.length === 0 ? (
+                        <Feedback>
+                          {copy.t(
+                            hasSelectedGroup
+                              ? "referencePicker.emptyDirectory"
+                              : "referencePicker.selectGroupHint"
+                          )}
+                        </Feedback>
+                      ) : (
+                        // 浏览:就地递归展开树(复刻 agent 引用面板文件树交互)
+                        view.currentEntries.map((node) => (
+                          <TreeNodeRow
+                            key={nodeRefKey(node.ref)}
+                            copy={copy}
+                            depth={0}
+                            iconUrls={iconUrls}
+                            node={node}
+                            onContextMenu={openReferenceContextMenu}
+                            view={view}
+                          />
+                        ))
+                      )}
+                      {view.contentError && hasVisibleContent ? (
+                        <ContentError
+                          action={contentErrorAction}
+                          copy={copy}
+                          inline
+                          onAction={view.retryContent}
+                        />
+                      ) : null}
+                      {view.hasMore && (view.isQuery || hasSelectedGroup) ? (
+                        <Button
+                          className="mt-1 w-full"
+                          disabled={view.isLoadingMore}
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                          onClick={view.loadMore}
+                        >
+                          {view.isLoadingMore ? (
+                            <Spinner className="text-current" size={14} />
+                          ) : null}
+                          {copy.t("referencePicker.loadMore")}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </ScrollArea>
+                  {fileManagerCopy ? (
+                    <WorkspaceFileManagerContextMenu
+                      contextMenu={
+                        contextMenu
+                          ? {
+                              x: contextMenu.x,
+                              y: contextMenu.y
+                            }
+                          : null
+                      }
+                      contextMenuRef={contextMenuRef}
+                      items={referenceContextMenuItems}
+                      positionMode="viewport"
+                      onClose={() => setContextMenu(null)}
+                    />
+                  ) : null}
+                </div>
+              </ResizablePanel>
+              <ResizableHandle
+                disableDoubleClick
+                withHandle
+                className="after:bg-[var(--line-1)]"
+                onDoubleClick={fitMiddle}
+              />
+              <ResizablePanel
+                id="preview"
+                className="min-h-0 min-w-0"
+                defaultSize={30}
+                minSize="200px"
+              >
+                <PreviewInfoPane
+                  copy={copy}
+                  hierarchy={view.breadcrumb}
+                  iconUrls={iconUrls}
+                  node={previewNode}
+                  previewState={view.previewState}
+                  sourceLabel={view.activeTabLabel}
+                />
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </div>
+        </CardContent>
+
+        <Footer
+          cancelLabel={copy.t("actions.cancel")}
+          confirmLabel={copy.t(
+            purpose === "directory"
+              ? "directoryPicker.confirm"
+              : "referencePicker.confirm"
+          )}
+          countLabel={copy.t("referencePicker.selectedCount", {
+            count:
+              purpose === "directory" &&
+              view.selectionCount === 0 &&
+              canConfirmDirectory
+                ? 1
+                : view.selectionCount
+          })}
+          selection={
+            view.selection.length > 0
+              ? view.selection
+              : confirmRootDirectoryNode
+                ? [confirmRootDirectoryNode]
+                : view.selection
+          }
+          disabled={
+            purpose === "directory"
+              ? !canConfirmDirectory
+              : view.selectionCount === 0
+          }
+          errorMessage={
+            view.confirmError
+              ? (fileManagerCopy?.t("unknownErrorMessage") ??
+                copy.t("referencePicker.loadError"))
+              : null
+          }
+          loading={view.isConfirming}
+          onClose={requestClose}
+          onConfirm={handleConfirm}
+        />
+      </Card>
+    </div>
+  );
+  const dialog = (
+    <>
+      {pickerDialog}
+      {fileManagerCopy ? (
+        <WorkspaceFileManagerCreateDialog
+          busy={createDirectoryDialog?.submitting === true}
+          copy={fileManagerCopy}
+          dialog={
+            createDirectoryDialog
+              ? {
+                  errorMessage: createDirectoryDialog.errorMessage,
+                  kind: "directory",
+                  name: createDirectoryDialog.name
+                }
+              : null
+          }
+          onClose={() => {
+            if (!createDirectoryDialog?.submitting) {
+              setCreateDirectoryDialog(null);
+            }
+          }}
+          onConfirm={() => void confirmCreateDirectory()}
+          onNameChange={(name) => {
+            setCreateDirectoryDialog((current) =>
+              current ? { ...current, errorMessage: null, name } : null
+            );
+          }}
+        />
+      ) : null}
+    </>
+  );
+
+  if (typeof document === "undefined") {
+    return dialog;
+  }
+  return createPortal(dialog, document.body);
+}
+
+export interface ReferenceSourceContentPaneProps {
+  aggregator: ReferenceSourceAggregator;
+  className?: string;
+  copy: WorkspaceFileReferenceCopy;
+  fileManagerCopy?: WorkspaceFileManagerI18nRuntime;
+  hostOs?: NodeJS.Platform;
+  initialNodeRef?: NodeRef | null;
+  initialTarget?: ReferenceLocateTarget | null;
+  resolveEntryIconUrl?: (
+    entry: WorkspaceFileEntry
+  ) => Promise<string | null | undefined>;
+  resolveOpenWithApplicationIcon?: (
+    application: WorkspaceFileOpenWithApplication
+  ) => JSX.Element | null;
+  workspaceId: string;
+}
+
+export function ReferenceSourceContentPane({
+  aggregator,
+  className,
+  copy,
+  fileManagerCopy,
+  hostOs = "darwin",
+  initialNodeRef = null,
+  initialTarget = null,
+  resolveEntryIconUrl,
+  resolveOpenWithApplicationIcon,
+  workspaceId
+}: ReferenceSourceContentPaneProps): JSX.Element {
+  const view = useReferenceSourcePickerView({
+    aggregator,
+    workspaceId,
+    open: true,
+    initialTarget,
+    isNodeSelectable: () => false,
+    onClose: noopVoid,
+    onConfirm: noopVoid,
+    searchResultKind: "file"
+  });
+  const hasVisibleContent = view.isQuery
+    ? view.searchResultCount > 0
+    : view.currentEntries.length > 0;
+  useEffect(() => {
+    if (!initialNodeRef) {
+      return;
+    }
+    if (view.selectedGroupKey === nodeRefKey(initialNodeRef)) {
+      return;
+    }
+    const group = view.sidebarGroupsBySource[initialNodeRef.sourceId]?.find(
+      (item) => item.ref.nodeId === initialNodeRef.nodeId
+    );
+    if (!group) {
+      return;
+    }
+    view.selectGroup(group);
+  }, [
+    initialNodeRef,
+    view.selectedGroupKey,
+    view.sidebarGroupsBySource,
+    view.selectGroup
+  ]);
+  const activeFilterSet = new Set(view.activeFilters);
+  const toggleFilter = (id: string) => {
+    const next = new Set(activeFilterSet);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    view.setFilters([...next]);
+  };
+  const clearFilters = () => view.setFilters([]);
+  const searchInput = useComposedInputValue({
+    onCommit: view.setSearchQuery,
+    value: view.searchQuery
+  });
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const [contextMenu, setContextMenu] =
+    useState<ReferenceSourceContextMenuState | null>(null);
+  const [openWithApplications, setOpenWithApplications] = useState<
+    WorkspaceFileOpenWithApplication[]
+  >([]);
+  const [openWithLoading, setOpenWithLoading] = useState(false);
+  const retainedIconEntries = useMemo(
+    () =>
+      collectReferenceNodeIconEntries({
+        childrenByKey: view.childrenByKey,
+        currentEntries: view.currentEntries,
+        expandedKeys: view.expandedKeys,
+        focusedNode: view.focusedNode,
+        selection: view.selection,
+        sidebarGroupsBySource: view.sidebarGroupsBySource
+      }),
+    [
+      view.childrenByKey,
+      view.currentEntries,
+      view.expandedKeys,
+      view.focusedNode,
+      view.selection,
+      view.sidebarGroupsBySource
+    ]
+  );
+  const iconUrls = useWorkspaceFileEntryIconUrls({
+    entries: retainedIconEntries,
+    includeImageThumbnails: resolveEntryIconUrl !== undefined,
+    resolveEntryIconUrl
+  });
+
+  useEffect(() => {
+    if (!contextMenu || !fileManagerCopy) {
+      setOpenWithApplications([]);
+      setOpenWithLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const cachedApplications = view.getCachedOpenWithApplications(
+      contextMenu.node
+    );
+    if (cachedApplications) {
+      setOpenWithApplications(cachedApplications);
+      setOpenWithLoading(false);
+      return;
+    }
+
+    setOpenWithApplications([]);
+    setOpenWithLoading(true);
+    void view
+      .listOpenWithApplications(contextMenu.node)
+      .then((applications) => {
+        if (cancelled) {
+          return;
+        }
+        setOpenWithApplications(applications);
+        setOpenWithLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setOpenWithApplications([]);
+        setOpenWithLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contextMenu?.node, fileManagerCopy]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    function handlePointerDown(event: globalThis.PointerEvent): void {
+      const target = event.target;
+      if (target instanceof Node && contextMenuRef.current?.contains(target)) {
+        return;
+      }
+      if (
+        target instanceof Element &&
+        target.closest("[data-workspace-file-manager-submenu]")
+      ) {
+        return;
+      }
+      setContextMenu(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [contextMenu]);
+
+  const referenceContextMenuItems = useMemo(
+    () =>
+      fileManagerCopy && contextMenu
+        ? buildReferenceSourcePickerContextMenuItems({
+            fileManagerCopy,
+            hostOs,
+            isBusy: view.isOpeningReference,
+            openWithApplications,
+            openWithLoading,
+            resolveOpenWithApplicationIcon,
+            showCreateDirectoryAction: false,
+            showOpenAction: true,
+            showOpenWithAction: true,
+            showRevealInFolderAction: true,
+            onCreateDirectory: noopVoid,
+            onOpen: async () => {
+              await view.openNode(contextMenu.node);
+            },
+            onOpenWithApplication: async (applicationPath) => {
+              await view.openWithApplication(contextMenu.node, applicationPath);
+            },
+            onOpenWithOtherApplication: async () => {
+              await view.openWithOtherApplication(
+                contextMenu.node,
+                fileManagerCopy.t("openWithOtherPickerPrompt")
+              );
+            },
+            onRevealInFolder: async () => {
+              await view.revealNode(contextMenu.node);
+            }
+          })
+        : [],
+    [
+      contextMenu,
+      fileManagerCopy,
+      hostOs,
+      openWithApplications,
+      openWithLoading,
+      resolveOpenWithApplicationIcon,
+      view
+    ]
+  );
+
+  const openReferenceContextMenu = (
+    event: MouseEvent<HTMLElement>,
+    node: ReferenceNode
+  ): void => {
+    if (!fileManagerCopy || node.kind !== "file") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    view.setFocusedNode(node);
+    setContextMenu({
+      node,
+      x: event.clientX,
+      y: event.clientY
+    });
+  };
+  const [searchViewportElement, setSearchViewportElement] =
+    useState<HTMLDivElement | null>(null);
+  const searchResultActionsRef = useRef<ReferenceSearchResultActions | null>(
+    null
+  );
+  searchResultActionsRef.current = {
+    isSelectable: view.isSelectable,
+    onContextMenu: openReferenceContextMenu,
+    onFocus: view.setFocusedNode,
+    onOpen: view.openNode,
+    onSingleSelect: view.toggleSingleSelectionAndExpand,
+    onToggle: view.toggleSelection
+  };
+  const hasSelectedGroup = view.selectedGroupKey != null;
+
+  return (
+    <div
+      className={cn(
+        "relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[var(--background-fronted)]",
+        className
+      )}
+      data-slot="viewport-menu-boundary"
+      data-workspace-file-menu-boundary=""
+      style={
+        {
+          "--workspace-file-manager-dialog-overlay-z-index": "20"
+        } as CSSProperties
+      }
+    >
+      <div className="flex min-h-0 min-w-0 flex-[1.7] flex-col border-r border-[var(--line-1)]">
+        <div className="flex items-center gap-2 border-b border-[var(--line-1)] p-3">
+          <div className="relative flex-1">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
+            <Input
+              className="pl-9"
+              placeholder={copy.t("referencePicker.searchPlaceholder")}
+              value={searchInput.value}
+              onBlur={searchInput.onBlur}
+              onChange={searchInput.onChange}
+              onCompositionEnd={searchInput.onCompositionEnd}
+              onCompositionStart={searchInput.onCompositionStart}
+            />
+          </div>
+          {view.capabilities?.filterable && view.filterCategories.length > 0 ? (
+            <FilterCategoryFilter
+              categories={view.filterCategories}
+              copy={copy}
+              selected={activeFilterSet}
+              onClear={clearFilters}
+              onToggle={toggleFilter}
+            />
+          ) : null}
+        </div>
+        <ScrollArea
+          className="min-h-0 flex-1"
+          viewportRef={setSearchViewportElement}
+          viewportProps={{
+            onScroll: (event) => {
+              const el = event.currentTarget;
+              if (
+                !view.isQuery &&
+                view.hasMore &&
+                !view.isLoading &&
+                !view.isLoadingMore &&
+                el.scrollHeight - el.scrollTop - el.clientHeight < 120
+              ) {
+                view.loadMore();
+              }
+            }
+          }}
+        >
+          <div className="flex flex-col gap-[2px] p-3">
+            {view.isLoading ? (
+              <Feedback>
+                <Spinner size={16} />
+              </Feedback>
+            ) : view.contentError && !hasVisibleContent ? (
+              <ContentError copy={copy} />
+            ) : view.isQuery ? (
+              view.searchResultCount === 0 ? (
+                <Feedback>{copy.t("referencePicker.emptySearch")}</Feedback>
+              ) : (
+                <ReferenceSearchResultList
+                  actionsRef={searchResultActionsRef}
+                  focusedNode={view.focusedNode}
+                  hasMore={view.hasMore}
+                  isLoadingMore={view.isLoading || view.isLoadingMore}
+                  onEndReached={view.loadMore}
+                  resolveEntryIconUrl={resolveEntryIconUrl}
+                  resultCount={view.searchResultCount}
+                  resultIdentity={view.searchResultIdentity}
+                  resultIndex={view.searchResultIndex}
+                  scrollElement={searchViewportElement}
+                  selection={view.selection}
+                />
+              )
+            ) : view.currentEntries.length === 0 ? (
+              <Feedback>
+                {copy.t(
+                  hasSelectedGroup
+                    ? "referencePicker.emptyDirectory"
+                    : "referencePicker.selectGroupHint"
+                )}
+              </Feedback>
+            ) : (
+              view.currentEntries.map((node) => (
+                <TreeNodeRow
+                  key={nodeRefKey(node.ref)}
+                  copy={copy}
+                  depth={0}
+                  iconUrls={iconUrls}
+                  node={node}
+                  onContextMenu={openReferenceContextMenu}
+                  view={view}
+                />
+              ))
+            )}
+            {view.contentError && hasVisibleContent ? (
+              <ContentError copy={copy} inline />
+            ) : null}
+            {view.hasMore && (view.isQuery || hasSelectedGroup) ? (
+              <Button
+                className="mt-1 w-full"
+                disabled={view.isLoadingMore}
+                size="sm"
+                type="button"
+                variant="ghost"
+                onClick={view.loadMore}
+              >
+                {view.isLoadingMore ? (
+                  <Spinner className="text-current" size={14} />
+                ) : null}
+                {copy.t("referencePicker.loadMore")}
+              </Button>
+            ) : null}
+          </div>
+        </ScrollArea>
+        {fileManagerCopy ? (
+          <WorkspaceFileManagerContextMenu
+            contextMenu={
+              contextMenu
+                ? {
+                    x: contextMenu.x,
+                    y: contextMenu.y
+                  }
+                : null
+            }
+            contextMenuRef={contextMenuRef}
+            items={referenceContextMenuItems}
+            positionMode="viewport"
+            onClose={() => setContextMenu(null)}
+          />
+        ) : null}
+      </div>
+      <div className="@max-[760px]/workspace-file-manager:hidden min-h-0 min-w-[220px] flex-1">
+        <PreviewInfoPane
+          copy={copy}
+          hierarchy={view.breadcrumb}
+          iconUrls={iconUrls}
+          node={view.focusedNode}
+          previewState={view.previewState}
+          sourceLabel={view.activeTabLabel}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 二级分组无自带 iconUrl 时的兜底图标:按源 metadata.icon 令牌选取。
+ * 议题源(icon: "issue")用「事项」应用图标,其余回退到文件夹图标。
+ */
+function GroupFallbackIcon({
+  icon,
+  className
+}: {
+  icon?: string;
+  className: string;
+}): JSX.Element {
+  if (icon === "issue") {
+    return <IssueIcon className={className} />;
+  }
+  return <FolderFilledIcon className={className} />;
+}
+
+/**
+ * 左侧边栏(类 macOS Finder 边栏):
+ * 一级源(本地/应用/任务)作为常驻分组标题、默认全部展开、无折叠箭头;
+ * 其下二级目录分组与标题左对齐(无额外缩进),靠图标区分层级。
+ */
+function SourceSidebar({
+  copy,
+  view,
+  contentRef,
+  headerActions
+}: {
+  copy: WorkspaceFileReferenceCopy;
+  view: PickerView;
+  contentRef: RefObject<HTMLDivElement | null>;
+  headerActions?: ReactNode;
+}): JSX.Element {
+  // 选中分组(含 initialTarget 定位结果)变化时,把它滚入可视区。
+  const selectedGroupRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    selectedGroupRef.current?.scrollIntoView({ block: "nearest" });
+  }, [view.selectedGroupKey]);
+  // 每个源已展示的分组上限(默认一页);点「拉取更多」按页累加。源切换/重开会重置。
+  const [shownBySource, setShownBySource] = useState<Record<string, number>>(
+    {}
+  );
+  const loadMoreGroups = (sourceId: string) => {
+    const groups = view.sidebarGroupsBySource[sourceId] ?? [];
+    const limit = shownBySource[sourceId] ?? SIDEBAR_GROUP_PAGE_SIZE;
+    // 点「查看更多」先展示全部已加载项;已全部可见时,同一入口再拉源端下一页。
+    const visibleCount = Math.max(groups.length, limit);
+    if (groups.length > limit) {
+      setShownBySource((prev) => ({ ...prev, [sourceId]: visibleCount }));
+      return;
+    }
+    if (view.sidebarHasMoreBySource[sourceId] ?? false) {
+      view.loadMoreSidebarGroups(sourceId);
+    }
+  };
+  const sourceList = (
+    <ScrollArea className="h-full min-h-0 w-full">
+      <div ref={contentRef} className="flex flex-col gap-0.5 p-2">
+        <p className="px-2 py-1 text-[11px] font-semibold text-[var(--text-tertiary)]">
+          {copy.t("referencePicker.sourceColumn")}
+        </p>
+        {view.tabsError ? (
+          <p className="px-2 py-1 text-[12px] text-[var(--destructive)]">
+            {copy.t("referencePicker.loadError")}
+          </p>
+        ) : null}
+        {view.tabs.map((tab) => {
+          const groups = view.sidebarGroupsBySource[tab.sourceId] ?? [];
+          const limit = shownBySource[tab.sourceId] ?? SIDEBAR_GROUP_PAGE_SIZE;
+          // 当前选中分组(如 initialTarget 定位到靠后的项)始终展示,避免「选中却被折叠」。
+          const selectedIndex = groups.findIndex(
+            (group) => nodeRefKey(group.ref) === view.selectedGroupKey
+          );
+          const effectiveLimit =
+            selectedIndex >= limit ? selectedIndex + 1 : limit;
+          const visibleGroups = groups.slice(0, effectiveLimit);
+          const loadingMore =
+            view.sidebarLoadingMoreBySource[tab.sourceId] ?? false;
+          // 还能拉取更多 = 已加载分组超出当前展示上限,或源端仍有续页未取。
+          const hasMore =
+            groups.length > effectiveLimit ||
+            (view.sidebarHasMoreBySource[tab.sourceId] ?? false);
+          return (
+            <div key={tab.sourceId} className="flex flex-col gap-0.5">
+              {/* 一级源:Finder 风格分区标题,同时作为源根入口。 */}
+              <button
+                aria-current={
+                  view.activeSourceId === tab.sourceId &&
+                  view.selectedGroupKey == null
+                    ? "true"
+                    : undefined
+                }
+                className={cn(
+                  "px-2 pt-1.5 pb-0.5 text-left text-[11px] font-semibold text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)]",
+                  view.activeSourceId === tab.sourceId &&
+                    view.selectedGroupKey == null &&
+                    "text-[var(--text-primary)]"
+                )}
+                data-autofit-label
+                type="button"
+                onClick={() => view.selectSourceRoot(tab.sourceId)}
+              >
+                {tab.label}
+              </button>
+              {groups.length === 0 ? (
+                view.isLoadingTabs ||
+                (view.sidebarLoadingBySource[tab.sourceId] ?? false) ? (
+                  <p className="px-2 py-1 text-[12px] text-[var(--text-tertiary)]">
+                    …
+                  </p>
+                ) : view.sidebarErrorBySource[tab.sourceId] ? (
+                  <p className="px-2 py-1 text-[12px] text-[var(--destructive)]">
+                    {copy.t("referencePicker.loadError")}
+                  </p>
+                ) : null
+              ) : (
+                visibleGroups.map((group) => {
+                  const key = nodeRefKey(group.ref);
+                  const selected = key === view.selectedGroupKey;
+                  return (
+                    <button
+                      key={key}
+                      ref={selected ? selectedGroupRef : undefined}
+                      aria-current={selected ? "true" : undefined}
+                      className={cn(
+                        "flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-[13px] transition-colors",
+                        selected
+                          ? "bg-primary/10 font-medium text-[var(--text-primary)] hover:bg-primary/15"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--transparency-hover)] hover:text-[var(--text-primary)]"
+                      )}
+                      type="button"
+                      onClick={() => view.selectGroup(group)}
+                    >
+                      {group.iconUrl ? (
+                        <img
+                          alt=""
+                          className="size-4 shrink-0 rounded-[3px] object-cover"
+                          src={group.iconUrl}
+                        />
+                      ) : (
+                        <GroupFallbackIcon
+                          className="size-4 shrink-0 text-[var(--rich-text-folder)]"
+                          icon={tab.icon}
+                        />
+                      )}
+                      <FullTextTooltip content={group.displayName}>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          data-autofit-label
+                        >
+                          {group.displayName}
+                        </span>
+                      </FullTextTooltip>
+                      {group.childCount != null ? (
+                        <span className="shrink-0 text-[11px] text-[var(--text-tertiary)]">
+                          {group.childCount}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })
+              )}
+              {groups.length > 0 && view.sidebarErrorBySource[tab.sourceId] ? (
+                <p className="px-2 py-1 text-[12px] text-[var(--destructive)]">
+                  {copy.t("referencePicker.loadError")}
+                </p>
+              ) : null}
+              {hasMore ? (
+                <button
+                  className="flex items-center gap-1.5 rounded-[6px] px-2 py-1.5 text-left text-[12px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--transparency-hover)] hover:text-[var(--text-primary)] disabled:opacity-60"
+                  disabled={loadingMore}
+                  type="button"
+                  onClick={() => loadMoreGroups(tab.sourceId)}
+                >
+                  {loadingMore ? (
+                    <Spinner
+                      className="text-[var(--text-secondary)]"
+                      size={12}
+                    />
+                  ) : (
+                    <ChevronDownIcon
+                      className="shrink-0 text-[var(--text-secondary)]"
+                      size={12}
+                    />
+                  )}
+                  <span>{copy.t("referencePicker.loadMoreGroups")}</span>
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </ScrollArea>
+  );
+  if (headerActions == null) {
+    return sourceList;
+  }
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[var(--line-1)] p-2">
+        {headerActions}
+      </div>
+      <div className="min-h-0 flex-1">{sourceList}</div>
+    </div>
+  );
+}
+
+/**
+ * 把 hook 的 node-keyed 预览态映射成共享预览组件的 surface state,补上本地化文案。
+ * previewState 可能短暂滞后于 node(异步加载间隙),不匹配时回退到 loading/directory。
+ */
+function toPreviewSurfaceState(
+  node: ReferenceNode,
+  previewState: ReferenceNodePreviewState,
+  copy: WorkspaceFileReferenceCopy
+): WorkspaceFilePreviewSurfaceState<ReferenceNode> {
+  if (
+    !("node" in previewState) ||
+    nodeRefKey(previewState.node.ref) !== nodeRefKey(node.ref)
+  ) {
+    return node.kind === "folder"
+      ? { entry: node, status: "directory" }
+      : { entry: node, status: "loading" };
+  }
+  switch (previewState.status) {
+    case "directory":
+      return { entry: node, status: "directory" };
+    case "loading":
+      return {
+        entry: node,
+        previewKind: previewState.previewKind,
+        status: "loading"
+      };
+    case "image":
+      return {
+        entry: node,
+        objectUrl: previewState.objectUrl,
+        previewKind: "image",
+        status: "image"
+      };
+    case "video":
+      return {
+        entry: node,
+        objectUrl: previewState.objectUrl,
+        previewKind: "video",
+        status: "video"
+      };
+    case "text":
+      return {
+        content: previewState.content,
+        entry: node,
+        previewKind: previewState.previewKind,
+        status: "text"
+      };
+    case "readonly":
+      return {
+        entry: node,
+        message:
+          previewState.reason === "binary"
+            ? copy.t("referencePicker.previewBinary")
+            : previewState.reason === "file_too_large" ||
+                previewState.reason === "text_too_large"
+              ? copy.t("referencePicker.previewTooLarge")
+              : copy.t("referencePicker.previewUnsupported"),
+        status: "readonly"
+      };
+    case "error":
+      return {
+        entry: node,
+        message: copy.t("referencePicker.previewError"),
+        status: "error"
+      };
+    case "unsupported":
+      return {
+        entry: node,
+        message: copy.t("referencePicker.previewUnsupported"),
+        status: "unsupported"
+      };
+  }
+}
+
+/**
+ * 产出来源徽标配色:按一级源给「产出来源」徽标着色,复用 rich-text mention
+ * 的语义 token(本地文件 / 应用产物 / 事项产物各自的 @mention 同色),保持
+ * 全局一致。未知源回退到默认 secondary 徽标(返回 undefined)。
+ * sourceId 取值见 contracts/referenceSource.ts 的枚举说明。
+ * 注意:class 必须写成完整字面量,Tailwind JIT 不扫描拼接出来的类名。
+ */
+function sourceBadgeClassName(sourceId: string): string | undefined {
+  return SOURCE_BADGE_CLASSES[sourceId];
+}
+
+const SOURCE_BADGE_CLASSES: Record<string, string> = {
+  "workspace-file":
+    "bg-[color-mix(in_srgb,var(--rich-text-mention-file)_12%,transparent)] text-[var(--rich-text-mention-file)]",
+  "app-artifact":
+    "bg-[color-mix(in_srgb,var(--rich-text-mention-app)_12%,transparent)] text-[var(--rich-text-mention-app)]",
+  "issue-file":
+    "bg-[color-mix(in_srgb,var(--rich-text-mention-issue)_12%,transparent)] text-[var(--rich-text-mention-issue)]"
+};
+
+function FullTextTooltip({
+  children,
+  content
+}: {
+  children: ReactNode;
+  content: string;
+}): JSX.Element {
+  return (
+    <Tooltip delayDuration={300}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        className="max-w-[min(520px,calc(100vw-32px))] whitespace-normal text-left [overflow-wrap:anywhere]"
+        side="top"
+        style={{
+          maxWidth: "min(520px, calc(100vw - 32px))",
+          overflowWrap: "anywhere",
+          whiteSpace: "normal",
+          backgroundColor: "var(--background-fronted)",
+          border: "1px solid var(--border-1)",
+          borderRadius: 6,
+          boxShadow: "var(--shadow-soft)",
+          color: "var(--text-primary)",
+          padding: "4px 8px"
+        }}
+      >
+        {content}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function PreviewInfoPane({
+  copy,
+  hierarchy,
+  iconUrls,
+  node,
+  previewState,
+  sourceLabel
+}: {
+  copy: WorkspaceFileReferenceCopy;
+  hierarchy: readonly ReferenceNode[];
+  iconUrls: ReferenceNodeIconUrlState;
+  node: ReferenceNode | null;
+  previewState: ReferenceNodePreviewState;
+  sourceLabel: string;
+}): JSX.Element {
+  const sizeBytes = node
+    ? resolveReferencePreviewSizeBytes(node, previewState)
+    : null;
+  const timestampMs = node ? resolveReferencePreviewTimestampMs(node) : null;
+  return (
+    <aside className="flex h-full min-h-0 w-full flex-col bg-[var(--background-fronted)]">
+      {node ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+          {/* 文件查看面板:复用 file-manager 的共享预览组件,真实渲染图片/文本内容。 */}
+          <WorkspaceFilePreviewSurface<ReferenceNode>
+            directoryMessage={copy.t("referencePicker.previewFolder")}
+            emptyMessage={copy.t("referencePicker.emptyPreview")}
+            imageAlt={(entry) => entry.displayName}
+            loadingIndicator={<Spinner size={16} />}
+            loadingMessage={copy.t("referencePicker.previewLoading")}
+            renderIcon={(entry) => (
+              <ReferenceNodeIcon
+                frameClassName="size-10"
+                iconClassName="size-9"
+                iconUrls={iconUrls}
+                node={entry}
+              />
+            )}
+            state={toPreviewSurfaceState(node, previewState, copy)}
+            variant="compact"
+          />
+          <div className="space-y-1">
+            <p className="truncate text-[15px] font-semibold">
+              {node.displayName}
+            </p>
+            <ReferencePathText hierarchy={hierarchy} node={node} />
+          </div>
+          <dl className="space-y-2 text-[13px]">
+            <InfoRow label={copy.t("referencePicker.previewSource")}>
+              <Badge
+                variant="secondary"
+                className={sourceBadgeClassName(node.ref.sourceId)}
+              >
+                {sourceLabel}
+              </Badge>
+            </InfoRow>
+            {timestampMs != null ? (
+              <InfoRow label={copy.t("referencePicker.previewModified")}>
+                {formatReferencePreviewDateTime(timestampMs)}
+              </InfoRow>
+            ) : null}
+            {sizeBytes != null ? (
+              <InfoRow label={copy.t("referencePicker.previewSize")}>
+                {formatBytes(sizeBytes)}
+              </InfoRow>
+            ) : null}
+          </dl>
+        </div>
+      ) : (
+        <Feedback>{copy.t("referencePicker.emptyPreview")}</Feedback>
+      )}
+    </aside>
+  );
+}
+
+function ReferencePathText({
+  hierarchy,
+  node
+}: {
+  hierarchy: readonly ReferenceNode[];
+  node: ReferenceNode;
+}): JSX.Element {
+  const pathText = getReferenceNodePathText(node, hierarchy);
+  const lastSlashIndex = pathText.lastIndexOf("/");
+  if (lastSlashIndex <= 0 || lastSlashIndex === pathText.length - 1) {
+    return (
+      <p
+        className="truncate text-[12px] leading-5 text-[var(--text-tertiary)]"
+        title={pathText}
+      >
+        {pathText}
+      </p>
+    );
+  }
+
+  return (
+    <p
+      className="flex min-w-0 items-center text-[12px] leading-5 text-[var(--text-tertiary)]"
+      title={pathText}
+    >
+      <span className="min-w-0 truncate">
+        {pathText.slice(0, lastSlashIndex + 1)}
+      </span>
+      <span className="max-w-[65%] shrink-0 truncate">
+        {pathText.slice(lastSlashIndex + 1)}
+      </span>
+    </p>
+  );
+}
+
+function getReferenceNodePathText(
+  node: ReferenceNode,
+  hierarchy: readonly ReferenceNode[]
+): string {
+  return formatReferenceNodePathText(node, hierarchy);
+}
+
+function InfoRow({
+  label,
+  children
+}: {
+  label: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-[var(--text-secondary)]">{label}</dt>
+      <dd className="min-w-0 truncate text-right text-[var(--text-primary)]">
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+function Footer({
+  cancelLabel,
+  confirmLabel,
+  countLabel,
+  disabled,
+  errorMessage = null,
+  loading = false,
+  selection,
+  onClose,
+  onConfirm
+}: {
+  cancelLabel: string;
+  confirmLabel: string;
+  countLabel: string;
+  disabled: boolean;
+  errorMessage?: string | null;
+  loading?: boolean;
+  selection: readonly ReferenceNode[];
+  onClose: () => void;
+  onConfirm: () => void;
+}): JSX.Element {
+  const selectionTooltipId = useId();
+  const [selectionTooltipOpen, setSelectionTooltipOpen] = useState(false);
+  const selectionTooltipLabel = selection
+    .map((node) => node.displayName)
+    .join("\n");
+
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-[var(--line-1)] px-4 py-3 sm:px-6">
+      <div className="flex min-w-0 items-center gap-2">
+        {errorMessage ? (
+          <span
+            className="truncate text-[13px] text-[var(--state-danger)]"
+            role="alert"
+          >
+            {errorMessage}
+          </span>
+        ) : (
+          <>
+            <span className="shrink-0 text-[13px] text-[var(--text-secondary)]">
+              {countLabel}
+            </span>
+            {selection.slice(0, 2).map((node) => (
+              <Badge
+                key={nodeRefKey(node.ref)}
+                className="min-w-0 max-w-[12rem]"
+                variant="secondary"
+              >
+                <FullTextTooltip content={node.displayName}>
+                  <span className="truncate">{node.displayName}</span>
+                </FullTextTooltip>
+              </Badge>
+            ))}
+          </>
+        )}
+        {!errorMessage && selection.length > 2 ? (
+          <span
+            className="relative inline-flex shrink-0"
+            onBlur={() => setSelectionTooltipOpen(false)}
+            onFocus={() => setSelectionTooltipOpen(true)}
+            onMouseEnter={() => setSelectionTooltipOpen(true)}
+            onMouseLeave={() => setSelectionTooltipOpen(false)}
+          >
+            <Badge
+              asChild
+              className="shrink-0 cursor-default"
+              variant="secondary"
+            >
+              <button
+                aria-describedby={selectionTooltipId}
+                aria-label={selectionTooltipLabel}
+                type="button"
+              >
+                +{selection.length - 2}
+              </button>
+            </Badge>
+            <span
+              aria-hidden={!selectionTooltipOpen}
+              className="pointer-events-none absolute bottom-[calc(100%+8px)] left-0 z-[var(--z-tooltip,100700)] max-h-[min(20rem,calc(100vh-96px))] w-max max-w-[min(28rem,calc(100vw-32px))] overflow-auto whitespace-pre-line rounded-md border border-[var(--border-1)] bg-[var(--background-fronted)] px-2 py-1 text-left text-[13px] leading-[1.3] text-[var(--text-primary)] shadow-soft transition-opacity duration-100 [overflow-wrap:anywhere]"
+              id={selectionTooltipId}
+              role="tooltip"
+              style={{
+                opacity: selectionTooltipOpen ? 1 : 0,
+                visibility: selectionTooltipOpen ? "visible" : "hidden"
+              }}
+            >
+              {selectionTooltipLabel}
+            </span>
+          </span>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          disabled={loading}
+          type="button"
+          variant="secondary"
+          onClick={onClose}
+        >
+          {cancelLabel}
+        </Button>
+        <Button
+          disabled={disabled || loading}
+          type="button"
+          onClick={onConfirm}
+        >
+          {loading ? <Spinner className="text-current" size={14} /> : null}
+          {confirmLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function Feedback({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <div className="grid min-h-0 flex-1 place-items-center px-4 py-8 text-center text-[13px] text-[var(--text-secondary)]">
+      {children}
+    </div>
+  );
+}
+
+function ContentError({
+  action,
+  copy,
+  inline = false,
+  onAction
+}: {
+  action?: ReferenceSourceContentErrorAction | null;
+  copy: WorkspaceFileReferenceCopy;
+  inline?: boolean;
+  onAction?: () => void;
+}): JSX.Element {
+  const content = (
+    <div
+      className={cn(
+        "flex max-w-sm gap-3",
+        inline ? "items-center" : "flex-col items-center"
+      )}
+      role="alert"
+    >
+      <div className="flex items-center gap-2 text-[var(--state-danger)]">
+        <WarningLinedIcon className="size-5 shrink-0" />
+        <span>{copy.t("referencePicker.loadError")}</span>
+      </div>
+      {action && onAction ? (
+        <Button size="sm" type="button" variant="secondary" onClick={onAction}>
+          {action.label}
+        </Button>
+      ) : null}
+    </div>
+  );
+  if (inline) {
+    return (
+      <div className="flex justify-center px-4 py-3 text-[13px]">{content}</div>
+    );
+  }
+  return <Feedback>{content}</Feedback>;
+}
+
+/**
+ * 文件类型多选筛选(搜索框右侧)。自实现的轻量 popover —— 不用设计系统的 Radix
+ * DropdownMenu:本下拉嵌在自定义遮罩对话框(createPortal 到 body)里,Radix 菜单项
+ * 的 select 在「portal + modal=false」组合下点击无法触发(hover 高亮正常但点了不勾选),
+ * 表现为「筛选选了完全没反应」。改用原生 `<button onClick>`,点击必然触发 toggle。
+ *
+ * 弹层就地(absolute)渲染在触发器下方、不再 portal:对话框很高、弹层短且贴顶,
+ * 不会被 overflow 裁切;省去手动定位与 z 层冲突。未选时按钮显示「全部类型」,已选时
+ * 按固定顺序拼出已选分类名(过宽则截断,完整列表见 title 悬浮提示),并附数量徽章。
+ *
+ * 触发器固定宽度、固定 h-8(与左侧搜索框 Input 同高,父行 items-center 居中对齐):
+ * 选中文案再长也只在内部截断成「…」,不撑宽控件、不挤动搜索框。有选中时,触发器右侧的
+ * 箭头位让位给「清除」按钮:点击一键清空全部筛选(也可在弹层里逐项取消勾选)。
+ */
+function FilterCategoryFilter({
+  categories,
+  copy,
+  selected,
+  onClear,
+  onToggle
+}: {
+  categories: readonly ReferenceFilterCategory[];
+  copy: WorkspaceFileReferenceCopy;
+  selected: ReadonlySet<string>;
+  onClear: () => void;
+  onToggle: (id: string) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // 打开期间:点击容器外部或按 Esc 收起。pointerdown 用捕获阶段,先于其它处理生效;
+  // 容器内的点击(触发器/选项)不收起,以支持连续多选。
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  // 按 categories 的固定顺序收集已选标签,保证展示顺序稳定。
+  const selectedLabels = categories
+    .filter((category) => selected.has(category.id))
+    .map((category) => copy.t(category.labelKey));
+  const count = selectedLabels.length;
+  const labelText =
+    count > 0
+      ? selectedLabels.join(copy.t("referencePicker.fileTypeSeparator"))
+      : copy.t("referencePicker.fileTypeAll");
+
+  return (
+    // shrink-0:不被搜索框挤压;固定宽度让控件不随选中文案变宽。
+    <div ref={containerRef} className="relative w-[124px] shrink-0">
+      <Button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        // h-8:与左侧搜索框(Input size=default 同为 h-8/32px)显式等高对齐。
+        // 不用 h-full —— flex 项内的百分比高度无法可靠地依 items-stretch 求值,
+        // 会塌到按钮内容高度,导致与搜索框高度不一致。
+        // w-full + justify-between:固定宽度容器内,文案占据中间并截断,箭头贴右。
+        className="h-8 w-full justify-between gap-1.5 border-0 px-2.5"
+        size="default"
+        type="button"
+        variant="secondary"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="min-w-0 flex-1 truncate text-left" title={labelText}>
+          {labelText}
+        </span>
+        {count > 1 ? (
+          <Badge className="shrink-0 px-1.5" variant="secondary">
+            {count}
+          </Badge>
+        ) : null}
+        {count > 0 ? (
+          // 有选中时,右侧箭头位让位给「清除」:role=button 的 span(避免 button 嵌
+          // button 的非法结构),stopPropagation 让点击只清空筛选、不触发触发器的开合。
+          <span
+            aria-label={copy.t("referencePicker.clearFilter")}
+            className="grid size-4 shrink-0 cursor-pointer place-items-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--transparency-hover)] hover:text-[var(--text-primary)]"
+            role="button"
+            tabIndex={0}
+            onClick={(event) => {
+              event.stopPropagation();
+              onClear();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                onClear();
+              }
+            }}
+          >
+            <CloseIcon size={12} />
+          </span>
+        ) : (
+          <ChevronDownIcon className="size-3.5 shrink-0 text-[var(--text-tertiary)]" />
+        )}
+      </Button>
+      {open ? (
+        <div
+          className="absolute top-[calc(100%+4px)] right-0 min-w-40 overflow-hidden rounded-[8px] border border-[var(--line-1)] bg-[var(--background-fronted)] p-1 shadow-panel"
+          role="menu"
+          style={{ zIndex: "var(--z-panel-popover)" }}
+        >
+          {categories.map((category) => {
+            const checked = selected.has(category.id);
+            return (
+              <button
+                key={category.id}
+                aria-checked={checked}
+                className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--transparency-hover)]"
+                role="menuitemcheckbox"
+                type="button"
+                onClick={() => onToggle(category.id)}
+              >
+                <span className="grid size-4 shrink-0 place-items-center">
+                  {checked ? (
+                    <CheckIcon className="size-3.5 text-[var(--tutti-purple)]" />
+                  ) : null}
+                </span>
+                <span className="flex-1">{copy.t(category.labelKey)}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// 每级缩进 = 箭头列宽(20px)+ 间距(8px)。文件没有箭头列,因此其图标恰好落在
+// 父文件夹图标的正下方;更深层级仍逐级缩进以体现层级关系。
+const TREE_INDENT = 28;
+const TREE_COLLAPSE_DURATION_MS = 200;
+
+function isFocused(
+  focused: ReferenceNode | null,
+  node: ReferenceNode
+): boolean {
+  return focused ? nodeRefKey(focused.ref) === nodeRefKey(node.ref) : false;
+}
+
+/**
+ * 递归文件树节点,交互复刻 main 分支 `WorkspaceFileReferencePickerTreeEntry`:
+ * 24px 缩进、folder 箭头旋转、点名称展开/收起、grid-rows 展开动画、add/check 勾选。
+ * 可选性由业务侧按 source/kind 注入,例如 host 本地目录可浏览但不可引用。
+ */
+function TreeNodeRow({
+  node,
+  depth,
+  iconUrls,
+  onContextMenu,
+  view,
+  copy
+}: {
+  node: ReferenceNode;
+  depth: number;
+  iconUrls: ReferenceNodeIconUrlState;
+  onContextMenu: (event: MouseEvent<HTMLElement>, node: ReferenceNode) => void;
+  view: PickerView;
+  copy: WorkspaceFileReferenceCopy;
+}): JSX.Element {
+  const key = nodeRefKey(node.ref);
+  const isFolder = node.kind === "folder";
+  const expanded = view.expandedKeys[key] ?? false;
+  const childState = view.childrenByKey[key];
+  const childEntries = view.sortNodes(childState?.entries ?? []);
+  const selected = view.isSelected(node);
+  const selectable = view.isSelectable(node);
+  const focused = isFocused(view.focusedNode, node);
+  const active = selected || (focused && selectable);
+  const focusedRowRef = useRef<HTMLDivElement | null>(null);
+
+  const [shouldRenderChildContent, setShouldRenderChildContent] =
+    useState(expanded);
+
+  useEffect(() => {
+    if (focused) {
+      focusedRowRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [focused]);
+
+  useEffect(() => {
+    if (expanded) {
+      setShouldRenderChildContent(true);
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setShouldRenderChildContent(false);
+    }, TREE_COLLAPSE_DURATION_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [expanded]);
+
+  const shouldBuildChildContent = expanded || shouldRenderChildContent;
+  const childContent = shouldBuildChildContent ? (
+    childState?.loading ? (
+      <div
+        className="flex items-center gap-2 px-2 py-2 text-[11px] text-[var(--text-secondary)]"
+        style={{ paddingLeft: `${(depth + 1) * TREE_INDENT + 12}px` }}
+      >
+        <Spinner className="text-[var(--text-secondary)]" size={14} />
+        <span>{copy.t("referencePicker.loading")}</span>
+      </div>
+    ) : childEntries.length > 0 ? (
+      <div className="space-y-0.5">
+        {childEntries.map((child) => (
+          <TreeNodeRow
+            key={nodeRefKey(child.ref)}
+            copy={copy}
+            depth={depth + 1}
+            iconUrls={iconUrls}
+            node={child}
+            onContextMenu={onContextMenu}
+            view={view}
+          />
+        ))}
+      </div>
+    ) : childState?.loaded ? (
+      <div
+        className="px-2 py-2 text-[11px] text-[var(--text-secondary)]"
+        style={{ paddingLeft: `${(depth + 1) * TREE_INDENT + 12}px` }}
+      >
+        {copy.t("referencePicker.emptyDirectory")}
+      </div>
+    ) : null
+  ) : null;
+
+  return (
+    <div>
+      {/* 整行可点:点击监听挂在父级行 div 上,使可点热区与 hover 高亮区一致;
+          内层箭头/选中按钮 stopPropagation 各管各的,避免冒泡到行点击。 */}
+      <div
+        ref={focused ? focusedRowRef : undefined}
+        className={cn(
+          "flex cursor-pointer items-center gap-2 rounded-[6px] py-1.5 pr-1 transition-colors",
+          active ? "bg-transparency-block" : "hover:bg-transparency-block"
+        )}
+        style={{ paddingLeft: `${depth * TREE_INDENT + 8}px` }}
+        onClick={() => {
+          view.setFocusedNode(node);
+          view.toggleSingleSelectionAndExpand(node);
+        }}
+        onContextMenu={(event) => onContextMenu(event, node)}
+        onDoubleClick={(event) => {
+          if (node.kind !== "file") {
+            return;
+          }
+          event.stopPropagation();
+          view.setFocusedNode(node);
+          void view.openNode(node);
+        }}
+      >
+        {isFolder ? (
+          <button
+            aria-label={node.displayName}
+            className="grid size-5 shrink-0 place-items-center rounded-sm text-[var(--text-secondary)] hover:bg-[var(--transparency-hover)]"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              view.setFocusedNode(node);
+              view.toggleNode(node);
+            }}
+          >
+            <ArrowRightIcon
+              className={cn(
+                "size-3.5 transition-transform",
+                expanded && "rotate-90"
+              )}
+            />
+          </button>
+        ) : null}
+        <ReferenceNodeIcon
+          frameClassName="size-7"
+          iconClassName="size-6"
+          iconUrls={iconUrls}
+          node={node}
+        />
+        <FullTextTooltip content={node.displayName}>
+          <span
+            className="min-w-0 flex-1 truncate text-[13px] text-[var(--text-primary)]"
+            data-autofit-label
+          >
+            {node.displayName}
+          </span>
+        </FullTextTooltip>
+        {selectable ? (
+          <Button
+            aria-label={node.displayName}
+            aria-pressed={selected}
+            className="shrink-0"
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+            onClick={(event) => {
+              event.stopPropagation();
+              view.setFocusedNode(node);
+              view.toggleSelection(node);
+            }}
+            onDoubleClick={(event) => event.stopPropagation()}
+          >
+            {selected ? (
+              <CheckIcon size={14} />
+            ) : (
+              <AddLinedIcon
+                className="text-[var(--text-secondary)]"
+                size={16}
+              />
+            )}
+          </Button>
+        ) : null}
+      </div>
+      {isFolder ? (
+        <div
+          className={cn(
+            "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+            expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+            childContent && "mt-[2px]"
+          )}
+        >
+          <div
+            aria-hidden={expanded ? undefined : "true"}
+            className={cn(
+              "min-h-0 overflow-hidden transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+              expanded
+                ? "translate-y-0 opacity-100"
+                : "-translate-y-1 opacity-0"
+            )}
+            inert={expanded ? undefined : true}
+          >
+            {childContent}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function ReferenceNodeIcon({
+  frameClassName,
+  iconClassName,
+  iconUrls,
+  node
+}: {
+  frameClassName?: string;
+  iconClassName: string;
+  iconUrls: ReferenceNodeIconUrlState;
+  node: ReferenceNode;
+}): JSX.Element {
+  const entry = useMemo(() => referenceNodeToWorkspaceFileEntry(node), [node]);
+
+  if (node.kind === "folder") {
+    return (
+      <span
+        className={cn(
+          "grid flex-none place-items-center text-[var(--rich-text-folder)]",
+          frameClassName
+        )}
+      >
+        <FolderFilledIcon className={iconClassName} />
+      </span>
+    );
+  }
+
+  return (
+    <WorkspaceFileEntryIcon
+      entry={entry}
+      frameClassName={frameClassName}
+      iconClassName={iconClassName}
+      iconUrlByCacheKey={iconUrls.iconUrlByCacheKey}
+      onViewportEnter={iconUrls.reportEntryIconViewportEnter}
+      onViewportLeave={iconUrls.reportEntryIconViewportLeave}
+    />
+  );
+}
+
+function collectReferenceNodeIconEntries(input: {
+  childrenByKey: PickerView["childrenByKey"];
+  currentEntries: readonly ReferenceNode[];
+  expandedKeys: PickerView["expandedKeys"];
+  focusedNode: ReferenceNode | null;
+  selection: readonly ReferenceNode[];
+  sidebarGroupsBySource: PickerView["sidebarGroupsBySource"];
+}): WorkspaceFileEntry[] {
+  const byKey = new Map<string, ReferenceNode>();
+  const retain = (node: ReferenceNode): void => {
+    byKey.set(nodeRefKey(node.ref), node);
+  };
+  const retainTree = (node: ReferenceNode): void => {
+    retain(node);
+    const key = nodeRefKey(node.ref);
+    if (!input.expandedKeys[key]) {
+      return;
+    }
+    for (const child of input.childrenByKey[key]?.entries ?? []) {
+      retainTree(child);
+    }
+  };
+
+  input.currentEntries.forEach(retainTree);
+  input.selection.forEach(retain);
+  if (input.focusedNode) {
+    retain(input.focusedNode);
+  }
+  for (const groups of Object.values(input.sidebarGroupsBySource)) {
+    groups.forEach(retain);
+  }
+
+  return [...byKey.values()].map(referenceNodeToWorkspaceFileEntry);
+}
+
+function noopVoid(): void {}

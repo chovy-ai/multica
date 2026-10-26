@@ -1,0 +1,731 @@
+import type { ReactNode } from "react";
+import type { I18nRuntime } from "@tutti-os/ui-i18n-runtime";
+import type { WorkbenchSnapshot } from "@tutti-os/workbench-snapshot";
+import type {
+  WorkbenchDisplayMode,
+  WorkbenchFrame,
+  WorkbenchLayoutConstraints,
+  WorkbenchLayoutConstraintsInput,
+  WorkbenchNode,
+  WorkbenchNodeSizeConstraints,
+  WorkbenchQuickLayoutTarget,
+  WorkbenchSize,
+  WorkbenchState
+} from "../core/types.ts";
+import type { WorkbenchMissionControlAdapter } from "../mission-control/types.ts";
+import type {
+  WorkbenchController,
+  WorkbenchDebugDiagnostics
+} from "../store/types.ts";
+import type {
+  WorkbenchSurfaceWallpaper,
+  WorkbenchWindowManagementConfig
+} from "../react/WorkbenchSurface.tsx";
+import type {
+  WorkbenchDockPlacement,
+  WorkbenchMinimizeAnimation,
+  WorkbenchWindowHeaderPresentation,
+  WorkbenchSurfacePresentation,
+  WorkbenchWindowSurfaceLayer,
+  WorkbenchWindowHeaderDragHandleProps
+} from "../react/types.ts";
+import type { WorkbenchDockPreviewCache } from "../react/dockPreviewCache.ts";
+import type {
+  WorkbenchNodePreviewImageCapture,
+  WorkbenchNodePreviewImagesCapture
+} from "../react/nodePreviewCapture.ts";
+
+export interface WorkbenchHostActivation<TPayload = unknown> {
+  payload?: TPayload;
+  sequence: number;
+  type: string;
+}
+
+export interface WorkbenchHostNodeData {
+  activation?: WorkbenchHostActivation | null;
+  dockEntryId?: string | null;
+  instanceId: string;
+  instanceKey?: string | null;
+  isProjected?: boolean;
+  launchSource?: string | null;
+  projectionSubject?: WorkbenchHostProjectedNodeSubject | null;
+  runtimeNodeState?: unknown;
+  snapshotNodeState?: unknown;
+  typeId: string;
+}
+
+export interface WorkbenchHostProjectedNodeSubject {
+  id: string;
+  type: string;
+}
+
+export interface WorkbenchHostProjectedNode {
+  dockEntryId?: string | null;
+  defaultFrame?: WorkbenchFrame;
+  instanceId: string;
+  instanceKey?: string | null;
+  sizeConstraints?: WorkbenchNodeSizeConstraints | null;
+  subject?: WorkbenchHostProjectedNodeSubject | null;
+  title: string;
+  typeId: string;
+}
+
+export interface WorkbenchHostExternalStateLookupInput {
+  instanceId: string;
+  instanceKey?: string | null;
+  nodeId: string;
+  subject?: WorkbenchHostProjectedNodeSubject | null;
+  typeId: string;
+  workspaceId: string;
+}
+
+export interface WorkbenchHostExternalStateSource<
+  TNodeState = unknown,
+  TWorkspaceState = unknown
+> {
+  getNodeState(input: WorkbenchHostExternalStateLookupInput): TNodeState;
+  getSnapshotNodeState?(input: WorkbenchHostExternalStateLookupInput): unknown;
+  getWorkspaceState(input: { workspaceId: string }): TWorkspaceState;
+  /**
+   * Subscribe to one node's live state. `getNodeState` must return the same
+   * reference until this node's observable state changes.
+   */
+  subscribeNodeState?(
+    input: WorkbenchHostExternalStateLookupInput,
+    listener: () => void
+  ): () => void;
+  /**
+   * Subscribe to workspace state consumed by a node renderer. `getWorkspaceState`
+   * must return the same reference until this workspace state changes.
+   */
+  subscribeWorkspaceState?(
+    input: { workspaceId: string },
+    listener: () => void
+  ): () => void;
+}
+
+export type WorkbenchHostNodeCloseDecision = "close" | "keep-open";
+
+export type WorkbenchHostCloseDialogScope = "node" | "window";
+
+export type WorkbenchHostCloseDialogVariant = "default" | "destructive";
+
+export interface WorkbenchHostCloseDialogRequest {
+  cancelLabel: string;
+  confirmLabel: string;
+  description: string;
+  details?: string | null;
+  scope: WorkbenchHostCloseDialogScope;
+  title: string;
+  variant?: WorkbenchHostCloseDialogVariant;
+}
+
+export interface WorkbenchHostCloseEffect {
+  description?: string | null;
+  nodeId: string;
+  title: string;
+  typeId: string;
+}
+
+export interface WorkbenchHostNodeCloseRequest {
+  instanceId: string;
+  instanceKey?: string | null;
+  isProjected: boolean;
+  nodeId: string;
+  subject?: WorkbenchHostProjectedNodeSubject | null;
+  typeId: string;
+  workspaceId: string;
+}
+
+export type WorkbenchHostLaunchReason =
+  | "command"
+  | "dock"
+  | "host"
+  | "launchpad"
+  | "shortcut";
+
+export interface WorkbenchHostLaunchInput {
+  dockEntryId?: string;
+  launchSource?: string;
+  payload?: unknown;
+  reason: WorkbenchHostLaunchReason;
+  typeId: string;
+}
+
+export interface WorkbenchHostLaunchRequest extends WorkbenchHostLaunchInput {
+  layoutConstraints: WorkbenchLayoutConstraints;
+  surfaceSize: WorkbenchSize;
+  workspaceId: string;
+}
+
+export type WorkbenchHostLaunchFramePolicy =
+  | "absolute"
+  | "cascade"
+  | "cascade-same-type-centered";
+
+export interface WorkbenchHostLaunchResult {
+  activation?: {
+    payload?: unknown;
+    type: string;
+  } | null;
+  cascadeOffset?: { x: number; y: number };
+  defaultFrame?: WorkbenchFrame;
+  displayMode?: WorkbenchDisplayMode;
+  dockEntryId?: string;
+  framePolicy: WorkbenchHostLaunchFramePolicy;
+  instanceId: string;
+  instanceKey?: string | null;
+  launchSource?: string | null;
+  /**
+   * When true, skip the "cascade-same-type-centered" re-center/resize step
+   * for a node that already exists (see openLaunchResult in session.ts).
+   * Set this when the launch is re-focusing a specific already-open
+   * instance (e.g. reusing the window for a known conversation/session)
+   * rather than a fresh/generic open, so the user's current window size and
+   * position are preserved instead of being reset to the default frame.
+   */
+  preserveExistingNodeFrame?: boolean;
+  reuseDockEntryNode?: boolean;
+  sizeConstraints?: WorkbenchNodeSizeConstraints | null;
+  title?: string;
+  typeId: string;
+}
+
+export type WorkbenchHostDockEntryVisibility = "always" | "when-open" | "never";
+
+export type WorkbenchHostDockEntryLaunchBehavior = "enabled" | "disabled";
+
+export type WorkbenchHostDockEntryStateKind =
+  | "enabled"
+  | "disabled"
+  | "loading"
+  | "unavailable";
+
+export interface WorkbenchHostDockEntryState {
+  kind: WorkbenchHostDockEntryStateKind;
+  reason?: string;
+}
+
+export type WorkbenchHostDockEntryBadge =
+  | { kind: "count"; value: number }
+  | {
+      kind: "status";
+      status: "running" | "completed" | "failed" | "warning";
+    }
+  | { content: ReactNode; kind: "custom" };
+
+export interface WorkbenchHostDockEntryAction {
+  disabled?: boolean;
+  id: string;
+  label: string;
+  pendingLabel?: string;
+}
+
+export interface WorkbenchHostDockEntryRetentionAction {
+  actionId: string;
+  disabled?: boolean;
+  pendingLabel?: string;
+  retained: boolean;
+}
+
+export type WorkbenchHostDockEntryDiagnostics = Record<string, unknown>;
+
+export interface WorkbenchHostDockPopupItemInput {
+  externalNodeState?: unknown;
+  externalWorkspaceState?: unknown;
+  host: WorkbenchHostHandle;
+  isFocused: boolean;
+  isMinimized: boolean;
+  node: WorkbenchNode<WorkbenchHostNodeData>;
+  previewViewport?: WorkbenchSize;
+}
+
+export type WorkbenchHostNodePreviewCapture = (
+  input: WorkbenchHostDockPopupItemInput
+) => Promise<string | null> | string | null;
+
+export type WorkbenchDockPreviewContent =
+  | {
+      element: ReactNode;
+      kind: "component";
+      revision?: string | null;
+    }
+  | {
+      kind: "image";
+      revision?: string | null;
+      src: string;
+    };
+
+export type WorkbenchHostDockPopupPreviewProvider = (
+  input: WorkbenchHostDockPopupItemInput
+) => WorkbenchDockPreviewContent | null;
+
+export interface WorkbenchHostDockPopupItemDescriptor {
+  preview?: WorkbenchDockPreviewContent | null;
+  revision?: string | null;
+  subtitle?: string | null;
+  title?: string | null;
+}
+
+export type WorkbenchHostDockPopupCardLabelMode = "hidden" | "hover-overlay";
+
+export interface WorkbenchHostDockEntry {
+  anchorKey?: string;
+  attentionToken?: number | string | null;
+  badge?: WorkbenchHostDockEntryBadge;
+  capturePopupItemPreview?: WorkbenchHostNodePreviewCapture;
+  clickActionId?: string;
+  /**
+   * `launch` keeps clicks on the launch request path even when matching nodes
+   * already exist.
+   */
+  /**
+   * When false, hides the dock hover-popup "New window" tile even for
+   * multi-instance entries. Context-menu "New window" remains available unless
+   * the entry is otherwise disabled. Defaults to true.
+   */
+  allowNewWindowInDockPopup?: boolean;
+  clickBehavior?: "default" | "launch";
+  hoverActions?: readonly WorkbenchHostDockEntryAction[];
+  icon: ReactNode;
+  iconSize?: "default" | "large";
+  id: string;
+  label: string;
+  diagnostics?: WorkbenchHostDockEntryDiagnostics;
+  dockRetention?: WorkbenchHostDockEntryRetentionAction;
+  instanceMode?: WorkbenchHostNodeInstanceStrategy["mode"];
+  launchBehavior?: WorkbenchHostDockEntryLaunchBehavior;
+  launchPayload?: unknown;
+  /**
+   * Payload used by the dock popup's explicit "New window" action instead of
+   * `launchPayload`. Supply this when a normal dock launch reuses/focuses an
+   * existing node (e.g. a single logical instance per provider/target) but the
+   * "New window" command must always open a fresh node. Falls back to
+   * `launchPayload` when omitted.
+   */
+  newWindowLaunchPayload?: unknown;
+  matchNode?: (node: WorkbenchNode<WorkbenchHostNodeData>) => boolean;
+  order?: number;
+  popupCardLabelMode?: WorkbenchHostDockPopupCardLabelMode;
+  providePopupItemPreview?: WorkbenchHostDockPopupPreviewProvider;
+  resolvePopupItem?: (
+    input: WorkbenchHostDockPopupItemInput
+  ) => WorkbenchHostDockPopupItemDescriptor;
+  separatorAfter?: boolean;
+  sectionId?: string;
+  state?: WorkbenchHostDockEntryState;
+  typeId: string;
+  visibility?: WorkbenchHostDockEntryVisibility;
+}
+
+export type WorkbenchHostDockEntryPresentationOverride = Readonly<
+  Partial<Pick<WorkbenchHostDockEntry, "dockRetention" | "visibility">>
+>;
+
+export type WorkbenchHostDockEntryPresentationOverrides = Readonly<
+  Record<string, WorkbenchHostDockEntryPresentationOverride>
+>;
+
+export type WorkbenchHostDockEntryDynamicState = Partial<
+  Pick<
+    WorkbenchHostDockEntry,
+    | "attentionToken"
+    | "badge"
+    | "diagnostics"
+    | "dockRetention"
+    | "hoverActions"
+    | "launchBehavior"
+    | "order"
+    | "state"
+    | "visibility"
+  >
+>;
+
+export interface WorkbenchHostDockEntryStateSource {
+  getEntryState(
+    entryId: string
+  ): WorkbenchHostDockEntryDynamicState | null | undefined;
+  subscribe(listener: () => void): () => void;
+}
+
+export interface WorkbenchHostNodeWindowCapabilities {
+  closable?: boolean;
+  defaultOpen?: boolean;
+  fullscreenHeaderMode?: "persistent";
+  fullscreenable?: boolean;
+  header?: WorkbenchWindowHeaderPresentation;
+  keepMountedWhenMinimized?:
+    | boolean
+    | ((node: WorkbenchNode<WorkbenchHostNodeData>) => boolean);
+  minimizable?: boolean;
+  minimizedDock?: WorkbenchHostNodeMinimizedDockCapability;
+  persists?: boolean;
+  restoreOnLoad?: boolean;
+  surfaceLayer?: WorkbenchHostNodeWindowSurfaceLayer;
+}
+
+export type WorkbenchHostNodeWindowSurfaceLayer = Exclude<
+  WorkbenchWindowSurfaceLayer,
+  "default"
+>;
+
+export type WorkbenchHostNodeMinimizedDockCapability =
+  | {
+      capturePreview?: WorkbenchHostNodePreviewCapture;
+      kind: "snapshot";
+    }
+  | {
+      kind: "component";
+      providePreview: WorkbenchHostDockPopupPreviewProvider;
+    };
+
+export interface WorkbenchHostSingleInstanceStrategy {
+  mode?: "single";
+}
+
+export interface WorkbenchHostMultiInstanceStrategy {
+  mode: "multi";
+}
+
+export type WorkbenchHostNodeInstanceStrategy =
+  | WorkbenchHostSingleInstanceStrategy
+  | WorkbenchHostMultiInstanceStrategy;
+
+export interface WorkbenchHostNodeBodyContext<
+  TExternalNodeState = unknown,
+  TExternalWorkspaceState = unknown
+> {
+  activation: WorkbenchHostActivation | null;
+  displayMode: WorkbenchNode<WorkbenchHostNodeData>["displayMode"];
+  externalNodeState: TExternalNodeState;
+  externalWorkspaceState: TExternalWorkspaceState;
+  focus(): void;
+  host: WorkbenchHostHandle;
+  instanceId: string;
+  instanceKey?: string | null;
+  /** True while the host is interactively moving this node. */
+  isDragging: boolean;
+  isFocused: boolean;
+  /** True while the host is interactively resizing this node. */
+  isResizing: boolean;
+  /**
+   * True only while the normal Workbench window presentation is visible.
+   * False while minimized, Genie-hidden, or inside Mission Control.
+   */
+  isVisible: boolean;
+  /**
+   * True when a non-normal Workbench presentation currently paints this node.
+   * Omitted by direct hosts that do not use a Workbench presentation.
+   */
+  isPresentationVisible?: boolean;
+  /** Current host presentation mode; null for the normal window layout. */
+  presentationMode?: WorkbenchSurfacePresentation["mode"] | null;
+  node: WorkbenchNode<WorkbenchHostNodeData>;
+  previewViewport?: WorkbenchSize;
+  setNodeRuntimeState(state: unknown): void;
+  setSnapshotNodeState(state: unknown): void;
+}
+
+export interface WorkbenchHostWindowCloseEffectContext<
+  TExternalNodeState = unknown,
+  TExternalWorkspaceState = unknown
+> {
+  externalNodeState: TExternalNodeState;
+  externalWorkspaceState: TExternalWorkspaceState;
+  instanceId: string;
+  instanceKey?: string | null;
+  node: WorkbenchNode<WorkbenchHostNodeData>;
+  workspaceId: string;
+}
+
+export interface WorkbenchHostNodeLeaseHandle {
+  release(): void;
+}
+
+export interface WorkbenchHostNodeLeaseContext {
+  node: WorkbenchNode<WorkbenchHostNodeData>;
+  workspaceId: string;
+}
+
+export interface WorkbenchHostNodeHeaderWindowActions {
+  applyQuickLayout(target: WorkbenchQuickLayoutTarget): void;
+  close(): void;
+  focus(): void;
+  getFrame(): WorkbenchFrame;
+  minimize(): void;
+  resize(frame: WorkbenchFrame): void;
+  toggleDisplayMode(): void;
+}
+
+export interface WorkbenchHostNodeHeaderContext<
+  TExternalNodeState = unknown,
+  TExternalWorkspaceState = unknown
+> {
+  activation: WorkbenchHostActivation | null;
+  defaultActions: ReactNode;
+  displayMode: WorkbenchNode<WorkbenchHostNodeData>["displayMode"];
+  dragHandleProps: WorkbenchWindowHeaderDragHandleProps;
+  externalNodeState: TExternalNodeState;
+  externalWorkspaceState: TExternalWorkspaceState;
+  instanceId: string;
+  instanceKey?: string | null;
+  isDragging: boolean;
+  isFocused: boolean;
+  isResizing: boolean;
+  node: WorkbenchNode<WorkbenchHostNodeData>;
+  surfaceSize: WorkbenchSize;
+  windowActions: WorkbenchHostNodeHeaderWindowActions;
+}
+
+type WorkbenchHostBodyRenderer<
+  TExternalNodeState = unknown,
+  TExternalWorkspaceState = unknown
+> = {
+  bivarianceHack(
+    context: WorkbenchHostNodeBodyContext<
+      TExternalNodeState,
+      TExternalWorkspaceState
+    >
+  ): ReactNode;
+}["bivarianceHack"];
+
+type WorkbenchHostHeaderRenderer<
+  TExternalNodeState = unknown,
+  TExternalWorkspaceState = unknown
+> = {
+  bivarianceHack(
+    context: WorkbenchHostNodeHeaderContext<
+      TExternalNodeState,
+      TExternalWorkspaceState
+    >
+  ): ReactNode;
+}["bivarianceHack"];
+
+export type WorkbenchHostNodeHeaderFrameRenderKey =
+  | boolean
+  | number
+  | string
+  | null;
+
+type WorkbenchHostHeaderFrameRenderKeyResolver<
+  TExternalNodeState = unknown,
+  TExternalWorkspaceState = unknown
+> = {
+  bivarianceHack(
+    context: WorkbenchHostNodeHeaderContext<
+      TExternalNodeState,
+      TExternalWorkspaceState
+    >
+  ): WorkbenchHostNodeHeaderFrameRenderKey;
+}["bivarianceHack"];
+
+type WorkbenchHostWindowCloseEffectResolver<
+  TExternalNodeState = unknown,
+  TExternalWorkspaceState = unknown
+> = {
+  bivarianceHack(
+    context: WorkbenchHostWindowCloseEffectContext<
+      TExternalNodeState,
+      TExternalWorkspaceState
+    >
+  ):
+    | Promise<WorkbenchHostCloseEffect | null | void>
+    | WorkbenchHostCloseEffect
+    | null
+    | void;
+}["bivarianceHack"];
+
+export interface WorkbenchHostNodeDefinition<
+  TExternalNodeState = unknown,
+  TExternalWorkspaceState = unknown
+> {
+  createLease?: (
+    context: WorkbenchHostNodeLeaseContext
+  ) => WorkbenchHostNodeLeaseHandle | null | void;
+  description?: string;
+  frame: WorkbenchFrame;
+  getWindowCloseEffect?: WorkbenchHostWindowCloseEffectResolver<
+    TExternalNodeState,
+    TExternalWorkspaceState
+  >;
+  /**
+   * Projects frame-derived header presentation during direct manipulation.
+   * Equal keys skip renderHeader; omitted definitions keep live frame renders.
+   */
+  getHeaderFrameRenderKey?: WorkbenchHostHeaderFrameRenderKeyResolver<
+    TExternalNodeState,
+    TExternalWorkspaceState
+  >;
+  instance?: WorkbenchHostNodeInstanceStrategy;
+  onBodyRenderErrorChange?: (input: {
+    hasError: boolean;
+    node: WorkbenchNode<WorkbenchHostNodeData>;
+  }) => void;
+  renderBody: WorkbenchHostBodyRenderer<
+    TExternalNodeState,
+    TExternalWorkspaceState
+  >;
+  renderHeader?: WorkbenchHostHeaderRenderer<
+    TExternalNodeState,
+    TExternalWorkspaceState
+  >;
+  sizeConstraints?: WorkbenchNodeSizeConstraints | null;
+  title: string;
+  typeId: string;
+  window?: WorkbenchHostNodeWindowCapabilities;
+}
+
+export interface WorkbenchHostSnapshotRepository {
+  hasLoaded?(workspaceId: string): boolean;
+  load(workspaceId: string): Promise<WorkbenchSnapshot | null>;
+  readCached?(workspaceId: string): WorkbenchSnapshot | null;
+  save(
+    workspaceId: string,
+    snapshot: WorkbenchSnapshot
+  ): Promise<WorkbenchSnapshot> | WorkbenchSnapshot;
+}
+
+export type WorkbenchHostActivationTarget =
+  | { nodeId: string }
+  | { instanceId?: string; typeId: string };
+
+export interface WorkbenchHostHandle {
+  activateNode(
+    target: WorkbenchHostActivationTarget,
+    activation: {
+      payload?: unknown;
+      type: string;
+    }
+  ): void;
+  clearNodeActivation?(nodeId: string, sequence: number): void;
+  closeNode(nodeId: string): void;
+  collectWindowCloseEffects(): Promise<readonly WorkbenchHostCloseEffect[]>;
+  dispose(): void;
+  exitFullscreenNode(nodeId: string): void;
+  focusNode(nodeId: string): void;
+  getSnapshot(): WorkbenchState<WorkbenchHostNodeData>;
+  isHydrating?(): boolean;
+  launchNode(input: WorkbenchHostLaunchInput): Promise<string | null>;
+  load(): Promise<void>;
+  minimizeNode(nodeId: string): void;
+  requestNodeClose(nodeId: string): void;
+  reconcileProjectedNodes(
+    projectedNodes: readonly WorkbenchHostProjectedNode[]
+  ): void;
+  setNodeRuntimeState(nodeId: string, state: unknown): void;
+  setNodeSizeConstraints(
+    nodeId: string,
+    sizeConstraints: WorkbenchNodeSizeConstraints | null
+  ): void;
+  setSnapshotNodeState(nodeId: string, state: unknown): void;
+  setNodeTitle(nodeId: string, title: string): void;
+}
+
+export interface WorkbenchHostRuntimeHandle extends WorkbenchHostHandle {
+  readonly controller: WorkbenchController<WorkbenchHostNodeData>;
+}
+
+export interface WorkbenchHostChromeRenderContext {
+  controller: WorkbenchController<WorkbenchHostNodeData>;
+  activateNode: WorkbenchHostHandle["activateNode"];
+  focusNode: WorkbenchHostHandle["focusNode"];
+  launchNode: WorkbenchHostHandle["launchNode"];
+}
+
+export interface WorkbenchHostMissionControlProps {
+  active: boolean;
+  nodeIds?: readonly string[];
+  onRequestClose: () => void;
+}
+
+export interface WorkbenchHostMissionControlOpenRequest {
+  nodeIds?: readonly string[];
+  trigger?: "dock-context-menu";
+}
+
+export interface WorkbenchHostClosePreparationContext {
+  host: WorkbenchHostHandle;
+  workspaceId: string;
+}
+
+export type WorkbenchHostClosePreparer = (
+  context: WorkbenchHostClosePreparationContext
+) => Promise<boolean> | boolean;
+
+export interface WorkbenchContribution {
+  dockEntries?: readonly WorkbenchHostDockEntry[];
+  externalStateSource?: WorkbenchHostExternalStateSource;
+  id: string;
+  nodes?: readonly WorkbenchHostNodeDefinition[];
+  onLaunchRequest?: (
+    request: WorkbenchHostLaunchRequest
+  ) =>
+    | Promise<WorkbenchHostLaunchResult | null | void>
+    | WorkbenchHostLaunchResult
+    | null
+    | void;
+  onNodeCloseRequest?: (
+    request: WorkbenchHostNodeCloseRequest
+  ) =>
+    | Promise<WorkbenchHostNodeCloseDecision | void>
+    | WorkbenchHostNodeCloseDecision
+    | void;
+  prepareHostClose?: WorkbenchHostClosePreparer;
+}
+
+export interface WorkbenchHostProps {
+  captureNodePreviewImage?: WorkbenchNodePreviewImageCapture<WorkbenchHostNodeData>;
+  captureNodePreviewImages?: WorkbenchNodePreviewImagesCapture<WorkbenchHostNodeData>;
+  className?: string;
+  contributions?: readonly WorkbenchContribution[];
+  debugDiagnostics?: WorkbenchDebugDiagnostics;
+  dockPreviewCache?: WorkbenchDockPreviewCache;
+  dockPlacement?: WorkbenchDockPlacement;
+  dockEntries?: readonly WorkbenchHostDockEntry[];
+  dockEntryPresentationOverrides?: WorkbenchHostDockEntryPresentationOverrides;
+  dockStateSource?: WorkbenchHostDockEntryStateSource;
+  externalStateSource?: WorkbenchHostExternalStateSource;
+  i18n?: I18nRuntime<string>;
+  layoutConstraints?: WorkbenchLayoutConstraintsInput;
+  missionControl?: WorkbenchHostMissionControlProps;
+  minimizeAnimation?: WorkbenchMinimizeAnimation;
+  nodes?: readonly WorkbenchHostNodeDefinition[];
+  onDockEntryAction?: (input: {
+    actionId: string;
+    entryId: string;
+    host: WorkbenchHostHandle;
+  }) => Promise<void> | void;
+  onDockEntryClick?: (input: {
+    entryId: string;
+    host: WorkbenchHostHandle;
+    nodeId?: string;
+  }) => Promise<void> | void;
+  onLaunchRequest?: (
+    request: WorkbenchHostLaunchRequest
+  ) =>
+    | Promise<WorkbenchHostLaunchResult | null | void>
+    | WorkbenchHostLaunchResult
+    | null
+    | void;
+  onMissionControlAdapterReady?: (
+    adapter: WorkbenchMissionControlAdapter<WorkbenchHostNodeData> | null
+  ) => void;
+  onMissionControlRequestOpen?: (
+    request?: WorkbenchHostMissionControlOpenRequest
+  ) => void;
+  onNodeCloseRequest?: (
+    request: WorkbenchHostNodeCloseRequest
+  ) =>
+    | Promise<WorkbenchHostNodeCloseDecision | void>
+    | WorkbenchHostNodeCloseDecision
+    | void;
+  onHandleReady?: (handle: WorkbenchHostHandle | null) => void;
+  projectedNodes?: readonly WorkbenchHostProjectedNode[];
+  renderBottomChrome?: (context: WorkbenchHostChromeRenderContext) => ReactNode;
+  renderTopChrome?: (context: WorkbenchHostChromeRenderContext) => ReactNode;
+  snapshotRepository: WorkbenchHostSnapshotRepository;
+  shortcutsEnabled?: boolean;
+  wallpaper?: WorkbenchSurfaceWallpaper;
+  windowManagement?: WorkbenchWindowManagementConfig;
+  workspaceId: string;
+}

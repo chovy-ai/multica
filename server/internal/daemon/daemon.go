@@ -8752,6 +8752,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		CursorHookCommand:          cursorHookCommand,
 		Cwd:                        env.WorkDir,
 		Model:                      model,
+		RestoreConfiguredModel:     provider == "codex" && task.ChatSessionID != "" && model == "",
 		ThreadName:                 deriveTaskThreadName(task),
 		Timeout:                    d.cfg.AgentTimeout,
 		SemanticInactivityTimeout:  d.cfg.CodexSemanticInactivityTimeout,

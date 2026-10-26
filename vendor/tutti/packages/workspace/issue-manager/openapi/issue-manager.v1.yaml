@@ -1,0 +1,2465 @@
+openapi: 3.0.3
+info:
+  title: Workspace Issue Manager API Fragment
+  version: 1.0.0
+tags:
+  - name: issue
+paths:
+  /v1/workspaces/{workspaceID}/issue-topics:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listWorkspaceIssueTopics
+      tags:
+        - issue
+      summary: List issue-manager topics for one workspace
+      responses:
+        "200":
+          description: Workspace issue topics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerTopicListResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    post:
+      operationId: createWorkspaceIssueTopic
+      tags:
+        - issue
+      summary: Create one issue-manager topic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIssueManagerTopicRequest"
+      responses:
+        "201":
+          description: Workspace issue topic created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerTopicResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issue-topics/{topicID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerTopicID"
+    patch:
+      operationId: updateWorkspaceIssueTopic
+      tags:
+        - issue
+      summary: Update one issue-manager topic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIssueManagerTopicRequest"
+      responses:
+        "200":
+          description: Workspace issue topic updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerTopicResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    delete:
+      operationId: deleteWorkspaceIssueTopic
+      tags:
+        - issue
+      summary: Delete one issue-manager topic
+      responses:
+        "200":
+          description: Workspace issue topic deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteIssueManagerTopicResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listWorkspaceIssues
+      tags:
+        - issue
+      summary: List issue-manager issues for one workspace
+      parameters:
+        - $ref: "#/components/parameters/IssueManagerPageSize"
+        - $ref: "#/components/parameters/IssueManagerPageToken"
+        - $ref: "#/components/parameters/IssueManagerTopicIDQuery"
+        - $ref: "#/components/parameters/IssueManagerStatusFilter"
+        - $ref: "#/components/parameters/IssueManagerSearchQuery"
+      responses:
+        "200":
+          description: Workspace issues
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerIssueListResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    post:
+      operationId: createWorkspaceIssue
+      tags:
+        - issue
+      summary: Create one issue-manager issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIssueManagerIssueRequest"
+      responses:
+        "201":
+          description: Workspace issue created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerIssueResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/from-plan:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: createWorkspaceIssueFromPlan
+      tags:
+        - issue
+      summary: Create one executable Issue and its tasks from an Ultra or traditional Plan
+      description: The returned Issue remains durable even when execution is started later. Task assignments and dependencies are validated as one graph before task execution can start.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIssueManagerIssueFromPlanRequest"
+      responses:
+        "201":
+          description: Workspace issue and tasks created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerIssueDetailResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/auto-token-budget-estimate:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: estimateWorkspaceIssueAutoTokenBudget
+      tags:
+        - issue
+      summary: Estimate the authoritative automatic token budget for a proposed Issue graph
+      description: Uses the same scale, intensity, and comparable completed-run history compiler as Issue creation. No Issue or task is persisted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstimateIssueManagerAutoTokenBudgetRequest"
+      responses:
+        "200":
+          description: Automatic token budget estimate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerAutoTokenBudgetEstimate"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issue-references/search:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: searchWorkspaceIssueReferences
+      tags:
+        - issue
+      summary: Search issue-manager output files across one workspace
+      description: >
+        Searches the produced output files of issue-manager runs by file name
+        across one workspace. Optional issueId / topicId scope the search to one
+        issue or topic. Returns a flat, recency-ordered list of file references
+        (deduplicated by path) each annotated with its owning issue title; it
+        never returns groups.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueManagerReferenceSearchRequest"
+      responses:
+        "200":
+          description: Workspace issue reference search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerReferenceSearchResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+    get:
+      operationId: getWorkspaceIssueDetail
+      tags:
+        - issue
+      summary: Get one issue-manager issue detail
+      responses:
+        "200":
+          description: Workspace issue detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerIssueDetailResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    patch:
+      operationId: updateWorkspaceIssue
+      tags:
+        - issue
+      summary: Update one issue-manager issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIssueManagerIssueRequest"
+      responses:
+        "200":
+          description: Workspace issue updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerIssueResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    delete:
+      operationId: deleteWorkspaceIssue
+      tags:
+        - issue
+      summary: Delete one issue-manager issue
+      responses:
+        "200":
+          description: Workspace issue deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteIssueManagerIssueResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/context-refs:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+    post:
+      operationId: addWorkspaceIssueContextRefs
+      tags:
+        - issue
+      summary: Add context references to one issue-manager issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddIssueManagerContextRefsRequest"
+      responses:
+        "200":
+          description: Workspace issue context references added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerContextRefsResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/context-refs/{contextRefID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+      - $ref: "#/components/parameters/IssueManagerContextRefID"
+    delete:
+      operationId: removeWorkspaceIssueContextRef
+      tags:
+        - issue
+      summary: Remove one issue-manager context reference
+      responses:
+        "200":
+          description: Workspace issue-manager context reference removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteIssueManagerContextRefResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/context-refs/{contextRefID}/attachment:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+      - $ref: "#/components/parameters/IssueManagerContextRefID"
+    get:
+      operationId: readWorkspaceIssueAttachment
+      tags:
+        - issue
+      summary: Read one managed issue attachment by opaque ContextRef identity
+      responses:
+        "200":
+          description: Managed issue attachment content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerAttachmentContentResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/cancel-execution:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+    post:
+      operationId: cancelWorkspaceIssueExecution
+      tags:
+        - issue
+      summary: Stop one issue-manager issue's execution
+      description: Durably pauses future task dispatch, cancels the live agent turn of every running run's session, and settles those runs as canceled. Idempotent.
+      responses:
+        "200":
+          description: Workspace issue execution canceled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelIssueManagerExecutionResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/runs:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+    get:
+      operationId: listWorkspaceIssueRuns
+      tags:
+        - issue
+      summary: List runs for one issue-manager issue
+      responses:
+        "200":
+          description: Workspace issue runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunListResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    post:
+      operationId: createWorkspaceIssueRun
+      tags:
+        - issue
+      summary: Create one run for an issue-manager issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIssueManagerRunRequest"
+      responses:
+        "201":
+          description: Workspace issue run created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/run-launches:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+    post:
+      operationId: startWorkspaceIssueRun
+      tags:
+        - issue
+      summary: Create and launch one Agent-backed run for an issue-manager issue
+      description: Resolves the issue's managed image attachments before durably creating and delivering the run to Agent Host.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartIssueManagerRunRequest"
+      responses:
+        "201":
+          description: Workspace issue run created and accepted for Agent delivery
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/runs/{runID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+      - $ref: "#/components/parameters/IssueManagerRunID"
+    get:
+      operationId: getWorkspaceIssueRun
+      tags:
+        - issue
+      summary: Get one issue-manager issue run
+      responses:
+        "200":
+          description: Workspace issue run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunEnvelope"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    patch:
+      operationId: completeWorkspaceIssueRun
+      tags:
+        - issue
+      summary: Complete one issue-manager issue run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteIssueManagerRunRequest"
+      responses:
+        "200":
+          description: Workspace issue run completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunEnvelope"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/tasks:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+    get:
+      operationId: listWorkspaceIssueTasks
+      tags:
+        - issue
+      summary: List tasks for one issue-manager issue
+      parameters:
+        - $ref: "#/components/parameters/IssueManagerPageSize"
+        - $ref: "#/components/parameters/IssueManagerPageToken"
+        - $ref: "#/components/parameters/IssueManagerStatusFilter"
+        - $ref: "#/components/parameters/IssueManagerSearchQuery"
+      responses:
+        "200":
+          description: Workspace issue tasks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerTaskListResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    post:
+      operationId: createWorkspaceIssueTask
+      tags:
+        - issue
+      summary: Create one task for an issue-manager issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIssueManagerTaskRequest"
+      responses:
+        "201":
+          description: Workspace issue task created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerTaskResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/tasks/batch-create:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+    post:
+      operationId: createWorkspaceIssueTasks
+      tags:
+        - issue
+      summary: Create ordered tasks for an issue-manager issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIssueManagerTasksRequest"
+      responses:
+        "201":
+          description: Workspace issue tasks created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerTasksResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/tasks/{taskID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+      - $ref: "#/components/parameters/IssueManagerTaskID"
+    get:
+      operationId: getWorkspaceIssueTaskDetail
+      tags:
+        - issue
+      summary: Get one issue-manager task detail
+      responses:
+        "200":
+          description: Workspace issue task detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerTaskDetailResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    patch:
+      operationId: updateWorkspaceIssueTask
+      tags:
+        - issue
+      summary: Update one issue-manager task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIssueManagerTaskRequest"
+      responses:
+        "200":
+          description: Workspace issue task updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerTaskResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    delete:
+      operationId: deleteWorkspaceIssueTask
+      tags:
+        - issue
+      summary: Delete one issue-manager task
+      responses:
+        "200":
+          description: Workspace issue task deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteIssueManagerTaskResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/tasks/{taskID}/context-refs:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+      - $ref: "#/components/parameters/IssueManagerTaskID"
+    post:
+      operationId: addWorkspaceIssueTaskContextRefs
+      tags:
+        - issue
+      summary: Add context references to one issue-manager task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddIssueManagerContextRefsRequest"
+      responses:
+        "200":
+          description: Workspace issue task context references added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerContextRefsResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/tasks/{taskID}/context-refs/{contextRefID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+      - $ref: "#/components/parameters/IssueManagerTaskID"
+      - $ref: "#/components/parameters/IssueManagerContextRefID"
+    delete:
+      operationId: removeWorkspaceIssueTaskContextRef
+      tags:
+        - issue
+      summary: Remove one task-scoped issue-manager context reference
+      responses:
+        "200":
+          description: Workspace issue-manager task context reference removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteIssueManagerContextRefResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/tasks/{taskID}/runs:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+      - $ref: "#/components/parameters/IssueManagerTaskID"
+    get:
+      operationId: listWorkspaceIssueTaskRuns
+      tags:
+        - issue
+      summary: List runs for one issue-manager task
+      responses:
+        "200":
+          description: Workspace issue task runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunListResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    post:
+      operationId: createWorkspaceIssueTaskRun
+      tags:
+        - issue
+      summary: Create one run for an issue-manager task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIssueManagerRunRequest"
+      responses:
+        "201":
+          description: Workspace issue task run created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "409":
+          $ref: "#/components/responses/WorkspaceIssueResourceExistsError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+  /v1/workspaces/{workspaceID}/issues/{issueID}/tasks/{taskID}/runs/{runID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/IssueManagerIssueID"
+      - $ref: "#/components/parameters/IssueManagerTaskID"
+      - $ref: "#/components/parameters/IssueManagerRunID"
+    get:
+      operationId: getWorkspaceIssueTaskRun
+      tags:
+        - issue
+      summary: Get one issue-manager task run
+      responses:
+        "200":
+          description: Workspace issue task run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunEnvelope"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+    patch:
+      operationId: completeWorkspaceIssueTaskRun
+      tags:
+        - issue
+      summary: Complete one issue-manager task run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteIssueManagerRunRequest"
+      responses:
+        "200":
+          description: Workspace issue task run completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueManagerRunEnvelope"
+        "400":
+          $ref: "#/components/responses/InvalidRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/WorkspaceIssueResourceNotFoundError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedError"
+        "502":
+          $ref: "#/components/responses/WorkspaceOperationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailableError"
+components:
+  parameters:
+    IssueManagerIssueID:
+      name: issueID
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IssueManagerTopicID:
+      name: topicID
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IssueManagerTopicIDQuery:
+      name: topicId
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IssueManagerTaskID:
+      name: taskID
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IssueManagerRunID:
+      name: runID
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IssueManagerContextRefID:
+      name: contextRefID
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IssueManagerPageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 25
+    IssueManagerPageToken:
+      name: pageToken
+      in: query
+      required: false
+      schema:
+        type: string
+    IssueManagerStatusFilter:
+      name: statusFilter
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/IssueManagerStatusFilter"
+    IssueManagerSearchQuery:
+      name: searchQuery
+      in: query
+      required: false
+      description: Case-insensitive substring search over the visible title only.
+      schema:
+        type: string
+  responses:
+    WorkspaceIssueResourceNotFoundError:
+      description: Workspace issue-manager resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiErrorResponse"
+          examples:
+            workspaceIssueResourceNotFound:
+              value:
+                error:
+                  code: workspace_issue_resource_not_found
+                  reason: workspace_issue_not_found
+                  developerMessage: workspace issue-manager resource not found
+    WorkspaceIssueResourceExistsError:
+      description: Workspace issue-manager resource conflicts with durable state
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiErrorResponse"
+          examples:
+            workspaceIssueResourceExists:
+              value:
+                error:
+                  code: workspace_issue_resource_exists
+                  reason: workspace_issue_resource_exists
+                  developerMessage: workspace issue-manager resource already exists
+            tuttiIssueManaged:
+              value:
+                error:
+                  code: workspace_issue_resource_exists
+                  reason: tutti_issue_managed
+                  params:
+                    issueId: issue-1
+                    sourceSessionId: session-1
+                    recommendedAction: open_source_session
+                  developerMessage: Tutti owns this Issue graph; modify it in the source conversation
+  schemas:
+    IssueManagerStatus:
+      type: string
+      enum:
+        - not_started
+        - running
+        - pending_acceptance
+        - completed
+        - failed
+        - canceled
+    IssueManagerStatusFilter:
+      type: string
+      enum:
+        - all
+        - not_started
+        - running
+        - pending_acceptance
+        - completed
+        - failed
+        - canceled
+    IssueManagerRunCompletionStatus:
+      type: string
+      enum:
+        - completed
+        - failed
+        - canceled
+    IssueManagerPriority:
+      type: string
+      enum:
+        - high
+        - medium
+        - low
+      x-enum-varnames:
+        - IssueManagerPriorityHigh
+        - IssueManagerPriorityMedium
+        - IssueManagerPriorityLow
+    IssueManagerPlanningSource:
+      type: string
+      description: How the issue entered the durable execution workflow.
+      enum:
+        - manual
+        - tutti_mode_plan
+        - traditional_plan
+    IssueManagerBudgetMode:
+      type: string
+      enum:
+        - auto
+        - fixed
+    IssueManagerBudgetStatus:
+      type: string
+      description: soft_limited pauses future dispatch without canceling in-flight runs.
+      enum:
+        - active
+        - soft_limited
+    IssueManagerAcceptanceState:
+      type: string
+      description: Three-step completion ladder. Only user_accepted closes a successful task.
+      enum:
+        - agent_claimed
+        - auto_checked
+        - user_accepted
+      x-enum-varnames:
+        - IssueManagerAcceptanceStateAgentClaimed
+        - IssueManagerAcceptanceStateAutoChecked
+        - IssueManagerAcceptanceStateUserAccepted
+    IssueManagerExecutionProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - reasoningIntensity
+        - orchestrationIntensity
+      properties:
+        reasoningIntensity:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Issue-owned reasoning strength inherited by every task and run.
+        orchestrationIntensity:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Issue-owned decomposition, dependency, review, and retry strength.
+    IssueManagerBudget:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - tokenLimit
+        - consumedTokens
+        - quotaWaterlinePercent
+        - status
+      properties:
+        mode:
+          $ref: "#/components/schemas/IssueManagerBudgetMode"
+        tokenLimit:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Compiled token soft limit. In auto mode the daemon owns this value; zero means no token gate is currently available.
+        consumedTokens:
+          type: integer
+          format: int64
+          minimum: 0
+        quotaWaterlinePercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Subscription plans gate on the remaining-quota waterline instead of fake monetary cost.
+        remainingQuotaPercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Last provider-reported subscription quota percentage. Omitted when the provider cannot report quota.
+        status:
+          $ref: "#/components/schemas/IssueManagerBudgetStatus"
+    IssueManagerTokenUsage:
+      type: object
+      additionalProperties: false
+      required:
+        - inputTokens
+        - outputTokens
+        - cacheReadTokens
+        - cacheWriteTokens
+      properties:
+        inputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+        outputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+        cacheReadTokens:
+          type: integer
+          format: int64
+          minimum: 0
+        cacheWriteTokens:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerCost:
+      type: object
+      additionalProperties: false
+      required:
+        - currency
+        - estimatedMicros
+        - actualMicros
+      properties:
+        currency:
+          type: string
+          description: ISO 4217 currency code. USD is used when a ModelPlan publishes API prices.
+        estimatedMicros:
+          type: integer
+          format: int64
+          minimum: 0
+        actualMicros:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerStatusCounts:
+      type: object
+      additionalProperties: false
+      required:
+        - all
+        - notStarted
+        - running
+        - pendingAcceptance
+        - completed
+        - failed
+        - canceled
+      properties:
+        all:
+          type: integer
+          minimum: 0
+        notStarted:
+          type: integer
+          minimum: 0
+        running:
+          type: integer
+          minimum: 0
+        pendingAcceptance:
+          type: integer
+          minimum: 0
+        completed:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        canceled:
+          type: integer
+          minimum: 0
+    IssueManagerTopic:
+      type: object
+      additionalProperties: false
+      required:
+        - topicId
+        - workspaceId
+        - title
+        - summary
+        - isDefault
+        - pinnedAtUnix
+        - lastActivityAtUnix
+        - createdAtUnix
+        - updatedAtUnix
+      properties:
+        topicId:
+          type: string
+        workspaceId:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        isDefault:
+          type: boolean
+        pinnedAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        lastActivityAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        createdAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        updatedAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerIssue:
+      type: object
+      additionalProperties: false
+      required:
+        - issueId
+        - workspaceId
+        - topicId
+        - title
+        - content
+        - status
+        - planningSource
+        - sourceSessionId
+        - sequentialExecution
+        - parallelExecution
+        - dispatchPaused
+        - executionProfile
+        - budget
+        - taskCount
+        - notStartedCount
+        - runningCount
+        - pendingAcceptanceCount
+        - completedCount
+        - failedCount
+        - canceledCount
+        - creatorUserId
+        - creatorDisplayName
+        - creatorAvatarUrl
+        - createdAtUnix
+        - updatedAtUnix
+      properties:
+        issueId:
+          type: string
+        workspaceId:
+          type: string
+        topicId:
+          type: string
+        title:
+          type: string
+        content:
+          type: string
+        status:
+          $ref: "#/components/schemas/IssueManagerStatus"
+        planningSource:
+          $ref: "#/components/schemas/IssueManagerPlanningSource"
+        sourceSessionId:
+          type: string
+          description: Optional Agent session that produced the plan. Empty for manually created issues.
+        sequentialExecution:
+          type: boolean
+          description: When true, the daemon dispatches the next eligible task after each user acceptance while budget remains active.
+        parallelExecution:
+          type: boolean
+          description: When true, the daemon dispatches every dependency-ready task whose execution directory is isolated; dependencies still require user acceptance.
+        dispatchPaused:
+          type: boolean
+          description: When true, automatic task dispatch is durably paused and no successor task may launch.
+        executionProfile:
+          $ref: "#/components/schemas/IssueManagerExecutionProfile"
+        budget:
+          $ref: "#/components/schemas/IssueManagerBudget"
+        taskCount:
+          type: integer
+          minimum: 0
+        notStartedCount:
+          type: integer
+          minimum: 0
+        runningCount:
+          type: integer
+          minimum: 0
+        pendingAcceptanceCount:
+          type: integer
+          minimum: 0
+        completedCount:
+          type: integer
+          minimum: 0
+        failedCount:
+          type: integer
+          minimum: 0
+        canceledCount:
+          type: integer
+          minimum: 0
+        creatorUserId:
+          type: string
+        creatorDisplayName:
+          type: string
+        creatorAvatarUrl:
+          type: string
+        createdAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        updatedAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerTask:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - issueId
+        - workspaceId
+        - title
+        - content
+        - status
+        - priority
+        - sortIndex
+        - dueAtUnix
+        - agentTargetId
+        - modelPlanId
+        - model
+        - executionDirectory
+        - dependencyTaskIds
+        - parallelizable
+        - autoAccept
+        - acceptanceState
+        - acceptanceSummary
+        - supersededAtUnix
+        - supersededByTaskId
+        - creatorUserId
+        - creatorDisplayName
+        - creatorAvatarUrl
+        - latestRunId
+        - createdAtUnix
+        - updatedAtUnix
+      properties:
+        taskId:
+          type: string
+        issueId:
+          type: string
+        workspaceId:
+          type: string
+        title:
+          type: string
+        content:
+          type: string
+        status:
+          $ref: "#/components/schemas/IssueManagerStatus"
+        priority:
+          $ref: "#/components/schemas/IssueManagerPriority"
+        sortIndex:
+          type: integer
+          minimum: 0
+        dueAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        agentTargetId:
+          type: string
+          description: Opaque WorkspaceAgent assignment. Empty means not assigned yet.
+        modelPlanId:
+          type: string
+          description: Explicit Plan assignment. Empty delegates to the WorkspaceAgent default.
+        model:
+          type: string
+          description: Explicit model assignment. Empty delegates to the assigned Agent/Plan default.
+        executionDirectory:
+          type: string
+        dependencyTaskIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        parallelizable:
+          type: boolean
+          description: >-
+            Opts this task out of the Issue's sequential default so it may run
+            alongside other dependency-ready tasks. False keeps strict
+            sequential ordering.
+        autoAccept:
+          type: boolean
+          description: >-
+            Bypasses the human acceptance gate: a successful completion is
+            accepted automatically and dispatch advances.
+        acceptanceState:
+          $ref: "#/components/schemas/IssueManagerAcceptanceState"
+        acceptanceSummary:
+          type: string
+        supersededAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            Logical supersession timestamp. Zero means the task remains in the
+            active graph; non-zero preserves the task and its execution history
+            while excluding it from future scheduling.
+        supersededByTaskId:
+          type: string
+          description: Replacement task ID when supersession introduced one.
+        creatorUserId:
+          type: string
+        creatorDisplayName:
+          type: string
+        creatorAvatarUrl:
+          type: string
+        latestRunId:
+          type: string
+        createdAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        updatedAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerRun:
+      type: object
+      additionalProperties: false
+      required:
+        - runId
+        - issueId
+        - workspaceId
+        - requesterUserId
+        - agentUserId
+        - agentTargetId
+        - agentSessionId
+        - agentProvider
+        - status
+        - summary
+        - errorMessage
+        - outputDir
+        - executionDirectory
+        - createdAtUnix
+        - startedAtUnix
+        - completedAtUnix
+        - updatedAtUnix
+      properties:
+        runId:
+          type: string
+        taskId:
+          type: string
+        issueId:
+          type: string
+        workspaceId:
+          type: string
+        requesterUserId:
+          type: string
+        agentUserId:
+          type: string
+        agentTargetId:
+          type: string
+        agentSessionId:
+          type: string
+        agentProvider:
+          type: string
+        status:
+          $ref: "#/components/schemas/IssueManagerStatus"
+        summary:
+          type: string
+        errorMessage:
+          type: string
+        outputDir:
+          type: string
+        executionDirectory:
+          type: string
+        createdAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        startedAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        completedAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        updatedAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerReferenceSearchRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          maxLength: 200
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 200
+        filters:
+          type: array
+          description: >-
+            已选「文件类型筛选分类」id(全局统一口径:image/video/document/
+            webpage/other)。筛选与搜索是同一能力:query 可空、filters
+            非空时即按类型查。空/缺省 = 不按类型过滤。
+          items:
+            type: string
+        issueId:
+          type: string
+          nullable: true
+          description: >
+            Optional. Limit the search to output files produced by this issue.
+        topicId:
+          type: string
+          nullable: true
+          description: >
+            Optional. Limit the search to output files produced by issues under
+            this topic. Ignored when issueId is set.
+    IssueManagerReferenceSearchResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - workspaceId
+        - items
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+        items:
+          type: array
+          description: >
+            Flat, recency-ordered list of output file references. Search never
+            returns group items.
+          items:
+            $ref: "#/components/schemas/IssueManagerReferenceSearchHit"
+    IssueManagerReferenceSearchHit:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - issueTitle
+      properties:
+        output:
+          $ref: "#/components/schemas/IssueManagerRunOutput"
+        issueTitle:
+          type: string
+          description: Title of the issue that produced this output file.
+    IssueManagerRunOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - outputId
+        - runId
+        - issueId
+        - workspaceId
+        - path
+        - displayName
+        - mediaType
+        - sizeBytes
+        - createdAtUnix
+      properties:
+        outputId:
+          type: string
+        runId:
+          type: string
+        taskId:
+          type: string
+        issueId:
+          type: string
+        workspaceId:
+          type: string
+        path:
+          type: string
+        displayName:
+          type: string
+        mediaType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        createdAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerContextRef:
+      oneOf:
+        - $ref: "#/components/schemas/IssueManagerIssueContextRef"
+        - $ref: "#/components/schemas/IssueManagerTaskContextRef"
+      discriminator:
+        propertyName: parentKind
+        mapping:
+          issue: "#/components/schemas/IssueManagerIssueContextRef"
+          task: "#/components/schemas/IssueManagerTaskContextRef"
+    IssueManagerAttachmentContentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - contextRefId
+        - mimeType
+        - displayName
+        - data
+      properties:
+        contextRefId:
+          type: string
+        mimeType:
+          type: string
+          enum:
+            - image/png
+            - image/jpeg
+            - image/webp
+        displayName:
+          type: string
+        data:
+          type: string
+          format: byte
+    IssueManagerIssueContextRef:
+      type: object
+      additionalProperties: false
+      required:
+        - contextRefId
+        - workspaceId
+        - issueId
+        - parentKind
+        - refType
+        - accessKind
+        - displayName
+        - createdAtUnix
+      properties:
+        contextRefId:
+          type: string
+        workspaceId:
+          type: string
+        issueId:
+          type: string
+        parentKind:
+          type: string
+          enum:
+            - issue
+          x-enum-varnames:
+            - IssueManagerIssueContextRefParentKindIssue
+        refType:
+          type: string
+        accessKind:
+          type: string
+          enum:
+            - workspace_path
+            - managed_attachment
+        path:
+          type: string
+        displayName:
+          type: string
+        createdAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerTaskContextRef:
+      type: object
+      additionalProperties: false
+      required:
+        - contextRefId
+        - workspaceId
+        - issueId
+        - taskId
+        - parentKind
+        - refType
+        - accessKind
+        - displayName
+        - createdAtUnix
+      properties:
+        contextRefId:
+          type: string
+        workspaceId:
+          type: string
+        issueId:
+          type: string
+        taskId:
+          type: string
+        parentKind:
+          type: string
+          enum:
+            - task
+          x-enum-varnames:
+            - IssueManagerTaskContextRefParentKindTask
+        refType:
+          type: string
+        accessKind:
+          type: string
+          enum:
+            - workspace_path
+            - managed_attachment
+        path:
+          type: string
+        displayName:
+          type: string
+        createdAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+    IssueManagerIssueResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - issue
+      properties:
+        issue:
+          $ref: "#/components/schemas/IssueManagerIssue"
+    IssueManagerTopicResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - topic
+      properties:
+        topic:
+          $ref: "#/components/schemas/IssueManagerTopic"
+    IssueManagerTopicListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - topics
+      properties:
+        topics:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerTopic"
+    IssueManagerIssueListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - issues
+        - totalCount
+        - statusCounts
+      properties:
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerIssue"
+        nextPageToken:
+          type: string
+        totalCount:
+          type: integer
+          minimum: 0
+        statusCounts:
+          $ref: "#/components/schemas/IssueManagerStatusCounts"
+    CreateIssueManagerIssueFromPlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - issue
+        - tasks
+      properties:
+        issue:
+          $ref: "#/components/schemas/CreateIssueManagerPlannedIssueRequest"
+        tasks:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CreateIssueManagerTaskRequest"
+    EstimateIssueManagerAutoTokenBudgetRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - executionProfile
+        - tasks
+      properties:
+        executionProfile:
+          $ref: "#/components/schemas/IssueManagerExecutionProfile"
+        tasks:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/IssueManagerAutoTokenBudgetTaskInput"
+    IssueManagerAutoTokenBudgetTaskInput:
+      type: object
+      additionalProperties: false
+      properties:
+        agentTargetId:
+          type: string
+        modelPlanId:
+          type: string
+        model:
+          type: string
+    IssueManagerAutoTokenBudgetEstimate:
+      type: object
+      additionalProperties: false
+      required:
+        - tokenLimit
+        - deterministicTokenLimit
+        - historicalTokenEstimate
+        - matchedTaskCount
+      properties:
+        tokenLimit:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Effective auto budget that Issue creation will compile for the same input.
+        deterministicTokenLimit:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Scale and intensity estimate before historical calibration.
+        historicalTokenEstimate:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Sum of comparable completed-run averages before headroom and blending.
+        matchedTaskCount:
+          type: integer
+          minimum: 0
+    IssueManagerIssueDetailResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - issue
+        - tasks
+        - contextRefs
+        - latestRun
+        - recentRuns
+        - latestOutputs
+      properties:
+        issue:
+          $ref: "#/components/schemas/IssueManagerIssue"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerTask"
+        contextRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerContextRef"
+        latestRun:
+          allOf:
+            - $ref: "#/components/schemas/IssueManagerRun"
+          nullable: true
+        recentRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerRun"
+        latestOutputs:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerRunOutput"
+    IssueManagerTaskResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - task
+      properties:
+        task:
+          $ref: "#/components/schemas/IssueManagerTask"
+    IssueManagerTasksResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tasks
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerTask"
+    IssueManagerTaskListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - tasks
+        - totalCount
+        - statusCounts
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerTask"
+        nextPageToken:
+          type: string
+        totalCount:
+          type: integer
+          minimum: 0
+        statusCounts:
+          $ref: "#/components/schemas/IssueManagerStatusCounts"
+    IssueManagerTaskDetailResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - task
+        - contextRefs
+        - latestRun
+        - recentRuns
+        - latestOutputs
+      properties:
+        task:
+          $ref: "#/components/schemas/IssueManagerTask"
+        contextRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerContextRef"
+        latestRun:
+          allOf:
+            - $ref: "#/components/schemas/IssueManagerRun"
+          nullable: true
+        recentRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerRun"
+        latestOutputs:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerRunOutput"
+    IssueManagerRunResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - run
+      properties:
+        run:
+          $ref: "#/components/schemas/IssueManagerRun"
+    IssueManagerRunListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - runs
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerRun"
+    IssueManagerRunEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - run
+        - outputs
+      properties:
+        run:
+          $ref: "#/components/schemas/IssueManagerRun"
+        outputs:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerRunOutput"
+    IssueManagerContextRefsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - contextRefs
+      properties:
+        contextRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/IssueManagerContextRef"
+    CreateIssueManagerIssueRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - topicId
+        - title
+      properties:
+        issueId:
+          type: string
+        topicId:
+          type: string
+          minLength: 1
+        title:
+          type: string
+          minLength: 1
+        content:
+          type: string
+        planningSource:
+          $ref: "#/components/schemas/IssueManagerPlanningSource"
+        sourceSessionId:
+          type: string
+        sequentialExecution:
+          type: boolean
+          description: Persist the user's Create-and-Start choice so successor dispatch survives desktop restarts.
+        parallelExecution:
+          type: boolean
+          description: Persist the user's parallel Create-and-Start choice. Mutually exclusive with sequentialExecution.
+        executionProfile:
+          $ref: "#/components/schemas/IssueManagerExecutionProfile"
+        budget:
+          $ref: "#/components/schemas/IssueManagerBudget"
+        attachments:
+          type: array
+          maxItems: 8
+          description: Inline image attachments persisted as managed issue context references.
+          items:
+            $ref: "#/components/schemas/CreateIssueManagerImageAttachmentRequest"
+    CreateIssueManagerPlannedIssueRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - topicId
+        - title
+      properties:
+        issueId:
+          type: string
+        topicId:
+          type: string
+          minLength: 1
+        title:
+          type: string
+          minLength: 1
+        content:
+          type: string
+        planningSource:
+          $ref: "#/components/schemas/IssueManagerPlanningSource"
+        sourceSessionId:
+          type: string
+        sequentialExecution:
+          type: boolean
+          description: Persist the user's Create-and-Start choice so successor dispatch survives desktop restarts.
+        parallelExecution:
+          type: boolean
+          description: Persist the user's parallel Create-and-Start choice. Mutually exclusive with sequentialExecution.
+        executionProfile:
+          $ref: "#/components/schemas/IssueManagerExecutionProfile"
+        budget:
+          $ref: "#/components/schemas/IssueManagerBudget"
+    CreateIssueManagerImageAttachmentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - mimeType
+        - dataBase64
+      properties:
+        mimeType:
+          type: string
+          enum:
+            - image/png
+            - image/jpeg
+            - image/webp
+          x-enum-varnames:
+            - IssueAttachmentMimeTypePNG
+            - IssueAttachmentMimeTypeJPEG
+            - IssueAttachmentMimeTypeWebP
+        dataBase64:
+          type: string
+          minLength: 1
+          description: Base64-encoded image bytes. Decoded content is limited to 20 MiB.
+        displayName:
+          type: string
+        attachmentId:
+          type: string
+          format: uuid
+    CreateIssueManagerTopicRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+      properties:
+        topicId:
+          type: string
+        title:
+          type: string
+          minLength: 1
+        summary:
+          type: string
+    UpdateIssueManagerTopicRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        summary:
+          type: string
+        pinned:
+          type: boolean
+    UpdateIssueManagerIssueRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        status:
+          $ref: "#/components/schemas/IssueManagerStatus"
+    CreateIssueManagerTaskRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+      properties:
+        taskId:
+          type: string
+        title:
+          type: string
+          minLength: 1
+        content:
+          type: string
+        priority:
+          $ref: "#/components/schemas/IssueManagerPriority"
+        dueAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        agentTargetId:
+          type: string
+        modelPlanId:
+          type: string
+        model:
+          type: string
+        executionDirectory:
+          type: string
+        dependencyTaskIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        parallelizable:
+          type: boolean
+        autoAccept:
+          type: boolean
+    CreateIssueManagerTasksRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - tasks
+      properties:
+        tasks:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CreateIssueManagerTaskRequest"
+    UpdateIssueManagerTaskRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        status:
+          $ref: "#/components/schemas/IssueManagerStatus"
+        priority:
+          $ref: "#/components/schemas/IssueManagerPriority"
+        dueAtUnix:
+          type: integer
+          format: int64
+          minimum: 0
+        sortIndex:
+          type: integer
+          minimum: 0
+        parallelizable:
+          type: boolean
+        autoAccept:
+          type: boolean
+        acceptanceState:
+          $ref: "#/components/schemas/IssueManagerAcceptanceState"
+        acceptanceSummary:
+          type: string
+    AddIssueManagerContextRefItem:
+      type: object
+      additionalProperties: false
+      required:
+        - refType
+        - path
+      properties:
+        refType:
+          type: string
+        path:
+          type: string
+          minLength: 1
+        displayName:
+          type: string
+        contextRefId:
+          type: string
+    AddIssueManagerContextRefsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - refs
+      properties:
+        refs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddIssueManagerContextRefItem"
+    CreateIssueManagerRunRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - agentTargetId
+      properties:
+        runId:
+          type: string
+        agentTargetId:
+          type: string
+          minLength: 1
+        agentProvider:
+          type: string
+          description: Legacy display/provider analytics hint. New run authority is agentTargetId.
+        agentUserId:
+          type: string
+        agentSessionId:
+          type: string
+        executionDirectory:
+          type: string
+    StartIssueManagerRunRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - agentTargetId
+      properties:
+        agentTargetId:
+          type: string
+          minLength: 1
+        executionDirectory:
+          type: string
+    CompleteIssueManagerRunOutputItem:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+      properties:
+        outputId:
+          type: string
+        path:
+          type: string
+          minLength: 1
+        displayName:
+          type: string
+        mediaType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+    CompleteIssueManagerRunRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - outputs
+      properties:
+        status:
+          $ref: "#/components/schemas/IssueManagerRunCompletionStatus"
+        summary:
+          type: string
+        errorMessage:
+          type: string
+        usage:
+          $ref: "#/components/schemas/IssueManagerTokenUsage"
+        remainingQuotaPercent:
+          type: number
+          format: double
+          minimum: 0
+        outputs:
+          type: array
+          items:
+            $ref: "#/components/schemas/CompleteIssueManagerRunOutputItem"
+    DeleteIssueManagerIssueResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - removed
+      properties:
+        removed:
+          type: boolean
+    DeleteIssueManagerTopicResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - removed
+      properties:
+        removed:
+          type: boolean
+    DeleteIssueManagerTaskResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - removed
+      properties:
+        removed:
+          type: boolean
+    DeleteIssueManagerContextRefResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - removed
+      properties:
+        removed:
+          type: boolean
+    CancelIssueManagerExecutionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - canceledRunCount
+      properties:
+        canceledRunCount:
+          type: integer
+          minimum: 0
+          description: Number of running runs this call settled as canceled.

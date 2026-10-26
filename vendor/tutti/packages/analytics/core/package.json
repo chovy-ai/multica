@@ -1,0 +1,25 @@
+{
+  "name": "@tutti-os/analytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tutti-os/tutti.git",
+    "directory": "packages/analytics/core"
+  },
+  "dependencies": {
+    "@tutti-os/infra": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4"
+  }
+}

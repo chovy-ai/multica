@@ -1,0 +1,34 @@
+{
+  "name": "@tutti-os/workspace-file-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core/index.ts",
+    "./react": "./src/react/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tutti-os/tutti.git",
+    "directory": "packages/workspace/file-preview"
+  },
+  "peerDependencies": {
+    "react": "^19.1.0"
+  },
+  "tutti": {
+    "tailwindSourceRoot": "src"
+  },
+  "dependencies": {
+    "react": "19.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "@types/react": "19.2.15"
+  }
+}

@@ -84,7 +84,9 @@ vi.mock("@multica/ui/hooks/use-mobile", () => ({
 }));
 vi.mock("@multica/core/paths", () => ({
   useRequiredWorkspaceSlug: () => "acme",
-  useWorkspacePaths: () => ({ chat: () => "/acme/chat" }),
+  useWorkspacePaths: () => ({
+    chat: () => "/acme/chat",
+  }),
 }));
 const platformWorkspace = vi.hoisted(() => ({ slug: "acme" }));
 vi.mock("@multica/core/platform", async (importOriginal) => ({
@@ -262,6 +264,13 @@ beforeEach(() => {
 });
 
 describe("ChatPage URL synchronization", () => {
+  it("keeps the native chat surface even when an old workspace view query is present", () => {
+    renderPage("session=session-1&view=workbench");
+    expect(screen.queryByRole("link", { name: "Agent workspace" })).toBeNull();
+    expect(screen.queryByTestId("tutti-agent-gui-host")).toBeNull();
+    expect(storeRef.current.activeSessionId).toBe("session-1");
+  });
+
   it.each(["/globex/issues", "/acme/issues"])(
     "does not redirect back to chat when the retained page observes %s",
     (pathname) => {

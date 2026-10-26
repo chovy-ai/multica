@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   appSuffixForPath,
+  applyCloudDevEnv,
   applyWorktreeDevEnv,
   cksum,
   offsetForPath,
@@ -25,6 +26,21 @@ function tmpRoot(kind /* "file" | "dir" | "none" */) {
 }
 
 describe("worktree-dev-env", () => {
+  it("pins cloud endpoints despite inherited local environment values", () => {
+    const env = { VITE_API_URL: "http://localhost:8080", VITE_WS_URL: "ws://localhost:8080/ws", VITE_APP_URL: "http://localhost:3000", OTHER_SETTING: "keep" };
+    applyCloudDevEnv(env, { root: "/work/multica" });
+    expect(env).toMatchObject({ VITE_API_URL: "https://api.multica.ai", VITE_WS_URL: "wss://api.multica.ai/ws", VITE_APP_URL: "https://multica.ai", OTHER_SETTING: "keep" });
+  });
+
+  it("isolates cloud storage and renderer from the same checkout's local instance", () => {
+    const root = tmpRoot("file");
+    const local = applyWorktreeDevEnv({}, { root });
+    const cloud = applyCloudDevEnv({ ...local }, { root });
+    expect(cloud.DESKTOP_APP_SUFFIX).toBe(`${local.DESKTOP_APP_SUFFIX}-cloud`);
+    expect(Number(cloud.DESKTOP_RENDERER_PORT)).toBe(Number(local.DESKTOP_RENDERER_PORT) + 10000);
+    expect(applyCloudDevEnv(cloud, { root })).toEqual(cloud);
+  });
+
   it("cksum is byte-compatible with coreutils cksum(1)", () => {
     // `printf '%s' "/tmp/foo" | cksum` → 427878967 8
     expect(cksum(Buffer.from("/tmp/foo"))).toBe(427878967);

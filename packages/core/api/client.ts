@@ -105,6 +105,7 @@ import type {
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
+  SendChatAgentMessageResponse,
   StartMikaOnboardingResponse,
   CancelTaskResponse,
   Project,
@@ -272,6 +273,7 @@ import {
   ChatSessionSchema,
   PrioritizeQueuedChatTaskResponseSchema,
   SendChatMessageResponseSchema,
+  SendChatAgentMessageResponseSchema,
   StartMikaOnboardingResponseSchema,
   ChildIssuesResponseSchema,
   IssueDuplicatesResponseSchema,
@@ -3862,13 +3864,18 @@ export class ApiClient {
     sessionId: string,
     content: string,
     attachmentIds?: string[],
+    options?: { model?: string },
   ): Promise<SendChatMessageResponse> {
     const body: {
       content: string;
       attachment_ids?: string[];
+      model?: string;
     } = { content };
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
+    }
+    if (options?.model !== undefined) {
+      body.model = options.model;
     }
     const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",
@@ -3882,6 +3889,23 @@ export class ApiClient {
     );
     if (!response) throw new Error("invalid send chat message response");
     return response;
+  }
+
+  async sendChatAgentMessage(sessionId: string, content: string, agentIds: string[], attachmentIds?: string[]): Promise<SendChatAgentMessageResponse> {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/agent-messages`, {
+      method: "POST", body: JSON.stringify({content, agent_ids: agentIds, ...(attachmentIds?.length ? {attachment_ids: attachmentIds} : {})}),
+    });
+    const result = parseWithFallback<SendChatAgentMessageResponse | null>(raw, SendChatAgentMessageResponseSchema, null, {endpoint: "POST /api/chat/sessions/:id/agent-messages"});
+    if (!result) throw new Error("invalid agent invocation response");
+    return result;
+  }
+
+  async listChatSessionTasksPage(sessionId: string, options: {limit?: number; before?: string} = {}): Promise<{tasks: AgentTask[]; nextCursor: string | null}> {
+    const search = new URLSearchParams({limit: String(options.limit ?? 200)});
+    if (options.before) search.set("before", options.before);
+    const response = await this.fetchRaw(`/api/chat/sessions/${sessionId}/tasks?${search}`);
+    const tasks: unknown = await response.json();
+    return parseWithFallback({tasks, nextCursor: response.headers.get("X-Agent-Tasks-Next-Cursor")}, AgentTaskPageSchema, {tasks: [], nextCursor: null}, {endpoint: "GET /api/chat/sessions/:id/tasks"});
   }
 
   async startMikaOnboarding(

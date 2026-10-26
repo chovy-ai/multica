@@ -1,0 +1,13 @@
+{
+  "name": "@tutti-os/event-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "24.12.4"
+  }
+}

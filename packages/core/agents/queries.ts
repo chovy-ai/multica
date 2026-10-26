@@ -1,9 +1,33 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
+import { issueKeys, type IssueFlatFilter } from "../issues/queries";
 import type {
   WorkspaceWorkingAgentMineRelation,
   WorkspaceWorkingAgentType,
 } from "../types";
+
+/** Uses the Issue cache family so assignment/deletion events reconcile this view. */
+export function agentWorkspaceIssuesOptions(wsId: string, agentId: string) {
+  const filter: IssueFlatFilter = {
+    assignee_id: agentId,
+    assignee_types: ["agent"],
+  };
+  const limit = 30;
+  return infiniteQueryOptions({
+    queryKey: issueKeys.flat(wsId, "agent-workspace", filter),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) =>
+      api.listIssues({ ...filter, limit, offset: pageParam }),
+    getNextPageParam: (lastPage, pages) => {
+      const loaded = pages.reduce((count, page) => count + page.issues.length, 0);
+      return lastPage.issues.length > 0 && loaded < lastPage.total
+        ? loaded
+        : undefined;
+    },
+    enabled: Boolean(wsId && agentId),
+    staleTime: 30_000,
+  });
+}
 
 export const agentTaskSnapshotKeys = {
   all: (wsId: string) => ["workspaces", wsId, "agent-task-snapshot"] as const,

@@ -812,15 +812,25 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 // Chat Messages
 
 type SendChatMessageRequest struct {
-	Content       string   `json:"content"`
-	AttachmentIDs []string `json:"attachment_ids"`
+	Content       string          `json:"content"`
+	AttachmentIDs []string        `json:"attachment_ids"`
+	Model         json.RawMessage `json:"model,omitempty"`
+	AgentIDs      []string        `json:"agent_ids,omitempty"`
+}
+
+type ChatAgentRunResponse struct {
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+	TaskID    string `json:"task_id"`
+	MessageID string `json:"message_id"`
 }
 
 type SendChatMessageResponse struct {
-	MessageID     string `json:"message_id"`
-	TaskID        string `json:"task_id"`
-	SupportsQueue bool   `json:"supports_queue"`
-	Queued        bool   `json:"queued"`
+	AgentRuns     []ChatAgentRunResponse `json:"agent_runs,omitempty"`
+	MessageID     string                 `json:"message_id"`
+	TaskID        string                 `json:"task_id"`
+	SupportsQueue bool                   `json:"supports_queue"`
+	Queued        bool                   `json:"queued"`
 	// AttachmentIDs are the attachment rows actually bound to this message by
 	// the server. The client diffs these against the ids it requested so it
 	// can warn the user when an attachment silently failed to bind — no extra
@@ -840,6 +850,14 @@ type SendChatMessageResponse struct {
 }
 
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
+	h.sendChatMessage(w, r, false)
+}
+
+func (h *Handler) SendChatAgentMessage(w http.ResponseWriter, r *http.Request) {
+	h.sendChatMessage(w, r, true)
+}
+
+func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invokedAgents bool) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -854,6 +872,33 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Content == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+	model, err := service.ParseChatModelOverride(req.Model)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var targetIDs []pgtype.UUID
+	if invokedAgents {
+		if len(req.AgentIDs) < 1 || len(req.AgentIDs) > 5 || model != nil {
+			writeError(w, http.StatusBadRequest, "select one to five agents and use their configured models")
+			return
+		}
+		parsed, ok := parseUUIDSliceOrBadRequest(w, req.AgentIDs, "agent_ids")
+		if !ok {
+			return
+		}
+		seen := map[pgtype.UUID]bool{}
+		for _, id := range parsed {
+			if !seen[id] {
+				targetIDs = append(targetIDs, id)
+				seen[id] = true
+			}
+		}
+	} else if len(req.AgentIDs) > 0 {
+		writeError(w, http.StatusBadRequest, "use agent-messages to invoke agents")
 		return
 	}
 
@@ -889,36 +934,43 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// another tab) would land the user message, then get a 500, leaving an
 	// orphan message with no task or reply. Fail fast with a 4xx and mutate
 	// nothing. See EnqueueChatTask's ErrChatTaskAgentArchived / NoRuntime.
-	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load chat agent")
-		return
+	agents := make([]db.Agent, 0, max(1, len(targetIDs)))
+	if !invokedAgents {
+		targetIDs = []pgtype.UUID{session.AgentID}
 	}
-	if agent.ArchivedAt.Valid {
-		writeError(w, http.StatusConflict, "chat agent is archived")
-		return
-	}
-	// Shared verdict: an unbound agent and a machine whose CLI cannot run are
-	// both refusals here, with their own codes. A merely offline runtime is not
-	// checked at all — chat messages queue for it, as they always have.
-	if verdict, err := service.AgentReadiness(r.Context(), h.runtimeLookup(obsmetrics.RuntimeLookupSourceChat), agent); err == nil && verdict.Blocked() {
-		h.writeDispatchBlocked(w, http.StatusConflict, verdict.Reason)
-		return
-	}
-
-	// Re-run the INVOKE gate on every send, not just the softer view gate in
-	// gatePublicChatSessionForUser (MUL-4525). canAccessPrivateAgent lets a workspace
-	// admin keep reading a transcript, but sending a message enqueues a run and
-	// must satisfy canInvokeAgent — which has no admin bypass. A session created
-	// while the user could invoke the agent must stop enqueuing work the instant
-	// that permission is revoked (agent flipped private, ownership moved, target
-	// removed from the allow-list), and it must fail BEFORE we persist the user
-	// message / attachments / task. Blocked returns a structured, enumeration-safe
-	// reason so the composer can explain it without leaking private-agent details.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
-		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
-		return
+	for _, id := range targetIDs {
+		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: id, WorkspaceID: session.WorkspaceID})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "agent not found")
+			return
+		}
+		if agent.ArchivedAt.Valid {
+			writeError(w, http.StatusConflict, "chat agent is archived")
+			return
+		}
+		// Shared verdict: an unbound agent and a machine whose CLI cannot run are
+		// both refusals here, with their own codes. A merely offline runtime is not
+		// checked at all — chat messages queue for it, as they always have.
+		if verdict, err := service.AgentReadiness(r.Context(), h.runtimeLookup(obsmetrics.RuntimeLookupSourceChat), agent); err == nil && verdict.Blocked() {
+			h.writeDispatchBlocked(w, http.StatusConflict, verdict.Reason)
+			return
+		}
+
+		// Re-run the INVOKE gate on every send, not just the softer view gate in
+		// gatePublicChatSessionForUser (MUL-4525). canAccessPrivateAgent lets a workspace
+		// admin keep reading a transcript, but sending a message enqueues a run and
+		// must satisfy canInvokeAgent — which has no admin bypass. A session created
+		// while the user could invoke the agent must stop enqueuing work the instant
+		// that permission is revoked (agent flipped private, ownership moved, target
+		// removed from the allow-list), and it must fail BEFORE we persist the user
+		// message / attachments / task. Blocked returns a structured, enumeration-safe
+		// reason so the composer can explain it without leaking private-agent details.
+		if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
+			h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
+			return
+		}
+		agents = append(agents, agent)
 	}
 
 	// Detect whether this is the very first human message in the session,
@@ -952,9 +1004,13 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// creator-only), so they are the task initiator and the run's originator —
 	// surfaced to the agent under `## On Behalf Of`. actorType/actorID were
 	// resolved above for the invoke gate.
-	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID))
+	sentResults, err := h.TaskService.SendDirectChatMessages(r.Context(), session, agents, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), service.DirectChatSendOptions{Model: model, InvokedAgents: invokedAgents})
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrChatInvocationDenied):
+			h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
+		case errors.Is(err, service.ErrChatModelOverride):
+			writeError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, service.ErrChatSessionArchived):
 			writeError(w, http.StatusConflict, "chat session is archived")
 		case errors.Is(err, service.ErrChatTaskAgentArchived):
@@ -967,6 +1023,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	sent := &sentResults[0]
 	msg := sent.Message
 	task := sent.Task
 	currentTitle := session.Title
@@ -1000,14 +1057,20 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Broadcast the user message.
 	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
-		ChatSessionID: resolvedSessionID,
-		MessageID:     uuidToString(msg.ID),
-		Role:          "user",
-		Content:       req.Content,
-		TaskID:        uuidToString(task.ID),
-		CreatedAt:     timestampToString(msg.CreatedAt),
-	})
+	var agentRuns []ChatAgentRunResponse
+	for _, item := range sentResults {
+		h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
+			ChatSessionID: resolvedSessionID,
+			MessageID:     uuidToString(item.Message.ID),
+			Role:          "user",
+			Content:       req.Content,
+			TaskID:        uuidToString(item.Task.ID),
+			CreatedAt:     timestampToString(item.Message.CreatedAt),
+		})
+		if invokedAgents {
+			agentRuns = append(agentRuns, ChatAgentRunResponse{AgentID: uuidToString(item.Task.AgentID), AgentName: service.ChatInvocationFromContext(item.Task.Context).AgentName, TaskID: uuidToString(item.Task.ID), MessageID: uuidToString(item.Message.ID)})
+		}
+	}
 
 	// First user message → kick off best-effort LLM auto-titling (MUL-4295).
 	// Fire-and-forget and non-blocking: the response below is written whether
@@ -1021,6 +1084,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, SendChatMessageResponse{
+		AgentRuns:     agentRuns,
 		MessageID:     uuidToString(msg.ID),
 		TaskID:        uuidToString(task.ID),
 		SupportsQueue: true,

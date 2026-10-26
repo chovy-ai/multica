@@ -1,0 +1,54 @@
+{
+  "name": "@tutti-os/ui-rich-text",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./at-panel": "./src/at-panel/index.ts",
+    "./at-panel/index.css": "./src/at-panel/mentionPalette.css",
+    "./at-panel/model": "./src/at-panel/model.ts",
+    "./core": "./src/core/index.ts",
+    "./editor": "./src/editor/index.ts",
+    "./plugins": "./src/plugins/index.ts",
+    "./service": "./src/service/index.ts",
+    "./types": "./src/types/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tutti-os/tutti.git",
+    "directory": "packages/ui/rich-text"
+  },
+  "dependencies": {
+    "@tutti-os/ui-i18n-runtime": "workspace:*",
+    "@tutti-os/ui-system": "workspace:*",
+    "@tiptap/core": "3.23.6",
+    "@tiptap/react": "3.23.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "@tiptap/extension-document": "3.23.6",
+    "@tiptap/extension-hard-break": "3.23.6",
+    "@tiptap/extension-paragraph": "3.23.6",
+    "@tiptap/extension-text": "3.23.6",
+    "@tiptap/pm": "3.23.6"
+  },
+  "peerDependencies": {
+    "@tiptap/core": "^3.23.6",
+    "@tiptap/react": "^3.23.6",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "tutti": {
+    "tailwindSourceRoot": "src"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3"
+  }
+}

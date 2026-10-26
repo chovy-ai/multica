@@ -347,20 +347,30 @@ export class TestApiClient {
   }
 
   /** Seed an owned runtime without launching an actual agent tool. */
-  async seedRuntime(name: string): Promise<string> {
+  async seedRuntime(name: string, provider: "claude" | "codex" = "claude"): Promise<string> {
     if (!this.workspaceId || !this.email) throw new Error("Select a workspace before seeding a runtime");
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
       const result = await client.query(
         `INSERT INTO agent_runtime (workspace_id, name, runtime_mode, provider, status, owner_id, last_seen_at)
-         SELECT $1, $2, 'local', 'claude', 'online', id, now() FROM "user" WHERE email = $3 RETURNING id`,
-        [this.workspaceId, name, this.email],
+         SELECT $1, $2, 'local', $4, 'online', id, now() FROM "user" WHERE email = $3 RETURNING id`,
+        [this.workspaceId, name, this.email, provider],
       );
       return result.rows[0].id as string;
     } finally {
       await client.end();
     }
+  }
+
+  /** Creates an Agent through the real API; the owning test deletes its workspace. */
+  async createAgent(name: string, runtimeId: string): Promise<{ id: string; name: string }> {
+    const response = await this.authedFetch("/api/agents", {
+      method: "POST",
+      body: JSON.stringify({ name, runtime_id: runtimeId, runtime_mode: "local", visibility: "workspace" }),
+    });
+    if (!response.ok) throw new Error(`create agent failed: ${response.status} ${await response.text()}`);
+    return response.json();
   }
 
   /** Adds an existing user to this client's workspace and returns the member id. */

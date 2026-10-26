@@ -1,11 +1,13 @@
 import { resolve } from "path";
+import { execFileSync } from "node:child_process";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Workspace packages expose raw TypeScript; main must bundle their runtime imports.
+    plugins: [externalizeDepsPlugin({ exclude: ["@multica/tutti-agent-gui-host", "@multica/core"] })],
   },
   preload: {
     // `@electron-toolkit/preload` must be bundled INTO the preload script:
@@ -24,7 +26,18 @@ export default defineConfig({
       port: Number(process.env.DESKTOP_RENDERER_PORT) || 5173,
       strictPort: true,
     },
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      {
+        name: "multica-tutti-agent-gui-assets",
+        config() {
+          execFileSync(process.execPath, [
+            resolve("../../packages/tutti-agent-gui-host/scripts/build.mjs"),
+          ], { stdio: "inherit" });
+        },
+      },
+      react(),
+      tailwindcss(),
+    ],
     resolve: {
       alias: {
         "@": resolve("src/renderer/src"),

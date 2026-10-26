@@ -1,0 +1,900 @@
+{
+  "$schema": "../../schemas/core/event-definition.schema.json",
+  "topic": "agent.activity.updated",
+  "version": 2,
+  "direction": "server->client",
+  "owner": "agent",
+  "scope": "workspace",
+  "payloadSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+    "oneOf": [
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "runtime_activity_update"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "workspaceId",
+              "agentSessionId",
+              "eventType",
+              "state",
+              "occurredAtUnixMs"
+            ],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventType": {
+                "const": "runtime_activity_update"
+              },
+              "state": {
+                "type": "string",
+                "enum": ["idle", "running"]
+              },
+              "occurredAtUnixMs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "session_restored"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "workspaceId",
+              "agentSessionId",
+              "eventType",
+              "restoredAtUnixMs"
+            ],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventType": {
+                "const": "session_restored"
+              },
+              "restoredAtUnixMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "session_reconcile_required"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "workspaceId",
+              "agentSessionId",
+              "eventType",
+              "lastEventUnixMs"
+            ],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentTargetId": {
+                "type": "string"
+              },
+              "eventType": {
+                "const": "session_reconcile_required"
+              },
+              "lastEventUnixMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "message_delta"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "workspaceId",
+              "agentSessionId",
+              "messageId",
+              "turnId",
+              "role",
+              "kind",
+              "occurredAtUnixMs"
+            ],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "messageId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "turnId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "occurredAtUnixMs": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["operation"],
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "enum": ["append_text", "set"]
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "value": true
+                }
+              },
+              "toolOutput": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["operation", "text"],
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "enum": ["append_text", "set"]
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "offsetBytes": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              },
+              "payloadSet": {
+                "type": "object",
+                "minProperties": 1
+              },
+              "payloadUnset": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "status": {
+                "type": "string"
+              },
+              "semantics": {
+                "type": "object"
+              },
+              "startedAtUnixMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "completedAtUnixMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "session_deleted"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "workspaceId",
+              "agentSessionId",
+              "eventType",
+              "deletedAtUnixMs"
+            ],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventType": {
+                "const": "session_deleted"
+              },
+              "deletedAtUnixMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "message_update"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "workspaceId",
+              "agentSessionId",
+              "eventType",
+              "latestVersion",
+              "acceptedCount",
+              "messages"
+            ],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventType": {
+                "const": "message_update"
+              },
+              "latestVersion": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "acceptedCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "agentSessionId",
+                        "kind",
+                        "messageId",
+                        "occurredAtUnixMs",
+                        "payload",
+                        "role",
+                        "sequence",
+                        "turnId",
+                        "version"
+                      ],
+                      "properties": {
+                        "agentSessionId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "kind": {
+                          "const": "collaboration"
+                        },
+                        "messageId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "payload": {
+                          "type": "object"
+                        },
+                        "role": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "sequence": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Stable message presentation order assigned when the durable message row is first created."
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "turnId": {
+                          "type": ["null"],
+                          "description": "Session-level collaboration messages do not belong to an agent turn."
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "occurredAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "startedAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "completedAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "createdAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "updatedAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "agentSessionId",
+                        "kind",
+                        "messageId",
+                        "occurredAtUnixMs",
+                        "payload",
+                        "role",
+                        "sequence",
+                        "turnId",
+                        "version"
+                      ],
+                      "properties": {
+                        "agentSessionId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "kind": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^(?!collaboration$|session_audit$).+"
+                        },
+                        "messageId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "payload": {
+                          "type": "object"
+                        },
+                        "role": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "sequence": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Stable message presentation order assigned when the durable message row is first created."
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "turnId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "Turn-scoped messages always reference a real persisted Turn. Session audits use the separate session_audit event."
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "occurredAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "startedAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "completedAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "createdAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "updatedAtUnixMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "session_audit"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["workspaceId", "agentSessionId", "eventType", "audit"],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventType": {
+                "const": "session_audit"
+              },
+              "audit": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "auditId",
+                  "role",
+                  "payload",
+                  "occurredAtUnixMs",
+                  "version"
+                ],
+                "properties": {
+                  "auditId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "payload": {
+                    "type": "object"
+                  },
+                  "occurredAtUnixMs": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "turn_update"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "workspaceId",
+              "agentSessionId",
+              "eventType",
+              "occurredAtUnixMs",
+              "activeTurnId",
+              "turn"
+            ],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventType": {
+                "const": "turn_update"
+              },
+              "occurredAtUnixMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "activeTurnId": {
+                "type": ["string", "null"],
+                "description": "The session's active turn reference after this update; null once the turn settles."
+              },
+              "turn": {
+                "type": "object",
+                "required": [
+                  "turnId",
+                  "agentSessionId",
+                  "phase",
+                  "origin",
+                  "outcome",
+                  "error",
+                  "fileChanges",
+                  "completedCommand",
+                  "startedAtUnixMs",
+                  "settledAtUnixMs",
+                  "updatedAtUnixMs"
+                ],
+                "properties": {
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "agentSessionId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "capabilityRefs": {
+                    "type": "array",
+                    "description": "Structured capability provenance attached by the controller-owned initial submission event or lifecycle-neutral native-guidance report and persisted on the canonical turn. It is never provider prompt text.",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["capability", "source"],
+                      "properties": {
+                        "capability": {
+                          "type": "string",
+                          "const": "tutti"
+                        },
+                        "source": {
+                          "type": "string",
+                          "const": "slash_command"
+                        }
+                      }
+                    }
+                  },
+                  "phase": {
+                    "type": "string",
+                    "enum": [
+                      "submitted",
+                      "running",
+                      "waiting",
+                      "settling",
+                      "settled"
+                    ]
+                  },
+                  "origin": {
+                    "type": "string",
+                    "enum": [
+                      "user_prompt",
+                      "goal_arm",
+                      "goal_continuation",
+                      "provider_initiated",
+                      "legacy_unknown"
+                    ]
+                  },
+                  "sourceGoalOperationId": {
+                    "type": ["string", "null"],
+                    "minLength": 1
+                  },
+                  "sourceGoalRevision": {
+                    "type": ["integer", "null"],
+                    "minimum": 0
+                  },
+                  "sourceGoalRepairEpoch": {
+                    "type": ["integer", "null"],
+                    "minimum": 0
+                  },
+                  "outcome": {
+                    "type": ["string", "null"],
+                    "enum": [
+                      null,
+                      "completed",
+                      "failed",
+                      "canceled",
+                      "interrupted"
+                    ]
+                  },
+                  "error": {
+                    "type": ["object", "null"],
+                    "required": ["message"],
+                    "properties": {
+                      "message": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "code": {
+                        "type": "string"
+                      },
+                      "detail": {
+                        "type": "string",
+                        "maxLength": 240
+                      }
+                    }
+                  },
+                  "fileChanges": true,
+                  "completedCommand": {
+                    "type": ["object", "null"],
+                    "required": ["kind", "status"],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": ["compact", "review", "undo", "goal"]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": ["completed", "failed", "canceled"]
+                      }
+                    }
+                  },
+                  "startedAtUnixMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "settledAtUnixMs": {
+                    "type": ["integer", "null"],
+                    "minimum": 0
+                  },
+                  "updatedAtUnixMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "agentSessionId", "eventType", "data"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentSessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventType": {
+            "const": "interaction_update"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "workspaceId",
+              "agentSessionId",
+              "eventType",
+              "occurredAtUnixMs",
+              "interaction"
+            ],
+            "properties": {
+              "workspaceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentSessionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventType": {
+                "const": "interaction_update"
+              },
+              "occurredAtUnixMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "interaction": {
+                "type": "object",
+                "required": [
+                  "requestId",
+                  "agentSessionId",
+                  "turnId",
+                  "kind",
+                  "status",
+                  "toolName",
+                  "input",
+                  "output",
+                  "metadata",
+                  "createdAtUnixMs",
+                  "updatedAtUnixMs"
+                ],
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "agentSessionId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": ["approval", "question", "plan"]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["pending", "answered", "superseded"]
+                  },
+                  "toolName": {
+                    "type": ["string", "null"]
+                  },
+                  "input": {
+                    "type": ["object", "null"]
+                  },
+                  "output": {
+                    "type": ["object", "null"]
+                  },
+                  "metadata": {
+                    "type": ["object", "null"]
+                  },
+                  "createdAtUnixMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "updatedAtUnixMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "properties": {
+      "workspaceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "agentSessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "agentTargetId": {
+        "type": "string"
+      },
+      "eventType": {
+        "type": "string",
+        "enum": [
+          "session_reconcile_required",
+          "session_deleted",
+          "session_restored",
+          "session_audit",
+          "message_delta",
+          "message_update",
+          "turn_update",
+          "interaction_update"
+        ]
+      },
+      "data": true
+    }
+  }
+}

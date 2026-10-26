@@ -2921,6 +2921,22 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			"error_runtime_access_denied", http.StatusForbidden, "private runtime does not permit task agent",
 		)
 	}
+	model := agent.Model.String
+	if task.ChatSessionID.Valid {
+		override, modelErr := service.ChatTaskModelOverride(task.Context)
+		if modelErr == nil && override != nil {
+			modelErr = service.ValidateChatModelOverride(runtime.Provider, *override)
+		}
+		if modelErr != nil {
+			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task, modelErr.Error(), taskfailure.ReasonInvalidTaskIdentity,
+				"error_chat_model_override", http.StatusConflict, "chat model override is invalid",
+			)
+		}
+		if override != nil {
+			model = *override
+		}
+	}
 	useSkillRefs := requestHasClientCapability(r, protocol.DaemonCapabilitySkillBundlesV1)
 	// A daemon older than the multica-platform merge assembles a brief that
 	// still names the built-ins this server stopped shipping. It cannot be
@@ -2995,7 +3011,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		CustomEnv:             customEnv,
 		CustomArgs:            customArgs,
 		McpConfig:             mcpConfig,
-		Model:                 agent.Model.String,
+		Model:                 model,
 		ThinkingLevel:         agent.ThinkingLevel.String,
 		ServiceTier:           agent.ServiceTier.String,
 		RuntimeConfig:         runtimeConfig,
@@ -3615,7 +3631,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 		projectCtx.applyTo(&resp)
-		if !task.ForceFreshSession && !task.ChannelContextRevision.Valid {
+		if !task.ForceFreshSession && !task.ChannelContextRevision.Valid && cs.AgentID == task.AgentID {
 			// Resume chat sessions only when the stored pointer was produced
 			// by the same runtime as the claiming task. When the chat_session
 			// pointer is missing (legacy NULL runtime_id), stale (last task
@@ -3689,6 +3705,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				started := time.Now()
 				prior, err := h.Queries.GetLastChatTaskSession(r.Context(), db.GetLastChatTaskSessionParams{
 					ChatSessionID:          cs.ID,
+					AgentID:                task.AgentID,
 					ChannelContextRevision: contextRevision,
 				})
 				h.Metrics.ObserveChatClaimLastSessionQuery(time.Since(started).Seconds())

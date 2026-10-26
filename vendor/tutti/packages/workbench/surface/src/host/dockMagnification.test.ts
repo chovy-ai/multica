@@ -1,0 +1,525 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  advanceDockMagnificationSpring,
+  applyDockMagnificationEntryRamp,
+  DOCK_ICON_BASE_SIZE,
+  DOCK_ICON_PEAK_SIZE,
+  DOCK_MAGNIFICATION_HALF_RANGE,
+  createDockMagnificationGlobalPointerTracker,
+  isDockMagnificationPointInsideHitBounds,
+  isDockMagnificationPointInsideSlotRect,
+  isDockMagnificationSlotLayoutLocked,
+  isDockMagnificationSpringSettled,
+  mapDistanceToTargetSize,
+  projectDockMagnificationGeometry,
+  resolveDockMagnificationHitBounds,
+  resolveDockMagnificationSlotCenter,
+  resolveDockMagnificationVisibleHitBounds,
+  resolveDockMagnificationVisibleSlotRects
+} from "./dockMagnification.ts";
+
+function assertBoundsEqual(
+  actual: ReturnType<typeof resolveDockMagnificationHitBounds>,
+  expected: NonNullable<ReturnType<typeof resolveDockMagnificationHitBounds>>
+) {
+  if (actual === null) {
+    assert.fail("expected dock magnification hit bounds");
+  }
+  assert.ok(Math.abs(actual.crossEnd - expected.crossEnd) < 0.001);
+  assert.ok(Math.abs(actual.crossStart - expected.crossStart) < 0.001);
+  assert.ok(Math.abs(actual.mainEnd - expected.mainEnd) < 0.001);
+  assert.ok(Math.abs(actual.mainStart - expected.mainStart) < 0.001);
+}
+
+function assertRectEqual(
+  actual: {
+    bottom: number;
+    left: number;
+    right: number;
+    top: number;
+  },
+  expected: {
+    bottom: number;
+    left: number;
+    right: number;
+    top: number;
+  }
+) {
+  assert.ok(Math.abs(actual.bottom - expected.bottom) < 0.001);
+  assert.ok(Math.abs(actual.left - expected.left) < 0.001);
+  assert.ok(Math.abs(actual.right - expected.right) < 0.001);
+  assert.ok(Math.abs(actual.top - expected.top) < 0.001);
+}
+
+class FakePointerTrackingTarget {
+  readonly listeners = new Map<
+    string,
+    Set<EventListenerOrEventListenerObject>
+  >();
+  readonly added: string[] = [];
+  readonly removed: string[] = [];
+
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null
+  ) {
+    if (!listener) {
+      return;
+    }
+    this.added.push(type);
+    let listenersForType = this.listeners.get(type);
+    if (!listenersForType) {
+      listenersForType = new Set();
+      this.listeners.set(type, listenersForType);
+    }
+    listenersForType.add(listener);
+  }
+
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null
+  ) {
+    if (!listener) {
+      return;
+    }
+    this.removed.push(type);
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  dispatch(type: string, event: Event) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      if (typeof listener === "function") {
+        listener(event);
+      } else {
+        listener.handleEvent(event);
+      }
+    }
+  }
+
+  listenerCount(type: string) {
+    return this.listeners.get(type)?.size ?? 0;
+  }
+}
+
+test("mapDistanceToTargetSize peaks at center and falls off linearly", () => {
+  const centerSize = mapDistanceToTargetSize(0);
+  const edgeSize = mapDistanceToTargetSize(DOCK_MAGNIFICATION_HALF_RANGE);
+  const beyondSize = mapDistanceToTargetSize(
+    DOCK_MAGNIFICATION_HALF_RANGE + 12
+  );
+
+  assert.equal(centerSize, DOCK_ICON_PEAK_SIZE);
+  assert.equal(edgeSize, DOCK_ICON_BASE_SIZE);
+  assert.equal(beyondSize, DOCK_ICON_BASE_SIZE);
+});
+
+test("mapDistanceToTargetSize is symmetric around the icon center", () => {
+  assert.equal(mapDistanceToTargetSize(-24), mapDistanceToTargetSize(24));
+});
+
+test("dock magnification entry ramp eases into the first hover target", () => {
+  const target = mapDistanceToTargetSize(0);
+
+  assert.equal(
+    applyDockMagnificationEntryRamp(target, DOCK_ICON_BASE_SIZE, 0),
+    DOCK_ICON_BASE_SIZE
+  );
+  assert.equal(
+    applyDockMagnificationEntryRamp(target, DOCK_ICON_BASE_SIZE, 1),
+    target
+  );
+  assert.equal(
+    applyDockMagnificationEntryRamp(target, DOCK_ICON_BASE_SIZE, 0.5),
+    DOCK_ICON_BASE_SIZE + (target - DOCK_ICON_BASE_SIZE) * 0.5
+  );
+});
+
+test("dock magnification hit bounds exclude scroll-control padding before the first slot", () => {
+  const hitBounds = resolveDockMagnificationHitBounds(
+    [
+      { bottom: 80, left: 100, right: 143.2, top: 36.8 },
+      { bottom: 80, left: 160, right: 203.2, top: 36.8 }
+    ],
+    "bottom"
+  );
+
+  assertBoundsEqual(hitBounds, {
+    crossEnd: 88,
+    crossStart: 28.8,
+    mainEnd: 203.2,
+    mainStart: 100
+  });
+});
+
+test("dock magnification hit bounds include the transparent gap between slots", () => {
+  const hitBounds = resolveDockMagnificationHitBounds(
+    [
+      { bottom: 80, left: 100, right: 143.2, top: 36.8 },
+      { bottom: 80, left: 160, right: 203.2, top: 36.8 }
+    ],
+    "bottom"
+  );
+
+  assert.equal(
+    isDockMagnificationPointInsideHitBounds({
+      clientX: 151.6,
+      clientY: 60,
+      dockPlacement: "bottom",
+      hitBounds
+    }),
+    true
+  );
+  assert.equal(
+    isDockMagnificationPointInsideHitBounds({
+      clientX: 99,
+      clientY: 60,
+      dockPlacement: "bottom",
+      hitBounds
+    }),
+    false
+  );
+});
+
+test("dock magnification visible hit bounds clip overflow slots to the viewport", () => {
+  const slotHitBounds = resolveDockMagnificationHitBounds(
+    [
+      { bottom: 80, left: 100, right: 143.2, top: 36.8 },
+      { bottom: 80, left: 160, right: 203.2, top: 36.8 },
+      { bottom: 80, left: 720, right: 763.2, top: 36.8 }
+    ],
+    "bottom"
+  );
+  const visibleHitBounds = resolveDockMagnificationVisibleHitBounds({
+    dockPlacement: "bottom",
+    hitBounds: slotHitBounds,
+    viewportRect: { bottom: 88, left: 64, right: 560, top: 0 }
+  });
+
+  assertBoundsEqual(visibleHitBounds, {
+    crossEnd: 88,
+    crossStart: 28.8,
+    mainEnd: 560,
+    mainStart: 100
+  });
+  assert.equal(
+    isDockMagnificationPointInsideHitBounds({
+      clientX: 151.6,
+      clientY: 60,
+      dockPlacement: "bottom",
+      hitBounds: visibleHitBounds
+    }),
+    true
+  );
+  assert.equal(
+    isDockMagnificationPointInsideHitBounds({
+      clientX: 730,
+      clientY: 60,
+      dockPlacement: "bottom",
+      hitBounds: visibleHitBounds
+    }),
+    false
+  );
+});
+
+test("dock magnification visible hit bounds preserve edge hover room near the viewport", () => {
+  const slotHitBounds = resolveDockMagnificationHitBounds(
+    [
+      { bottom: 80, left: 100, right: 143.2, top: 36.8 },
+      { bottom: 80, left: 160, right: 203.2, top: 36.8 }
+    ],
+    "bottom"
+  );
+  const visibleHitBounds = resolveDockMagnificationVisibleHitBounds({
+    dockPlacement: "bottom",
+    hitBounds: slotHitBounds,
+    mainAxisEdgePadding: DOCK_ICON_BASE_SIZE / 2,
+    viewportRect: { bottom: 88, left: 90, right: 210, top: 0 }
+  });
+
+  assertBoundsEqual(visibleHitBounds, {
+    crossEnd: 88,
+    crossStart: 28.8,
+    mainEnd: 224.8,
+    mainStart: 78.4
+  });
+  assert.equal(
+    isDockMagnificationPointInsideHitBounds({
+      clientX: 80,
+      clientY: 60,
+      dockPlacement: "bottom",
+      hitBounds: visibleHitBounds
+    }),
+    true
+  );
+});
+
+test("left dock magnification hit bounds use the vertical slot range", () => {
+  const hitBounds = resolveDockMagnificationHitBounds(
+    [
+      { bottom: 143.2, left: 20, right: 63.2, top: 100 },
+      { bottom: 203.2, left: 20, right: 63.2, top: 160 }
+    ],
+    "left"
+  );
+
+  assertBoundsEqual(hitBounds, {
+    crossEnd: 71.2,
+    crossStart: 12,
+    mainEnd: 203.2,
+    mainStart: 100
+  });
+});
+
+test("left dock magnification hit bounds stay flush with the icon column", () => {
+  const hitBounds = resolveDockMagnificationHitBounds(
+    [{ bottom: 143.2, left: 20, right: 63.2, top: 100 }],
+    "left"
+  );
+
+  assertBoundsEqual(hitBounds, {
+    crossEnd: 71.2,
+    crossStart: 12,
+    mainEnd: 143.2,
+    mainStart: 100
+  });
+  assert.equal(
+    isDockMagnificationPointInsideHitBounds({
+      clientX: 63.2 + DOCK_ICON_PEAK_SIZE - DOCK_ICON_BASE_SIZE,
+      clientY: 120,
+      dockPlacement: "left",
+      hitBounds
+    }),
+    false
+  );
+});
+
+test("dock magnification keeps slot edge points eligible", () => {
+  const rect = { bottom: 80, left: 100, right: 143.2, top: 36.8 };
+
+  assert.equal(
+    isDockMagnificationPointInsideSlotRect({
+      clientX: 100,
+      clientY: 60,
+      rect
+    }),
+    true
+  );
+  assert.equal(
+    isDockMagnificationPointInsideSlotRect({
+      clientX: 143.2,
+      clientY: 60,
+      rect
+    }),
+    true
+  );
+  assert.equal(
+    isDockMagnificationPointInsideSlotRect({
+      clientX: 99.9,
+      clientY: 60,
+      rect
+    }),
+    false
+  );
+});
+
+test("dock magnification clips slot edge eligibility to the viewport", () => {
+  const visibleRects = resolveDockMagnificationVisibleSlotRects({
+    slotRects: [
+      { bottom: 80, left: 100, right: 143.2, top: 36.8 },
+      { bottom: 80, left: 720, right: 763.2, top: 36.8 }
+    ],
+    viewportRect: { bottom: 88, left: 64, right: 120, top: 0 }
+  });
+
+  assert.deepEqual(visibleRects, [
+    { bottom: 80, left: 100, right: 120, top: 36.8 }
+  ]);
+  assert.equal(
+    isDockMagnificationPointInsideSlotRect({
+      clientX: 120,
+      clientY: 60,
+      rect: visibleRects[0]!
+    }),
+    true
+  );
+  assert.equal(
+    isDockMagnificationPointInsideSlotRect({
+      clientX: 130,
+      clientY: 60,
+      rect: visibleRects[0]!
+    }),
+    false
+  );
+});
+
+test("dock magnification center ignores the slot's current magnified size", () => {
+  const restCenter = resolveDockMagnificationSlotCenter(
+    { bottom: 80, left: 100, right: 143.2, top: 36.8 },
+    "bottom"
+  );
+  const magnifiedCenter = resolveDockMagnificationSlotCenter(
+    { bottom: 100, left: 100, right: 180, top: 20 },
+    "bottom"
+  );
+
+  assert.equal(restCenter, magnifiedCenter);
+});
+
+test("left dock magnification center ignores the slot's current magnified size", () => {
+  const restCenter = resolveDockMagnificationSlotCenter(
+    { bottom: 143.2, left: 20, right: 63.2, top: 100 },
+    "left"
+  );
+  const magnifiedCenter = resolveDockMagnificationSlotCenter(
+    { bottom: 180, left: 0, right: 80, top: 100 },
+    "left"
+  );
+
+  assert.equal(restCenter, magnifiedCenter);
+});
+
+test("dock magnification projects centered flex reflow without DOM reads", () => {
+  const geometry = projectDockMagnificationGeometry({
+    appliedSizes: new Map([["a", 70]]),
+    dockPlacement: "bottom",
+    mainAxisStartAligned: false,
+    order: ["a", "b"],
+    restRects: new Map([
+      ["a", { bottom: 80, left: 100, right: 143.2, top: 36.8 }],
+      ["b", { bottom: 80, left: 160, right: 203.2, top: 36.8 }]
+    ])
+  });
+
+  assert.equal(geometry.slotRects.length, 2);
+  assertRectEqual(geometry.slotRects[0]!, {
+    bottom: 80,
+    left: 86.6,
+    right: 156.6,
+    top: 10
+  });
+  assertRectEqual(geometry.slotRects[1]!, {
+    bottom: 80,
+    left: 173.4,
+    right: 216.6,
+    top: 36.8
+  });
+  assert.ok(Math.abs(geometry.centers.get("a")! - 108.2) < 0.001);
+  assert.ok(Math.abs(geometry.centers.get("b")! - 195) < 0.001);
+});
+
+test("dock magnification projects start-aligned vertical flex reflow", () => {
+  const geometry = projectDockMagnificationGeometry({
+    appliedSizes: new Map([["a", 70]]),
+    dockPlacement: "left",
+    mainAxisStartAligned: true,
+    order: ["a", "b"],
+    restRects: new Map([
+      ["a", { bottom: 143.2, left: 20, right: 63.2, top: 100 }],
+      ["b", { bottom: 203.2, left: 20, right: 63.2, top: 160 }]
+    ])
+  });
+
+  assert.equal(geometry.slotRects.length, 2);
+  assertRectEqual(geometry.slotRects[0]!, {
+    bottom: 170,
+    left: 6.6,
+    right: 76.6,
+    top: 100
+  });
+  assertRectEqual(geometry.slotRects[1]!, {
+    bottom: 230,
+    left: 20,
+    right: 63.2,
+    top: 186.8
+  });
+  assert.ok(Math.abs(geometry.centers.get("a")! - 121.6) < 0.001);
+  assert.ok(Math.abs(geometry.centers.get("b")! - 208.4) < 0.001);
+});
+
+test("dock magnification spring settles on the target size", () => {
+  let spring = { value: DOCK_ICON_BASE_SIZE, velocity: 0 };
+  const target = mapDistanceToTargetSize(0);
+
+  for (let index = 0; index < 240; index += 1) {
+    spring = advanceDockMagnificationSpring(spring, target, 1 / 60);
+  }
+
+  assert.ok(isDockMagnificationSpringSettled(spring, target));
+  assert.ok(Math.abs(spring.value - target) < 0.5);
+});
+
+test("dock magnification global pointer tracker forwards gap moves and cleans up", () => {
+  const pointerTarget = new FakePointerTrackingTarget();
+  const blurTarget = new FakePointerTrackingTarget();
+  const moves: Array<{ clientX: number; clientY: number }> = [];
+  let canceled = 0;
+  const tracker = createDockMagnificationGlobalPointerTracker({
+    blurTarget,
+    onPointerCancel: () => {
+      canceled += 1;
+    },
+    onPointerMove: (clientX, clientY) => {
+      moves.push({ clientX, clientY });
+    },
+    pointerTarget
+  });
+
+  tracker.start();
+  tracker.start();
+
+  assert.equal(tracker.isActive(), true);
+  assert.equal(pointerTarget.listenerCount("pointermove"), 1);
+  assert.equal(pointerTarget.listenerCount("pointercancel"), 1);
+  assert.equal(blurTarget.listenerCount("blur"), 1);
+  assert.deepEqual(pointerTarget.added, ["pointermove", "pointercancel"]);
+  assert.deepEqual(blurTarget.added, ["blur"]);
+
+  pointerTarget.dispatch("pointermove", {
+    clientX: 151,
+    clientY: 60
+  } as unknown as Event);
+  assert.deepEqual(moves, [{ clientX: 151, clientY: 60 }]);
+
+  pointerTarget.dispatch("pointercancel", new Event("pointercancel"));
+  assert.equal(canceled, 1);
+  assert.equal(tracker.isActive(), false);
+  assert.equal(pointerTarget.listenerCount("pointermove"), 0);
+  assert.equal(pointerTarget.listenerCount("pointercancel"), 0);
+  assert.equal(blurTarget.listenerCount("blur"), 0);
+
+  tracker.start();
+  blurTarget.dispatch("blur", new Event("blur"));
+  assert.equal(canceled, 2);
+  assert.equal(tracker.isActive(), false);
+  assert.equal(pointerTarget.listenerCount("pointermove"), 0);
+  assert.equal(pointerTarget.listenerCount("pointercancel"), 0);
+  assert.equal(blurTarget.listenerCount("blur"), 0);
+});
+
+test("dock magnification skips layout-locked dock slots", () => {
+  assert.equal(
+    isDockMagnificationSlotLayoutLocked({
+      dataset: { collapsing: "true" }
+    } as unknown as HTMLElement),
+    true
+  );
+  assert.equal(
+    isDockMagnificationSlotLayoutLocked({
+      dataset: { presence: "entering" }
+    } as unknown as HTMLElement),
+    true
+  );
+  assert.equal(
+    isDockMagnificationSlotLayoutLocked({
+      dataset: { presence: "exiting" }
+    } as unknown as HTMLElement),
+    true
+  );
+  assert.equal(
+    isDockMagnificationSlotLayoutLocked({
+      dataset: { presence: "present" }
+    } as unknown as HTMLElement),
+    false
+  );
+});

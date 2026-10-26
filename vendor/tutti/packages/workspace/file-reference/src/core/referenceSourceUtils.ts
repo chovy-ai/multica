@@ -1,0 +1,89 @@
+import type {
+  NodeRef,
+  ReferenceNode,
+  SelectedReference
+} from "../contracts/referenceSource.ts";
+import type { WorkspaceFileReference } from "../contracts/index.ts";
+
+/**
+ * Reference Source Services 的共享 base 工具(形状处理,非取数)。
+ * 设计见 docs/architecture/agent-reference-source-services.md §1 / §2。
+ */
+
+/**
+ * 「回到源根」哨兵 nodeId。源在 loadSidebarGroups 里用它表示一个等价于源根的
+ * 二级分组(如本地源的「个人」= 用户 home 根);picker 选中它走 navigateToRoot
+ * 而非 ensureChildren,避免把哨兵当真实路径打后端。
+ */
+export const WORKSPACE_ROOT_GROUP_NODE_ID = "__workspace_root__";
+
+/** 节点的全局 key,用于 picker 树状态索引与去重。picker 不解析其内部结构。 */
+export function nodeRefKey(ref: NodeRef): string {
+  return `${ref.sourceId}\0${ref.nodeId}`;
+}
+
+export function nodeKey(node: ReferenceNode): string {
+  return nodeRefKey(node.ref);
+}
+
+/** 任意输入归一为 "file" | "folder"。 */
+export function normalizeReferenceNodeKind(
+  kind: string | null | undefined
+): "file" | "folder" {
+  return kind === "folder" || kind === "directory" ? "folder" : "file";
+}
+
+/** folder 在前、同类按 displayName 本地化排序。 */
+export function sortReferenceNodes(
+  nodes: readonly ReferenceNode[]
+): ReferenceNode[] {
+  return [...nodes].sort((left, right) => {
+    if (left.kind !== right.kind) {
+      return left.kind === "folder" ? -1 : 1;
+    }
+    return left.displayName.localeCompare(right.displayName, undefined, {
+      sensitivity: "base"
+    });
+  });
+}
+
+/** 按 node key 去重,保留首次出现。支持 cursor append 的稳定去重。 */
+export function dedupeReferenceNodes(
+  nodes: readonly ReferenceNode[]
+): ReferenceNode[] {
+  const seen = new Set<string>();
+  const result: ReferenceNode[] = [];
+  for (const node of nodes) {
+    const key = nodeKey(node);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(node);
+  }
+  return result;
+}
+
+/** 续页累积:把新一页 append 到已有项后并去重(cursor 语义,不重排)。 */
+export function appendReferencePage(
+  current: readonly ReferenceNode[],
+  next: readonly ReferenceNode[]
+): ReferenceNode[] {
+  return dedupeReferenceNodes([...current, ...next]);
+}
+
+/** SelectedReference 与现有 WorkspaceFileReference 形状兼容,便于下游零改动复用。 */
+export function selectedReferenceToWorkspaceFileReference(
+  selected: SelectedReference
+): WorkspaceFileReference {
+  return {
+    path: selected.path,
+    kind: selected.kind,
+    ...(selected.displayName ? { displayName: selected.displayName } : {}),
+    ...(selected.sizeBytes === null || selected.sizeBytes === undefined
+      ? {}
+      : { sizeBytes: selected.sizeBytes }),
+    ...(selected.hostPath ? { hostPath: selected.hostPath } : {}),
+    ...(selected.sourceId ? { sourceId: selected.sourceId } : {})
+  };
+}

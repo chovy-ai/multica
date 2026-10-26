@@ -227,6 +227,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
   useWorkspacePaths: () => ({
     inbox: () => "/ws-test/inbox",
     chat: () => "/ws-test/chat",
+    conversationFlow: () => "/ws-test/conversations",
     myIssues: () => "/ws-test/my-issues",
     issues: () => "/ws-test/issues",
     projects: () => "/ws-test/projects",
@@ -482,6 +483,17 @@ describe("SearchCommand", () => {
 
     expect(mockPush).toHaveBeenCalledWith("/ws-test/settings");
     expect(useSearchStore.getState().open).toBe(false);
+  });
+
+  it("opens Conversations in a separate tab on a normal selection", async () => {
+    const user = userEvent.setup();
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    renderSearch();
+    await user.type(screen.getByPlaceholderText("Type a command or search..."), "conversations");
+    await user.click(await screen.findByText("Conversations"));
+    expect(open).toHaveBeenCalledWith("https://app.multica//ws-test/conversations", "_blank", "noopener,noreferrer");
+    expect(mockPush).not.toHaveBeenCalled();
+    open.mockRestore();
   });
 
   it("cmd-click on a result opens it in a new tab instead of navigating in place", async () => {

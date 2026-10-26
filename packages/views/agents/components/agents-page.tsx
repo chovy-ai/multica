@@ -59,7 +59,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
-import { useNavigation, useRowLink } from "../../navigation";
+import { AppLink, useNavigation, useRowLink } from "../../navigation";
+import { Button as WorkspaceButton } from "@nextop-os/ui-system/components";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { docsLocalePrefix } from "../../common/docs-locale";
 import { ProviderLogo } from "../../runtimes/components/provider-logo";
@@ -255,6 +256,8 @@ function PageHeaderBar({
   onCreate: () => void;
 }) {
   const { t, i18n } = useT("agents");
+  const { t: tLayout } = useT("layout");
+  const paths = useWorkspacePaths();
   return (
     <CollectionPageHeader
       icon={Bot}
@@ -265,11 +268,16 @@ function PageHeaderBar({
         label: t(($) => $.page.learn_more),
       }}
       actions={
-        <CollectionPageHeaderAction
-          icon={Plus}
-          label={t(($) => $.page.new_agent)}
-          onClick={onCreate}
-        />
+        <>
+          <WorkspaceButton variant="outline" size="sm" className="agent-workspace-entry h-8" asChild>
+            <AppLink href={paths.conversationFlow()} target="_blank">{tLayout(($) => $.nav.conversation_flow)}</AppLink>
+          </WorkspaceButton>
+          <CollectionPageHeaderAction
+            icon={Plus}
+            label={t(($) => $.page.new_agent)}
+            onClick={onCreate}
+          />
+        </>
       }
     />
   );

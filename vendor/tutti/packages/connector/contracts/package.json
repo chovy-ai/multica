@@ -1,0 +1,26 @@
+{
+  "name": "@tutti-os/connector-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./authorization/v1": "./src/authorization/v1/index.ts",
+    "./openapi/connector-market.v1.yaml": "./openapi/connector-market.v1.yaml"
+  },
+  "dependencies": {
+    "valibot": "1.4.2"
+  },
+  "files": [
+    "dist",
+    "openapi",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tutti-os/tutti.git",
+    "directory": "packages/connector/contracts"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4"
+  }
+}

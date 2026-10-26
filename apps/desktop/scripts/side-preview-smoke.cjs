@@ -1,0 +1,45 @@
+// Explicit, isolated Electron integration test. Never loads the user's profile.
+if (process.env.MULTICA_RUN_NATIVE_PREVIEW_SMOKE !== "1") process.exit(0);
+const { app, BrowserWindow } = require("electron");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const http = require("node:http");
+const ts = require("typescript");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "multica-side-preview-"));
+app.setPath("userData", path.join(root, "profile"));
+app.setName("Multica Side Preview Smoke");
+const source = fs.readFileSync(path.join(__dirname, "../src/main/resource-web-preview.ts"), "utf8");
+const modulePath = path.join(root, "resource-web-preview.cjs");
+fs.writeFileSync(modulePath, ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText);
+const { ResourceWebPreview } = require(modulePath);
+let server, window, manager;
+const loaded = async (contents) => { if (!contents.isLoading() && contents.getURL()) return; await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error("Preview load timed out")), 10000); contents.once("did-finish-load", () => { clearTimeout(timer); resolve(); }); }); };
+app.whenReady().then(async () => {
+  server = http.createServer((request, response) => { response.setHeader("Content-Security-Policy", "frame-ancestors 'none'"); response.end(`<title>${request.url === "/second" ? "Second page" : "Preview document"}</title><h1>Native preview</h1>`); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  window = new BrowserWindow({ show: false, width: 1000, height: 800, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  manager = new ResourceWebPreview(window);
+  await manager.request("test-account:test-workspace", { id: "web:smoke", action: "show", url, bounds: { x: 500, y: 80, width: 480, height: 650 } });
+  const view = manager.entries.get("web:smoke").view;
+  await loaded(view.webContents);
+  const isolation = await view.webContents.executeJavaScript(`({node:typeof require, process:typeof process, desktop:typeof window.desktopAPI, text:document.querySelector('h1').textContent})`);
+  assert.deepEqual(isolation, { node: "undefined", process: "undefined", desktop: "undefined", text: "Native preview" });
+  assert.deepEqual(view.getBounds(), { x: 500, y: 80, width: 480, height: 650 });
+  await manager.request("test-account:test-workspace", { id: "web:smoke", action: "navigate", url: `${url}/second` });
+  await loaded(view.webContents); assert.equal(view.webContents.getTitle(), "Second page");
+  assert.equal(view.webContents.navigationHistory.canGoBack(), true);
+  await manager.request("test-account:test-workspace", { id: "web:smoke", action: "back" }); await loaded(view.webContents);
+  assert.equal(view.webContents.getTitle(), "Preview document");
+  await assert.rejects(manager.request("other-account", { id: "web:smoke", action: "hide" }), /another workspace/);
+  await assert.rejects(manager.request("test-account:test-workspace", { id: "web:smoke", action: "navigate", url: "file:///etc/passwd" }), /http or https/);
+  await manager.request("test-account:test-workspace", { id: "web:smoke", action: "hide" }); assert.equal(view.getVisible(), false);
+  await manager.request("test-account:test-workspace", { id: "web:smoke", action: "close" });
+  assert.equal(manager.entries.size, 0);
+  console.log(JSON.stringify({ passed: true, sandbox: isolation, nativeBounds: true, frameAncestorsIndependent: true, history: true, scopeIsolation: true, modelCalls: 0 }));
+}).catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => {
+  manager?.dispose(); if (window && !window.isDestroyed()) window.destroy(); server?.close();
+  app.once("quit", () => fs.rmSync(root, { recursive: true, force: true })); app.quit();
+});

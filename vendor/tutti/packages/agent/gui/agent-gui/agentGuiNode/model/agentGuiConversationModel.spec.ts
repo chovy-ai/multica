@@ -1,0 +1,1695 @@
+import { describe, expect, it } from "vitest";
+import {
+  normalizeAgentActivitySession,
+  type AgentActivityMessage,
+  type AgentActivitySession,
+  type AgentActivitySnapshot
+} from "@tutti-os/agent-activity-core";
+import type { WorkspaceAgentActivityTimelineItem } from "../../../shared/workspaceAgentTimelineTypes";
+import {
+  AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+  buildAgentGUIConversationDetail,
+  buildAgentGUITimelineItems,
+  buildAgentGUIConversationVM,
+  buildAgentGUIConversationSummaries,
+  conversationSummaryFromAgentSession,
+  applyAgentGUIConversationProjects,
+  mergeAgentGUITimelineItems,
+  resolveAgentGUIConversationTitleFromTimelineItems,
+  buildAgentGUITimelineRows,
+  mergeAgentGUITimelineRows,
+  selectAgentGUIConversationId,
+  resolveAgentGUIConversationProjectBySectionKey,
+  type AgentGUIConversationUserProject
+} from "./agentGuiConversationModel";
+
+describe("agentGuiConversationModel", () => {
+  it("resolves a project only from an exact rail section key", () => {
+    expect(
+      resolveAgentGUIConversationProjectBySectionKey("project:/workspace/app", [
+        userProject("app", "/workspace/app", "App")
+      ])
+    ).toEqual({
+      id: "app",
+      path: "/workspace/app",
+      label: "App",
+      sectionKey: "project:/workspace/app",
+      pinnedAtUnixMs: 0
+    });
+  });
+
+  it("fails closed for conversations, missing, and unknown section keys", () => {
+    const projects = [userProject("app", "/workspace/app", "App")];
+
+    expect(
+      resolveAgentGUIConversationProjectBySectionKey("conversations", projects)
+    ).toBeNull();
+    expect(
+      resolveAgentGUIConversationProjectBySectionKey(undefined, projects)
+    ).toBeNull();
+    expect(
+      resolveAgentGUIConversationProjectBySectionKey(
+        "project:/workspace/missing",
+        projects
+      )
+    ).toBeNull();
+  });
+
+  it("uses railSectionKey even when cwd points at a detached worktree", () => {
+    const worktreePath =
+      "/Users/local/.tutti/agent/worktrees/session-44444444-4444-4444-8444-444444444444";
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "worktree-session",
+          cwd: worktreePath,
+          provider: "codex",
+          railSectionKey: "project:/workspace/app",
+          title: "Project worktree",
+          updatedAtUnixMs: 10
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({
+        snapshot,
+        provider: "codex",
+        userProjects: [userProject("app", "/workspace/app", "App")]
+      })
+    ).toEqual([
+      expect.objectContaining({
+        id: "worktree-session",
+        cwd: worktreePath,
+        project: expect.objectContaining({ id: "app" })
+      })
+    ]);
+  });
+
+  it("does not infer a project from cwd when the rail key says conversations", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        normalizeAgentActivitySession({
+          ...{
+            activeTurnId: null,
+            latestTurnInteractions: [],
+            pendingInteractions: []
+          },
+          workspaceId: "workspace-1",
+          agentSessionId: "conversation-session",
+          provider: "codex",
+          providerSessionId: "conversation-session",
+          cwd: "/workspace/app",
+          railSectionKey: "conversations",
+          title: "Scratch conversation",
+          createdAtUnixMs: 1,
+          updatedAtUnixMs: 30
+        })
+      ]
+    };
+
+    const summaries = buildAgentGUIConversationSummaries({
+      snapshot,
+      provider: "codex",
+      userProjects: [userProject("app", "/workspace/app", "App")]
+    });
+
+    expect(summaries).toEqual([
+      expect.objectContaining({
+        id: "conversation-session",
+        project: null
+      })
+    ]);
+  });
+
+  it("trusts a project rail key for imported sessions too", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        normalizeAgentActivitySession({
+          activeTurnId: null,
+          agentSessionId: "imported-project-session",
+          cwd: "/tmp/imported-session",
+          imported: true,
+          latestTurnInteractions: [],
+          pendingInteractions: [],
+          provider: "codex",
+          providerSessionId: "imported-project-session",
+          railSectionKey: "project:/workspace/app",
+          title: "Imported project session",
+          workspaceId: "workspace-1"
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({
+        snapshot,
+        provider: "codex",
+        userProjects: [userProject("app", "/workspace/app", "App")]
+      })
+    ).toEqual([
+      expect.objectContaining({
+        id: "imported-project-session",
+        isImported: true,
+        project: expect.objectContaining({ id: "app" })
+      })
+    ]);
+  });
+
+  it("treats every canonical Codex session as a runtime conversation", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "runtime-codex",
+          provider: "codex",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "Runtime Codex",
+          createdAtUnixMs: 1,
+          updatedAtUnixMs: 30
+        }),
+        workspaceAgentSession({
+          agentSessionId: "unknown-origin-codex",
+          provider: "codex",
+          sessionOrigin: "WORKSPACE_AGENT_SESSION_ORIGIN_UNKNOWN",
+          title: "Unknown Origin Codex",
+          createdAtUnixMs: 2,
+          updatedAtUnixMs: 40
+        }),
+        workspaceAgentSession({
+          agentSessionId: "runtime-claude",
+          provider: "claude-code",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "Claude",
+          updatedAtUnixMs: 50
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({ snapshot, provider: "codex" })
+    ).toEqual([
+      expect.objectContaining({
+        id: "unknown-origin-codex",
+        title: "Unknown Origin Codex"
+      }),
+      expect.objectContaining({
+        id: "runtime-codex",
+        title: "Runtime Codex"
+      })
+    ]);
+  });
+
+  it("treats core-native sessions without legacy sessionOrigin as runtime sessions", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        normalizeAgentActivitySession({
+          ...{
+            activeTurnId: null,
+            latestTurnInteractions: [],
+            pendingInteractions: []
+          },
+          workspaceId: "workspace-1",
+          agentSessionId: "core-runtime-codex",
+          provider: "codex",
+          providerSessionId: "core-runtime-codex",
+          cwd: "/workspace",
+          title: "Core Runtime Codex",
+          lastEventUnixMs: 30,
+          createdAtUnixMs: 1,
+          updatedAtUnixMs: 30
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({ snapshot, provider: "codex" })
+    ).toEqual([
+      expect.objectContaining({
+        id: "core-runtime-codex",
+        title: "Core Runtime Codex"
+      })
+    ]);
+  });
+
+  it("orders runtime conversations by session sort time instead of message update time", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "older-start",
+          provider: "codex",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "Older Start",
+          createdAtUnixMs: 1_000,
+          startedAtUnixMs: 1_000,
+          updatedAtUnixMs: 9_000
+        }),
+        workspaceAgentSession({
+          agentSessionId: "newer-start",
+          provider: "codex",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "Newer Start",
+          createdAtUnixMs: 2_000,
+          startedAtUnixMs: 2_000,
+          updatedAtUnixMs: 2_000
+        })
+      ]
+    };
+
+    const conversations = buildAgentGUIConversationSummaries({
+      snapshot,
+      provider: "codex",
+      sessionMessagesById: {
+        "older-start": [
+          workspaceAgentMessage({
+            id: 1,
+            agentSessionId: "older-start",
+            eventId: "late-message",
+            role: "assistant",
+            occurredAtUnixMs: 8_000
+          })
+        ]
+      }
+    });
+
+    expect(conversations.map((conversation) => conversation.id)).toEqual([
+      "newer-start",
+      "older-start"
+    ]);
+    expect(conversations[1]).toMatchObject({
+      id: "older-start",
+      sortTimeUnixMs: 1_000,
+      updatedAtUnixMs: 9_000
+    });
+  });
+
+  it("indexes user project section keys once when building conversation batches", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "one",
+          cwd: "/workspace/app/packages/one",
+          provider: "codex",
+          railSectionKey: "project:/workspace/app",
+          title: "One",
+          updatedAtUnixMs: 10
+        }),
+        workspaceAgentSession({
+          agentSessionId: "two",
+          cwd: "/workspace/app/packages/two",
+          provider: "codex",
+          railSectionKey: "project:/workspace/app",
+          title: "Two",
+          updatedAtUnixMs: 20
+        })
+      ]
+    };
+    let archiveSectionKeyReads = 0;
+    const archiveProject: AgentGUIConversationUserProject = {
+      id: "archive",
+      path: "/workspace/archive",
+      get sectionKey() {
+        archiveSectionKeyReads += 1;
+        return "project:/workspace/archive";
+      },
+      label: "Archive",
+      pinnedAtUnixMs: 0
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({
+        snapshot,
+        provider: "codex",
+        userProjects: [
+          userProject("app", "/workspace/app", "App"),
+          archiveProject
+        ]
+      }).map((conversation) => conversation.project)
+    ).toEqual([
+      expect.objectContaining({ id: "app" }),
+      expect.objectContaining({ id: "app" })
+    ]);
+    expect(archiveSectionKeyReads).toBe(1);
+  });
+
+  it("applies conversation projects without mutating existing conversations", () => {
+    const conversation = {
+      id: "session-1",
+      provider: "codex" as const,
+      title: "Session",
+      status: "ready" as const,
+      cwd: "/workspace/app",
+      railSectionKey: "project:/workspace/app",
+      project: null,
+      updatedAtUnixMs: 1
+    };
+    const conversations = [conversation];
+
+    const applied = applyAgentGUIConversationProjects(conversations, [
+      userProject("app", "/workspace/app", "App")
+    ]);
+
+    expect(applied).toEqual([
+      expect.objectContaining({
+        id: "session-1",
+        project: {
+          id: "app",
+          path: "/workspace/app",
+          label: "App",
+          sectionKey: "project:/workspace/app",
+          pinnedAtUnixMs: 0
+        }
+      })
+    ]);
+    expect(conversation.project).toBeNull();
+    expect(applied[0]).not.toBe(conversation);
+  });
+
+  it("selects the stored active conversation when it still exists", () => {
+    const conversations = [
+      {
+        id: "newer",
+        title: "Newer",
+        titleFallback: null,
+        provider: "codex" as const,
+        status: "ready" as const,
+        cwd: "",
+        updatedAtUnixMs: 2
+      },
+      {
+        id: "stored",
+        title: "Stored",
+        titleFallback: null,
+        provider: "codex" as const,
+        status: "ready" as const,
+        cwd: "",
+        updatedAtUnixMs: 1
+      }
+    ];
+
+    expect(selectAgentGUIConversationId(conversations, "stored")).toBe(
+      "stored"
+    );
+    expect(selectAgentGUIConversationId(conversations, "missing")).toBe(
+      "newer"
+    );
+  });
+
+  it("keeps provider-specific runtime sessions separated for Nexight, Hermes, and OpenClaw Agent GUI", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "nexight-session",
+          provider: "nexight",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "Nexight Session",
+          updatedAtUnixMs: 10
+        }),
+        workspaceAgentSession({
+          agentSessionId: "hermes-session",
+          provider: "hermes",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "Hermes Session",
+          updatedAtUnixMs: 20
+        }),
+        workspaceAgentSession({
+          agentSessionId: "openclaw-session",
+          provider: "openclaw",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "OpenClaw Session",
+          updatedAtUnixMs: 30
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({ snapshot, provider: "nexight" })
+    ).toEqual([
+      expect.objectContaining({
+        id: "nexight-session",
+        provider: "nexight"
+      })
+    ]);
+    expect(
+      buildAgentGUIConversationSummaries({ snapshot, provider: "hermes" })
+    ).toEqual([
+      expect.objectContaining({
+        id: "hermes-session",
+        provider: "hermes"
+      })
+    ]);
+    expect(
+      buildAgentGUIConversationSummaries({ snapshot, provider: "openclaw" })
+    ).toEqual([
+      expect.objectContaining({
+        id: "openclaw-session",
+        provider: "openclaw"
+      })
+    ]);
+  });
+
+  it("uses the canonical session provider instead of inferring it from presence", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [
+        {
+          id: 11,
+          workspaceId: "room-1",
+          userId: "user-1",
+          provider: "claude-code",
+          status: "active"
+        }
+      ],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "presence-only-provider",
+          presenceId: 11,
+          provider: "claude-code",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "Recovered from presence",
+          updatedAtUnixMs: 10
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({ snapshot, provider: "claude-code" })
+    ).toEqual([
+      expect.objectContaining({
+        id: "presence-only-provider",
+        provider: "claude-code",
+        title: "Recovered from presence"
+      })
+    ]);
+  });
+
+  it("uses canonical restored conversation titles with cached runtime timelines", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "nexight-session",
+          provider: "nexight",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "AAA",
+          updatedAtUnixMs: 30
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({
+        snapshot,
+        provider: "nexight",
+        sessionMessagesById: {
+          "nexight-session": [
+            workspaceAgentMessage({
+              id: 1,
+              eventId: "user-1",
+              actorType: "user",
+              actorId: "user-1",
+              itemType: "message.user",
+              role: "user",
+              payload: { content: "AAA" },
+              occurredAtUnixMs: 10
+            })
+          ]
+        }
+      })
+    ).toEqual([
+      expect.objectContaining({
+        id: "nexight-session",
+        title: "AAA"
+      })
+    ]);
+  });
+
+  it("keeps an empty canonical session title as a localized fallback", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "untitled-session",
+          provider: "codex",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "",
+          updatedAtUnixMs: 10
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({ snapshot, provider: "codex" })
+    ).toEqual([
+      expect.objectContaining({
+        id: "untitled-session",
+        title: "",
+        titleFallback: "untitled-conversation"
+      })
+    ]);
+  });
+
+  it("keeps explicit runtime session titles when cached messages are loaded", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "app-factory-session",
+          provider: "codex",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "Create App: System Monitor",
+          updatedAtUnixMs: 30
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({
+        snapshot,
+        provider: "codex",
+        sessionMessagesById: {
+          "app-factory-session": [
+            workspaceAgentMessage({
+              id: 1,
+              eventId: "user-1",
+              actorType: "user",
+              actorId: "user-1",
+              itemType: "message.user",
+              role: "user",
+              payload: {
+                content:
+                  "Create a local system dashboard inspired by btop. <tutti_app_factory_context>..."
+              },
+              occurredAtUnixMs: 10
+            })
+          ]
+        }
+      })
+    ).toEqual([
+      expect.objectContaining({
+        id: "app-factory-session",
+        title: "Create App: System Monitor"
+      })
+    ]);
+  });
+
+  it("keeps unknown-provider runtime sessions visible instead of dropping them", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "unknown-runtime-session",
+          provider: undefined,
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          title: "123213",
+          updatedAtUnixMs: 10
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({ snapshot, provider: "claude-code" })
+    ).toEqual([
+      expect.objectContaining({
+        id: "unknown-runtime-session",
+        provider: "unknown",
+        title: "123213"
+      })
+    ]);
+  });
+
+  it("hides empty runtime placeholder sessions from Agent GUI conversation summaries", () => {
+    const snapshot: AgentActivitySnapshot = {
+      workspaceId: "workspace-1",
+      sessionMessagesById: {},
+      presences: [],
+      sessions: [
+        workspaceAgentSession({
+          agentSessionId: "empty-runtime-session",
+          provider: "claude-code",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          lifecycleStatus: "active",
+          turnPhase: "idle",
+          effectiveStatus: "idle",
+          title: "Claude Code",
+          updatedAtUnixMs: 20
+        }),
+        workspaceAgentSession({
+          agentSessionId: "real-runtime-session",
+          provider: "claude-code",
+          sessionOrigin: AGENT_GUI_RUNTIME_SESSION_ORIGIN,
+          lifecycleStatus: "completed",
+          effectiveStatus: "completed",
+          title: "Inspect project structure",
+          updatedAtUnixMs: 10
+        })
+      ]
+    };
+
+    expect(
+      buildAgentGUIConversationSummaries({
+        snapshot,
+        provider: "claude-code",
+        sessionMessagesById: {
+          "empty-runtime-session": []
+        }
+      })
+    ).toEqual([
+      expect.objectContaining({
+        id: "real-runtime-session",
+        title: "Inspect project structure"
+      })
+    ]);
+  });
+
+  it("preserves the session provider when a session has no explicit title", () => {
+    expect(
+      conversationSummaryFromAgentSession(
+        normalizeAgentActivitySession({
+          ...{
+            activeTurnId: null,
+            latestTurnInteractions: [],
+            pendingInteractions: []
+          },
+          workspaceId: "room-1",
+          agentSessionId: "session-hermes",
+          provider: "hermes",
+          providerSessionId: "provider-session-hermes",
+          cwd: "/workspace",
+          title: "Current task",
+          createdAtUnixMs: 10,
+          updatedAtUnixMs: 20
+        })
+      )
+    ).toEqual(
+      expect.objectContaining({
+        provider: "hermes",
+        title: "Current task",
+        titleFallback: null,
+        updatedAtUnixMs: 20
+      })
+    );
+  });
+
+  it("derives a restored conversation title from the first user timeline message", () => {
+    expect(
+      resolveAgentGUIConversationTitleFromTimelineItems({
+        conversation: {
+          id: "session-1",
+          provider: "nexight",
+          title: "Nexight",
+          titleFallback: null,
+          status: "completed",
+          cwd: "/workspace",
+          updatedAtUnixMs: 30
+        },
+        timelineItems: [
+          timelineItem({
+            id: 2,
+            eventId: "assistant-1",
+            actorType: "agent",
+            actorId: "nexight",
+            itemType: "message.assistant",
+            role: "assistant",
+            content: "Done",
+            occurredAtUnixMs: 20
+          }),
+          timelineItem({
+            id: 1,
+            eventId: "user-1",
+            actorType: "user",
+            actorId: "user-1",
+            itemType: "message.user",
+            role: "user",
+            payload: {
+              displayPrompt: "Run Automation",
+              text: "long automation prompt",
+              content: "long automation prompt"
+            },
+            occurredAtUnixMs: 10
+          })
+        ]
+      })
+    ).toEqual({
+      title: "Run Automation",
+      titleFallback: null
+    });
+  });
+
+  it("keeps an explicit conversation title when timeline messages load", () => {
+    expect(
+      resolveAgentGUIConversationTitleFromTimelineItems({
+        conversation: {
+          id: "session-1",
+          provider: "codex",
+          title: "Create App: System Monitor",
+          titleFallback: null,
+          status: "completed",
+          cwd: "/workspace",
+          updatedAtUnixMs: 30
+        },
+        timelineItems: [
+          timelineItem({
+            id: 1,
+            eventId: "user-1",
+            actorType: "user",
+            actorId: "user-1",
+            itemType: "message.user",
+            role: "user",
+            payload: {
+              text: "Create a local system dashboard inspired by btop. <tutti_app_factory_context>..."
+            },
+            occurredAtUnixMs: 10
+          })
+        ]
+      })
+    ).toBeNull();
+  });
+
+  it("keeps explicit conversation titles in detail and conversation projections", () => {
+    const conversation = {
+      id: "session-1",
+      provider: "codex" as const,
+      title: "Create App: System Monitor",
+      titleFallback: null,
+      status: "completed" as const,
+      cwd: "/workspace",
+      updatedAtUnixMs: 30
+    };
+    const timelineItems = [
+      timelineItem({
+        id: 1,
+        eventId: "user-1",
+        actorType: "user",
+        actorId: "user-1",
+        itemType: "message.user",
+        role: "user",
+        payload: {
+          text: "Create a local system dashboard inspired by btop. <tutti_app_factory_context>..."
+        },
+        occurredAtUnixMs: 10
+      }),
+      timelineItem({
+        id: 2,
+        eventId: "assistant-1",
+        actorType: "agent",
+        actorId: "codex",
+        itemType: "message.assistant",
+        role: "assistant",
+        payload: { text: "Done." },
+        occurredAtUnixMs: 20
+      })
+    ];
+
+    const detail = buildAgentGUIConversationDetail({
+      timelineItems,
+      conversation,
+      workspaceRoot: "/workspace"
+    });
+    const projected = buildAgentGUIConversationVM({
+      timelineItems,
+      conversation,
+      workspaceRoot: "/workspace"
+    });
+
+    expect(detail?.activity.title).toBe("Create App: System Monitor");
+    expect(projected?.activity.title).toBe("Create App: System Monitor");
+  });
+
+  it("builds timeline rows from ordered timeline items", () => {
+    const rows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 2,
+        eventId: "assistant-1",
+        actorType: "agent",
+        actorId: "codex",
+        itemType: "message",
+        role: "assistant",
+        content: "Done",
+        occurredAtUnixMs: 20
+      }),
+      timelineItem({
+        id: 1,
+        eventId: "user-1",
+        actorType: "user",
+        actorId: "user-1",
+        itemType: "message",
+        role: "user",
+        payload: { content: "Please fix it" },
+        occurredAtUnixMs: 10
+      })
+    ]);
+
+    expect(rows.map((row) => [row.role, row.content])).toEqual([
+      ["user", "Please fix it"],
+      ["assistant", "Done"]
+    ]);
+  });
+
+  it("filters placeholder assistant thinking rows rendered as ellipsis", () => {
+    const rows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 1,
+        eventId: "user-1",
+        turnId: "turn-1",
+        actorType: "user",
+        actorId: "user-1",
+        itemType: "message.user",
+        role: "user",
+        content: "Please inspect the other session.",
+        occurredAtUnixMs: 10
+      }),
+      timelineItem({
+        id: 2,
+        eventId: "thinking-1",
+        turnId: "turn-1",
+        actorType: "agent",
+        actorId: "claude-code",
+        itemType: "message.assistant_thinking",
+        role: "assistant_thinking",
+        content: "...",
+        occurredAtUnixMs: 20
+      }),
+      timelineItem({
+        id: 3,
+        eventId: "assistant-1",
+        turnId: "turn-1",
+        actorType: "agent",
+        actorId: "claude-code",
+        itemType: "message.assistant",
+        role: "assistant",
+        content: "I checked it and summarized the result.",
+        occurredAtUnixMs: 30
+      })
+    ]);
+
+    expect(rows.map((row) => [row.role, row.content])).toEqual([
+      ["user", "Please inspect the other session."],
+      ["assistant", "I checked it and summarized the result."]
+    ]);
+  });
+
+  it("keeps the processing row after an interim assistant message while the turn lifecycle is running", () => {
+    const interimTimelineItems = [
+      timelineItem({
+        id: 1,
+        eventId: "user-1",
+        turnId: "turn-1",
+        actorType: "user",
+        actorId: "user-1",
+        itemType: "message.user",
+        role: "user",
+        content: "Dispatch the sub-agents",
+        occurredAtUnixMs: 10
+      }),
+      timelineItem({
+        id: 2,
+        eventId: "assistant-1",
+        turnId: "turn-1",
+        actorType: "agent",
+        actorId: "codex",
+        itemType: "message.assistant",
+        role: "assistant",
+        content: "I will now dispatch the sub-agents.",
+        status: "completed",
+        occurredAtUnixMs: 20
+      })
+    ];
+    const conversationSource = {
+      id: "session-1",
+      provider: "codex" as const,
+      title: "Codex",
+      titleFallback: null,
+      status: "working" as const,
+      cwd: "/workspace",
+      updatedAtUnixMs: 20
+    };
+
+    const withRunningTurn = buildAgentGUIConversationVM({
+      conversation: {
+        ...conversationSource,
+        activeTurn: {
+          agentSessionId: "session-1",
+          origin: "user_prompt",
+          phase: "running",
+          startedAtUnixMs: 10,
+          turnId: "turn-1",
+          updatedAtUnixMs: 20
+        }
+      },
+      workspaceRoot: "/workspace",
+      timelineItems: interimTimelineItems
+    });
+    const withoutTurnLifecycle = buildAgentGUIConversationVM({
+      conversation: conversationSource,
+      workspaceRoot: "/workspace",
+      timelineItems: interimTimelineItems
+    });
+
+    expect(withRunningTurn?.rows.some((row) => row.kind === "processing")).toBe(
+      true
+    );
+    expect(
+      withoutTurnLifecycle?.rows.some((row) => row.kind === "processing")
+    ).toBe(false);
+  });
+
+  it("derives pending approval from ACP call.started approval timeline items", () => {
+    const conversation = buildAgentGUIConversationVM({
+      conversation: {
+        id: "session-1",
+        provider: "codex",
+        title: "Codex",
+        titleFallback: null,
+        status: "waiting",
+        cwd: "/workspace",
+        updatedAtUnixMs: 2
+      },
+      workspaceRoot: "/workspace",
+      timelineItems: [
+        timelineItem({
+          id: 10,
+          eventId: "user-1",
+          actorType: "user",
+          actorId: "codex",
+          itemType: "message.user",
+          role: "user",
+          payload: { text: "看看项目有什么文件" },
+          occurredAtUnixMs: 10
+        }),
+        timelineItem({
+          id: 11,
+          eventId: "approval-1",
+          actorType: "agent",
+          actorId: "codex",
+          itemType: "call.started",
+          role: "assistant",
+          callType: "approval",
+          callId: "call_ySuHUYSLqzwC2DXTSZk2hNbk",
+          name: "tutti-cli --help",
+          status: "waiting_approval",
+          payload: {
+            callId: "call_ySuHUYSLqzwC2DXTSZk2hNbk",
+            callType: "approval",
+            input: {
+              requestId: "4a3caced-db7a-4a15-9e7a-4ebbf5d61616",
+              options: [
+                {
+                  label: "Legacy allow label",
+                  kind: "allow_once",
+                  name: "Yes, proceed",
+                  optionId: "approved"
+                },
+                {
+                  label: "Legacy abort label",
+                  kind: "reject_once",
+                  name: "No, and tell Codex what to do differently",
+                  optionId: "abort"
+                }
+              ]
+            },
+            status: "waiting_approval"
+          },
+          occurredAtUnixMs: 11
+        })
+      ]
+    });
+
+    expect(conversation && "pendingApproval" in conversation).toBe(false);
+  });
+
+  it("merges local and remote timeline rows without duplicating rows", () => {
+    expect(
+      mergeAgentGUITimelineRows(
+        [
+          {
+            id: "event:1",
+            turnId: "",
+            role: "agent",
+            content: "session.started",
+            eventType: "session.started",
+            status: "ready",
+            occurredAtUnixMs: 1
+          }
+        ],
+        [
+          {
+            id: "event:1",
+            turnId: "",
+            role: "agent",
+            content: "session.started",
+            eventType: "session.started",
+            status: "ready",
+            occurredAtUnixMs: 1
+          }
+        ]
+      )
+    ).toHaveLength(1);
+  });
+
+  it("merges live and remote user message rows by event id when server id changes", () => {
+    const liveRows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 0,
+        eventId: "user-message-1",
+        turnId: "turn-1",
+        actorType: "user",
+        actorId: "user-1",
+        itemType: "message",
+        role: "user",
+        content: "Please fix it",
+        occurredAtUnixMs: 10
+      })
+    ]);
+    const remoteRows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 42,
+        eventId: "user-message-1",
+        turnId: "turn-1",
+        actorType: "user",
+        actorId: "user-1",
+        itemType: "message",
+        role: "user",
+        content: "Please fix it",
+        occurredAtUnixMs: 10
+      })
+    ]);
+
+    expect(mergeAgentGUITimelineRows(liveRows, remoteRows)).toEqual([
+      expect.objectContaining({
+        id: "event:user-message-1",
+        role: "user",
+        content: "Please fix it"
+      })
+    ]);
+  });
+
+  it("drops an optimistic local prompt once the durable user timeline item arrives", () => {
+    expect(
+      mergeAgentGUITimelineItems(
+        [
+          {
+            id: -1,
+            workspaceId: "room-1",
+            agentSessionId: "session-1",
+            turnId: "turn-2",
+            seq: 0,
+            eventId: "optimistic:user:turn-2",
+            actorType: "user",
+            actorId: "user-1",
+            itemType: "message.user",
+            role: "user",
+            content: "New ask",
+            payload: {
+              __agentGuiOptimisticPrompt: true
+            },
+            occurredAtUnixMs: 20,
+            createdAtUnixMs: 20
+          }
+        ],
+        [
+          {
+            id: 22,
+            workspaceId: "room-1",
+            agentSessionId: "session-1",
+            turnId: "turn-2",
+            seq: 3,
+            eventId: "user-message-2",
+            actorType: "user",
+            actorId: "user-1",
+            itemType: "message.user",
+            role: "user",
+            content: "New ask",
+            occurredAtUnixMs: 21,
+            createdAtUnixMs: 21
+          }
+        ]
+      )
+    ).toEqual([
+      expect.objectContaining({
+        eventId: "user-message-2",
+        turnId: "turn-2",
+        content: "New ask"
+      })
+    ]);
+  });
+
+  it("keeps an optimistic prompt after a durable assistant tail during merge", () => {
+    const merged = mergeAgentGUITimelineItems(
+      [
+        timelineItem({
+          id: 8,
+          eventId: "assistant-tail",
+          itemType: "message.assistant",
+          role: "assistant",
+          content: "Assistant tail",
+          occurredAtUnixMs: 200,
+          seq: 8
+        })
+      ],
+      [
+        timelineItem({
+          id: -1,
+          eventId: "client-submit:user:submit-1",
+          itemType: "message.user",
+          role: "user",
+          content: "New ask",
+          payload: {
+            __agentGuiOptimisticPrompt: true
+          },
+          occurredAtUnixMs: 100,
+          createdAtUnixMs: 100,
+          seq: 0
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.eventId)).toEqual([
+      "assistant-tail",
+      "client-submit:user:submit-1"
+    ]);
+  });
+
+  it("keeps distinct user prompts from different turns when event ids are missing but seq matches", () => {
+    expect(
+      mergeAgentGUITimelineItems(
+        [
+          {
+            id: 101,
+            workspaceId: "room-1",
+            agentSessionId: "session-1",
+            turnId: "turn-1",
+            seq: 1,
+            eventId: "",
+            actorType: "user",
+            actorId: "user-1",
+            itemType: "message.user",
+            role: "user",
+            content: "你好？",
+            occurredAtUnixMs: 100,
+            createdAtUnixMs: 100
+          }
+        ],
+        [
+          {
+            id: 102,
+            workspaceId: "room-1",
+            agentSessionId: "session-1",
+            turnId: "turn-2",
+            seq: 1,
+            eventId: "",
+            actorType: "user",
+            actorId: "user-1",
+            itemType: "message.user",
+            role: "user",
+            content: "继续后续变更",
+            occurredAtUnixMs: 200,
+            createdAtUnixMs: 200
+          }
+        ]
+      )
+    ).toEqual([
+      expect.objectContaining({
+        turnId: "turn-1",
+        content: "你好？"
+      }),
+      expect.objectContaining({
+        turnId: "turn-2",
+        content: "继续后续变更"
+      })
+    ]);
+  });
+
+  it("does not overwrite rich tool output with shallow status updates", () => {
+    const merged = mergeAgentGUITimelineItems(
+      [
+        timelineItem({
+          id: 11,
+          eventId: "call-event-1",
+          turnId: "turn-1",
+          itemType: "call",
+          callType: "tool",
+          callId: "tool-1",
+          name: "Run command",
+          status: "completed",
+          payload: {
+            output: {
+              stdout: "README.md\n"
+            }
+          },
+          occurredAtUnixMs: 20,
+          createdAtUnixMs: 20
+        })
+      ],
+      [
+        timelineItem({
+          id: 0,
+          eventId: "call-event-1",
+          turnId: "turn-1",
+          itemType: "call",
+          callType: "tool",
+          callId: "tool-1",
+          name: "Run command",
+          status: "completed",
+          payload: {
+            output: {
+              sessionUpdate: "tool_call_update",
+              status: "completed",
+              toolCallId: "tool-1"
+            }
+          },
+          occurredAtUnixMs: 21,
+          createdAtUnixMs: 21
+        })
+      ]
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.payload?.output).toEqual({
+      stdout: "README.md\n",
+      sessionUpdate: "tool_call_update",
+      status: "completed",
+      toolCallId: "tool-1"
+    });
+  });
+
+  it("moves streaming assistant messages to their latest upsert timestamp", () => {
+    const merged = mergeAgentGUITimelineItems(
+      [
+        timelineItem({
+          id: 0,
+          eventId: "assistant-message-1",
+          turnId: "turn-1",
+          itemType: "message.assistant",
+          role: "assistant",
+          content: "I will check it.",
+          occurredAtUnixMs: 100,
+          createdAtUnixMs: 100
+        }),
+        timelineItem({
+          id: 0,
+          eventId: "tool-call-1",
+          turnId: "turn-1",
+          itemType: "call.errored",
+          callType: "tool",
+          callId: "call-1",
+          name: "Read",
+          status: "errored",
+          occurredAtUnixMs: 200,
+          createdAtUnixMs: 200
+        })
+      ],
+      [
+        timelineItem({
+          id: 0,
+          eventId: "assistant-message-1",
+          turnId: "turn-1",
+          itemType: "message.assistant",
+          role: "assistant",
+          content: "I will check it. Done.",
+          occurredAtUnixMs: 300,
+          createdAtUnixMs: 300
+        })
+      ]
+    );
+
+    expect(merged.map((item) => item.itemType)).toEqual([
+      "call.errored",
+      "message.assistant"
+    ]);
+    expect(merged[1]).toEqual(
+      expect.objectContaining({
+        eventId: "assistant-message-1",
+        content: "I will check it. Done.",
+        occurredAtUnixMs: 300
+      })
+    );
+  });
+
+  it("builds an empty detail shell for conversations without transcript items yet", () => {
+    const detail = buildAgentGUIConversationDetail({
+      timelineItems: [],
+      conversation: {
+        id: "claude-session-1",
+        provider: "claude-code",
+        title: "Claude Code",
+        titleFallback: null,
+        status: "working",
+        cwd: "/workspace",
+        updatedAtUnixMs: 10
+      },
+      workspaceRoot: "/workspace"
+    });
+
+    expect(detail).toEqual(
+      expect.objectContaining({
+        cwd: "/workspace",
+        workspaceRoot: "/workspace",
+        turns: []
+      })
+    );
+    expect(detail?.activity.status).toBe("working");
+    expect(detail?.session.agentSessionId).toBe("claude-session-1");
+    expect(detail?.session.providerSessionId).toBe("claude-session-1");
+    expect(detail?.session.updatedAtUnixMs).toBe(10);
+  });
+
+  it("keeps the conversation provider when the timeline starts with a user message", () => {
+    const detail = buildAgentGUIConversationDetail({
+      timelineItems: [
+        timelineItem({
+          id: 1,
+          eventId: "user-1",
+          actorType: "user",
+          actorId: "user-1",
+          itemType: "message.user",
+          role: "user",
+          content: "Please fix it",
+          occurredAtUnixMs: 10
+        })
+      ],
+      conversation: {
+        id: "session-1",
+        provider: "claude-code",
+        title: "Claude Code",
+        titleFallback: null,
+        status: "working",
+        cwd: "/workspace",
+        updatedAtUnixMs: 10
+      },
+      workspaceRoot: "/workspace"
+    });
+
+    expect(detail?.session.provider).toBe("claude-code");
+  });
+
+  it("keeps waiting transcript calls historical and non-actionable", () => {
+    const rows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 1,
+        eventId: "call-1",
+        turnId: "turn-1",
+        itemType: "call",
+        callType: "approval",
+        callId: "approval-1",
+        name: "Run command",
+        status: "waiting_approval",
+        payload: {
+          input: {
+            requestId: "request-1",
+            options: [{ optionId: "allow_once", label: "Allow once" }]
+          }
+        },
+        occurredAtUnixMs: 12
+      })
+    ]);
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        content: "Run command",
+        status: "waiting_approval"
+      })
+    ]);
+    expect(rows[0]).not.toHaveProperty("approval");
+  });
+
+  it("replaces streaming message snapshots with the latest content for the same event id", () => {
+    const rows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 1,
+        eventId: "assistant-1",
+        turnId: "turn-1",
+        actorType: "agent",
+        actorId: "codex",
+        itemType: "message",
+        role: "assistant",
+        content: "Hel",
+        status: "streaming",
+        occurredAtUnixMs: 10
+      }),
+      timelineItem({
+        id: 2,
+        eventId: "assistant-1",
+        turnId: "turn-1",
+        actorType: "agent",
+        actorId: "codex",
+        itemType: "message",
+        role: "assistant",
+        content: "Hello",
+        status: "completed",
+        occurredAtUnixMs: 11
+      })
+    ]);
+
+    expect(rows.map((row) => [row.content, row.status])).toEqual([
+      ["Hello", "completed"]
+    ]);
+  });
+
+  it("merges live tool call timeline items by call id", () => {
+    const rows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 1,
+        eventId: "tool-started",
+        turnId: "turn-1",
+        itemType: "call",
+        callType: "tool",
+        callId: "call-1",
+        name: "tsh-agent-activity active-peers",
+        content: "tsh-agent-activity active-peers",
+        status: "streaming",
+        occurredAtUnixMs: 12
+      }),
+      timelineItem({
+        id: 2,
+        eventId: "tool-completed",
+        turnId: "turn-1",
+        itemType: "call",
+        callType: "tool",
+        callId: "call-1",
+        name: "tsh-agent-activity active-peers",
+        content: "tsh-agent-activity active-peers",
+        status: "completed",
+        occurredAtUnixMs: 20
+      })
+    ]);
+
+    expect(
+      rows.map((row) => [row.id, row.role, row.content, row.status])
+    ).toEqual([
+      [
+        "call:turn-1:call-1",
+        "tool",
+        "tsh-agent-activity active-peers",
+        "completed"
+      ]
+    ]);
+  });
+
+  it("prefers the canonical tool label when tool summary is only an opaque Call Function title", () => {
+    const rows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 1,
+        eventId: "tool-completed",
+        turnId: "turn-1",
+        itemType: "call.completed",
+        callType: "tool",
+        callId: "call-opaque-tool",
+        name: "Call Function Jmcg9irmt39q 2",
+        status: "completed",
+        payload: {
+          acp: {
+            sessionUpdate: "tool_call_update",
+            kind: "execute"
+          },
+          kind: "execute",
+          toolName: "Jmcg9irmt39q"
+        },
+        occurredAtUnixMs: 20
+      })
+    ]);
+
+    expect(rows.map((row) => [row.role, row.content, row.status])).toEqual([
+      ["tool", "Run command", "completed"]
+    ]);
+  });
+
+  it("does not assemble assistant chunks in the renderer", () => {
+    const rows = buildAgentGUITimelineRows([
+      timelineItem({
+        id: 1,
+        eventId: "chunk-1",
+        turnId: "turn-1",
+        itemType: "message",
+        role: "assistant",
+        content: "Hi",
+        occurredAtUnixMs: 10
+      }),
+      timelineItem({
+        id: 2,
+        eventId: "chunk-2",
+        turnId: "turn-1",
+        itemType: "message",
+        role: "assistant",
+        content: " there.",
+        occurredAtUnixMs: 11
+      })
+    ]);
+
+    expect(rows.map((row) => [row.role, row.content])).toEqual([
+      ["assistant", "Hi"],
+      ["assistant", " there."]
+    ]);
+  });
+
+  it("drops transient agent.responding activity items from Agent GUI timeline state", () => {
+    const items = buildAgentGUITimelineItems([
+      timelineItem({
+        id: 1,
+        eventId: "responding-1",
+        turnId: "turn-1",
+        itemType: "activity.completed",
+        role: "assistant",
+        payload: {
+          metadata: {
+            activityKind: "responding"
+          }
+        },
+        occurredAtUnixMs: 10
+      })
+    ]);
+
+    expect(items).toEqual([]);
+  });
+});
+
+function timelineItem(
+  overrides: Partial<WorkspaceAgentActivityTimelineItem> & {
+    id: number;
+    eventId: string;
+  }
+): WorkspaceAgentActivityTimelineItem {
+  return {
+    workspaceId: "room-1",
+    agentSessionId: "session-1",
+    actorType: "agent",
+    actorId: "codex",
+    itemType: "event",
+    occurredAtUnixMs: overrides.id,
+    createdAtUnixMs: overrides.id,
+    ...overrides
+  };
+}
+
+function workspaceAgentMessage(
+  overrides: Partial<AgentActivityMessage> & {
+    id: number;
+    eventId?: string;
+    content?: string;
+    actorType?: string;
+    actorId?: string;
+    itemType?: string;
+  }
+): AgentActivityMessage {
+  const payload = overrides.payload ?? {};
+  return {
+    agentSessionId: overrides.agentSessionId ?? "session-1",
+    messageId:
+      overrides.messageId ?? overrides.eventId ?? `message-${overrides.id}`,
+    version: overrides.version ?? overrides.id,
+    turnId: overrides.turnId ?? `turn-${overrides.id}`,
+    role: overrides.role ?? "user",
+    kind: overrides.kind ?? "message",
+    ...(overrides.status ? { status: overrides.status } : {}),
+    payload: {
+      ...payload,
+      content: payload.content ?? overrides.content,
+      text: payload.text ?? overrides.content
+    },
+    occurredAtUnixMs: overrides.occurredAtUnixMs ?? overrides.id,
+    startedAtUnixMs: overrides.startedAtUnixMs,
+    completedAtUnixMs: overrides.completedAtUnixMs
+  };
+}
+
+function workspaceAgentSession(
+  overrides: Partial<AgentActivitySession> & {
+    sessionOrigin?: string;
+    lifecycleStatus?: string;
+    turnPhase?: string;
+    effectiveStatus?: string;
+    presenceId?: string | number;
+    id?: number;
+    createdAtUnixMs?: number;
+    updatedAtUnixMs?: number;
+  }
+): AgentActivitySession {
+  const {
+    effectiveStatus: _effectiveStatus,
+    id: _id,
+    lifecycleStatus: _lifecycleStatus,
+    presenceId: _presenceId,
+    sessionOrigin: _sessionOrigin,
+    turnPhase: _turnPhase,
+    ...canonical
+  } = overrides;
+  return normalizeAgentActivitySession({
+    ...{
+      activeTurnId: null,
+      latestTurnInteractions: [],
+      pendingInteractions: []
+    },
+    workspaceId: "workspace-1",
+    agentSessionId: "session-1",
+    userId: "user-1",
+    provider: "codex",
+    providerSessionId: "provider-session-1",
+    cwd: "/workspace",
+    title: "Codex",
+    createdAtUnixMs: 1,
+    updatedAtUnixMs: 1,
+    ...canonical
+  });
+}
+
+function userProject(id: string, path: string, label: string) {
+  return {
+    id,
+    path,
+    label,
+    sectionKey: `project:${path}`,
+    pinnedAtUnixMs: 0
+  };
+}

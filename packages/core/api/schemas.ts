@@ -24,6 +24,7 @@ import type {
   ChatSession,
   PrioritizeQueuedChatTaskResponse,
   SendChatMessageResponse,
+  SendChatAgentMessageResponse,
   StartMikaOnboardingResponse,
   Comment,
   CreateBillingCheckoutSessionResponse,
@@ -2026,6 +2027,8 @@ const TaskUsageSchema = z.object({
 }).loose();
 
 export const AgentTaskSchema = z.object({
+  chat_invocation_group_id: z.string().optional().catch(undefined),
+  chat_invoked_agent_name: z.string().optional().catch(undefined),
   wakeup_id: z.string().optional().catch(undefined),
   cancelled_by_comment_change: z.boolean().optional().catch(undefined),
   cancelled_by: TaskCancellationActorSchema.optional().catch(undefined),
@@ -2246,6 +2249,13 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
   created_at: z.string().min(1),
   attachment_ids: z.array(z.string()).nullish().transform((ids) => ids ?? undefined),
 }).loose();
+
+export const SendChatAgentMessageResponseSchema: z.ZodType<SendChatAgentMessageResponse> = z.object({
+  message_id: z.string().min(1), task_id: z.string().min(1), created_at: z.string().min(1),
+  supports_queue: z.boolean().optional(), queued: z.boolean().optional(),
+  attachment_ids: z.array(z.string()).nullish().transform((ids) => ids ?? undefined),
+  agent_runs: z.array(z.object({agent_id: z.string().min(1), agent_name: z.string(), task_id: z.string().min(1), message_id: z.string().min(1)})).min(1).max(5),
+});
 
 // `started` is the only field the flow branches on, and a malformed response
 // must not be read as "the opening landed" — parseWithFallback's fallback says

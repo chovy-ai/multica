@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { isTaskMessageTaskId, taskMessagesOptions } from "@multica/core/chat/queries";
+import { chatAuthoredPrompt } from "@multica/core/chat/context-snapshot";
 import { RichContent } from "../../rich-content";
 import { RichContentScrollRootProvider } from "../../rich-content/scroll-root";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -485,6 +486,7 @@ const MessageBubble = memo(function MessageBubble({
   const { message } = item;
 
   if (message.role === "user") {
+    const content = chatAuthoredPrompt(message.content);
     return (
       <div className="flex justify-end">
         <div className="rounded-2xl bg-muted px-3.5 py-2 text-body max-w-[80%] break-words">
@@ -494,14 +496,14 @@ const MessageBubble = memo(function MessageBubble({
            * too. `compact` trims the leading/trailing block margins so a
            * single-line bubble stays as tight as the plain-text version. */}
           <RichContent
-            content={message.content}
+            content={content}
             attachments={message.attachments}
             density="compact"
             phase="settled"
           />
           <AttachmentList
             attachments={message.attachments}
-            content={message.content}
+            content={content}
             className="mt-1.5"
           />
         </div>

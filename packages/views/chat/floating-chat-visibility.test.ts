@@ -16,4 +16,13 @@ describe("floating chat route suppression", () => {
     // Another workspace's chat tab is a different route too.
     expect(isFloatingChatRouteSuppressed("/other/chat", "/acme/chat")).toBe(false);
   });
+
+  it("keeps the Conversations execution selectors clear without suppressing sibling routes", () => {
+    const suppressed = (path: string) => isFloatingChatRouteSuppressed(path, "/acme/chat", "/acme/conversations");
+    expect(suppressed("/acme/conversations")).toBe(true);
+    expect(suppressed("/acme/conversations/session-1")).toBe(true);
+    expect(suppressed("/acme/conversations-settings")).toBe(false);
+    expect(suppressed("/other/conversations")).toBe(false);
+    expect(suppressed("/acme/issues")).toBe(false);
+  });
 });

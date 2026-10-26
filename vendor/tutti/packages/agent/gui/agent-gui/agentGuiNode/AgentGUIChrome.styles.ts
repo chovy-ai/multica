@@ -1,0 +1,36 @@
+const styles = {
+  sessionChrome: "agent-gui-chrome__session-chrome",
+  chromeCard: "agent-gui-chrome__card",
+  chromeCardWarning: "agent-gui-chrome__card--warning",
+  chromeCardAction: "agent-gui-chrome__card--action",
+  chromeCardMuted: "agent-gui-chrome__card--muted",
+  chromeCardConnecting: "agent-gui-chrome__card--connecting",
+  chromeCardDanger: "agent-gui-chrome__card--danger",
+  chromeCardSuccess: "agent-gui-chrome__card--success",
+  chromeIcon: "agent-gui-chrome__icon",
+  chromeMessageSlot: "agent-gui-chrome__message-slot",
+  chromeInlineActions: "agent-gui-chrome__inline-actions",
+  chromeNoticeDescription: "agent-gui-chrome__notice-description",
+  chromeNoticeMessage: "agent-gui-chrome__notice-message",
+  chromeNoticeTitle: "agent-gui-chrome__notice-title",
+  chromeTitle: "agent-gui-chrome__title",
+  chromeMessage: "agent-gui-chrome__message",
+  chromeActions: "agent-gui-chrome__actions",
+  chromeMetaRow: "agent-gui-chrome__meta-row",
+  chromeDangerGhostButton: "agent-gui-chrome__danger-ghost-button",
+  chromeSuccessGhostButton: "agent-gui-chrome__success-ghost-button",
+  chromeGoalHint: "agent-gui-chrome__goal-hint",
+  chromeGoalActions: "agent-gui-chrome__goal-actions",
+  chromeGoalEditInput: "agent-gui-chrome__goal-edit-input",
+  composerDisclosure: "agent-gui-chrome__composer-disclosure",
+  composerDisclosureBanner: "agent-gui-chrome__composer-disclosure-banner",
+  composerDisclosureChevron: "agent-gui-chrome__composer-disclosure-chevron",
+  composerDisclosureChevronExpanded:
+    "agent-gui-chrome__composer-disclosure-chevron--expanded",
+  composerDisclosurePanel: "agent-gui-chrome__composer-disclosure-panel",
+  composerDisclosureTrigger: "agent-gui-chrome__composer-disclosure-trigger",
+  tuttiWorkflowBanner: "agent-gui-chrome__tutti-workflow-banner",
+  tuttiWorkflowPanel: "agent-gui-chrome__tutti-workflow-panel"
+} as const;
+
+export default styles;

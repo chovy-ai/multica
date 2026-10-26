@@ -2,6 +2,7 @@ import { cloneElement, forwardRef, useEffect, useRef, useImperativeHandle } from
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
+import { setCurrentWorkspace } from "@multica/core/platform";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { DraftUpload } from "@multica/core/drafts";
 import enCommon from "../../locales/en/common.json";
@@ -93,6 +94,7 @@ vi.mock("../../editor", async () => ({
       defaultValue?: string;
       value?: string;
       onUpdate?: (md: string) => void;
+      onReady?: () => void;
       placeholder?: string;
       onUploadFile?: (file: File, uploadId: string) => Promise<UploadResult | null>;
       onUploadingChange?: (uploading: boolean) => void;
@@ -112,6 +114,7 @@ vi.mock("../../editor", async () => ({
     editorProps.last = props as unknown as Record<string, unknown>;
     const valueRef = useRef<string>(value ?? defaultValue ?? "");
     const uploadingRef = useRef(0);
+    useEffect(() => { props.onReady?.(); }, []);
     useEffect(() => {
       if (value !== undefined) valueRef.current = value;
     }, [value]);
@@ -381,6 +384,48 @@ function element(props: Partial<React.ComponentProps<typeof ChatInput>>) {
     </I18nProvider>
   );
 }
+
+describe("ChatInput task references", () => {
+  const request = { id: "reference-1", workspaceId: "ws-1", draftKey: "__draft_new__", content: "[MUL-7](mention://issue/issue-7)" };
+
+  it("appends an exact issue mention without replacing a draft or sending it", async () => {
+    setCurrentWorkspace("workspace-one", "ws-1");
+    useChatStore.getState().setInputDraft("__draft_new__", "Keep these instructions");
+    const applied = vi.fn();
+    const { onSend, rerender } = renderInput({ draftAppendRequest: request, onDraftAppendApplied: applied });
+    await waitFor(() => expect(applied).toHaveBeenCalledWith(request.id));
+    expect(useChatStore.getState().inputDrafts["__draft_new__"]).toBe("Keep these instructions\n\n" + request.content);
+    expect(onSend).not.toHaveBeenCalled();
+    rerender(element({ draftAppendRequest: request, onDraftAppendApplied: applied }));
+    expect(insertMarkdownSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not deliver a stale request to another workspace or draft", () => {
+    setCurrentWorkspace("workspace-two", "ws-2");
+    const applied = vi.fn();
+    const { rerender } = renderInput({ draftAppendRequest: request, onDraftAppendApplied: applied });
+    expect(insertMarkdownSpy).not.toHaveBeenCalled();
+    setCurrentWorkspace("workspace-one", "ws-1");
+    rerender(element({ draftAppendRequest: { ...request, draftKey: "another-session" }, onDraftAppendApplied: applied }));
+    expect(insertMarkdownSpy).not.toHaveBeenCalled();
+    expect(applied).not.toHaveBeenCalled();
+  });
+
+  it("keeps read-only conversation drafts unchanged", () => {
+    setCurrentWorkspace("workspace-one", "ws-1");
+    const { onSend } = renderInput({ draftAppendRequest: request, disabled: true });
+    expect(insertMarkdownSpy).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("revokes a queued insert when the surface changes before the editor can apply it", async () => {
+    setCurrentWorkspace("workspace-one", "ws-1");
+    const { rerender } = renderInput({ draftAppendRequest: request });
+    rerender(element({ draftAppendRequest: null }));
+    await act(async () => { await Promise.resolve(); });
+    expect(insertMarkdownSpy).not.toHaveBeenCalled();
+  });
+});
 
 // MUL-4864: an uncreated chat has ONE draft per workspace. `selectedAgentId`
 // picks where the first send goes; it does not own the draft. Switching agent

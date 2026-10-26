@@ -50,6 +50,7 @@ SET session_id = t.session_id,
 FROM agent_task_queue t
 WHERE t.id = $1
   AND t.chat_session_id = cs.id
+  AND t.agent_id = cs.agent_id
   AND t.status = 'cancelled'
   AND t.session_id IS NOT NULL
   AND t.runtime_id IS NOT NULL
@@ -173,12 +174,14 @@ SET session_id = NULL,
     runtime_id = NULL,
     updated_at = now()
 WHERE id = $1
-  AND session_id = $2
-  AND runtime_id = $3
+  AND ($2::uuid IS NULL OR agent_id = $2::uuid)
+  AND session_id = $3
+  AND runtime_id = $4
 `
 
 type ClearChatSessionSessionIfMatchesParams struct {
 	ID        pgtype.UUID `json:"id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
 	SessionID pgtype.Text `json:"session_id"`
 	RuntimeID pgtype.UUID `json:"runtime_id"`
 }
@@ -198,7 +201,12 @@ type ClearChatSessionSessionIfMatchesParams struct {
 // a slower sibling's failure. work_dir is deliberately left alone — the
 // directory is still reusable, only the conversation is not.
 func (q *Queries) ClearChatSessionSessionIfMatches(ctx context.Context, arg ClearChatSessionSessionIfMatchesParams) error {
-	_, err := q.db.Exec(ctx, clearChatSessionSessionIfMatches, arg.ID, arg.SessionID, arg.RuntimeID)
+	_, err := q.db.Exec(ctx, clearChatSessionSessionIfMatches,
+		arg.ID,
+		arg.AgentID,
+		arg.SessionID,
+		arg.RuntimeID,
+	)
 	return err
 }
 
@@ -376,7 +384,7 @@ INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, accountable_user_id, force_fresh_session, runtime_mcp_overlay,
     runtime_connected_apps, originator_source, trigger_evidence_kind, trigger_evidence_ref_id,
-    fire_at, channel_context_revision, id
+    fire_at, channel_context_revision, id, context
 )
 SELECT
     $1, $2, NULL,
@@ -392,7 +400,8 @@ SELECT
     $14,
     $6::timestamptz,
     $15::bigint,
-    COALESCE($16::uuid, gen_random_uuid())
+    COALESCE($16::uuid, gen_random_uuid()),
+    $17::jsonb
 WHERE lock_task_owner_rows($1, NULL, $2)
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, workflow_step
 `
@@ -414,6 +423,7 @@ type CreateChatTaskParams struct {
 	TriggerEvidenceRefID   pgtype.UUID        `json:"trigger_evidence_ref_id"`
 	ChannelContextRevision pgtype.Int8        `json:"channel_context_revision"`
 	ID                     pgtype.UUID        `json:"id"`
+	Context                []byte             `json:"context"`
 }
 
 // Fenced against workspace teardown: lock_task_owner_rows (migration 284)
@@ -441,6 +451,7 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		arg.TriggerEvidenceRefID,
 		arg.ChannelContextRevision,
 		arg.ID,
+		arg.Context,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(
@@ -954,9 +965,10 @@ WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id
     FROM agent_task_queue r
     WHERE r.chat_session_id = $1
+      AND ($2::uuid IS NULL OR r.agent_id = $2::uuid)
       AND (
-        $2::bigint IS NULL
-        OR COALESCE(r.channel_context_revision, 1) = $2::bigint
+        $3::bigint IS NULL
+        OR COALESCE(r.channel_context_revision, 1) = $3::bigint
       )
       AND r.retired_session_id IS NOT NULL
 ), resume_overflow_at AS (
@@ -967,9 +979,10 @@ WITH retired_sessions AS (
     SELECT MAX(t.completed_at) AS at
     FROM agent_task_queue t
     WHERE t.chat_session_id = $1
+      AND ($2::uuid IS NULL OR t.agent_id = $2::uuid)
       AND (
-        $2::bigint IS NULL
-        OR COALESCE(t.channel_context_revision, 1) = $2::bigint
+        $3::bigint IS NULL
+        OR COALESCE(t.channel_context_revision, 1) = $3::bigint
       )
       AND t.status = 'failed'
       AND (
@@ -981,9 +994,10 @@ WITH retired_sessions AS (
         t.session_id, t.work_dir, t.runtime_id, t.status, t.failure_reason, t.error, t.completed_at
     FROM agent_task_queue t
     WHERE t.chat_session_id = $1
+      AND ($2::uuid IS NULL OR t.agent_id = $2::uuid)
       AND (
-        $2::bigint IS NULL
-        OR COALESCE(t.channel_context_revision, 1) = $2::bigint
+        $3::bigint IS NULL
+        OR COALESCE(t.channel_context_revision, 1) = $3::bigint
       )
       AND t.session_id IS NOT NULL
       AND t.status IN ('completed', 'failed', 'cancelled')
@@ -1031,6 +1045,7 @@ LIMIT 1
 
 type GetLastChatTaskSessionParams struct {
 	ChatSessionID          pgtype.UUID `json:"chat_session_id"`
+	AgentID                pgtype.UUID `json:"agent_id"`
 	ChannelContextRevision pgtype.Int8 `json:"channel_context_revision"`
 }
 
@@ -1081,7 +1096,7 @@ type GetLastChatTaskSessionRow struct {
 // poisoned row invalidates the whole session, while a genuinely different
 // healthy session stays eligible.
 func (q *Queries) GetLastChatTaskSession(ctx context.Context, arg GetLastChatTaskSessionParams) (GetLastChatTaskSessionRow, error) {
-	row := q.db.QueryRow(ctx, getLastChatTaskSession, arg.ChatSessionID, arg.ChannelContextRevision)
+	row := q.db.QueryRow(ctx, getLastChatTaskSession, arg.ChatSessionID, arg.AgentID, arg.ChannelContextRevision)
 	var i GetLastChatTaskSessionRow
 	err := row.Scan(&i.SessionID, &i.WorkDir, &i.RuntimeID)
 	return i, err
@@ -2284,6 +2299,107 @@ func (q *Queries) ListChatMessagesPageForChannelContext(ctx context.Context, arg
 			&i.ChannelOutboundChatID,
 			&i.ChannelOutboundMessageIds,
 			&i.ChannelTypingSettled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSessionTasks = `-- name: ListChatSessionTasks :many
+SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, issue_snapshot, workflow_step FROM agent_task_queue
+WHERE chat_session_id = $1
+  AND (created_at, id) < ($2::timestamptz, $3::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+`
+
+type ListChatSessionTasksParams struct {
+	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
+	BeforeCreatedAt pgtype.Timestamptz `json:"before_created_at"`
+	BeforeID        pgtype.UUID        `json:"before_id"`
+	RowLimit        int32              `json:"row_limit"`
+}
+
+func (q *Queries) ListChatSessionTasks(ctx context.Context, arg ListChatSessionTasksParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listChatSessionTasks,
+		arg.ChatSessionID,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.BranchName,
+			&i.DurableWorkDir,
+			&i.ChannelContextRevision,
+			&i.CommentThreadID,
+			&i.CancelledByType,
+			&i.CancelledByID,
+			&i.CancelledByName,
+			&i.IssueSnapshot,
+			&i.WorkflowStep,
 		); err != nil {
 			return nil, err
 		}
@@ -3732,6 +3848,7 @@ SET session_id = COALESCE($1, session_id),
     runtime_id = COALESCE($3, runtime_id),
     updated_at = now()
 WHERE id = $4
+  AND ($5::uuid IS NULL OR agent_id = $5::uuid)
 `
 
 type UpdateChatSessionSessionParams struct {
@@ -3739,6 +3856,7 @@ type UpdateChatSessionSessionParams struct {
 	WorkDir   pgtype.Text `json:"work_dir"`
 	RuntimeID pgtype.UUID `json:"runtime_id"`
 	ID        pgtype.UUID `json:"id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
 }
 
 // Updates the resume pointer for a chat session. Empty/NULL inputs are
@@ -3752,6 +3870,7 @@ func (q *Queries) UpdateChatSessionSession(ctx context.Context, arg UpdateChatSe
 		arg.WorkDir,
 		arg.RuntimeID,
 		arg.ID,
+		arg.AgentID,
 	)
 	return err
 }

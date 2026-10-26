@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@multica/views/agent-workspace/styles.css";
 @import "@multica/ui/styles/tokens.css";
 @import "@multica/ui/styles/base.css";
 

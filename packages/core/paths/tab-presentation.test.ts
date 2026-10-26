@@ -14,6 +14,12 @@ function present(url: string, data: TabEntityData = {}) {
 }
 
 describe("resolveTabPresentation — pages", () => {
+  it("labels the Agent GUI as Conversations independently of a native chat session", () => {
+    expect(present("/acme/conversations?session=s1", { chatSessionTitle: "Deploy plan" })).toEqual({
+      visual: { kind: "icon", icon: "MessagesSquare" },
+      title: { kind: "nav", navKey: "conversation_flow" },
+    });
+  });
   it("uses the page icon and localized page name", () => {
     expect(present("/acme/issues")).toEqual({
       visual: { kind: "icon", icon: "ListTodo" },

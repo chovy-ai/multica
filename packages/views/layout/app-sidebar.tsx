@@ -114,6 +114,7 @@ const PINNED_PREVIEW_LIMIT = 5;
 type NavKey =
   | "inbox"
   | "chat"
+  | "conversationFlow"
   | "myIssues"
   | "issues"
   | "projects"
@@ -130,6 +131,7 @@ type NavKey =
 type NavLabelKey =
   | "inbox"
   | "chat"
+  | "conversation_flow"
   | "my_issues"
   | "issues"
   | "projects"
@@ -148,6 +150,7 @@ const personalNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "inbox", labelKey: "inbox" },
   { key: "myIssues", labelKey: "my_issues" },
   { key: "chat", labelKey: "chat" },
+  { key: "conversationFlow", labelKey: "conversation_flow" },
 ];
 
 const workNav: { key: NavKey; labelKey: NavLabelKey }[] = [
@@ -781,7 +784,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     <SidebarMenuItem key={item.key}>
                       <SidebarMenuButton
                         isActive={isActive}
-                        render={<AppLink href={href} />}
+                        render={<AppLink href={href} target={item.key === "conversationFlow" ? "_blank" : undefined} />}
                         className={NAV_ITEM_CLASS_NAME}
                       >
                         <Icon />

@@ -1,0 +1,428 @@
+/* Multica conversation styling; execution and source layout stay intact. */
+/* The promoted frame is transparent so the popup backdrop reveals the app shell. */
+html.multica-agent-gui[data-global-svg-preview="true"],
+html.multica-agent-gui[data-global-svg-preview="true"] body {
+  background: transparent !important;
+}
+html.multica-agent-gui[data-global-svg-preview="true"] #app {
+  visibility: hidden;
+}
+html.multica-agent-gui[data-global-svg-preview="true"] dialog[open] {
+  visibility: visible;
+}
+html.multica-agent-gui[data-multica-presentation="conversation"] {
+  --rich-text-mention-session: var(--brand);
+}
+
+/* Center an empty main session without remounting its draft or attachment state. */
+html.multica-agent-gui:not([data-side-pane="true"]) .agent-gui-node__detail-primary:has(.multica-empty-conversation-welcome) {
+  justify-content: safe center;
+}
+
+html.multica-agent-gui:not([data-side-pane="true"]) .agent-gui-node__detail-primary:has(.multica-empty-conversation-welcome) > [data-slot="scroll-area"] {
+  flex: 0 1 auto;
+  block-size: auto;
+}
+
+html.multica-agent-gui:not([data-side-pane="true"]) .agent-gui-node__timeline-with-composer:has(.multica-empty-conversation-welcome) {
+  padding-block: 0;
+  scroll-padding-block-end: 0;
+}
+
+html.multica-agent-gui:not([data-side-pane="true"]) .multica-empty-conversation-welcome {
+  min-block-size: 0;
+  padding-block: 0;
+}
+
+html.multica-agent-gui:not([data-side-pane="true"]) .agent-gui-node__detail-primary:has(.multica-empty-conversation-welcome) > .agent-gui-node__bottom-dock {
+  position: static;
+  margin-block-start: 24px;
+}
+
+html.multica-agent-gui .agent-gui-node__bottom-dock > .agent-gui-node__composer-hero {
+  pointer-events: auto;
+}
+
+html.multica-agent-gui .multica-empty-conversation-welcome .agent-gui-node__empty-hero-body {
+  block-size: auto;
+}
+
+/* Side drafts keep the normal dock and the source quote supplied by the host. */
+html.multica-agent-gui[data-side-pane="true"] .multica-empty-conversation-welcome,
+html.multica-agent-gui[data-side-pane="true"] .agent-gui-node__empty-hero-carousel-layer {
+  display: none;
+}
+html.multica-agent-gui [data-multica-located="true"] {
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+html.multica-agent-gui .multica-selection-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-inline-size: calc(100vw - 16px);
+  padding: 4px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  color: var(--foreground);
+  box-shadow: var(--menu-shadow);
+}
+
+/* Match the transcript's gutter without changing the measured editor height. */
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__composer[data-layout="dock"] {
+  padding-inline: var(--agent-gui-detail-padding-x);
+  padding-bottom: 16px;
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-floating-prompt--queued {
+  position: relative;
+  inset: auto;
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-queued-prompt-panel {
+  padding-inline: 12px;
+}
+
+/* Notices, queues and growing drafts share measured space in the bottom dock. */
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__bottom-dock > .agent-gui-chrome__session-chrome {
+  margin-inline: var(--agent-gui-detail-padding-x);
+  margin-bottom: 8px;
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-input-shell {
+  grid-template-rows: calc(56px + var(--agent-gui-composer-input-overflow, 0px)) auto;
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-floating-prompt:not(.agent-gui-node__composer-floating-prompt--queued) {
+  bottom: calc(100% + 8px);
+}
+
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-input-shell::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  transition: border-color 100ms ease, box-shadow 100ms ease;
+}
+
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-input-shell:focus-within::before {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-prompt-input-area,
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-prompt-input-area:focus-within {
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-footer {
+  width: 100%;
+  margin: 0;
+  padding: 0 10px 8px;
+  background: transparent;
+}
+
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-prompt-input-area .agent-gui-node__composer-prompt-input-line {
+  padding-block: 0;
+}
+
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-prompt-input-line > .agent-gui-node__rich-text-editor-surface {
+  align-self: start;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-hero-prompt-input-area .agent-gui-node__composer-prompt-input-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The home helper tray sits below the input's own border and focus ring. */
+html.multica-agent-gui .agent-gui-node__composer-hero .agent-gui-node__composer-input-group-hero {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-hero .agent-gui-node__composer-input-shell {
+  border-color: var(--surface-border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-hero .agent-gui-node__composer-input-shell:focus-within {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-hero .agent-gui-node__composer-project-row {
+  min-height: 40px;
+  margin-inline: 12px;
+  padding: 8px 12px;
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  background: var(--muted);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-hero .agent-gui-node__composer-prompt-tip {
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-footer > .agent-gui-node__composer-footer-right:has(.agent-gui-node__composer-send-button, .agent-gui-node__composer-stop-button) {
+  order: 1;
+  flex: 0 0 auto;
+  align-self: flex-end;
+  margin-left: auto;
+  overflow: visible;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-send-button:is([data-state="send"], [data-state="queue"]) svg {
+  width: 16px;
+  height: 16px;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-send-button:hover:not(:disabled) {
+  transform: none;
+}
+
+html.multica-agent-gui .workspace-agents-status-panel__detail-user-message.agent-gui-conversation__user-message-bubble {
+  border-radius: var(--radius-2xl);
+  background: var(--surface-selected);
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+html.multica-agent-gui .workspace-agents-status-panel__detail-markdown.agent-gui-conversation__assistant-markdown {
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+html.multica-agent-gui .agent-gui-node__timeline .workspace-agents-status-panel__detail-turn-summary {
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+
+/* The existing portal keeps its viewport-safe frame and keyboard behavior. */
+html.multica-agent-gui [data-testid="agent-gui-mention-palette-surface"] {
+  border-color: var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--menu-shadow);
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette.rich-text-at-mention-palette__shell {
+  height: auto;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette-header {
+  min-height: 36px;
+  padding-top: 8px;
+  background: var(--surface-raised);
+}
+
+html.multica-agent-gui .tsh-underline-tabs.agent-gui-node__mention-palette-tabs {
+  height: 36px;
+  padding: 4px 12px 0;
+  font-size: var(--text-label);
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette-scroll-region {
+  padding: 8px;
+  scroll-padding-block: 8px;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-palette__row-button {
+  border-radius: var(--radius-md);
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-palette__group-items {
+  gap: 2px;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-palette__expand-button[aria-busy="true"] {
+  justify-content: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  opacity: 1;
+}
+
+html.multica-agent-gui .multica-mention-task-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+html.multica-agent-gui .multica-mention-task-identifier {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+html.multica-agent-gui .multica-mention-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+html.multica-agent-gui .multica-mention-task-status {
+  --multica-mention-status-color: var(--muted-foreground);
+  max-width: min(30%, 140px);
+  padding-inline: 6px;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  background: var(--muted);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+html.multica-agent-gui .multica-mention-task-status::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: var(--multica-mention-status-color);
+}
+
+html.multica-agent-gui .multica-mention-task-status[data-category="started"] {
+  --multica-mention-status-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+html.multica-agent-gui .multica-mention-task-status[data-category="done"] {
+  --multica-mention-status-color: var(--info);
+  background: color-mix(in srgb, var(--info) 10%, transparent);
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-palette__row-button[data-highlighted] {
+  background: var(--surface-selected);
+  color: var(--surface-selected-foreground);
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-row--app {
+  gap: 8px;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-row__app-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-row__app-name {
+  max-width: 100%;
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  font-weight: 500;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-row__app-description {
+  flex: none;
+  max-width: 100%;
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette [data-agent-mention-app-icon] {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette [data-agent-mention-agent-avatar] {
+  border-radius: var(--radius-sm);
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette [data-agent-mention-agent-avatar] img {
+  border-radius: inherit;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette-footer {
+  min-height: 28px;
+  border-color: var(--surface-border);
+  background: var(--surface-raised);
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette-hint {
+  height: 28px;
+  padding-inline: 12px;
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+html.multica-agent-gui .agent-gui-node__mention-palette .rich-text-at-mention-palette__empty-state-inner {
+  min-height: 96px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-input-shell::before {
+    transition: none;
+  }
+}
+
+/* Each attachment keeps a square footprint, independent of image aspect ratio. */
+html.multica-agent-gui .agent-gui-conversation__user-image-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  width: max-content;
+  max-width: 100%;
+}
+
+html.multica-agent-gui .agent-gui-conversation__user-image-thumbnail {
+  flex: 0 0 80px;
+  width: 80px;
+  height: 80px;
+  max-height: none;
+  border-radius: var(--radius-xl, 12px);
+  background: var(--surface-raised);
+}
+
+html.multica-agent-gui .agent-gui-conversation__user-image-thumbnail > .tsh-zoomable-image > img {
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+/* Keep output previews compact; the existing viewer still opens the full image. */
+html.multica-agent-gui [data-testid="agent-generated-image-artifact"] .tsh-zoomable-image > img,
+html.multica-agent-gui [data-workspace-agent-markdown] .tsh-zoomable-image > img {
+  width: auto;
+  height: auto;
+  max-width: min(260px, 100%);
+  max-height: 260px;
+  border-radius: var(--radius-lg);
+  object-fit: contain;
+}
+html.multica-agent-gui [data-multica-preview-link] code {
+  color: var(--brand);
+}

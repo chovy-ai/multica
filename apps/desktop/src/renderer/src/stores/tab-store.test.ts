@@ -57,6 +57,18 @@ describe("sanitizeTabPath", () => {
 });
 
 describe("resourceKeyForUrl", () => {
+  it("opens a distinct conversation flow tab and preserves the native chat URL", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme", "/acme/chat?session=native-chat");
+    const chatId = getActiveTab(useTabStore.getState())!.id;
+    const flowId = store.openTab("/acme/conversations", "Conversations", { activate: true });
+    expect(flowId).not.toBe(chatId);
+    expect(getActiveTab(useTabStore.getState())!.url).toBe("/acme/conversations");
+    store.navigateActiveSession("/acme/conversations?session=flow-session", { replace: true });
+    expect(store.openTab("/acme/conversations", "Conversations", { activate: true })).toBe(flowId);
+    store.setActiveTab(chatId);
+    expect(getActiveTab(useTabStore.getState())!.url).toBe("/acme/chat?session=native-chat");
+  });
   it("is the pathname — search and hash are view state, not identity", () => {
     expect(resourceKeyForUrl("/acme/issues")).toBe("/acme/issues");
     expect(resourceKeyForUrl("/acme/issues?filter=a")).toBe("/acme/issues");

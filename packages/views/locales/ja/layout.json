@@ -11,7 +11,8 @@
     "usage": "分析",
     "runtimes": "ランタイム",
     "skills": "スキル",
-    "settings": "設定"
+    "settings": "設定",
+    "conversation_flow": "会話フロー"
   },
   "tab": {
     "issue": "タスク",

@@ -453,7 +453,7 @@ function findCliOnPath(): string | null {
  *   electron-builder's `asarUnpack: resources/**` extracts the binary to
  *   `app.asar.unpacked/`, so we swap the path segment to execute it.
  */
-function bundledCliPath(): string {
+export function bundledCliPath(): string {
   const binName = process.platform === "win32" ? "multica.exe" : "multica";
   return join(app.getAppPath(), "resources", "bin", binName).replace(
     "app.asar",

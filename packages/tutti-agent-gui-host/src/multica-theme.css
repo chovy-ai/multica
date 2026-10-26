@@ -1,0 +1,200 @@
+/* Fonts are available before the initial host snapshot arrives. */
+html.multica-agent-gui {
+  --multica-font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", sans-serif;
+  --multica-font-serif: "Source Serif 4 Variable", "Source Serif 4", "Iowan Old Style",
+    "Apple Garamond", Baskerville, "Times New Roman", serif;
+  --multica-font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular,
+    Menlo, Consolas, monospace;
+  --font-sans: var(--multica-font-sans);
+  --font-serif: var(--multica-font-serif);
+  --font-mono: var(--multica-font-mono);
+  --font-sans-system: var(--multica-font-sans);
+  --font-sans-cjk: var(--multica-font-sans);
+  --font-mono-system: var(--multica-font-mono);
+  --font-ui: var(--multica-font-sans);
+  --font-display: var(--multica-font-sans);
+  --tsh-font-ui: var(--multica-font-sans);
+  --tsh-font-display: var(--multica-font-sans);
+  --tsh-font-mono: var(--multica-font-mono);
+}
+
+/* Multica owns the palette; these are names consumed by the intact source UI. */
+html.multica-agent-gui[data-theme] {
+  --renderer-background: var(--page-canvas);
+  --renderer-background-fronted: var(--surface-raised);
+  --renderer-background-panel: var(--app-shell);
+  --renderer-foreground: var(--foreground);
+  --renderer-text-primary: var(--foreground);
+  --renderer-text-secondary: var(--muted-foreground);
+  --renderer-muted: var(--muted-foreground);
+  --renderer-border: var(--surface-border);
+  --renderer-panel: var(--surface);
+  --renderer-accent: var(--brand);
+  --renderer-accent-pressed: var(--brand);
+  --renderer-danger: var(--destructive);
+  --renderer-success: var(--success);
+  --renderer-scrim: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --renderer-scrim-strong: var(--renderer-scrim);
+
+  --background-panel: var(--app-shell);
+  --background-1: var(--app-shell);
+  --background-session-flow: var(--page-canvas);
+  --background-session-sidepanel: var(--app-shell);
+  --background-fronted: var(--surface-raised);
+  --background-soft: var(--page-canvas);
+  --background-board-card: var(--surface);
+  --text-primary: var(--foreground);
+  --text-primary-hover: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --text-tertiary: var(--muted-foreground);
+  --text-placeholder: var(--muted-foreground);
+  --text-disabled: var(--muted-foreground);
+  --text-inverted: var(--primary-foreground);
+  --border-1: var(--surface-border);
+  --border-2: var(--border);
+  --line-1: var(--surface-border);
+  --line-2: var(--border);
+  --line-focus-window: var(--ring);
+  --border-focus: var(--ring);
+  --panel: var(--surface);
+  --panel-foreground: var(--surface-foreground);
+  --backdrop: var(--renderer-scrim);
+
+  --accent-codex: var(--brand);
+  --accent-codex-border: var(--surface-border);
+  --accent-bg: var(--surface-selected);
+  --accent-claude: var(--brand);
+  --status-running: var(--info);
+  --tutti-purple: var(--brand);
+  --tutti-purple-bg: var(--surface-selected);
+  --tutti-purple-border: var(--surface-border);
+  --folder: var(--brand);
+  --rich-text-folder: var(--brand);
+  --rich-text-mention-app: var(--brand);
+  --rich-text-mention-issue: var(--brand);
+  --rich-text-mention-session: var(--success);
+  --rich-text-mention-file: var(--brand);
+  --state-danger: var(--destructive);
+  --state-danger-hover: var(--destructive);
+  --state-success: var(--success);
+  --state-warning: var(--warning);
+  --destructive-foreground: var(--primary-foreground);
+  --success-foreground: var(--foreground);
+  --warning-foreground: var(--foreground);
+  --on-danger: color-mix(in srgb, var(--destructive) 10%, transparent);
+  --on-danger-hover: color-mix(in srgb, var(--destructive) 20%, transparent);
+  --transparency-block: var(--surface-hover);
+  --transparency-hover: var(--surface-hover);
+  --transparency-active: var(--surface-selected);
+  --shadow-soft: var(--surface-shadow);
+  --shadow-panel: var(--floating-shadow);
+  --shadow-side-panel: var(--floating-shadow);
+
+  --workbench-canvas-bg: var(--page-canvas);
+  --workbench-surface-background: var(--page-canvas);
+  --workbench-foreground: var(--foreground);
+  --workbench-muted-foreground: var(--muted-foreground);
+  --workbench-chrome-foreground: var(--foreground);
+  --workbench-chrome-muted: var(--muted-foreground);
+  --workbench-chrome-hover-bg: var(--surface-hover);
+  --workbench-panel: var(--surface);
+  --workbench-window-bg: var(--surface);
+  --workbench-node-surface: var(--surface);
+  --workbench-window-header-bg: var(--page-canvas);
+  --workbench-field-bg: var(--surface);
+  --workbench-window-backdrop-filter: none;
+  --workbench-border: var(--surface-border);
+  --workbench-accent: var(--brand);
+  --workbench-focused-border: var(--ring);
+  --workbench-scrim: var(--renderer-scrim);
+  --workbench-window-elevation: var(--surface-shadow);
+  --workbench-control-hover-bg: var(--surface-hover);
+  --workbench-dock-shadow: var(--menu-shadow);
+  --workbench-snap-guide: var(--surface-selected);
+  --workbench-snap-guide-border: var(--brand);
+  --workbench-snap-guide-shadow: 0 0 0 1px var(--brand);
+
+  --modal-open-dur: var(--dialog-enter-duration);
+  --modal-close-dur: var(--dialog-exit-duration);
+  --modal-ease: var(--dialog-enter-easing);
+  --dropdown-open-dur: var(--dialog-enter-duration);
+  --dropdown-close-dur: var(--dialog-exit-duration);
+  --dropdown-ease: var(--dialog-enter-easing);
+}
+
+/* Source Chinese descendants set their own font variables. Keep the same
+   per-character Latin/CJK fallback inside editors, tool views and portals. */
+:where(:lang(zh), [lang^="zh"]) {
+  --font-sans: var(--multica-font-sans);
+  --font-sans-system: var(--multica-font-sans);
+  --font-sans-cjk: var(--multica-font-sans);
+  --font-ui: var(--multica-font-sans);
+  --font-display: var(--multica-font-sans);
+  --tsh-font-ui: var(--multica-font-sans);
+  --tsh-font-display: var(--multica-font-sans);
+}
+
+html[lang|="ja"] {
+  --multica-font-sans: "Inter Variable", "Inter", "Hiragino Sans",
+    "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic", "Meiryo",
+    "Noto Sans CJK JP", "Noto Sans JP", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", sans-serif;
+}
+
+html,
+body {
+  background: var(--page-canvas);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: var(--text-body--line-height);
+  font-synthesis: style;
+  text-autospace: ideograph-alpha ideograph-numeric;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Keep the browser's root rem geometry; only readable body text is 14px. */
+body {
+  font-size: var(--text-body);
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-sans);
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}

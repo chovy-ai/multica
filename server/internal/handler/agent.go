@@ -368,6 +368,8 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
+	ChatInvocationGroupID    string                 `json:"chat_invocation_group_id,omitempty"`
+	ChatInvokedAgentName     string                 `json:"chat_invoked_agent_name,omitempty"`
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`
 	CancelledBy              *TaskCancellationActor `json:"cancelled_by,omitempty"`
@@ -858,7 +860,10 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	if t.HandoffNote.Valid {
 		handoffNote = t.HandoffNote.String
 	}
+	invocation := service.ChatInvocationFromContext(t.Context)
 	return AgentTaskResponse{
+		ChatInvocationGroupID: invocation.GroupID,
+		ChatInvokedAgentName:  invocation.AgentName,
 		// Task-scoped provenance must not transfer through copied retry context.
 		CancelledByCommentChange: t.Status == "cancelled" && cancellation.TaskID != "" && cancellation.TaskID == uuidToString(t.ID),
 		CancelledBy:              taskCancellationActorToResponse(t),

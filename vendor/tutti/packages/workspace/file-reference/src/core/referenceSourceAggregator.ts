@@ -1,0 +1,418 @@
+import type {
+  LoadSidebarGroupsResult,
+  ListChildrenResult,
+  NodeRef,
+  ReferenceNode,
+  ReferencePreview,
+  ReferenceScope,
+  ReferenceSourceRegistry,
+  ReferenceSourceService,
+  SearchInput,
+  SearchResult,
+  SelectedReference
+} from "../contracts/referenceSource.ts";
+import type { WorkspaceFileOpenWithApplication } from "@tutti-os/workspace-file-manager/services";
+import {
+  referenceProvenanceFilterCacheKey,
+  referenceProvenanceFilterIsActive
+} from "./referenceProvenance.ts";
+import {
+  createReferenceReadRequestCoordinator,
+  type ReferenceReadRequestCoordinator
+} from "./referenceReadRequestCoordinator.ts";
+
+/**
+ * 多源聚合器:根层级 = 每个可用源一个 folder 节点;其余按 node.ref.sourceId 委派。
+ * 设计见 docs/architecture/agent-reference-source-services.md §3 / §4.4。
+ */
+
+/**
+ * 源根节点的 nodeId 哨兵。由聚合器创建源根节点时使用;
+ * 任何真实源都不会产出 nodeId 等于此值的子节点(workspace 源 nodeId 是路径,
+ * app 源 nodeId 以 "app:" 开头),因此路由无歧义。
+ */
+export const SOURCE_ROOT_NODE_ID = "\0source-root";
+
+/** 顶部 tab 的描述(source 身份 + 能力)。 */
+export interface ReferenceSourceTab {
+  sourceId: string;
+  label: string;
+  icon?: string;
+  capabilities: ReferenceSourceService["capabilities"];
+}
+
+export interface ReferenceSourceAggregator {
+  /** 顶部 tab 列表:每个可用源一个 tab(已过滤 isAvailable、按 order 排序)。 */
+  listSources(
+    scope: ReferenceScope,
+    input?: { signal?: AbortSignal }
+  ): Promise<ReferenceSourceTab[]>;
+  /** 每次 Picker 打开重新读取的左栏二级分组；不与目录 children 共享状态。 */
+  loadSidebarGroups(
+    scope: ReferenceScope,
+    sourceId: string,
+    input?: { cursor?: string | null; signal?: AbortSignal }
+  ): Promise<LoadSidebarGroupsResult>;
+  /** (备用,单树多根形态)根层级:每个可用源一个 folder 节点。 */
+  listRoot(scope: ReferenceScope): Promise<ReferenceNode[]>;
+  listChildren(
+    scope: ReferenceScope,
+    node: NodeRef,
+    input?: {
+      cursor?: string | null;
+      filter?: string | null;
+      signal?: AbortSignal;
+    }
+  ): Promise<ListChildrenResult>;
+  search(
+    scope: ReferenceScope,
+    sourceId: string,
+    input: SearchInput
+  ): Promise<SearchResult>;
+  createDirectory?(
+    scope: ReferenceScope,
+    sourceId: string,
+    input: { parent: ReferenceNode | null; name: string }
+  ): Promise<ReferenceNode>;
+  open(scope: ReferenceScope, node: ReferenceNode): Promise<void>;
+  listOpenWithApplications(
+    scope: ReferenceScope,
+    node: ReferenceNode
+  ): Promise<WorkspaceFileOpenWithApplication[]>;
+  openWithApplication(
+    scope: ReferenceScope,
+    node: ReferenceNode,
+    applicationPath: string
+  ): Promise<void>;
+  openWithOtherApplication(
+    scope: ReferenceScope,
+    node: ReferenceNode,
+    applicationPickerPrompt?: string
+  ): Promise<void>;
+  reveal(scope: ReferenceScope, node: ReferenceNode): Promise<void>;
+  readPreview(
+    scope: ReferenceScope,
+    node: ReferenceNode
+  ): Promise<ReferencePreview | null>;
+  resolveSelection(node: ReferenceNode): SelectedReference;
+  prepareSelection(
+    scope: ReferenceScope,
+    node: ReferenceNode
+  ): Promise<SelectedReference>;
+  /**
+   * 把语义定位参数解析为某源内从根到目标分组的 NodeRef 路径(root → leaf)。
+   * 源未实现 locateTarget / 未找到时返回 null。需先 listSources/listRoot 触发源加载。
+   */
+  locateTarget(
+    scope: ReferenceScope,
+    sourceId: string,
+    params: Record<string, string>
+  ): Promise<NodeRef[] | null>;
+  /** 取已加载的源(用于读取 capabilities/metadata)。需先 listRoot 触发加载。 */
+  getLoadedSource(sourceId: string): ReferenceSourceService | undefined;
+  /**
+   * 权限或 Host 能力变化时取消本聚合器的在途读取。
+   * 成功结果本就不会被 Request Coordinator 保存。
+   */
+  invalidateRuntimeReads(scope?: ReferenceScope): void;
+}
+
+export interface CreateReferenceSourceAggregatorOptions {
+  /** 可跨多个 Picker 共享；只去重正在执行的幂等读取。 */
+  requestCoordinator?: ReferenceReadRequestCoordinator;
+  /** 共享 coordinator 时用于隔离不同 registry/用途。 */
+  requestNamespace?: string;
+  /** 权限或 Host 能力变化时由宿主递增，使旧请求键立即失效。 */
+  getRequestEpoch?: () => string | number;
+}
+
+export function isSourceRootNode(ref: NodeRef): boolean {
+  return ref.nodeId === SOURCE_ROOT_NODE_ID;
+}
+
+export function createReferenceSourceAggregator(
+  registry: ReferenceSourceRegistry,
+  options: CreateReferenceSourceAggregatorOptions = {}
+): ReferenceSourceAggregator {
+  // 同一 scope 内源稳定;缓存便于 resolveSelection 同步取源。
+  const sourceMap = new Map<string, ReferenceSourceService>();
+  const requestCoordinator =
+    options.requestCoordinator ?? createReferenceReadRequestCoordinator();
+  const requestNamespace =
+    options.requestNamespace ?? `reference-source-${nextAggregatorNamespace++}`;
+
+  const requestKey = (
+    scope: ReferenceScope,
+    operation: string,
+    fields: Record<string, unknown> = {}
+  ): string =>
+    JSON.stringify({
+      namespace: requestNamespace,
+      workspaceId: scope.workspaceId,
+      epoch: options.getRequestEpoch?.() ?? "",
+      operation,
+      ...fields
+    });
+  const ownsRequestKey = (key: string, scope?: ReferenceScope): boolean => {
+    try {
+      const parsed = JSON.parse(key) as {
+        namespace?: unknown;
+        workspaceId?: unknown;
+      };
+      return (
+        parsed.namespace === requestNamespace &&
+        (scope === undefined || parsed.workspaceId === scope.workspaceId)
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  async function loadSources(
+    scope: ReferenceScope,
+    signal?: AbortSignal
+  ): Promise<ReferenceSourceService[]> {
+    const sources = await registry.getSources(scope, { signal });
+    signal?.throwIfAborted();
+    rememberSources(sources);
+    return sources;
+  }
+
+  function rememberSources(sources: readonly ReferenceSourceService[]): void {
+    sourceMap.clear();
+    for (const source of sources) {
+      sourceMap.set(source.metadata.id, source);
+    }
+  }
+
+  function requireSource(sourceId: string): ReferenceSourceService {
+    const source = sourceMap.get(sourceId);
+    if (!source) {
+      throw new Error(`reference source not found: ${sourceId}`);
+    }
+    return source;
+  }
+
+  return {
+    async listSources(scope, input) {
+      const sources = await requestCoordinator.request(
+        requestKey(scope, "list-sources"),
+        async (signal) => {
+          const loaded = await registry.getSources(scope, { signal });
+          signal.throwIfAborted();
+          return loaded;
+        },
+        input?.signal
+      );
+      input?.signal?.throwIfAborted();
+      // 跨 panel 共用 coordinator 时，每个 aggregator 实例都更新自己的路由表。
+      rememberSources(sources);
+      return sources.map((source) => ({
+        sourceId: source.metadata.id,
+        label: source.metadata.label,
+        ...(source.metadata.icon ? { icon: source.metadata.icon } : {}),
+        capabilities: source.capabilities
+      }));
+    },
+
+    async loadSidebarGroups(scope, sourceId, input) {
+      const cursor = input?.cursor ?? null;
+      return requestCoordinator.request(
+        requestKey(scope, "sidebar-groups", { sourceId, cursor }),
+        (signal) =>
+          requireSource(sourceId).loadSidebarGroups(scope, {
+            cursor,
+            signal
+          }),
+        input?.signal
+      );
+    },
+
+    async listRoot(scope) {
+      const sources = await loadSources(scope);
+      return sources.map((source) => ({
+        ref: { sourceId: source.metadata.id, nodeId: SOURCE_ROOT_NODE_ID },
+        kind: "folder",
+        displayName: source.metadata.label,
+        hasChildren: true
+      }));
+    },
+
+    async listChildren(scope, node, input) {
+      const cursor = input?.cursor ?? null;
+      const filter = input?.filter ?? null;
+      return requestCoordinator.request(
+        requestKey(scope, "list-children", {
+          sourceId: node.sourceId,
+          nodeId: node.nodeId,
+          cursor,
+          filter
+        }),
+        (signal) =>
+          requireSource(node.sourceId).listChildren(scope, {
+            node: isSourceRootNode(node) ? null : node,
+            cursor,
+            filter,
+            signal
+          }),
+        input?.signal
+      );
+    },
+
+    async search(scope, sourceId, input) {
+      const source = requireSource(sourceId);
+      if (referenceProvenanceFilterIsActive(input.provenanceFilter ?? null)) {
+        const supported = new Set(
+          source.capabilities.provenanceDimensions ?? []
+        );
+        if (
+          (input.provenanceFilter?.agentTargetIds !== null &&
+            !supported.has("agent")) ||
+          (input.provenanceFilter?.memberIds !== null &&
+            !supported.has("member"))
+        ) {
+          return { entries: [], nextCursor: null };
+        }
+      }
+      if (!source.search) {
+        return { entries: [], nextCursor: null };
+      }
+      return requestCoordinator.request(
+        requestKey(scope, "search", {
+          sourceId,
+          query: input.query,
+          cursor: input.cursor ?? null,
+          limit: input.limit ?? null,
+          kinds: [...(input.kinds ?? [])].sort(),
+          filters: [...(input.filters ?? [])].sort(),
+          provenance: input.provenanceFilter
+            ? referenceProvenanceFilterCacheKey(input.provenanceFilter)
+            : "disabled",
+          withinNodeId: input.withinNodeId ?? null
+        }),
+        (signal) => source.search!(scope, { ...input, signal }),
+        input.signal
+      );
+    },
+
+    async createDirectory(scope, sourceId, input) {
+      const source = requireSource(sourceId);
+      if (!source.createDirectory) {
+        throw new Error(
+          `reference source cannot create directories: ${sourceId}`
+        );
+      }
+      if (input.parent && input.parent.ref.sourceId !== sourceId) {
+        throw new Error("reference directory parent belongs to another source");
+      }
+      return source.createDirectory(scope, input);
+    },
+
+    async open(scope, node) {
+      const source = requireSource(node.ref.sourceId);
+      await source.open?.(scope, node);
+    },
+
+    async listOpenWithApplications(scope, node) {
+      const source = requireSource(node.ref.sourceId);
+      return (await source.listOpenWithApplications?.(scope, node)) ?? [];
+    },
+
+    async openWithApplication(scope, node, applicationPath) {
+      const source = requireSource(node.ref.sourceId);
+      await source.openWithApplication?.(scope, node, applicationPath);
+    },
+
+    async openWithOtherApplication(scope, node, applicationPickerPrompt) {
+      const source = requireSource(node.ref.sourceId);
+      await source.openWithOtherApplication?.(
+        scope,
+        node,
+        applicationPickerPrompt
+      );
+    },
+
+    async reveal(scope, node) {
+      const source = requireSource(node.ref.sourceId);
+      await source.reveal?.(scope, node);
+    },
+
+    async readPreview(scope, node) {
+      return requestCoordinator.request(
+        requestKey(scope, "preview", {
+          sourceId: node.ref.sourceId,
+          nodeId: node.ref.nodeId,
+          mtimeMs: node.mtimeMs ?? null,
+          sizeBytes: node.sizeBytes ?? null
+        }),
+        async () =>
+          (await requireSource(node.ref.sourceId).readPreview?.(scope, node)) ??
+          null
+      );
+    },
+
+    resolveSelection(node) {
+      const selected = requireSource(node.ref.sourceId).resolveSelection(node);
+      return {
+        ...selected,
+        sourceId: selected.sourceId ?? node.ref.sourceId
+      };
+    },
+
+    async prepareSelection(scope, node) {
+      const source = requireSource(node.ref.sourceId);
+      const selected = source.resolveSelection(node);
+      const prepared = source.prepareSelection
+        ? await source.prepareSelection(scope, node, selected)
+        : selected;
+      return {
+        ...prepared,
+        sourceId: prepared.sourceId ?? selected.sourceId ?? node.ref.sourceId
+      };
+    },
+
+    async locateTarget(scope, sourceId, params) {
+      // 源可能尚未加载(getLoadedSource 依赖先前 listSources/listRoot);此处兜底加载一次。
+      if (!sourceMap.has(sourceId)) {
+        await loadSources(scope);
+      }
+      const source = sourceMap.get(sourceId);
+      if (!source?.locateTarget) {
+        return null;
+      }
+      return (await source.locateTarget(scope, params)) ?? null;
+    },
+
+    getLoadedSource(sourceId) {
+      return sourceMap.get(sourceId);
+    },
+
+    invalidateRuntimeReads(scope) {
+      requestCoordinator.invalidate((key) => ownsRequestKey(key, scope));
+    }
+  };
+}
+
+/** 静态 registry:持有一组源,按 isAvailable 过滤、按 order 排序。 */
+export function createStaticReferenceSourceRegistry(
+  sources: readonly ReferenceSourceService[]
+): ReferenceSourceRegistry {
+  return {
+    async getSources(scope, input) {
+      const availability = await Promise.all(
+        sources.map(async (source) => {
+          try {
+            return await source.isAvailable(scope, input?.signal);
+          } catch {
+            return false;
+          }
+        })
+      );
+      return sources
+        .filter((_, index) => availability[index])
+        .sort((left, right) => left.metadata.order - right.metadata.order);
+    }
+  };
+}
+
+let nextAggregatorNamespace = 1;

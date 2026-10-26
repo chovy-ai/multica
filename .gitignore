@@ -16,6 +16,9 @@ dist-electron
 # config files (entitlements, icons) — not build output.
 !apps/desktop/build/
 !apps/desktop/build/**
+# Vendored GUI build helpers are source files listed in its source manifest.
+!vendor/tutti/packages/agent/gui/build/
+!vendor/tutti/packages/agent/gui/build/**
 
 # env
 .env*
