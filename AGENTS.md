@@ -101,6 +101,7 @@ Workspace-scoped queries filter by `workspace_id`; membership gates access and `
 
 ## Web/Desktop UI Rules
 
+- Start UI changes from `packages/ui/docs/README.md`, which indexes the rule sources and verification steps.
 - For Button and Dialog usage, read `packages/ui/docs/button.md` and `packages/ui/docs/dialog.md`. These component contracts also power UI Lab documentation.
 
 - Prefer existing shadcn/Base UI primitives. Add components with `pnpm ui:add <component>`.
