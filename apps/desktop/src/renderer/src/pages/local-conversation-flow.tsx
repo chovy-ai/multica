@@ -1,3 +1,5 @@
+import { getLocalConversationClient, LocalRuntimeUpdateRequired } from "../platform/local-conversation-client";
+import { LocalRuntimeNotice } from "./local-runtime-notice";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Archive, ChevronDown, ChevronRight, Clock3, Copy, FolderKanban, FolderMinus, FolderOpen, FolderPlus, GitFork, Loader2, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square } from "lucide-react";
@@ -35,7 +37,7 @@ import { SESSION_LIST_MIN_WIDTH, SESSION_LIST_MAX_WIDTH, useConversationLayoutSt
 
 const EMPTY_PROJECT_IDS: string[] = [];
 function localProjectsRequireRestart(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("Unknown local conversation request");
+  return error instanceof LocalRuntimeUpdateRequired || (error instanceof Error && error.message.includes("Unknown local conversation request"));
 }
 
 export function LocalConversationFlowPage() {
@@ -70,7 +72,7 @@ export function LocalConversationFlowPage() {
     window.addEventListener("blur", finish);
   };
   const qc = useQueryClient();
-  const client = window.desktopAPI.localConversations;
+  const client = getLocalConversationClient(window.desktopAPI.localConversations);
   const sideWorkspace = useRef<SideWorkspaceHandle>(null);
   const [sideOpen, setSideOpen] = useState(false);
   const [referenceDraft, setReferenceDraft] = useState<RestoreDraftRequest | null>(null);
@@ -125,7 +127,7 @@ export function LocalConversationFlowPage() {
     setCollapsedProjects((previous) => { const next = new Set(previous); next.delete(source?.projectId ?? "unassigned"); return next; });
     select(id, source?.provider); setLocateRequest({ sessionId: id, turnId, quote, sequence: Date.now() });
   };
-  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, getSelectionIntent: () => currentIntent.current, onLocalSelect: (id, choice) => latest.current.select(id, choice), onOpenSide: (id) => sideWorkspace.current?.openSide(id), onOpenResource: (id, url) => { void sideWorkspace.current?.openResource(id, url).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error))); }, onLocateSource: (sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote) }, window.desktopAPI.localConversations), []);
+  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: chinese ? "zh-CN" : "en", getSelectionIntent: () => currentIntent.current, onLocalSelect: (id, choice) => latest.current.select(id, choice), onOpenSide: (id) => sideWorkspace.current?.openSide(id), onOpenResource: (id, url) => { void sideWorkspace.current?.openResource(id, url).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error))); }, onLocateSource: (sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote) }, client), [client, chinese]);
   useEffect(() => client.subscribe((changed) => {
     if (changed.userId === scope.userId && changed.workspaceId === scope.workspaceId) void qc.invalidateQueries({ queryKey: localConversationKey(changed) });
   }), [client, qc, scope.userId, scope.workspaceId]);
@@ -412,6 +414,7 @@ export function LocalConversationFlowPage() {
             {selected && <Button variant="ghost" size="sm" className="max-w-48" aria-label={labels.directory} disabled={selected.messages.length > 0} title={`${automaticDirectory ? directoryName : selected.cwd}${selected.messages.length ? ` · ${labels.directoryLocked}` : ""}`} onClick={() => { void client.request(scope, "directory", { id: selected.id }).then(() => qc.invalidateQueries({ queryKey: localConversationKey(scope) })).catch(report); }}><FolderOpen className="size-4" /><span className="truncate">{directoryName}</span></Button>}
             <IconButton aria-expanded={sideOpen} label={sideOpen ? (chinese ? "关闭右侧面板" : "Close right workspace") : (chinese ? "打开右侧面板" : "Open right workspace")} onClick={() => sideWorkspace.current?.toggle()}><PanelRightOpen /></IconButton>
           </div>
+          <LocalRuntimeNotice scope={scope} chinese={chinese} />
           <TuttiAgentGuiPanel locateRequest={locateRequest ?? undefined} restoreDraftRequest={referenceDraft} key={`${workspace.id}:${userId}`} serviceFactory={factory} workspaceId={workspace.id} workspaceSlug={slug} userId={userId}
             activeSessionId={selectedId} selectedAgentId={localTargetId(provider)} active={active && mainVisible && (!compact || !showList)} composerFocusSequence={focusSequence || undefined}
             onRestoreDraftApplied={() => setReferenceDraft(null)} onSelectSession={(session) => select(session?.id ?? null)}

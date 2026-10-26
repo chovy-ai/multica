@@ -1,3 +1,4 @@
+import { getLocalConversationClient } from "./local-conversation-client";
 import { api } from "@multica/core/api";
 import { chatKeys } from "@multica/core/chat/queries";
 import type { AgentTask, Attachment, ChatSession } from "@multica/core/types";
@@ -39,7 +40,10 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   onOpenResource?: (sessionId: string, url: string) => void;
   onLocateSource?: (sessionId: string, turnId?: string, quote?: string) => void;
   storagePrefix?: string;
+  locale?: string;
 }, client: LocalConversationClient): ReturnType<typeof createAgentGuiParentService> {
+  client = getLocalConversationClient(client);
+  const attachmentFailures = new Set<string>();
   const scope: LocalConversationScope = { userId: options.userId, workspaceId: options.workspaceId };
   const cloud = createAgentGuiParentService(options);
   const listeners = new Set<(event: AgentGuiHostEvent) => void>();
@@ -123,14 +127,40 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   async function detail(id: string): Promise<AgentGuiSessionDetail> {
     const entry = await read(id); assertCurrent(); entry.turns.forEach((turn) => knownTurns.set(turn.id, id));
     const active = entry.turns.find((turn) => turn.status === "running");
+    const chinese = (options.locale || document.documentElement.lang || navigator.language).startsWith("zh");
+    const failedFiles = new Set<string>();
+    const attachmentLoads = new Map<string, Promise<Attachment>>();
+    const messages = await Promise.all(entry.messages.map(async (message) => {
+      const ids = message.attachmentIds ?? [];
+      const results = await Promise.allSettled(ids.map((id) => {
+        let pending = attachmentLoads.get(id);
+        if (!pending) { pending = fileAttachment(id); attachmentLoads.set(id, pending); }
+        return pending;
+      }));
+      const attachments: Attachment[] = [];
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") attachments.push(result.value);
+        else failedFiles.add(ids[index]!);
+      });
+      const missing = results.length - attachments.length;
+      const note = chinese ? `［${missing} 份附件暂时无法加载，重新打开会话可重试。］` : `[${missing} attachment(s) could not be loaded. Reopen the conversation to retry.]`;
+      return { id: message.id, chat_session_id: id, role: message.role,
+        content: missing ? `${localMessageDisplayContent(message)}\n\n${note}`.trim() : message.content,
+        task_id: message.turnId, created_at: message.createdAt,
+        ...(attachments.length ? { attachments } : {}), ...(message.failed ? { failure_reason: "agent_error" } : {}) };
+    }));
+    assertCurrent();
+    if (failedFiles.size) {
+      if (!attachmentFailures.has(id)) options.onShowMessage(chinese ? "部分附件暂时无法加载，会话正文已保留。" : "Some attachments could not be loaded. Conversation text is still available.", "warning");
+      attachmentFailures.add(id);
+    } else attachmentFailures.delete(id);
     return { session: projectLocalSession(entry, scope), model: entry.model, promptQueue: entry.promptQueue ?? { revision: 0, paused: false, items: [] },
       backgroundTasks: entry.turns.flatMap((turn) => (turn.backgroundTasks ?? []).filter((task) => !task.ambient).map((task) => ({ turnId: turn.id, task }))),
       questions: entry.turns.flatMap((turn) => (turn.questions ?? []).map((question) => ({ turnId: turn.id, question }))),
       permissionMode: entry.permissionMode ?? (entry.side || entry.forkedFrom || entry.messages.length > 0 || entry.turns.length > 0 ? "default" : undefined),
       tasks: entry.turns.map((turn) => projectLocalTurn(entry, turn)),
       ...(entry.forkedFrom && entry.forkedFromTurnId ? { forkedFrom: { sessionId: entry.forkedFrom, turnId: entry.forkedFromTurnId, targetTurnId: entry.forkedTurnId ?? entry.turns.at(-1)?.id ?? "", operationId: entry.id, createdAt: entry.createdAt } } : {}),
-      messages: await Promise.all(entry.messages.map(async (message) => ({ id: message.id, chat_session_id: id, role: message.role, content: message.content, task_id: message.turnId, created_at: message.createdAt,
-        ...(message.attachmentIds?.length ? { attachments: await Promise.all(message.attachmentIds.map(fileAttachment)) } : {}), ...(message.failed ? { failure_reason: "agent_error" } : {}) }))),
+      messages,
       pending: active ? { task_id: active.id, status: "running", created_at: active.createdAt } : {},
     };
   }

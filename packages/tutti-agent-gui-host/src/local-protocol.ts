@@ -120,7 +120,10 @@ export interface LocalAccountUsage {
 export interface LocalProviderUsage {
   provider: LocalProviderId; context: LocalContextUsage; account: LocalAccountUsage;
 }
+export const LOCAL_CONVERSATION_PROTOCOL_VERSION = 1;
+export interface LocalConversationCapabilities { protocolVersion: number; methods: string[] }
 export interface LocalConversationMethods {
+  capabilities: { params: Record<string, never>; result: LocalConversationCapabilities };
   queueEnqueue: { params: { id: string; item: LocalQueuedPrompt; paused?: boolean }; result: LocalPromptQueue };
   queueUpdate: { params: { id: string; action: "pause" | "stop" | "resume" | "remove" | "sendNow"; requestId?: string }; result: LocalPromptQueue };
   queueSide: { params: { id: string; requestId: string }; result: LocalConversation };
@@ -159,3 +162,40 @@ export interface LocalConversationClient {
   request<M extends LocalConversationMethod>(scope: LocalConversationScope, method: M, params: LocalConversationMethods[M]["params"]): Promise<LocalConversationMethods[M]["result"]>;
   subscribe(listener: (scope: LocalConversationScope, sessionId: string) => void): () => void;
 }
+
+/** Adding an IPC method requires advertising it to the renderer. */
+export const LOCAL_CONVERSATION_METHODS = {
+  capabilities: true,
+  queueEnqueue: true,
+  queueUpdate: true,
+  queueSide: true,
+  stopBackgroundTasks: true,
+  folderProjects: true,
+  folderProjectAdd: true,
+  sideCreate: true,
+  sideAccepted: true,
+  previewChoose: true,
+  previewList: true,
+  previewRead: true,
+  importScan: true,
+  importSessions: true,
+  importCancel: true,
+  providers: true,
+  list: true,
+  read: true,
+  create: true,
+  fork: true,
+  update: true,
+  directory: true,
+  send: true,
+  fileStore: true,
+  fileInfo: true,
+  fileRead: true,
+  imageRead: true,
+  cancel: true,
+  answerQuestion: true,
+  models: true,
+  usage: true,
+  remoteBegin: true,
+  remoteUpdate: true,
+} satisfies Record<LocalConversationMethod, true>;

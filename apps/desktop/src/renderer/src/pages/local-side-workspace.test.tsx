@@ -1,3 +1,4 @@
+import { LOCAL_CONVERSATION_METHODS } from "@multica/tutti-agent-gui-host/local-protocol";
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -9,7 +10,7 @@ vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: (
 const scope = { userId: "side-user", workspaceId: "side-workspace" };
 let queryClient: QueryClient;
 let sessions: LocalConversation[];
-let request: ReturnType<typeof vi.fn>;
+let request: ReturnType<typeof vi.fn<(scope: unknown, method: string, params: Record<string, unknown>) => Promise<unknown>>>;
 const preview = { request: vi.fn(), subscribe: vi.fn(() => () => {}) };
 beforeEach(() => {
   localStorage.clear(); vi.clearAllMocks();
@@ -17,7 +18,7 @@ beforeEach(() => {
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   sessions = [{ id: "main", provider: "codex", title: "Main conversation", cwd: "/project", model: "main-model", messages: [], turns: [], createdAt: "2026-10-24", updatedAt: "2026-10-24", archived: false, pinned: false }];
   request = vi.fn(async (_scope, method, params) => {
-    if (method === "sideCreate") { const side = { ...sessions[0]!, id: "new-side", side: { sourceId: "main", requestId: params.requestId, context: [] } }; sessions.push(side); return side; }
+    if (method === "sideCreate") { const side = { ...sessions[0]!, id: "new-side", side: { sourceId: "main", requestId: String(params.requestId), context: [] } }; sessions.push(side); return side; }
     if (method === "read") return sessions.find((entry) => entry.id === params.id);
     if (method === "previewChoose") return { root: "/project", path: "/project", name: "project", kind: "directory" };
     if (method === "previewList") return [{ root: "/project", path: "/project/test.ts", name: "test.ts", kind: "file" }, { root: "/project", path: "/project/nested", name: "nested", kind: "directory" }];
@@ -25,7 +26,7 @@ beforeEach(() => {
     return undefined;
   });
   preview.request.mockImplementation(async (_scope, command) => command.action === "close" || command.action === "hide" ? null : { id: command.id, url: command.url, title: "Example", loading: false, canGoBack: false, canGoForward: false });
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request, subscribe: () => () => {} }, resourcePreview: preview, openExternal: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: 1, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: () => () => {} }, resourcePreview: preview, openExternal: vi.fn() } });
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {

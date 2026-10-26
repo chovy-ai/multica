@@ -1,3 +1,5 @@
+import { LocalRuntimeNotice } from "./local-runtime-notice";
+import { getLocalConversationClient } from "../platform/local-conversation-client";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
@@ -70,10 +72,10 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
       const scope = latest.current.scope;
       setOpeningFiles((count) => count + 1); setError(""); setLayout((current) => ({ ...current, open: true }));
       try {
-        const source = await window.desktopAPI.localConversations.request(scope, "read", { id: sessionId });
+        const source = await getLocalConversationClient(window.desktopAPI.localConversations).request(scope, "read", { id: sessionId });
         const { file, line } = await resolveConversationFile({ source, value,
-          read: (path) => window.desktopAPI.localConversations.request(scope, "previewRead", { root: source.cwd, path, id: source.id }),
-          list: (path) => window.desktopAPI.localConversations.request(scope, "previewList", { root: source.cwd, path, id: source.id }),
+          read: (path) => getLocalConversationClient(window.desktopAPI.localConversations).request(scope, "previewRead", { root: source.cwd, path, id: source.id }),
+          list: (path) => getLocalConversationClient(window.desktopAPI.localConversations).request(scope, "previewList", { root: source.cwd, path, id: source.id }),
         });
         add({ id: `file:${crypto.randomUUID()}`, kind: "file", sourceId: source.id, line, location: { root: source.cwd, path: file.path, name: file.name, kind: "file" } });
       } catch (error) {
@@ -91,12 +93,12 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     if (creating) return; setCreating(true);
     try {
       let source = props.source;
-      if (!source) { source = await window.desktopAPI.localConversations.request(props.scope, "create", { provider: props.provider }); props.onSelectSource(source.id); }
-      const side = await window.desktopAPI.localConversations.request(props.scope, "sideCreate", { id: source.id, requestId: crypto.randomUUID() }); openSide(side.id);
+      if (!source) { source = await getLocalConversationClient(window.desktopAPI.localConversations).request(props.scope, "create", { provider: props.provider }); props.onSelectSource(source.id); }
+      const side = await getLocalConversationClient(window.desktopAPI.localConversations).request(props.scope, "sideCreate", { id: source.id, requestId: crypto.randomUUID() }); openSide(side.id);
     } catch (error) { showError(error); } finally { setCreating(false); }
   };
   const chooseFile = async (kind: "file" | "directory") => {
-    try { const location = await window.desktopAPI.localConversations.request(props.scope, "previewChoose", { kind }); if (location) add({ id: `file:${crypto.randomUUID()}`, kind: "file", location }); }
+    try { const location = await getLocalConversationClient(window.desktopAPI.localConversations).request(props.scope, "previewChoose", { kind }); if (location) add({ id: `file:${crypto.randomUUID()}`, kind: "file", location }); }
     catch (error) { showError(error); }
   };
   const close = (id: string) => setLayout((current) => { const tabs = current.tabs.filter((tab) => tab.id !== id); return { tabs, selected: current.selected === id ? tabs.at(-1)?.id ?? null : current.selected, open: tabs.length > 0 && current.open }; });
@@ -147,8 +149,9 @@ function SideConversation(props: Props & { sessionId: string; onSide(id: string)
   const latest = useRef(props); latest.current = props;
   const session = props.sessions.find((entry) => entry.id === props.sessionId);
   const [starting, setStarting] = useState(false);
-  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, storagePrefix: `side:${props.sessionId}:`, onLocalSelect: (id) => { if (id && id !== props.sessionId) latest.current.onSide(id); }, onOpenSide: (id) => latest.current.onSide(id), onOpenResource: (id, url) => { void latest.current.onResource(id, url).catch((error: unknown) => latest.current.onShowMessage(error instanceof Error ? error.message : String(error), "error")); }, onLocateSource: (id, turnId, quote) => latest.current.onSelectSource(id, turnId, quote) }, window.desktopAPI.localConversations), [props.sessionId]);
+  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: props.chinese ? "zh-CN" : "en", storagePrefix: `side:${props.sessionId}:`, onLocalSelect: (id) => { if (id && id !== props.sessionId) latest.current.onSide(id); }, onOpenSide: (id) => latest.current.onSide(id), onOpenResource: (id, url) => { void latest.current.onResource(id, url).catch((error: unknown) => latest.current.onShowMessage(error instanceof Error ? error.message : String(error), "error")); }, onLocateSource: (id, turnId, quote) => latest.current.onSelectSource(id, turnId, quote) }, window.desktopAPI.localConversations), [props.sessionId, props.chinese]);
   return <div className="flex h-full min-h-0 flex-col">
+    <LocalRuntimeNotice scope={props.scope} chinese={props.chinese} />
     {session?.side && <div className="shrink-0 border-b px-3 py-3 text-caption text-muted-foreground"><div className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{props.chinese ? "来自主对话" : "From main chat"} · {props.sessions.find((entry) => entry.id === session.side!.sourceId)?.title}</span><Button variant="link" size="xs" onClick={() => props.onSelectSource(session.side!.sourceId, session.side!.turnId, session.side!.quote)}><ArrowLeft className="size-3.5" />{props.chinese ? "定位来源" : "Locate source"}</Button></div>{session.side.quote && <blockquote className="mt-2 max-h-28 overflow-auto border-l-2 pl-3 text-body text-foreground">{session.side.quote}</blockquote>}{session.side.pending && <Button className="mt-2" variant="outline" size="sm" disabled={starting} onClick={() => {
       setStarting(true); const service = factory({ queryClient, resolveAvatar: (url) => url, workspaceId: props.scope.workspaceId, workspaceSlug: props.slug, userId: props.scope.userId, isCurrent: () => useAuthStore.getState().user?.id === props.scope.userId && getCurrentWsId() === props.scope.workspaceId, onSelectSession: () => {}, onOpenTask: props.onOpenTask, onShowMessage: props.onShowMessage });
       void service.request("host.startSide", { sessionId: session.id }).catch((error: unknown) => props.onShowMessage(error instanceof Error ? error.message : String(error), "error")).finally(() => { service.dispose(); setStarting(false); });
