@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { getCurrentWsId } from "@multica/core/platform";
-import { ArrowLeft, File, FolderOpen, Globe, Maximize2, MessagesSquare, Minimize2, PanelRightOpen, Plus, X } from "lucide-react";
+import { ArrowLeft, File, FolderOpen, Globe, Loader2, Maximize2, MessagesSquare, Minimize2, PanelRightOpen, Plus, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@multica/ui/components/ui/dropdown-menu";
@@ -12,7 +12,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle, useDefaultLayout 
 import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
 import type { LocalConversation, LocalConversationScope, LocalPreviewLocation, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
-import { localResourceTarget } from "@multica/tutti-agent-gui-host/message-resource-links";
+import { FileLinkPreviewError, fileLinkErrorMessage, resolveConversationFile } from "./local-resource-resolution";
 import { createLocalConversationParentService, localTargetId } from "../platform/local-conversation-service";
 import { LocalFilePreview, PreviewFolder, WebResourcePreview } from "./local-resource-preview";
 
@@ -43,6 +43,8 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
   const [addressOpen, setAddressOpen] = useState(false), [address, setAddress] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [openingFiles, setOpeningFiles] = useState(0);
+  const resourceRequests = useRef(new Map<string, Promise<void>>());
   const root = useRef<HTMLDivElement>(null);
   const latest = useRef(props); latest.current = props;
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: "multica-side-workspace-width" });
@@ -59,14 +61,29 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     return { tabs: existing ? current.tabs.map((item) => item.id === existing.id && item.kind === "file" && tab.kind === "file" ? { ...item, line: tab.line } : item) : [...current.tabs, tab], selected: existing?.id ?? tab.id, open: true };
   }); setError(""); }, []);
   const openSide = useCallback((id: string) => add({ id: `side:${id}`, kind: "side", sessionId: id }), [add]);
-  const openResource = useCallback(async (sessionId: string, value: string) => {
-    if (/^https?:\/\//i.test(value)) { const url = new URL(value); if (url.username || url.password) throw new Error("Use a webpage address without credentials"); add({ id: `web:${crypto.randomUUID()}`, kind: "web", url: url.href }); return; }
-    const source = await window.desktopAPI.localConversations.request(latest.current.scope, "read", { id: sessionId });
-    const target = localResourceTarget(value);
-    if (!target) throw new Error("Use a local file path or webpage address");
-    const path = /^(?:\/|[a-z]:[\\/])/i.test(target.path) ? target.path : `${source.cwd}/${target.path}`;
-    const file = await window.desktopAPI.localConversations.request(latest.current.scope, "previewRead", { root: source.cwd, path, id: source.id });
-    add({ id: `file:${crypto.randomUUID()}`, kind: "file", sourceId: source.id, line: target.line, location: { root: source.cwd, path: file.path, name: file.name, kind: "file" } });
+  const openResource = useCallback((sessionId: string, value: string) => {
+    const key = JSON.stringify([sessionId, value]);
+    const pending = resourceRequests.current.get(key);
+    if (pending) return pending;
+    const operation = (async () => {
+      if (/^https?:\/\//i.test(value)) { const url = new URL(value); if (url.username || url.password) throw new Error("Use a webpage address without credentials"); add({ id: `web:${crypto.randomUUID()}`, kind: "web", url: url.href }); return; }
+      const scope = latest.current.scope;
+      setOpeningFiles((count) => count + 1); setError(""); setLayout((current) => ({ ...current, open: true }));
+      try {
+        const source = await window.desktopAPI.localConversations.request(scope, "read", { id: sessionId });
+        const { file, line } = await resolveConversationFile({ source, value,
+          read: (path) => window.desktopAPI.localConversations.request(scope, "previewRead", { root: source.cwd, path, id: source.id }),
+          list: (path) => window.desktopAPI.localConversations.request(scope, "previewList", { root: source.cwd, path, id: source.id }),
+        });
+        add({ id: `file:${crypto.randomUUID()}`, kind: "file", sourceId: source.id, line, location: { root: source.cwd, path: file.path, name: file.name, kind: "file" } });
+      } catch (error) {
+        if (!(error instanceof FileLinkPreviewError)) throw error;
+        setError(fileLinkErrorMessage(error, latest.current.chinese));
+      } finally { setOpeningFiles((count) => count - 1); }
+    })();
+    resourceRequests.current.set(key, operation);
+    void operation.finally(() => resourceRequests.current.delete(key)).catch(() => {});
+    return operation;
   }, [add]);
   useImperativeHandle(ref, () => ({ openSide, openResource, toggle: () => setLayout((current) => ({ ...current, open: !current.open })) }), [openSide, openResource]);
   const showError = (error: unknown) => { const message = error instanceof Error ? error.message : String(error); setError(message); props.onShowMessage(message, "error"); };
@@ -109,6 +126,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
             </DropdownMenuContent></DropdownMenu>
             <IconButton label={maximized ? (props.chinese ? "恢复并排显示" : "Restore split view") : (props.chinese ? "展开右侧面板" : "Expand right workspace")} onClick={() => setMaximized(!maximized)}>{maximized ? <Minimize2 /> : <Maximize2 />}</IconButton><IconButton label={props.chinese ? "关闭右侧面板" : "Close right workspace"} onClick={() => setLayout((current) => ({ ...current, open: false }))}><X /></IconButton>
           </div>
+          {openingFiles > 0 && <div role="status" className="flex items-center gap-2 border-b px-3 py-2 text-caption text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />{props.chinese ? "正在定位文件…" : "Locating file…"}</div>}
           {error && <div role="alert" className="flex items-center justify-between border-b px-3 py-2 text-caption text-destructive"><span>{error}</span><IconButton label={props.chinese ? "关闭错误提示" : "Dismiss error"} onClick={() => setError("")}><X /></IconButton></div>}
           {!activeTab && <div className="flex flex-1 flex-col items-center justify-center gap-4 text-body text-muted-foreground"><PanelRightOpen className="size-8" /><span>{props.chinese ? "在这里继续旁支对话，或查看文件和网页" : "Continue a side chat or inspect files and webpages here"}</span><Button variant="outline" disabled={creating} onClick={() => { void createSide(); }}><Plus className="size-4" />{props.chinese ? "新建旁支" : "New side conversation"}</Button></div>}
           {layout.tabs.map((tab) => <section key={tab.id} role="tabpanel" id={`resource-content-${tab.id}`} aria-labelledby={`resource-tab-${tab.id}`} hidden={layout.selected !== tab.id} className="min-h-0 flex-1 overflow-hidden">

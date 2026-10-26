@@ -29,9 +29,9 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {
-  const ref = createRef<SideWorkspaceHandle>(); const onSelectSource = vi.fn();
-  const view = render(<QueryClientProvider client={queryClient}><LocalSideWorkspace ref={ref} scope={scope} slug="test" source={sessions[0]} provider="codex" sessions={sessions} chinese active onSelectSource={onSelectSource} onOpenTask={() => {}} onShowMessage={() => {}} onReference={() => {}}>{(visible) => <textarea aria-label="Main draft" data-visible={String(visible)} />}</LocalSideWorkspace></QueryClientProvider>);
-  return { ...view, ref, onSelectSource };
+  const ref = createRef<SideWorkspaceHandle>(); const onSelectSource = vi.fn(), onShowMessage = vi.fn();
+  const view = render(<QueryClientProvider client={queryClient}><LocalSideWorkspace ref={ref} scope={scope} slug="test" source={sessions[0]} provider="codex" sessions={sessions} chinese active onSelectSource={onSelectSource} onOpenTask={() => {}} onShowMessage={onShowMessage} onReference={() => {}}>{(visible) => <textarea aria-label="Main draft" data-visible={String(visible)} />}</LocalSideWorkspace></QueryClientProvider>);
+  return { ...view, ref, onSelectSource, onShowMessage };
 }
 it("creates a Side without replacing the main draft, retains its draft when closed, and returns to its source", async () => {
   const { ref, onSelectSource } = setup(); const main = screen.getByRole("textbox", { name: "Main draft" });
@@ -75,6 +75,29 @@ it("rejects foreign file URLs before reading a local resource", async () => {
   const { ref } = setup();
   await expect(ref.current!.openResource("main", "file://server/project/cases.html")).rejects.toThrow("Use a local file path");
   expect(request.mock.calls.filter(([, method]) => method === "previewRead")).toEqual([]);
+});
+it("shows one recoverable file error and preserves the main draft instead of stacking IPC toasts", async () => {
+  let missing = true;
+  request.mockImplementation(async (_scope, method) => {
+    if (method === "read") return sessions[0];
+    if (method === "previewRead") {
+      if (missing) throw new Error("Error invoking remote method 'local-conversation:request': Error: ENOENT: realpath '/project/walkthrough.md'");
+      return { name: "test.ts", path: "/project/test.ts", mimeType: "text/plain", text: "ready", size: 5, truncated: false };
+    }
+    return undefined;
+  });
+  const { ref, onShowMessage } = setup(); const main = screen.getByRole("textbox", { name: "Main draft" });
+  fireEvent.change(main, { target: { value: "Keep this draft" } });
+  await act(async () => { await Promise.all([ref.current!.openResource("main", "walkthrough.md"), ref.current!.openResource("main", "walkthrough.md")]); });
+  expect(request.mock.calls.filter(([, method]) => method === "previewRead")).toHaveLength(1);
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(screen.getByRole("alert")).toHaveTextContent("找不到此文件");
+  expect(screen.getByRole("alert")).not.toHaveTextContent(/ENOENT|remote method|realpath/);
+  expect(onShowMessage).not.toHaveBeenCalled(); expect(main).toHaveValue("Keep this draft");
+  missing = false;
+  await act(async () => { await ref.current!.openResource("main", "/project/test.ts"); });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Main draft" })).toBe(main);
 });
 it("opens a web tab in the same workspace and closes its native view with the tab", async () => {
   const { ref } = setup(); ref.current!.toggle();
