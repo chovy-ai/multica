@@ -779,6 +779,7 @@ start_desktop() {
 # Managed by scripts/dev-env.sh for environment ${NAME}.
 VITE_API_URL=http://localhost:${BACKEND_PORT}
 VITE_WS_URL=ws://localhost:${BACKEND_PORT}/ws
+VITE_APP_URL=http://localhost:${FRONTEND_PORT}
 EOF
   launch_detached desktop env \
     DESKTOP_RENDERER_PORT="$DESKTOP_RENDERER_PORT" DESKTOP_APP_SUFFIX="$DESKTOP_APP_SUFFIX" \
@@ -818,7 +819,8 @@ desktop_env_matches() {
   [ -f "$DESKTOP_ENV_FILE" ] \
     && grep -Fqx "# Managed by scripts/dev-env.sh for environment ${NAME}." "$DESKTOP_ENV_FILE" \
     && grep -Fqx "VITE_API_URL=http://localhost:${BACKEND_PORT}" "$DESKTOP_ENV_FILE" \
-    && grep -Fqx "VITE_WS_URL=ws://localhost:${BACKEND_PORT}/ws" "$DESKTOP_ENV_FILE"
+    && grep -Fqx "VITE_WS_URL=ws://localhost:${BACKEND_PORT}/ws" "$DESKTOP_ENV_FILE" \
+    && grep -Fqx "VITE_APP_URL=http://localhost:${FRONTEND_PORT}" "$DESKTOP_ENV_FILE"
 }
 
 stop_component() {

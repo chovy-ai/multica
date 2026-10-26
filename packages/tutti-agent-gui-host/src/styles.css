@@ -1,0 +1,39 @@
+@import "tailwindcss";
+@import "@tutti-os/ui-system/styles.css";
+@import "@tutti-os/workbench-surface/styles.css";
+@import "@tutti-os/agent-gui/styles.css";
+@import "../.multica-tokens.css";
+@import "./multica-theme.css";
+@import "./multica-components.css";
+@import "./conversation-appearance.css";
+
+@source "../../../vendor/tutti/packages/agent/gui";
+@source "../../../vendor/tutti/packages/browser/workbench-node/src";
+@source "../../../vendor/tutti/packages/connector/renderer/src";
+@source "../../../vendor/tutti/packages/ui/rich-text/src";
+@source "../../../vendor/tutti/packages/ui/system/src";
+@source "../../ui/components/ui/button.tsx";
+@source "../../ui/components/ui/badge.tsx";
+@source "../../ui/components/ui/spinner.tsx";
+@source "../../ui/components/ui/dropdown-menu.tsx";
+@source "../../../vendor/tutti/packages/workbench/surface/src";
+@source "../../../vendor/tutti/packages/workspace/file-manager/src";
+@source "../../../vendor/tutti/packages/workspace/file-preview/src";
+@source "../../../vendor/tutti/packages/workspace/file-reference/src";
+@source "../../../vendor/tutti/packages/workspace/issue-manager/src";
+@source "../../../vendor/tutti/packages/workspace/user-project/src";
+
+/* The document stays an embedded viewport; source layout remains intact. */
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+}

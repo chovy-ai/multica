@@ -214,15 +214,18 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const setSelectedAgentId = useChatStore((s) => s.setSelectedAgentId);
   const setSelectedProjectId = useChatStore((s) => s.setSelectedProjectId);
   const user = useAuthStore((s) => s.user);
-  const { data: agents = [], isSuccess: agentsLoaded } = useQuery(
-    agentListOptions(wsId),
-  );
-  const { data: members = [], isSuccess: membersLoaded } = useQuery(
-    memberListOptions(wsId),
-  );
-  const { data: sessions = [], isSuccess: sessionsLoaded } = useQuery(
-    chatSessionsOptions(wsId),
-  );
+  const {
+    data: agents = [], isSuccess: agentsLoaded,
+    isPending: agentsLoading, isError: agentsError, refetch: retryAgents,
+  } = useQuery(agentListOptions(wsId));
+  const {
+    data: members = [], isSuccess: membersLoaded,
+    isPending: membersLoading, isError: membersError, refetch: retryMembers,
+  } = useQuery(memberListOptions(wsId));
+  const {
+    data: sessions = [], isSuccess: sessionsLoaded,
+    isPending: sessionsLoading, isError: sessionsError, refetch: retrySessions,
+  } = useQuery(chatSessionsOptions(wsId));
   const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
     projectListOptions(wsId),
   );
@@ -835,9 +838,15 @@ export function useChatController(opts?: { isActive?: boolean }) {
     wsId,
     user,
     agents,
+    agentsLoading: agentsLoading || membersLoading,
+    agentsError: agentsError || membersError,
+    retryAgents: () => Promise.all([retryAgents(), retryMembers()]),
     availableAgents,
     agentsSettled,
     sessions,
+    sessionsLoading,
+    sessionsError,
+    retrySessions,
     projects,
     activeSessionId,
     selectedAgentId,

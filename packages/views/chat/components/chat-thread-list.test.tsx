@@ -1,9 +1,10 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent, ChatSession } from "@multica/core/types";
 import enChat from "../../locales/en/chat.json";
 import enIssues from "../../locales/en/issues.json";
+import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 
 // --- Mocks ------------------------------------------------------------------
 // The list no longer owns the archive-advance behavior — the parent (ChatPage)
@@ -17,6 +18,9 @@ import enIssues from "../../locales/en/issues.json";
 
 const setActiveSession = vi.fn();
 const archiveMutate = vi.fn();
+const deleteMutate = vi.fn();
+
+afterEach(() => vi.restoreAllMocks());
 
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: ({ actorId }: { actorId: string }) => (
@@ -26,6 +30,11 @@ vi.mock("../../common/actor-avatar", () => ({
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
+}));
+
+vi.mock("@multica/core/paths", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@multica/core/paths")>(),
+  useWorkspaceSlug: () => "acme",
 }));
 
 vi.mock("@multica/core/agents", () => ({
@@ -42,7 +51,7 @@ vi.mock("@multica/core/chat", () => ({
 }));
 
 vi.mock("@multica/core/chat/mutations", () => ({
-  useDeleteChatSession: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteChatSession: () => ({ mutate: deleteMutate, isPending: false }),
   useSetChatSessionPinned: () => ({ mutate: vi.fn(), isPending: false }),
   useSetChatSessionArchived: () => ({ mutate: archiveMutate, isPending: false }),
 }));
@@ -94,9 +103,20 @@ function renderList(
     onSelectSession = vi.fn(),
     renderedSessions = sessions,
     renderedAgents = [agent],
+    onDeletedSession,
+    getSessionHref,
+    navigation,
+  }: {
+    onArchive?: (session: ChatSession) => void;
+    onSelectSession?: (session: ChatSession) => void;
+    renderedSessions?: ChatSession[];
+    renderedAgents?: Agent[];
+    onDeletedSession?: (sessionId: string) => void;
+    getSessionHref?: (sessionId: string) => string | null;
+    navigation?: NavigationAdapter;
   } = {},
 ) {
-  render(
+  const content = (
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <ChatThreadList
         sessions={renderedSessions}
@@ -104,13 +124,44 @@ function renderList(
         activeSessionId={activeSessionId}
         onSelectSession={onSelectSession}
         onArchive={onArchive}
+        onDeletedSession={onDeletedSession}
+        getSessionHref={getSessionHref}
       />
-    </I18nProvider>,
+    </I18nProvider>
   );
+  render(navigation ? <NavigationProvider value={navigation}>{content}</NavigationProvider> : content);
   return { onArchive, onSelectSession };
 }
 
 const ARCHIVE_LABEL = enChat.list.archive;
+
+describe("conversation search", () => {
+  it("matches title, Agent and authored preview while keeping the archive view through an empty search", () => {
+    const chats = [
+      makeSession({ id: "current", title: "Design review" }),
+      makeSession({ id: "archive", title: "Saved report", status: "archived", last_message: { role: "assistant", content: "Ready for acceptance", created_at: "2026-07-08T00:00:00Z" } }),
+    ];
+    const onSelect = vi.fn();
+    const content = (searchQuery: string) => <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <ChatThreadList sessions={chats} agents={[agent]} activeSessionId="current" onArchive={vi.fn()} onSelectSession={onSelect}
+        searchQuery={searchQuery} emptyContent={<p>No matches</p>} />
+    </I18nProvider>;
+    const view = render(content("design"));
+    expect(screen.getByText("Design review")).toBeVisible();
+    view.rerender(content("ALPHA"));
+    expect(screen.getByText("Design review")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Archived/ }));
+    view.rerender(content("acceptance"));
+    expect(screen.getByText("Saved report")).toBeVisible();
+    view.rerender(content("missing"));
+    expect(screen.getByText("No matches")).toBeVisible();
+    view.rerender(content(""));
+    expect(screen.getByText("Saved report")).toBeVisible();
+    expect(screen.queryByText("Design review")).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+    view.unmount();
+  });
+});
 
 describe("ChatThreadList archive delegation", () => {
   beforeEach(() => {
@@ -125,7 +176,7 @@ describe("ChatThreadList archive delegation", () => {
     fireEvent.click(archiveButtons[1]!);
 
     expect(onArchive).toHaveBeenCalledTimes(1);
-    expect(onArchive.mock.calls[0]![0]).toMatchObject({ id: "s2" });
+    expect(onArchive).toHaveBeenCalledWith(expect.objectContaining({ id: "s2" }));
   });
 
   it("passes the archived row's session even when it isn't the open one", () => {
@@ -135,7 +186,7 @@ describe("ChatThreadList archive delegation", () => {
     fireEvent.click(archiveButtons[2]!);
 
     expect(onArchive).toHaveBeenCalledTimes(1);
-    expect(onArchive.mock.calls[0]![0]).toMatchObject({ id: "s3" });
+    expect(onArchive).toHaveBeenCalledWith(expect.objectContaining({ id: "s3" }));
   });
 
   it("does not flip archive status or move selection itself", () => {
@@ -146,6 +197,100 @@ describe("ChatThreadList archive delegation", () => {
     // Advance + mutation are the parent/controller's job now; the list stays out.
     expect(setActiveSession).not.toHaveBeenCalled();
     expect(archiveMutate).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatThreadList deletion ownership", () => {
+  beforeEach(() => {
+    deleteMutate.mockReset();
+    setActiveSession.mockReset();
+  });
+
+  function confirmDeletion(options: Parameters<typeof renderList>[1] = {}) {
+    renderList("archived-1", {
+      ...options,
+      renderedSessions: [makeSession({ id: "archived-1", status: "archived" })],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Archived/ }));
+    fireEvent.click(screen.getByRole("button", { name: enChat.session_history.row_delete_aria }));
+    fireEvent.click(screen.getByRole("button", { name: enChat.session_history.delete_dialog.confirm }));
+    return deleteMutate.mock.calls[0]![1] as {
+      onSuccess?: () => void;
+      onSettled: () => void;
+    };
+  }
+
+  it("delegates successful deletion without changing Chat selection", () => {
+    const onDeletedSession = vi.fn();
+    const callbacks = confirmDeletion({ onDeletedSession });
+
+    expect(deleteMutate).toHaveBeenCalledWith("archived-1", expect.any(Object));
+    expect(onDeletedSession).not.toHaveBeenCalled();
+    expect(setActiveSession).not.toHaveBeenCalled();
+
+    act(() => callbacks.onSuccess?.());
+
+    expect(onDeletedSession).toHaveBeenCalledExactlyOnceWith("archived-1");
+    expect(setActiveSession).not.toHaveBeenCalled();
+  });
+
+  it("does not notify deletion when the mutation settles after failure", () => {
+    const onDeletedSession = vi.fn();
+    const callbacks = confirmDeletion({ onDeletedSession });
+
+    act(() => callbacks.onSettled());
+
+    expect(onDeletedSession).not.toHaveBeenCalled();
+    expect(setActiveSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps the default Chat selection cleanup before deleting", () => {
+    confirmDeletion();
+
+    expect(setActiveSession).toHaveBeenCalledExactlyOnceWith(null);
+    expect(setActiveSession.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteMutate.mock.invocationCallOrder[0]!,
+    );
+  });
+});
+
+describe("ChatThreadList session destinations", () => {
+  const navigation = (): NavigationAdapter => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    back: vi.fn(),
+    pathname: "/acme/conversations",
+    searchParams: new URLSearchParams(),
+    hash: "",
+    getShareableUrl: (path) => `https://app.test${path}`,
+  });
+
+  it.each(["modifier", "middle"])("uses a custom destination for %s clicks", (intent) => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const getSessionHref = vi.fn((id: string) => `/acme/conversations?session=${id}`);
+    const onSelectSession = vi.fn();
+    renderList(null, { getSessionHref, navigation: navigation(), onSelectSession });
+    const row = screen.getByText("Chat s2").closest("[tabindex]")!;
+
+    if (intent === "modifier") fireEvent.click(row, { metaKey: true });
+    else fireEvent(row, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+
+    expect(getSessionHref).toHaveBeenCalledWith("s2");
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      "https://app.test/acme/conversations?session=s2", "_blank", "noopener,noreferrer",
+    );
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Chat destination when no override is supplied", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    renderList(null, { navigation: navigation() });
+
+    fireEvent.click(screen.getByText("Chat s1").closest("[tabindex]")!, { metaKey: true });
+
+    expect(open).toHaveBeenCalledWith(
+      "https://app.test/acme/chat?session=s1", "_blank", "noopener,noreferrer",
+    );
   });
 });
 
@@ -240,7 +385,7 @@ describe("ChatThreadList compact row menu", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: ARCHIVE_LABEL }));
 
     expect(onArchive).toHaveBeenCalledTimes(1);
-    expect(onArchive.mock.calls[0]![0]).toMatchObject({ id: "s2" });
+    expect(onArchive).toHaveBeenCalledWith(expect.objectContaining({ id: "s2" }));
   });
 
   it("offers the same pin toggle the hover strip does", async () => {

@@ -53,6 +53,43 @@ func (q *Queries) BindChatAttachmentsToMessage(ctx context.Context, arg BindChat
 	return items, nil
 }
 
+const copyChatInvocationAttachments = `-- name: CopyChatInvocationAttachments :many
+INSERT INTO attachment (id, workspace_id, chat_session_id, chat_message_id,
+  uploader_type, uploader_id, filename, url, content_type, size_bytes)
+SELECT gen_random_uuid(), source.workspace_id, source.chat_session_id, $1,
+  source.uploader_type, source.uploader_id, source.filename, source.url, source.content_type, source.size_bytes
+FROM attachment AS source
+WHERE source.chat_message_id = $2 AND source.workspace_id = $3
+RETURNING id
+`
+
+type CopyChatInvocationAttachmentsParams struct {
+	TargetMessageID pgtype.UUID `json:"target_message_id"`
+	SourceMessageID pgtype.UUID `json:"source_message_id"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+}
+
+// Inputs retain independent attachment bindings when another run is cancelled.
+func (q *Queries) CopyChatInvocationAttachments(ctx context.Context, arg CopyChatInvocationAttachmentsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, copyChatInvocationAttachments, arg.TargetMessageID, arg.SourceMessageID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countUnboundChatAttachmentsForTask = `-- name: CountUnboundChatAttachmentsForTask :one
 SELECT COUNT(*) FROM attachment
 WHERE workspace_id = $1

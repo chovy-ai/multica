@@ -3,8 +3,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { ChatSession } from "@multica/core/types";
 import enChat from "../../locales/en/chat.json";
+import enCommon from "../../locales/en/common.json";
 
-const updateMutate = vi.hoisted(() => vi.fn());
+const { updateMutate, deleteMutate, setActiveSession } = vi.hoisted(() => ({
+  updateMutate: vi.fn(),
+  deleteMutate: vi.fn(),
+  setActiveSession: vi.fn(),
+}));
 
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({ agentDetail: (id: string) => `/agents/${id}` }),
@@ -12,13 +17,13 @@ vi.mock("@multica/core/paths", () => ({
 
 vi.mock("@multica/core/chat/mutations", () => ({
   useUpdateChatSession: () => ({ mutate: updateMutate }),
-  useDeleteChatSession: () => ({ mutate: vi.fn() }),
+  useDeleteChatSession: () => ({ mutate: deleteMutate }),
   useSetChatSessionArchived: () => ({ mutate: vi.fn() }),
 }));
 
 vi.mock("@multica/core/chat", () => ({
   useChatStore: (selector: (state: { setActiveSession: () => void }) => unknown) =>
-    selector({ setActiveSession: vi.fn() }),
+    selector({ setActiveSession }),
 }));
 
 vi.mock("../../common/actor-avatar", () => ({
@@ -31,7 +36,7 @@ vi.mock("../../navigation", () => ({
 
 import { ChatSessionHeader } from "./chat-session-header";
 
-const TEST_RESOURCES = { en: { chat: enChat } };
+const TEST_RESOURCES = { en: { chat: enChat, common: enCommon } };
 const RENAME_LABEL = enChat.header.rename;
 const OUTSIDE_LABEL = "Outside control";
 
@@ -178,5 +183,65 @@ describe("ChatSessionHeader rename keyboard behavior", () => {
     expect(updateMutate).not.toHaveBeenCalled();
     expect(screen.queryByRole("textbox", { name: RENAME_LABEL })).not.toBeInTheDocument();
     expect(screen.getByText("Original title")).toBeInTheDocument();
+  });
+});
+
+describe("ChatSessionHeader deletion ownership", () => {
+  beforeEach(() => {
+    deleteMutate.mockReset();
+    setActiveSession.mockReset();
+  });
+
+  async function confirmDeletion(onDeletedSession?: (sessionId: string) => void) {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatSessionHeader
+          session={{ ...session, status: "archived" }}
+          agent={null}
+          onDeletedSession={onDeletedSession}
+        />
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: enCommon.more_actions }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: enChat.header.delete }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: enChat.session_history.delete_dialog.confirm,
+    }));
+  }
+
+  it("only delegates successful deletion and leaves Chat selection alone", async () => {
+    const onDeletedSession = vi.fn();
+    await confirmDeletion(onDeletedSession);
+
+    expect(deleteMutate).toHaveBeenCalledWith("session-1", expect.any(Object));
+    expect(onDeletedSession).not.toHaveBeenCalled();
+    expect(setActiveSession).not.toHaveBeenCalled();
+
+    const callbacks = deleteMutate.mock.calls[0]![1] as { onSuccess: () => void };
+    act(() => callbacks.onSuccess());
+
+    expect(onDeletedSession).toHaveBeenCalledExactlyOnceWith("session-1");
+    expect(setActiveSession).not.toHaveBeenCalled();
+  });
+
+  it("does not notify deletion before a failed request completes", async () => {
+    const onDeletedSession = vi.fn();
+    await confirmDeletion(onDeletedSession);
+    const callbacks = deleteMutate.mock.calls[0]![1] as { onError?: () => void };
+
+    act(() => callbacks?.onError?.());
+
+    expect(onDeletedSession).not.toHaveBeenCalled();
+    expect(setActiveSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps the default Chat selection cleanup before deleting", async () => {
+    await confirmDeletion();
+
+    expect(setActiveSession).toHaveBeenCalledExactlyOnceWith(null);
+    expect(deleteMutate).toHaveBeenCalledExactlyOnceWith("session-1");
+    expect(setActiveSession.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteMutate.mock.invocationCallOrder[0]!,
+    );
   });
 });

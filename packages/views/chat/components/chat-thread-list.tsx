@@ -26,6 +26,7 @@ import {
   useSetChatSessionPinned,
 } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
+import { chatAuthoredPrompt } from "@multica/core/chat/context-snapshot";
 import type { Agent, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { DeferredTooltip } from "../../common/deferred-tooltip";
@@ -85,6 +86,10 @@ export function ChatThreadList({
   activeSessionId,
   onSelectSession,
   onArchive,
+  searchQuery,
+  emptyContent,
+  onDeletedSession,
+  getSessionHref,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
@@ -94,6 +99,11 @@ export function ChatThreadList({
   // aware (desktop advances to the next chat; mobile drops back to the list)
   // and routes through the shared controller — see ChatPage.handleArchive.
   onArchive: (session: ChatSession) => void;
+  searchQuery?: string;
+  emptyContent?: React.ReactNode;
+  // Reused surfaces own their selection; notify only after deletion succeeds.
+  onDeletedSession?: (sessionId: string) => void;
+  getSessionHref?: (sessionId: string) => string | null;
 }) {
   const { t } = useT("chat");
   const locale = useLocale();
@@ -103,7 +113,9 @@ export function ChatThreadList({
   // affordance simply stays off.
   const slug = useWorkspaceSlug();
   const sessionHref = (sessionId: string) =>
-    slug ? `${paths.workspace(slug).chat()}?session=${sessionId}` : null;
+    getSessionHref
+      ? getSessionHref(sessionId)
+      : slug ? `${paths.workspace(slug).chat()}?session=${sessionId}` : null;
   // Optional: the list renders bare in tests; without an adapter the web
   // modifier-click affordance stays off (desktop keeps selection anyway).
   const navigation = useOptionalNavigation();
@@ -123,6 +135,17 @@ export function ChatThreadList({
     () => sortChatSessions(sessions.filter((s) => s.status === "archived")),
     [sessions],
   );
+
+  const query = searchQuery?.trim().toLocaleLowerCase() ?? "";
+  const matchesSearch = (session: ChatSession) => {
+    if (!query) return true;
+    const last = session.last_message;
+    const preview = last?.role === "user" ? chatAuthoredPrompt(last.content) : last?.content;
+    return [session.title, agentById.get(session.agent_id)?.name, preview]
+      .some((text) => text?.toLocaleLowerCase().includes(query));
+  };
+  const visibleHistory = historySessions.filter(matchesSearch);
+  const visibleArchived = archivedSessions.filter(matchesSearch);
 
   // Which view is showing. Falls back to history when the archived list drains
   // (last chat unarchived / deleted) so we never strand the user on an empty
@@ -160,8 +183,9 @@ export function ChatThreadList({
 
   const handleConfirmDelete = (session: ChatSession) => {
     const sessionId = session.id;
-    if (activeSessionId === sessionId) setActiveSession(null);
+    if (!onDeletedSession && activeSessionId === sessionId) setActiveSession(null);
     deleteSession.mutate(sessionId, {
+      onSuccess: () => onDeletedSession?.(sessionId),
       onSettled: () => setConfirmingDeleteId(null),
     });
   };
@@ -491,10 +515,10 @@ export function ChatThreadList({
           <ChevronLeft className="size-4 shrink-0" />
           <span className="truncate">{t(($) => $.list.archived_title)}</span>
           <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
-            {archivedSessions.length}
+            {visibleArchived.length}
           </span>
         </button>
-        {archivedSessions.map(renderRow)}
+        {visibleArchived.length === 0 ? emptyContent : visibleArchived.map(renderRow)}
       </>
     );
   }
@@ -510,17 +534,17 @@ export function ChatThreadList({
         <Archive className="size-4" />
       </span>
       <span className="min-w-0 flex-1 truncate font-medium">{t(($) => $.list.archived_title)}</span>
-      <span className="shrink-0 tabular-nums text-muted-foreground">{archivedSessions.length}</span>
+      <span className="shrink-0 tabular-nums text-muted-foreground">{visibleArchived.length}</span>
       <ChevronRight className="size-4 shrink-0 text-faint-foreground" />
     </button>
   );
 
-  if (historySessions.length === 0) {
+  if (visibleHistory.length === 0) {
     return (
       <>
-        <div className="px-2 py-1.5 text-caption text-muted-foreground">
+        {emptyContent ?? <div className="px-2 py-1.5 text-caption text-muted-foreground">
           {t(($) => $.window.no_previous)}
-        </div>
+        </div>}
         {archivedEntry}
       </>
     );
@@ -528,7 +552,7 @@ export function ChatThreadList({
 
   return (
     <>
-      {historySessions.map(renderRow)}
+      {visibleHistory.map(renderRow)}
       {archivedEntry}
     </>
   );

@@ -55,6 +55,8 @@ describe("parseTabSubject", () => {
     ["/acme/chat", { kind: "chat", sessionId: null }],
     ["/acme/chat?session=sess-1", { kind: "chat", sessionId: "sess-1" }],
     ["/acme/chat?agent=ag-1", { kind: "chat", sessionId: null }],
+    ["/acme/conversations", { kind: "page", page: "conversationFlow" }],
+    ["/acme/conversations?session=sess-1", { kind: "page", page: "conversationFlow" }],
     // Members list route does not exist
     ["/acme/members", { kind: "unknown" }],
     // Unknown / too short

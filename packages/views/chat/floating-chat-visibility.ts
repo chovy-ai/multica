@@ -11,6 +11,8 @@
 export function isFloatingChatRouteSuppressed(
   pathname: string,
   chatPath: string,
+  conversationPath?: string,
 ): boolean {
-  return pathname === chatPath || pathname.startsWith(`${chatPath}/`);
+  return [chatPath, conversationPath].some((path) => path !== undefined
+    && (pathname === path || pathname.startsWith(`${path}/`)));
 }

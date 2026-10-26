@@ -186,7 +186,19 @@ export interface ChatMessagesPage {
   next_cursor?: ChatMessagesCursor | null;
 }
 
+export interface ChatAgentRun {
+  agent_id: string;
+  agent_name: string;
+  task_id: string;
+  message_id: string;
+}
+
+export interface SendChatAgentMessageResponse extends SendChatMessageResponse {
+  agent_runs: ChatAgentRun[];
+}
+
 export interface SendChatMessageResponse {
+  agent_runs?: ChatAgentRun[];
   message_id: string;
   task_id: string;
   /** True when the server supports queued follow-up sends. */

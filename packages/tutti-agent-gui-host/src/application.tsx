@@ -1,0 +1,210 @@
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { AgentGUI, type AgentGUIProps } from "@tutti-os/agent-gui/agent-gui";
+import { resolveAgentGUIProviderIdentity } from "@tutti-os/agent-gui/provider-identity";
+import { resolveProviderIconAsset } from "@tutti-os/agent-gui/provider-icons";
+import { MAX_FILE_SIZE } from "@multica/core/constants/upload";
+import genericAgentIcon from "../../../vendor/tutti/packages/agent/gui/app/renderer/assets/icons/agents/agent-colorful.png";
+import { executionTargets } from "./protocol";
+import type { AgentGuiInitSnapshot, AgentGuiRpcClient } from "./protocol";
+import type { createMulticaAgentGuiRuntime } from "./runtime";
+import { createAgentGuiHostApi } from "./host-api";
+import { ComposerFooterControls, type ProviderDraft } from "./composer-footer-controls";
+import { createMulticaContextMentions } from "./context-mentions";
+import { SideEntryProvider } from "./side-entry";
+import { ResourceLinkProvider } from "./resource-link";
+
+type RuntimeHandle = ReturnType<typeof createMulticaAgentGuiRuntime>;
+type NodeState = AgentGUIProps["state"];
+const HIDDEN_MENTION_FILTER_IDS = ["file", "app"] as const;
+
+function initialNodeState(snapshot: AgentGuiInitSnapshot, handle: RuntimeHandle): NodeState {
+  const selectedId = snapshot.selectedAgentId
+    ?? snapshot.sessions.find((session) => session.id === snapshot.activeSessionId)?.agent_id;
+  const descriptor = executionTargets(snapshot).find((entry) => entry.id === selectedId)
+    ?? (!selectedId ? executionTargets(snapshot).find((entry) => entry.canInvoke && entry.runtimeBound)
+      ?? executionTargets(snapshot)[0] : undefined);
+  return {
+    provider: descriptor?.provider ?? "",
+    agentTargetId: descriptor?.id ?? null,
+    lastActiveAgentSessionId: snapshot.activeSessionId
+      ? handle.toGuiSessionId(snapshot.activeSessionId)
+      : null,
+    conversationRailCollapsed: true,
+  };
+}
+
+export function AgentGuiApplication({
+  client,
+  initial,
+  handle,
+}: {
+  client: AgentGuiRpcClient;
+  initial: AgentGuiInitSnapshot;
+  handle: RuntimeHandle;
+}) {
+  const [snapshot, setSnapshot] = useState(initial);
+  const [composerFocusSequence, setComposerFocusSequence] = useState<number | null>(null);
+  const workspace = useSyncExternalStore(handle.subscribeWorkspace, handle.getWorkspaceState);
+  const [node, setNode] = useState<NodeState>(() => initialNodeState(initial, handle));
+  // The composer remounts between an existing conversation and its home.
+  // Keep the requested target outside that composer until the old session exits.
+  const [pendingTarget, setPendingTarget] = useState<{ target: ReturnType<typeof executionTargets>[number]; fromSession: string; draft?: ProviderDraft } | null>(null);
+  const nodeRef = useRef(node);
+  nodeRef.current = node;
+  const lastSelection = useRef({ sessionId: initial.activeSessionId, agentId: node.agentTargetId });
+  const [appends, setAppends] = useState<NonNullable<AgentGUIProps["runtimeRequests"]["composerAppend"]>[]>([]);
+  const appendRestoreIds = useRef(new Map<number, string | undefined>());
+  const appliedAppends = useRef(new Set<number>());
+  const previousInit = useRef(initial);
+  const [size, setSize] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
+
+  useEffect(() => {
+    document.documentElement.dataset.multicaPresentation = "conversation";
+    document.documentElement.dataset.sidePane = String(snapshot.sidePane === true);
+    document.documentElement.dataset.theme = snapshot.theme;
+    document.documentElement.classList.toggle("dark", snapshot.theme === "dark");
+    document.documentElement.lang = snapshot.locale;
+  }, [snapshot.locale, snapshot.theme, snapshot.sidePane]);
+
+  useEffect(() => {
+    const resize = () => setSize({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+
+  useEffect(() => client.subscribe((event) => {
+    if (event.type === "init") {
+      if (event.snapshot.workspaceId !== initial.workspaceId || event.snapshot.userId !== initial.userId) return;
+      setSnapshot(event.snapshot);
+      const currentServerId = nodeRef.current.lastActiveAgentSessionId
+        ? handle.toServerSessionId(nodeRef.current.lastActiveAgentSessionId)
+        : null;
+      const agentIntentChanged = event.snapshot.selectedAgentId !== previousInit.current.selectedAgentId;
+      previousInit.current = event.snapshot;
+      if (event.snapshot.activeSessionId !== currentServerId || agentIntentChanged) {
+        if (event.snapshot.activeSessionId) setPendingTarget(null);
+        const external = initialNodeState(event.snapshot, handle);
+        lastSelection.current = { sessionId: event.snapshot.activeSessionId, agentId: external.agentTargetId };
+        setNode((current) => ({ ...current, ...external }));
+      }
+    } else if (event.type === "appendPrompt") {
+      if (appliedAppends.current.has(event.sequence)) return;
+      handle.registerAttachments?.(event.attachments ?? []);
+      appendRestoreIds.current.set(event.sequence, event.restoreRequestId);
+      const next: NonNullable<AgentGUIProps["runtimeRequests"]["composerAppend"]> = {
+        sequence: event.sequence,
+        ...(event.sessionId ? { agentSessionId: handle.toGuiSessionId(event.sessionId) } : {}),
+        prompt: event.prompt,
+        ...(event.attachments?.length ? {
+          files: event.attachments.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.filename,
+            mimeType: attachment.content_type,
+            url: attachment.download_url || attachment.markdown_url || attachment.url,
+            assetId: attachment.id,
+            sizeBytes: attachment.size_bytes,
+            uploadStatus: "ready",
+          })),
+        } : {}),
+      };
+      setAppends((current) => current.some((request) => request.sequence === next.sequence) ? current : [...current, next]);
+    }
+  }), [client, handle, initial.userId, initial.workspaceId]);
+
+  useEffect(() => {
+    const sessionId = node.lastActiveAgentSessionId
+      ? handle.toServerSessionId(node.lastActiveAgentSessionId)
+      : null;
+    if (node.lastActiveAgentSessionId && !sessionId) return;
+    const agentId = node.agentTargetId ?? undefined;
+    if (sessionId === lastSelection.current.sessionId && agentId === lastSelection.current.agentId) return;
+    lastSelection.current = { sessionId, agentId };
+    void client.request("host.selectSession", { sessionId, agentId }).catch(() => undefined);
+  }, [client, handle, node.agentTargetId, node.lastActiveAgentSessionId, workspace.sessions]);
+
+  const agentDirectory = useMemo<AgentGUIProps["agentDirectory"]>(() => ({
+    status: "ready",
+    error: null,
+    capturedAtUnixMs: Date.now(),
+    agents: executionTargets(workspace).map((descriptor) => {
+      const identity = resolveAgentGUIProviderIdentity(descriptor.provider);
+      const iconUrl = descriptor.iconUrl
+        || resolveProviderIconAsset(identity?.iconKey, "providerRail")
+        || genericAgentIcon;
+      return {
+        agentTargetId: descriptor.id,
+        provider: descriptor.provider,
+        name: descriptor.name,
+        description: descriptor.description,
+        iconUrl,
+        maskIconUrl: !descriptor.iconUrl
+          ? resolveProviderIconAsset(identity?.iconKey, "sessionFlat")
+          : null,
+        providerAccountUsageApplicable: false,
+        availability: {
+          status: descriptor.canInvoke && descriptor.runtimeBound ? "ready" : "unavailable",
+          reason: descriptor.unavailableReason,
+        },
+      };
+    }),
+  }), [workspace]);
+  const imageSessionId = node.lastActiveAgentSessionId ? handle.toServerSessionId(node.lastActiveAgentSessionId) : null;
+  const hostApi = useMemo(() => createAgentGuiHostApi(client, { workspaceId: snapshot.workspaceId, locale: snapshot.locale, local: snapshot.local }, handle, imageSessionId), [client, handle, snapshot.locale, snapshot.workspaceId, snapshot.local, imageSessionId]);
+  const mentionService = useMemo(() => createMulticaContextMentions(client, { workspaceId: snapshot.workspaceId, locale: snapshot.locale, local: snapshot.local }, handle), [client, handle, snapshot.workspaceId, snapshot.locale, snapshot.local]);
+  useEffect(() => () => mentionService.dispose(), [mentionService]);
+  const prepareFiles = useMemo<NonNullable<AgentGUIProps["workspace"]["prepareExternalPromptFiles"]>>(() => async (files) => Promise.all(files.map(async (file, sourceIndex) => {
+    if (file.size > MAX_FILE_SIZE) return { sourceIndex, status: "error" as const, errorCode: "file_too_large" as const, retryable: false };
+    try {
+      const attachment = await client.request("attachment.upload", { file });
+      handle.registerAttachments([attachment]);
+      return { sourceIndex, status: "prepared" as const, file: {
+        name: attachment.filename,
+        url: attachment.markdown_url || attachment.url || attachment.download_url,
+        assetId: attachment.id,
+        mimeType: attachment.content_type,
+        sizeBytes: attachment.size_bytes,
+        uploadStatus: "uploaded",
+      } };
+    } catch {
+      return { sourceIndex, status: "error" as const, errorCode: "preparation_failed" as const, retryable: true };
+    }
+  })), [client, handle]);
+
+  return <ResourceLinkProvider client={client} scope={{ workspaceId: initial.workspaceId, workspaceSlug: initial.workspaceSlug, appOrigin: snapshot.appOrigin }} agents={workspace.agents}><SideEntryProvider enabled={snapshot.sideWorkspace === true} sidePane={snapshot.sidePane} client={client} handle={handle} sessionId={node.lastActiveAgentSessionId ? handle.toServerSessionId(node.lastActiveAgentSessionId) : null} chinese={snapshot.locale === "zh-CN"}><AgentGUI
+    identity={{ nodeId: `multica-agent-gui:${snapshot.workspaceId}`, workspaceId: snapshot.workspaceId, currentUserId: snapshot.userId, title: "Agent GUI" }}
+    workspace={{ path: "", agentSettings: { avoidGroupingEdits: false }, prepareExternalPromptFiles: prepareFiles }}
+    frame={{ position: { x: 0, y: 0 }, ...size, desktopSize: size, isActive: snapshot.hostActive ?? true, isVisible: snapshot.hostVisible ?? true, embedded: true }}
+    state={node}
+    runtimeRequests={{ composerAppend: appends[0] ?? null, composerFocusSequence }}
+    agentDirectory={agentDirectory}
+    agentActivityRuntime={handle.runtime}
+    agentHostApi={hostApi}
+    locale={snapshot.locale}
+    disabled={["meet-tutti", "import-session"]}
+    hostCapabilities={{
+      hiddenMentionFilterIds: HIDDEN_MENTION_FILTER_IDS,
+      mentionService,
+      sessionWorktreeEnabled: false,
+      sideConversationEnabled: false,
+      capabilityControlsReadOnly: true,
+      capabilityMenuState: { tuttiMode: { enabled: false }, connectors: { enabled: false }, computerUse: { presentationSupported: false } },
+    }}
+    hostActions={{
+      onClose: () => undefined,
+      onResize: () => undefined,
+      onUpdateNode: setNode,
+      onShowMessage: (message, tone) => { void client.request("host.showMessage", { message, tone }); },
+      onComposerAppendHandled: (sequence) => {
+        const restoreRequestId = appendRestoreIds.current.get(sequence);
+        appendRestoreIds.current.delete(sequence);
+        appliedAppends.current.add(sequence);
+        setAppends((current) => current.filter((request) => request.sequence !== sequence));
+        void client.request("host.promptApplied", { sequence, restoreRequestId });
+      },
+    }}
+    renderSlots={{ composerFooterAccessory: (context) => <ComposerFooterControls context={context} client={client} handle={handle} targets={executionTargets(workspace)} snapshot={snapshot} onReadyForFocus={setComposerFocusSequence}
+      pendingTarget={pendingTarget} onCancelTargetSwitch={() => setPendingTarget(null)}
+      onLeaveSession={(target, fromSession, draft) => { setPendingTarget({ target, fromSession, draft }); setNode((current) => ({ ...current, lastActiveAgentSessionId: null })); }}
+      onSelectAgent={(target) => { setPendingTarget(null); setNode((current) => current.agentTargetId === target.id ? current : { ...current, provider: target.provider, agentTargetId: target.id, lastActiveAgentSessionId: null }); }} /> }}
+  /></SideEntryProvider></ResourceLinkProvider>;
+}

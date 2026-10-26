@@ -282,7 +282,8 @@ SET session_id = COALESCE(sqlc.narg('session_id'), session_id),
     work_dir = COALESCE(sqlc.narg('work_dir'), work_dir),
     runtime_id = COALESCE(sqlc.narg('runtime_id'), runtime_id),
     updated_at = now()
-WHERE id = sqlc.arg('id');
+WHERE id = sqlc.arg('id')
+  AND (sqlc.narg('agent_id')::uuid IS NULL OR agent_id = sqlc.narg('agent_id')::uuid);
 
 -- name: ClearChatSessionSessionIfMatches :exec
 -- Drops the chat session's resume pointer, but only while it still points at
@@ -304,6 +305,7 @@ SET session_id = NULL,
     runtime_id = NULL,
     updated_at = now()
 WHERE id = sqlc.arg('id')
+  AND (sqlc.narg('agent_id')::uuid IS NULL OR agent_id = sqlc.narg('agent_id')::uuid)
   AND session_id = sqlc.arg('session_id')
   AND runtime_id = sqlc.arg('runtime_id');
 
@@ -345,6 +347,7 @@ SET session_id = t.session_id,
 FROM agent_task_queue t
 WHERE t.id = sqlc.arg('task_id')
   AND t.chat_session_id = cs.id
+  AND t.agent_id = cs.agent_id
   AND t.status = 'cancelled'
   AND t.session_id IS NOT NULL
   AND t.runtime_id IS NOT NULL
@@ -1136,7 +1139,7 @@ INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, accountable_user_id, force_fresh_session, runtime_mcp_overlay,
     runtime_connected_apps, originator_source, trigger_evidence_kind, trigger_evidence_ref_id,
-    fire_at, channel_context_revision, id
+    fire_at, channel_context_revision, id, context
 )
 SELECT
     $1, $2, NULL,
@@ -1152,7 +1155,8 @@ SELECT
     sqlc.narg(trigger_evidence_ref_id),
     sqlc.narg('fire_at')::timestamptz,
     sqlc.narg('channel_context_revision')::bigint,
-    COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+    COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
+    sqlc.narg('context')::jsonb
 WHERE lock_task_owner_rows($1, NULL, $2)
 RETURNING *;
 
@@ -1237,6 +1241,7 @@ WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id
     FROM agent_task_queue r
     WHERE r.chat_session_id = sqlc.arg('chat_session_id')
+      AND (sqlc.narg('agent_id')::uuid IS NULL OR r.agent_id = sqlc.narg('agent_id')::uuid)
       AND (
         sqlc.narg('channel_context_revision')::bigint IS NULL
         OR COALESCE(r.channel_context_revision, 1) = sqlc.narg('channel_context_revision')::bigint
@@ -1250,6 +1255,7 @@ WITH retired_sessions AS (
     SELECT MAX(t.completed_at) AS at
     FROM agent_task_queue t
     WHERE t.chat_session_id = sqlc.arg('chat_session_id')
+      AND (sqlc.narg('agent_id')::uuid IS NULL OR t.agent_id = sqlc.narg('agent_id')::uuid)
       AND (
         sqlc.narg('channel_context_revision')::bigint IS NULL
         OR COALESCE(t.channel_context_revision, 1) = sqlc.narg('channel_context_revision')::bigint
@@ -1264,6 +1270,7 @@ WITH retired_sessions AS (
         t.session_id, t.work_dir, t.runtime_id, t.status, t.failure_reason, t.error, t.completed_at
     FROM agent_task_queue t
     WHERE t.chat_session_id = sqlc.arg('chat_session_id')
+      AND (sqlc.narg('agent_id')::uuid IS NULL OR t.agent_id = sqlc.narg('agent_id')::uuid)
       AND (
         sqlc.narg('channel_context_revision')::bigint IS NULL
         OR COALESCE(t.channel_context_revision, 1) = sqlc.narg('channel_context_revision')::bigint
@@ -1729,3 +1736,10 @@ WHERE workspace_id = $1
   AND status = 'active'
 ORDER BY created_at ASC
 LIMIT 1;
+
+-- name: ListChatSessionTasks :many
+SELECT * FROM agent_task_queue
+WHERE chat_session_id = sqlc.arg('chat_session_id')
+  AND (created_at, id) < (sqlc.arg('before_created_at')::timestamptz, sqlc.arg('before_id')::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('row_limit');

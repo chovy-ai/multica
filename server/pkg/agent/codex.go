@@ -2003,6 +2003,13 @@ func codexTurnInput(prompt string, resumeExpected, resumed bool, notice string) 
 // thread was picked up (only useful for logging).
 func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions, logger *slog.Logger) (string, bool, error) {
 	if priorThreadID := opts.ResumeSessionID; priorThreadID != "" {
+		if opts.RestoreConfiguredModel && opts.Model == "" {
+			model, err := c.configuredModel(ctx, opts.Cwd)
+			if err != nil {
+				return "", false, fmt.Errorf("codex could not restore configured model: %w", err)
+			}
+			opts.Model = model
+		}
 		// thread/resume reuses the thread's persisted model and reasoning
 		// effort; only override fields the daemon actually cares about.
 		// developerInstructions stays nil for the reason given on thread/start
@@ -2115,6 +2122,74 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 	)
 	c.trySetThreadName(ctx, threadID, opts.ThreadName, logger)
 	return threadID, false, nil
+}
+
+// configuredModel runs on the same app-server process as the turn, so its
+// effective environment, CLI arguments, profile and project config all apply.
+// A catalog default is used only when config/read explicitly has no model.
+func (c *codexClient) configuredModel(ctx context.Context, cwd string) (string, error) {
+	timeout := c.handshakeTimeout
+	if timeout <= 0 {
+		timeout = defaultCodexHandshakeTimeout
+	}
+	readCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	raw, err := c.request(readCtx, "config/read", map[string]any{"cwd": cwd, "includeLayers": false})
+	if err != nil {
+		return "", fmt.Errorf("read effective config: %w", err)
+	}
+	var config struct {
+		Config *struct {
+			Model *string `json:"model"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil || config.Config == nil {
+		return "", errors.New("invalid effective config response")
+	}
+	if model := config.Config.Model; model != nil && strings.TrimSpace(*model) != "" {
+		return *model, nil
+	}
+
+	var cursor *string
+	seen := map[string]bool{}
+	defaultModel := ""
+	for page := 0; page < 32; page++ {
+		raw, err = c.request(readCtx, "model/list", map[string]any{"cursor": cursor, "limit": 100})
+		if err != nil {
+			return "", fmt.Errorf("read default model: %w", err)
+		}
+		var catalog struct {
+			Data []struct {
+				Model     string `json:"model"`
+				IsDefault bool   `json:"isDefault"`
+			} `json:"data"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(raw, &catalog); err != nil || catalog.Data == nil {
+			return "", errors.New("invalid default model catalog response")
+		}
+		for _, model := range catalog.Data {
+			if !model.IsDefault {
+				continue
+			}
+			if strings.TrimSpace(model.Model) == "" || (defaultModel != "" && defaultModel != model.Model) {
+				return "", errors.New("default model catalog is ambiguous")
+			}
+			defaultModel = model.Model
+		}
+		if catalog.NextCursor == nil || *catalog.NextCursor == "" {
+			if defaultModel == "" {
+				return "", errors.New("runtime did not report a configured or default model")
+			}
+			return defaultModel, nil
+		}
+		if seen[*catalog.NextCursor] {
+			return "", errors.New("default model catalog repeated its cursor")
+		}
+		seen[*catalog.NextCursor] = true
+		cursor = catalog.NextCursor
+	}
+	return "", errors.New("default model catalog exceeded its page limit")
 }
 
 func (c *codexClient) trySetThreadName(ctx context.Context, threadID, name string, logger *slog.Logger) {

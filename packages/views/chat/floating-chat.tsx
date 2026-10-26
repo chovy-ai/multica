@@ -14,9 +14,8 @@ import { isFloatingChatRouteSuppressed } from "./floating-chat-visibility";
  *
  *  1. The Settings → Chat preference (`floatingChatEnabled`). When a user turns
  *     the floating window off, Chat lives only in its dedicated tab.
- *  2. The Chat tab route itself. On `/:slug/chat` the full-page surface already
- *     owns the conversation, so a floating copy of the same `activeSessionId`
- *     would be pure duplication — hide it there.
+ *  2. Dedicated conversation routes already own the available conversation
+ *     space; the overlay would cover the composer or its execution controls.
  */
 export function FloatingChat() {
   const enabled = useChatStore((s) => s.floatingChatEnabled);
@@ -24,8 +23,7 @@ export function FloatingChat() {
   const wsPaths = useWorkspacePaths();
 
   if (!enabled) return null;
-  // Suppress on the Chat tab — it renders the same conversation full-page.
-  if (isFloatingChatRouteSuppressed(pathname, wsPaths.chat())) return null;
+  if (isFloatingChatRouteSuppressed(pathname, wsPaths.chat(), wsPaths.conversationFlow())) return null;
 
   return (
     <>

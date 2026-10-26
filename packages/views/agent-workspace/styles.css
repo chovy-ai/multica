@@ -1,0 +1,211 @@
+@import "@nextop-os/ui-system/styles.css";
+
+@source "../node_modules/@nextop-os/ui-system/dist/**/*.js";
+
+/* The host owns the page canvas and font; vendor base styles stay subordinate. */
+@layer base {
+  body {
+    background-image: none;
+    font-family: inherit;
+  }
+}
+
+/* Multica uses .dark; UI System's additional tokens use data-theme instead. */
+:where(.agent-workspace, .agent-workspace-entry, .agent-workspace-menu) {
+  --text-primary: var(--foreground);
+  --text-primary-hover: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --text-tertiary: var(--muted-foreground);
+  --text-placeholder: var(--muted-foreground);
+  --text-disabled: var(--faint-foreground);
+  --text-inverted: var(--background);
+  --transparency-block: var(--muted);
+  --transparency-hover: var(--accent);
+  --transparency-active: var(--accent);
+}
+
+/* Portaled session menus need the same host theme as the workbench chrome. */
+.agent-workspace-menu {
+  --background-fronted: var(--surface-raised);
+  --border-1: var(--surface-border);
+  --state-danger: var(--destructive);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--menu-shadow);
+}
+
+.agent-workspace-menu,
+.agent-workspace-menu [data-slot="dropdown-menu-item"] {
+  font-family: inherit;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+/* UI System's default class merger does not know Multica's type scale. */
+:is(.agent-workspace-chrome [data-slot="button"], .agent-workspace-entry) {
+  font-family: inherit;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  font-weight: 500;
+  border-radius: var(--radius-lg);
+}
+
+:is(
+  .agent-workspace-chrome [data-slot="button"],
+  .agent-workspace-entry
+)[data-size="sm"] {
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  border-radius: var(--radius-md);
+}
+
+:is(.agent-workspace-chrome [data-slot="button"], .agent-workspace-entry):is(
+  [data-size="xs"],
+  [data-size="icon-xs"]
+) {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  border-radius: var(--radius-md);
+}
+
+.agent-workspace-chrome [data-slot="badge"] {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+
+:is(
+  .agent-workspace-chrome [data-slot="button"],
+  .agent-workspace-entry
+)[data-variant="outline"] {
+  background-color: var(--background);
+}
+
+:is(
+    .agent-workspace-chrome [data-slot="button"],
+    .agent-workspace-entry
+  )[data-variant="outline"]:hover {
+  background-color: var(--muted);
+}
+
+.agent-workspace-chrome [aria-pressed="true"] {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.agent-workspace .agent-workspace-list-row {
+  height: auto;
+  min-height: 40px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+}
+
+.agent-workspace .agent-workspace-session-row {
+  min-height: 56px;
+}
+
+.agent-workspace .agent-workspace-list-row[aria-pressed="true"]:hover {
+  background-color: var(--accent);
+}
+
+.agent-workspace .agent-workspace-list-row:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.agent-workspace .agent-workspace-search {
+  height: var(--button-height-default);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  background-color: transparent;
+  padding-inline: 32px 10px;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+.agent-workspace .agent-workspace-search:focus-visible {
+  border-color: var(--ring);
+  outline: 3px solid color-mix(in oklab, var(--ring) 50%, transparent);
+}
+
+.agent-workspace .agent-workspace-task-row {
+  gap: 6px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  padding: 10px 8px;
+  box-shadow: none;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+.agent-workspace .agent-workspace-task-row:hover {
+  background-color: color-mix(in oklab, var(--accent) 50%, transparent);
+}
+
+/* Rich text, transcript and command ownership stay with Chat. */
+.agent-workspace {
+  container: agent-workspace / inline-size;
+}
+
+.agent-workspace-columns {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 280px;
+}
+
+.agent-workspace-directory,
+.agent-workspace-conversation,
+.agent-workspace-tasks {
+  display: flex;
+}
+
+.agent-workspace-tasks > aside {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-workspace-mobile-tabs {
+  display: none;
+}
+
+@container agent-workspace (max-width: 960px) {
+  .agent-workspace-mobile-tabs {
+    display: flex;
+  }
+  .agent-workspace-mobile-tabs [data-pane-target="directory"] {
+    display: none;
+  }
+  .agent-workspace-columns {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+  .agent-workspace-tasks {
+    display: none;
+  }
+  .agent-workspace[data-pane="tasks"] .agent-workspace-conversation {
+    display: none;
+  }
+  .agent-workspace[data-pane="tasks"] .agent-workspace-tasks {
+    display: flex;
+  }
+}
+
+@container agent-workspace (max-width: 640px) {
+  .agent-workspace-mobile-tabs [data-pane-target="directory"] {
+    display: inline-flex;
+  }
+  .agent-workspace-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .agent-workspace-directory,
+  .agent-workspace-conversation,
+  .agent-workspace-tasks {
+    display: none;
+  }
+  .agent-workspace[data-pane="directory"] .agent-workspace-directory,
+  .agent-workspace[data-pane="conversation"] .agent-workspace-conversation,
+  .agent-workspace[data-pane="tasks"] .agent-workspace-tasks {
+    display: flex;
+  }
+}

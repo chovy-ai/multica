@@ -29,6 +29,10 @@ type ExecOptions struct {
 	EnableTaskSupplement bool
 	Cwd                  string
 	Model                string
+	// RestoreConfiguredModel makes a resumed Codex Chat with no explicit
+	// model restore this process's effective CLI configuration. Otherwise the
+	// provider thread would retain a previous turn's model override.
+	RestoreConfiguredModel bool
 	// SystemPrompt carries the Multica runtime brief for the few providers
 	// that cannot pick it up from disk. The daemon leaves it empty for every
 	// other provider (see daemon.providerNeedsInlineSystemPrompt), because the

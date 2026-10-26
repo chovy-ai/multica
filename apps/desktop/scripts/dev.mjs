@@ -14,19 +14,35 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { envWithLocalBins } from "./package.mjs";
+import { withClaudeLoginEnv } from "./claude-login-env.mjs";
 import {
+  applyCloudDevEnv,
   applyWorktreeDevEnv,
   repoRootFromScriptDir,
 } from "./worktree-dev-env.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+const cloud = args.includes("--cloud");
+const claudeLogin = args.includes("--claude-login");
+const devEnv = claudeLogin ? withClaudeLoginEnv(process.env) : process.env;
+if (claudeLogin) {
+  console.log("[dev:desktop] Inherited Claude provider overrides cleared; using local CLI settings and login.");
+}
+if (cloud && args.some((arg) => arg === "--mode" || arg.startsWith("--mode="))) {
+  throw new Error("Cloud development selects its own production mode; omit --mode.");
+}
 
-applyWorktreeDevEnv(process.env, {
+applyWorktreeDevEnv(devEnv, {
   root: repoRootFromScriptDir(here),
   log: true,
 });
+if (cloud) {
+  applyCloudDevEnv(devEnv, { root: repoRootFromScriptDir(here) });
+  console.log(`[dev:desktop] Multica Cloud → ${devEnv.VITE_API_URL}, app ${devEnv.DESKTOP_APP_SUFFIX}, renderer :${devEnv.DESKTOP_RENDERER_PORT}`);
+}
 
-function run(command, args, { shell = false, env = process.env } = {}) {
+function run(command, args, { shell = false, env = devEnv } = {}) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
     env,
@@ -47,7 +63,7 @@ const isWin = process.platform === "win32";
 // electron-vite's bin lands in apps/desktop/node_modules/.bin under the
 // isolated linker but only in the repo-root .bin under the hoisted linker
 // (.npmrc node-linker=hoisted); envWithLocalBins puts both on PATH.
-run("electron-vite", ["dev", ...process.argv.slice(2)], {
+run("electron-vite", ["dev", ...(cloud ? ["--mode", "production"] : []), ...args.filter((arg) => arg !== "--cloud" && arg !== "--claude-login")], {
   shell: isWin,
-  env: envWithLocalBins(process.env),
+  env: envWithLocalBins(devEnv),
 });

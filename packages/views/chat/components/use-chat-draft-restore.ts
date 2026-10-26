@@ -5,6 +5,7 @@ import { useConsumeChatDraftRestore } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
 import { removeChatMessageFromCaches } from "@multica/core/realtime";
 import type { Attachment } from "@multica/core/types";
+import { chatAuthoredPrompt } from "@multica/core/chat/context-snapshot";
 
 /**
  * A draft the composer is asked to adopt. Two sources feed it:
@@ -129,7 +130,7 @@ export function useChatDraftRestore(activeSessionId: string | null, enabled = tr
     if (queued) {
       setRestoreDraftRequest({
         id: queued.id,
-        content: queued.content,
+        content: chatAuthoredPrompt(queued.content),
         attachments: queued.attachments,
         sessionId: activeSessionId,
       });
@@ -144,7 +145,7 @@ export function useChatDraftRestore(activeSessionId: string | null, enabled = tr
     removeChatMessageFromCaches(qc, activeSessionId, restore.id);
     setRestoreDraftRequest({
       id: restore.id,
-      content: restore.content ?? "",
+      content: chatAuthoredPrompt(restore.content ?? ""),
       attachments: restore.attachments,
       sessionId: activeSessionId,
       serverRestoreId: restore.id,

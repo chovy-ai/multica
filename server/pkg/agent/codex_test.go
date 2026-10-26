@@ -2380,6 +2380,161 @@ func TestCodexStartOrResumeThreadNameFailureDoesNotBlock(t *testing.T) {
 	}
 }
 
+func TestCodexStartOrResumeThreadPassesSelectedModel(t *testing.T) {
+	t.Parallel()
+	for _, prior := range []string{"", "thr_prior"} {
+		t.Run(prior, func(t *testing.T) {
+			c, fs, _ := newTestCodexClient(t)
+			method := "thread/start"
+			if prior != "" {
+				method = "thread/resume"
+			}
+			wait := drainRPCScript(t, c, fs, []rpcResponse{{
+				method: method,
+				result: json.RawMessage(`{"thread":{"id":"thr_selected"}}`),
+				assertFn: func(t *testing.T, params map[string]any) {
+					if params["model"] != "gpt-test-model" {
+						t.Errorf("%s model=%v, want selected model", method, params["model"])
+					}
+				},
+			}})
+			defer wait()
+			_, resumed, err := c.startOrResumeThread(context.Background(), ExecOptions{
+				Cwd: "/work", ResumeSessionID: prior, Model: "gpt-test-model", RestoreConfiguredModel: true,
+			}, slog.Default())
+			if err != nil || resumed != (prior != "") {
+				t.Fatalf("start/resume: resumed=%t err=%v", resumed, err)
+			}
+		})
+	}
+}
+
+func TestCodexChatResumeRestoresConfiguredModel(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		script []rpcResponse
+		want   string
+		bad    bool
+	}{
+		{
+			name:   "effective config takes precedence over catalog and prior thread",
+			script: []rpcResponse{{method: "config/read", result: json.RawMessage(`{"config":{"model":"custom/local-model"}}`)}},
+			want:   "custom/local-model",
+		},
+		{
+			name: "catalog default on a later page",
+			script: []rpcResponse{
+				{method: "config/read", result: json.RawMessage(`{"config":{"model":null}}`)},
+				{method: "model/list", result: json.RawMessage(`{"data":[{"model":"gpt-prior-model","isDefault":false}],"nextCursor":"next-page"}`)},
+				{method: "model/list", result: json.RawMessage(`{"data":[{"model":"gpt-provider-default","isDefault":true}],"nextCursor":null}`), assertFn: func(t *testing.T, params map[string]any) {
+					if params["cursor"] != "next-page" {
+						t.Errorf("cursor=%v, want next-page", params["cursor"])
+					}
+				}},
+			},
+			want: "gpt-provider-default",
+		},
+		{
+			name:   "config read fails without resuming the overridden thread",
+			script: []rpcResponse{{method: "config/read", errMsg: "unavailable", errCode: -32603}},
+			bad:    true,
+		},
+		{
+			name: "no default is an explicit failure",
+			script: []rpcResponse{
+				{method: "config/read", result: json.RawMessage(`{"config":{"model":null}}`)},
+				{method: "model/list", result: json.RawMessage(`{"data":[{"model":"gpt-prior-model","isDefault":false}],"nextCursor":null}`)},
+			},
+			bad: true,
+		},
+		{
+			name: "model catalog failure is explicit",
+			script: []rpcResponse{
+				{method: "config/read", result: json.RawMessage(`{"config":{"model":null}}`)},
+				{method: "model/list", errMsg: "unavailable", errCode: -32603},
+			},
+			bad: true,
+		},
+		{
+			name: "ambiguous defaults fail",
+			script: []rpcResponse{
+				{method: "config/read", result: json.RawMessage(`{"config":{"model":null}}`)},
+				{method: "model/list", result: json.RawMessage(`{"data":[{"model":"gpt-a","isDefault":true},{"model":"gpt-b","isDefault":true}],"nextCursor":null}`)},
+			},
+			bad: true,
+		},
+		{
+			name:   "malformed config fails",
+			script: []rpcResponse{{method: "config/read", result: json.RawMessage(`{}`)}},
+			bad:    true,
+		},
+		{
+			name: "repeated pagination cursor fails",
+			script: []rpcResponse{
+				{method: "config/read", result: json.RawMessage(`{"config":{"model":null}}`)},
+				{method: "model/list", result: json.RawMessage(`{"data":[],"nextCursor":"same"}`)},
+				{method: "model/list", result: json.RawMessage(`{"data":[],"nextCursor":"same"}`)},
+			},
+			bad: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, fs, _ := newTestCodexClient(t)
+			script := append([]rpcResponse(nil), tc.script...)
+			script[0].assertFn = func(t *testing.T, params map[string]any) {
+				if params["cwd"] != "/work" || params["includeLayers"] != false {
+					t.Errorf("effective config params=%v", params)
+				}
+			}
+			if !tc.bad {
+				script = append(script, rpcResponse{
+					method: "thread/resume", result: json.RawMessage(`{"thread":{"id":"thr_prior"}}`),
+					assertFn: func(t *testing.T, params map[string]any) {
+						if params["model"] != tc.want || params["threadId"] != "thr_prior" {
+							t.Errorf("resume params=%v, want model=%q and preserved thread", params, tc.want)
+						}
+					},
+				})
+			}
+			wait := drainRPCScript(t, c, fs, script)
+			defer wait()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			id, resumed, err := c.startOrResumeThread(ctx, ExecOptions{
+				Cwd: "/work", ResumeSessionID: "thr_prior", RestoreConfiguredModel: true,
+			}, slog.Default())
+			if tc.bad {
+				if err == nil || !strings.Contains(err.Error(), "restore configured model") || resumed || id != "" {
+					t.Fatalf("failed default resolution: id=%q resumed=%t err=%v", id, resumed, err)
+				}
+			} else if err != nil || !resumed || id != "thr_prior" {
+				t.Fatalf("restore: id=%q resumed=%t err=%v", id, resumed, err)
+			}
+			if got := len(fs.Lines()); got != len(script) {
+				t.Fatalf("RPC count=%d, want %d (no speculative resume or fresh fallback)", got, len(script))
+			}
+		})
+	}
+}
+
+func TestCodexFreshChatDefaultDoesNotNeedDiscovery(t *testing.T) {
+	t.Parallel()
+	c, fs, _ := newTestCodexClient(t)
+	wait := drainRPCScript(t, c, fs, []rpcResponse{{
+		method: "thread/start", result: json.RawMessage(`{"thread":{"id":"thr_fresh"}}`),
+		assertFn: func(t *testing.T, params map[string]any) {
+			if params["model"] != nil {
+				t.Errorf("fresh thread model=%v, want provider configuration", params["model"])
+			}
+		},
+	}})
+	defer wait()
+	if _, _, err := c.startOrResumeThread(context.Background(), ExecOptions{Cwd: "/work", RestoreConfiguredModel: true}, slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCodexStartOrResumeThreadResumesPriorThread(t *testing.T) {
 	t.Parallel()
 

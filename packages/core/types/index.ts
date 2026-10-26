@@ -184,6 +184,8 @@ export type {
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
+  SendChatAgentMessageResponse,
+  ChatAgentRun,
   StartMikaOnboardingResponse,
   CancelledChatMessage,
   CancelTaskResponse,

@@ -31,6 +31,7 @@ import type { Attachment, Project } from "@multica/core/types";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { ClearablePillButton } from "../../common/pill-button";
 import { useT } from "../../i18n";
+import { getCurrentWsId } from "@multica/core/platform";
 
 const logger = createLogger("chat.ui");
 const EMPTY_UPLOADS: DraftUpload[] = [];
@@ -56,7 +57,16 @@ function isAttachmentReferenced(content: string, attachment: Attachment): boolea
   return attachmentReferenceUrls(attachment).some((url) => content.includes(url));
 }
 
+export interface DraftAppendRequest {
+  id: string;
+  workspaceId: string;
+  draftKey: string;
+  content: string;
+}
+
 interface ChatInputProps {
+  draftAppendRequest?: DraftAppendRequest | null;
+  onDraftAppendApplied?: (id: string) => void;
   onSend: (
     content: string,
     attachmentIds: string[] | undefined,
@@ -149,6 +159,8 @@ interface ChatInputProps {
 }
 
 export function ChatInput({
+  draftAppendRequest,
+  onDraftAppendApplied,
   onSend,
   restoreDraftRequest,
   conversationStarterRequest,
@@ -175,6 +187,9 @@ export function ChatInput({
   draftKeyOverride,
   editorKeyOverride,
 }: ChatInputProps) {
+  const [editorReadyRevision, setEditorReadyRevision] = useState(0);
+  const editorReady = useRef(false);
+  const appliedAppendId = useRef<string | null>(null);
   const { t } = useT("chat");
   const { t: tEditor } = useT("editor");
   const sendShortcut = useShortcut("send");
@@ -369,6 +384,29 @@ export function ChatInput({
     editorRef.current?.adoptContent(incoming);
     setIsEmpty(!incoming.trim());
   }, [draftKey, uploadGate.uploading, commitDraft]);
+
+  useEffect(() => {
+    const request = draftAppendRequest;
+    if (!request || request.id === appliedAppendId.current) return;
+    if (request.workspaceId !== getCurrentWsId() || request.draftKey !== draftKey) return;
+    if (disabled || noAgent || !editorReady.current || uploadGate.uploading) return;
+    if (editorDraftKeyRef.current !== draftKey) return;
+    // Tiptap's React node views may flush synchronously while inserting a mention.
+    // Run after React's effect phase and revoke the pending insert on navigation.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || request.id === appliedAppendId.current) return;
+      if (request.workspaceId !== getCurrentWsId() || editorDraftKeyRef.current !== request.draftKey) return;
+      const editor = editorRef.current;
+      if (!editor?.insertMarkdownAtEnd(request.content)) return;
+      const markdown = editor.flushPendingUpdate() ?? editor.getMarkdown();
+      commitDraft(draftKey, markdown);
+      appliedAppendId.current = request.id;
+      onDraftAppendApplied?.(request.id);
+      editor.focus();
+    });
+    return () => { cancelled = true; };
+  }, [draftAppendRequest, draftKey, disabled, noAgent, editorReadyRevision, uploadGate.uploading, commitDraft, onDraftAppendApplied]);
 
   // Grab keyboard focus when the owner bumps `focusRequest` (a new chat was
   // started) so the user can type immediately. The editor's `focus()` latches
@@ -714,6 +752,10 @@ export function ChatInput({
             // intentionally tracks neither the session nor the agent.
             key={editorKey}
             ref={editorRef}
+            onReady={() => {
+              editorReady.current = true;
+              if (draftAppendRequest) setEditorReadyRevision((revision) => revision + 1);
+            }}
             value={inputDraft}
             placeholder={placeholder}
             onUpdate={(md) => {

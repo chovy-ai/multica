@@ -301,6 +301,8 @@ export interface TaskCancellationActor {
 }
 
 export interface AgentTask {
+  chat_invocation_group_id?: string;
+  chat_invoked_agent_name?: string;
   wakeup_id?: string;
   id: string;
   agent_id: string;

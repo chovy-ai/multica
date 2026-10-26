@@ -74,9 +74,9 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   }: {
     children: React.ReactNode;
     isActive?: boolean;
-    render?: React.ReactElement<{ href?: string }>;
+    render?: React.ReactElement<{ href?: string; target?: string }>;
   } & React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-    <button {...props} type="button" data-active={isActive ? "true" : undefined} data-href={render?.props.href}>
+    <button {...props} type="button" data-active={isActive ? "true" : undefined} data-href={render?.props.href} data-target={render?.props.target}>
       {children}
     </button>
   ),
@@ -138,6 +138,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     chat: () => "/acme/chat",
+    conversationFlow: () => "/acme/conversations",
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
@@ -439,6 +440,12 @@ describe("personal nav — Chat", () => {
   it("renders a Chat nav link to the workspace chat route", () => {
     const { container } = render(<AppSidebar />);
     expect(chatNav(container)).not.toBeNull();
+  });
+
+  it("opens Conversations in a new tab while Chat keeps its existing destination", () => {
+    const { container } = render(<AppSidebar />);
+    expect(container.querySelector('[data-href="/acme/conversations"]')).toHaveAttribute("data-target", "_blank");
+    expect(chatNav(container)).not.toHaveAttribute("data-target");
   });
 
   it("badges the Chat nav with the summed unread_count of chat sessions", () => {

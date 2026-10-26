@@ -1,0 +1,499 @@
+/* Host presentation only. Source layout, state and measured dimensions stay upstream. */
+html.multica-agent-gui .agent-gui-node__shell [data-slot="button"],
+html.multica-agent-gui :is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]) [data-slot="button"] {
+  border-radius: var(--radius-lg);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  font-weight: 500;
+}
+
+html.multica-agent-gui [data-slot="button"]:is([data-size="xs"], [data-size="sm"], [data-size="icon-xs"], [data-size="icon-sm"]) {
+  border-radius: var(--radius-md);
+}
+
+html.multica-agent-gui [data-slot="button"][data-size="xs"] {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+
+html.multica-agent-gui [data-slot="button"][data-size="sm"] {
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+}
+
+html.multica-agent-gui [data-slot="button"][data-variant="default"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+html.multica-agent-gui [data-slot="button"]:is([data-variant="ghost"], [data-variant="chrome"]):is(:hover, [aria-expanded="true"]):not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+html.multica-agent-gui :is(.agent-gui-node__shell, [data-slot="dialog-content"], [data-slot="alert-dialog-content"]) :is(button, input, [role="button"], [role="tab"], [tabindex]):not([contenteditable]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+html.multica-agent-gui :is(.agent-gui-node__shell, [data-slot="dialog-content"], [data-slot="alert-dialog-content"]) [data-slot="input"] {
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+html.multica-agent-gui :is(.agent-gui-node__shell, [data-slot="dialog-content"], [data-slot="alert-dialog-content"]) [data-slot="input"]::placeholder {
+  color: var(--muted-foreground);
+}
+
+html.multica-agent-gui :is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]) input[data-slot="input"]:not([data-variant="otp"]):not([data-variant="lg"]) {
+  height: var(--button-height-default);
+  padding-inline: var(--button-padding-default);
+}
+
+html.multica-agent-gui :is(.agent-gui-node__shell, [data-slot="dialog-content"], [data-slot="alert-dialog-content"]) [data-slot="input"]:disabled {
+  background: color-mix(in srgb, var(--input) 50%, transparent);
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+html.multica-agent-gui :is(.agent-gui-node__shell, [data-slot="dialog-content"], [data-slot="alert-dialog-content"]) [data-slot="input"][aria-invalid="true"] {
+  border-color: var(--destructive);
+}
+
+html.multica-agent-gui :is(.agent-gui-node__shell, [data-slot="dialog-content"], [data-slot="alert-dialog-content"]) [data-slot="input"][aria-invalid="true"]:focus-visible {
+  outline-color: var(--destructive);
+}
+
+html.multica-agent-gui :is(.agent-gui-node__provider-rail-config-button, .agent-gui-node__activity-toggle-button, .agent-gui-node__new-conversation-icon-button) {
+  border-radius: var(--radius-lg);
+}
+
+html.multica-agent-gui .agent-gui-node__provider-rail-tile-label {
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  line-height: var(--text-micro--line-height);
+  font-weight: 500;
+}
+
+html.multica-agent-gui .agent-gui-node__provider-rail-tile:hover:not(:disabled) .agent-gui-node__provider-rail-avatar {
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+html.multica-agent-gui .agent-gui-node__provider-rail-tile[data-selected="true"] .agent-gui-node__provider-rail-avatar,
+html.multica-agent-gui .agent-gui-node__provider-rail-tile[data-selected="true"]:hover:not(:disabled) .agent-gui-node__provider-rail-avatar {
+  outline: none;
+  background: var(--surface-selected);
+  color: var(--surface-selected-foreground);
+}
+
+html.multica-agent-gui .agent-gui-node__provider-rail-tile[data-selected="true"] .agent-gui-node__provider-rail-tile-label {
+  color: var(--surface-selected-foreground);
+}
+
+html.multica-agent-gui .agent-gui-node__provider-rail-tile:focus-visible .agent-gui-node__provider-rail-avatar {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+html.multica-agent-gui .agent-gui-node__conversation-item {
+  border-color: transparent;
+  border-radius: var(--radius-md);
+}
+
+html.multica-agent-gui .agent-gui-node__conversation-item:is(:hover, :focus-within, [data-state="open"]) {
+  background: var(--surface-hover);
+}
+
+html.multica-agent-gui .agent-gui-node__conversation-item[data-active="true"] {
+  border-color: transparent;
+  background: var(--surface-selected);
+  color: var(--surface-selected-foreground);
+}
+
+html.multica-agent-gui .agent-gui-node__conversation-item:has(.agent-gui-node__conversation-select:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+html.multica-agent-gui .agent-gui-node__conversation-title {
+  color: inherit;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  font-weight: 500;
+}
+
+html.multica-agent-gui .agent-gui-node__conversation-title :is([data-workspace-agent-markdown-shell="true"], [data-workspace-agent-markdown="true"]) {
+  height: auto;
+  line-height: inherit;
+}
+
+html.multica-agent-gui :is(.agent-gui-workbench-header__agent-name, .agent-gui-workbench-header__session-title, .agent-gui-workbench-header__detail-title) {
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+html.multica-agent-gui :is(.agent-gui-node__conversation-time, .agent-gui-node__row-meta) {
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  line-height: var(--text-micro--line-height);
+}
+
+html.multica-agent-gui :is(.agent-gui-node__project-rail-title, .agent-gui-node__conversation-activity-secondary, .agent-gui-node__conversation-activity-project-label) {
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+
+html.multica-agent-gui :is(.agent-gui-node__message-bubble, .agent-gui-conversation__assistant-markdown, .agent-gui-conversation__user-message-bubble) {
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  font-weight: 400;
+}
+
+/* Portals belong to the iframe document rather than the AgentGUI root. */
+html.multica-agent-gui :is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], .agent-gui-node__composer-menu-content) {
+  border-color: var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  color: var(--foreground);
+  box-shadow: var(--menu-shadow);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+html.multica-agent-gui :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="context-menu-item"], [data-slot="context-menu-sub-trigger"], [data-slot="select-item"], .agent-gui-node__composer-menu-item) {
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+html.multica-agent-gui :is([data-slot="dropdown-menu-content"], [data-slot="context-menu-content"], [data-slot="select-content"], .agent-gui-node__composer-menu-content) [data-highlighted]:not([data-disabled]):not([aria-disabled="true"]) {
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+html.multica-agent-gui :is([data-slot="dropdown-menu-item"], [data-slot="context-menu-item"])[data-variant="destructive"] {
+  color: var(--destructive);
+}
+
+html.multica-agent-gui :is([data-slot="dropdown-menu-item"], [data-slot="context-menu-item"])[data-variant="destructive"][data-highlighted] {
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+}
+
+html.multica-agent-gui :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="context-menu-item"], [data-slot="context-menu-sub-trigger"], [data-slot="select-item"], .agent-gui-node__composer-menu-item):is([data-disabled], [aria-disabled="true"]) {
+  background: transparent;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+html.multica-agent-gui :is([data-slot="dropdown-menu-label"], .agent-gui-node__composer-menu-label) {
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  font-weight: 500;
+}
+
+html.multica-agent-gui .multica-queue-menu {
+  width: min(288px, calc(100vw - 16px));
+  min-width: 0;
+  max-width: var(--radix-dropdown-menu-content-available-width);
+}
+
+html.multica-agent-gui .multica-queue-side-action {
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+}
+
+html.multica-agent-gui .multica-queue-side-action > svg {
+  margin-top: 2px;
+}
+
+html.multica-agent-gui .multica-queue-action-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+html.multica-agent-gui .multica-queue-action-title {
+  white-space: nowrap;
+}
+
+html.multica-agent-gui .multica-queue-action-copy > .text-muted-foreground {
+  white-space: normal;
+  line-height: var(--text-caption--line-height);
+}
+
+html.multica-agent-gui :is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]) {
+  border-color: var(--surface-border);
+  border-radius: var(--radius-xl);
+  background: var(--surface-raised);
+  box-shadow: var(--floating-shadow);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+html.multica-agent-gui :is([data-slot="dialog-title"], [data-slot="alert-dialog-title"]) {
+  font-size: var(--text-title-sm);
+  line-height: var(--text-title-sm--line-height);
+  font-weight: 500;
+}
+
+html.multica-agent-gui [data-slot="tooltip-content"] {
+  border-color: var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--tooltip);
+  color: var(--white-stationary);
+  box-shadow: var(--tooltip-shadow);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+
+html.multica-agent-gui .agent-gui-node__empty-hero-title {
+  font-size: var(--text-title-lg);
+  line-height: var(--text-title-lg--line-height);
+  font-weight: 500;
+}
+
+html.multica-agent-gui .agent-gui-node__empty-hero-provider {
+  font-family: var(--font-sans);
+  font-style: normal;
+  font-weight: inherit;
+}
+
+html.multica-agent-gui :is(.agent-gui-node__empty-hero-suggestions-chip, .agent-gui-node__composer-menu-trigger) {
+  border-radius: var(--radius-lg);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+
+html.multica-agent-gui .agent-gui-node__empty-hero-suggestions-chip[aria-pressed="true"] {
+  background: var(--surface-selected);
+  color: var(--surface-selected-foreground);
+}
+
+html.multica-agent-gui :is(.agent-gui-node__composer-input-group-hero, .agent-gui-node__composer-input-shell, .agent-gui-node__empty-hero-suggestions-card) {
+  border-color: var(--surface-border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-input-group-hero .agent-gui-node__composer-input-shell {
+  border-color: transparent;
+}
+
+/* Multica's resting hero surface has no animated decorative edge. */
+html.multica-agent-gui .agent-gui-node__composer-input-group-hero[data-edge-glow="true"]::before,
+html.multica-agent-gui .agent-gui-node__composer-input-group-hero[data-edge-glow="true"]::after {
+  content: none;
+}
+
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-prompt-input-area {
+  border-color: var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-prompt-input-area textarea,
+html.multica-agent-gui .agent-gui-node__composer-textarea,
+html.multica-agent-gui .agent-gui-node__composer-textarea p {
+  /* Its 24px line height and all height variables belong to source measurement. */
+  font-size: var(--text-body);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-textarea .agent-rich-text-placeholder-node:first-child::before {
+  font-size: var(--text-body);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-input-group-hero:focus-within,
+html.multica-agent-gui .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-prompt-input-area:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-send-button,
+html.multica-agent-gui .agent-gui-node__composer-send-button[data-state="interrupt"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-send-button:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+html.multica-agent-gui .agent-gui-node__composer-send-button:disabled {
+  opacity: 0.5;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-send-button:is([data-state="loading"], [data-state="stopping"]) {
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+/* Replace explicit upstream mono faces without changing code density. */
+html.multica-agent-gui :is(.workspace-agents-status-panel__detail-tool-code, .workspace-agents-status-panel__detail-tool-code pre, .workspace-agents-status-panel__detail-tool-code code, .workspace-agents-status-panel__detail-tool-terminal, .workspace-agents-status-panel__detail-tool-terminal [data-agent-terminal-command="true"], .workspace-agents-status-panel__detail-tool-terminal pre, .workspace-agents-status-panel__detail-tool-terminal code, .workspace-agents-status-panel__detail-tool-diff pre, .agent-gui-conversation__assistant-markdown pre, .agent-gui-conversation__assistant-markdown pre code) {
+  font-family: var(--font-mono);
+}
+
+/* Match the three important upstream search declarations at this host boundary. */
+html.multica-agent-gui .agent-gui-node__rail-toolbar .room-issue-node__search-input {
+  border: 1px solid var(--input) !important;
+  border-radius: var(--radius-lg) !important;
+  font-size: var(--text-body) !important;
+}
+
+/* Multica owns conversation navigation; the intact source detail fills this document. */
+html.multica-agent-gui[data-multica-presentation="conversation"] :is(.agent-gui-node__provider-rail-panel, .agent-gui-node__rail-panel, .agent-gui-node__rail-resize-handle) {
+  display: none;
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__layout {
+  display: flex;
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__detail-panel {
+  flex: 1 1 0;
+  width: 100%;
+  border-radius: 0;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-footer-accessory {
+  flex: 0 1 auto;
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+html.multica-agent-gui .multica-composer-footer-controls {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+html.multica-agent-gui .agent-gui-node__composer-footer-accessory:has(.multica-permission-picker) {
+  flex: 1 1 0;
+  margin-left: 0;
+}
+html.multica-agent-gui .agent-gui-node__composer-footer:has(.multica-permission-picker) {
+  align-items: flex-start;
+  column-gap: 4px;
+}
+/* A visually hidden select in the upstream left group still creates a flex gap. */
+html.multica-agent-gui .agent-gui-node__composer-footer:has(.multica-permission-picker) > .agent-gui-node__composer-footer-left {
+  flex: 0 0 auto;
+  column-gap: 0;
+}
+html.multica-agent-gui .agent-gui-node__composer-footer:has(.multica-permission-picker) > .agent-gui-node__composer-footer-right:empty {
+  display: none;
+}
+html.multica-agent-gui .multica-composer-footer-controls:has(.multica-permission-picker) {
+  width: 100%;
+}
+html.multica-agent-gui .multica-permission-picker {
+  margin-right: auto;
+}
+
+html.multica-agent-gui .multica-composer-footer-controls [data-slot="button"] {
+  min-width: 0;
+  max-width: min(220px, 46vw);
+}
+
+html.multica-agent-gui .multica-composer-footer-control-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html.multica-agent-gui .multica-usage-trigger { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+html.multica-agent-gui .multica-usage-ring { flex: 0 0 16px; stroke: currentColor; stroke-width: 2.5; }
+html.multica-agent-gui .multica-usage-ring-track { opacity: .25; }
+html.multica-agent-gui .multica-usage-ring-fill { stroke: var(--foreground); stroke-linecap: round; }
+html.multica-agent-gui .multica-usage-summary { margin-left: 4px; color: var(--muted-foreground); }
+html.multica-agent-gui .multica-usage-popover { width: min(320px, calc(100vw - 24px)); max-height: min(540px, calc(100dvh - 32px)); overflow-y: auto; gap: 12px; }
+html.multica-agent-gui .multica-usage-heading,
+html.multica-agent-gui .multica-usage-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+html.multica-agent-gui .multica-usage-heading { font-size: var(--text-body); }
+html.multica-agent-gui .multica-usage-section { display: flex; flex-direction: column; gap: 8px; font-size: var(--text-caption); }
+html.multica-agent-gui .multica-usage-section + .multica-usage-section { border-top: 1px solid var(--border); padding-top: 12px; }
+html.multica-agent-gui .multica-usage-detail { margin: 0; color: var(--muted-foreground); font-size: var(--text-caption); line-height: 1.5; }
+html.multica-agent-gui .multica-usage-model { overflow-wrap: anywhere; }
+html.multica-agent-gui .multica-usage-plan { text-transform: capitalize; color: var(--muted-foreground); }
+html.multica-agent-gui .multica-usage-window { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+html.multica-agent-gui .multica-usage-meter { height: 4px; overflow: hidden; border-radius: var(--radius-sm); background: var(--muted); }
+html.multica-agent-gui .multica-usage-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--foreground); opacity: .65; }
+
+html.multica-agent-gui .multica-composer-footer-menu {
+  width: min(300px, calc(100vw - 24px));
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: min(480px, calc(100dvh - 32px));
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+html.multica-agent-gui .multica-composer-footer-menu [role^="menuitem"] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+html.multica-agent-gui .multica-composer-agent-option {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: flex-start;
+  text-align: left;
+  flex-direction: column;
+  gap: 2px;
+}
+
+html.multica-agent-gui .multica-composer-agent-availability {
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__composer-handoff-trigger:disabled {
+  display: none;
+}
+
+html.multica-agent-gui :is(.multica-composer-footer-help, .multica-composer-footer-error) {
+  max-width: 300px;
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  overflow-wrap: anywhere;
+}
+
+html.multica-agent-gui .multica-composer-footer-error {
+  color: var(--destructive);
+}
+
+html.multica-agent-gui .multica-composer-footer-menu :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-radio-item"]) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Agent identity follows Multica's circular avatars in both themes. */
+html.multica-agent-gui .agent-gui-node__mention-palette [data-agent-mention-app-icon] {
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+html.multica-agent-gui img[src$="#multica-agent-avatar"] {
+  border-radius: 50%;
+  background: var(--muted);
+}

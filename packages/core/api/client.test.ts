@@ -2142,6 +2142,25 @@ describe("ApiClient", () => {
       expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "again" });
     });
 
+    it("sendChatMessage sends the per-turn model without changing the endpoint or attachments", async () => {
+      const fetchMock = vi.fn().mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify({
+          message_id: "m1", task_id: "t1", created_at: "2026-08-01T00:00:00Z",
+        }), { status: 201, headers: { "Content-Type": "application/json" } })),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const client = new ApiClient("https://api.example.test");
+
+      await client.sendChatMessage("session-1", "selected", ["att-1"], { model: "gpt-test-model" });
+      await client.sendChatMessage("session-1", "default", undefined, {});
+
+      expect(fetchMock.mock.calls[0]![0]).toBe("https://api.example.test/api/chat/sessions/session-1/messages");
+      expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({
+        content: "selected", attachment_ids: ["att-1"], model: "gpt-test-model",
+      });
+      expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "default" });
+    });
+
     it("sendChatMessage accepts the server's null attachment_ids for text-only sends", async () => {
       vi.stubGlobal(
         "fetch",
@@ -3169,5 +3188,18 @@ describe("ApiClient shared credential across windows", () => {
     await expect(client.markOnboardingComplete()).rejects.toBeInstanceOf(ApiError);
 
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("defined-agent conversation invocation",()=>{
+  it("uses an explicit endpoint, retains every target identity and validates the batch response",async()=>{
+    const sent={message_id:"m1",task_id:"t1",created_at:"now",agent_runs:[{agent_id:"design",agent_name:"Design reviewer",message_id:"m1",task_id:"t1"},{agent_id:"code",agent_name:"Code reviewer",message_id:"m2",task_id:"t2"}]};
+    const fetchMock=vi.fn().mockResolvedValue(new Response(JSON.stringify(sent),{status:201,headers:{"Content-Type":"application/json"}})); vi.stubGlobal("fetch",fetchMock);
+    const client=new ApiClient("https://api.example.test");
+    expect((await client.sendChatAgentMessage("session","Review",["design","code"],["file"])).agent_runs).toHaveLength(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example.test/api/chat/sessions/session/agent-messages");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({content:"Review",agent_ids:["design","code"],attachment_ids:["file"]});
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({message_id:"m1",task_id:"t1",created_at:"now"}),{status:201}));
+    await expect(client.sendChatAgentMessage("session","Review",["design"])).rejects.toThrow("invalid agent invocation response");
   });
 });

@@ -20,6 +20,7 @@ import {
   type IssueWindowRequest,
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
+import type { LocalConversationClient, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
 import type {
   DaemonStatus,
   LocalRuntimeProbe,
@@ -101,6 +102,18 @@ function subscribeToMainRendererChannel<T>(
 }
 
 const desktopAPI = {
+  resourcePreview: {
+    request: (scope, command) => ipcRenderer.invoke("resource-preview:request", scope, command),
+    subscribe: (listener) => { const handler = (_event: Electron.IpcRendererEvent, state: import("../shared/resource-preview").WebPreviewState) => listener(state); ipcRenderer.on("resource-preview:changed", handler); return () => ipcRenderer.removeListener("resource-preview:changed", handler); },
+  } satisfies import("../shared/resource-preview").ResourcePreviewClient,
+  localConversations: {
+    request: (scope, method, params) => ipcRenderer.invoke("local-conversation:request", scope, method, params),
+    subscribe: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; sessionId: string }) => listener(payload.scope, payload.sessionId);
+      ipcRenderer.on("local-conversation:changed", handler);
+      return () => ipcRenderer.removeListener("local-conversation:changed", handler);
+    },
+  } satisfies LocalConversationClient,
   /** App version + normalized OS. Read once at preload time so the renderer
    *  can use it synchronously when initializing the API client. */
   appInfo,

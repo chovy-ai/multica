@@ -129,3 +129,15 @@ export function applyWorktreeDevEnv(env, { root, log = false } = {}) {
   }
   return env;
 }
+
+// Cloud development must never reuse a local backend's browser storage or port.
+export function applyCloudDevEnv(env, { root }) {
+  Object.assign(env, {
+    VITE_API_URL: "https://api.multica.ai",
+    VITE_WS_URL: "wss://api.multica.ai/ws",
+    VITE_APP_URL: "https://multica.ai",
+    DESKTOP_APP_SUFFIX: `${appSuffixForPath(root)}-cloud`,
+    DESKTOP_RENDERER_PORT: String(rendererPortForPath(root) + 10000),
+  });
+  return env;
+}

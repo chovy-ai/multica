@@ -5,14 +5,20 @@ import { pathToFileURL } from "url";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import fixPath from "fix-path";
 import { setupAutoUpdater } from "./updater";
-import { setupDaemonManager } from "./daemon-manager";
+import { bundledCliPath, setupDaemonManager } from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
+import { LocalConversationService } from "./local-conversation-service";
+import { ResourceWebPreview } from "./resource-web-preview";
+import { generateLocalConversationTitle } from "./local-conversation-title-generator";
+import { LocalMulticaContext } from "./local-multica-context";
+import type { LocalConversationMethod, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
 import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";
 import { handleAppShortcut } from "./keyboard-shortcuts";
 import { installNavigationGestures } from "./navigation-gestures";
 import { installNavigationGuard } from "./navigation-guard";
+import { installHtmlPreviewNavigationGuard } from "./html-preview-navigation";
 import { createRendererWebPreferences } from "./renderer-web-preferences";
 import { getAppVersion } from "./app-version";
 import { loadRuntimeConfig } from "./runtime-config-loader";
@@ -135,6 +141,7 @@ function freezeBreadcrumbPath(): string {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let localConversations: LocalConversationService | null = null;
 const issueWindows = new Set<BrowserWindow>();
 const authSessionCoordinator = new AuthSessionCoordinator<BrowserWindow>(
   (window) => {
@@ -239,6 +246,7 @@ function loadRenderer(window: BrowserWindow): void {
   // this one site covers both — see navigation-guard.ts for what is and is not
   // in scope (it is origin hardening; in-app routing never reaches it).
   installNavigationGuard(window, rendererURL);
+  installHtmlPreviewNavigationGuard(window.webContents);
 
   if (is.dev && process.env["ELECTRON_RENDERER_URL"]) {
     void window.loadURL(process.env["ELECTRON_RENDERER_URL"]);
@@ -640,6 +648,58 @@ if (!gotTheLock) {
       },
     });
 
+    if (runtimeConfigResult.ok) {
+      const queryContext = new LocalMulticaContext({
+        root: join(app.getPath("userData"), "local-conversations", "cli-context"),
+        apiUrl: runtimeConfigResult.config.apiUrl,
+        appUrl: runtimeConfigResult.config.appUrl,
+        workspaceOperations: true,
+        cliPath: bundledCliPath(),
+        local: (scope) => ({
+          list: () => localConversations!.request(scope, "list", {}),
+          read: (id) => localConversations!.request(scope, "read", { id }),
+          file: (id) => localConversations!.request(scope, "fileRead", { id }),
+        }),
+        localActions: (scope) => ({ request: (method, params) => localConversations!.request(scope, method, params) }),
+      });
+      await queryContext.initialize();
+      localConversations = new LocalConversationService({
+        root: join(app.getPath("userData"), "local-conversations"),
+        apiUrl: runtimeConfigResult.config.apiUrl,
+        generateTitle: generateLocalConversationTitle,
+        prepareContext: (scope, signal, current) => queryContext.prepare(scope, signal, current),
+        queueCloudClient: (scope, signal) => queryContext.queueClient(scope, signal),
+        notify: (scope, sessionId) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:changed", { scope, sessionId }); },
+        chooseDirectory: async (current) => {
+          if (!mainWindow) return null;
+          const result = await dialog.showOpenDialog(mainWindow, { defaultPath: current, properties: ["openDirectory", "createDirectory"] });
+          return result.canceled ? null : result.filePaths[0] ?? null;
+        },
+        choosePreview: async (kind) => {
+          if (!mainWindow) return null;
+          const result = await dialog.showOpenDialog(mainWindow, { properties: [kind === "directory" ? "openDirectory" : "openFile"] });
+          return result.canceled ? null : result.filePaths[0] ?? null;
+        },
+      });
+    }
+    let resourcePreview: ResourceWebPreview | undefined;
+    ipcMain.handle("resource-preview:request", (event, scope: LocalConversationScope, command: import("../shared/resource-preview").WebPreviewCommand) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Preview requires the active main window");
+      localConversations.assertScope(scope);
+      resourcePreview ??= new ResourceWebPreview(mainWindow);
+      return resourcePreview.request(JSON.stringify([scope.userId, scope.workspaceId]), command);
+    });
+    ipcMain.handle("local-conversation:request", (event, scope: LocalConversationScope, method: LocalConversationMethod, params) => {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Local conversations require the active main window");
+      return localConversations.request(scope, method, params);
+    });
+    let localShutdown = false;
+    app.on("before-quit", (event) => {
+      if (localShutdown || !localConversations) return;
+      event.preventDefault(); localShutdown = true;
+      void localConversations.stop().catch(() => console.warn("[local-conversations] Could not finish saving before exit")).finally(() => app.quit());
+    });
+
     electronApp.setAppUserModelId(
       is.dev ? "ai.multica.desktop.dev" : "ai.multica.desktop",
     );
@@ -758,8 +818,10 @@ if (!gotTheLock) {
       if (!sourceWindow || userId === undefined) return;
 
       if (sourceWindow === mainWindow) {
+        localConversations?.setCurrentUser(userId);
         const accountInvalidated = authSessionCoordinator.reportMain(userId);
         if (accountInvalidated) {
+          resourcePreview?.dispose();
           authSessionGeneration += 1;
           mainRendererMessages.clear("inbox:open");
         }
