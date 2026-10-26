@@ -27,9 +27,15 @@ export class CodexContextBridge {
         body: Buffer.concat(chunks),
       });
       response.writeHead(result.status, { "Content-Type": result.headers.get("content-type") ?? "application/json" });
-      if (result.body) for await (const chunk of result.body) {
-        if (response.destroyed) break;
-        response.write(chunk);
+      if (result.body) {
+        const reader = result.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done || response.destroyed) break;
+            response.write(value);
+          }
+        } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
       }
       response.end();
     } catch { if (!response.headersSent) response.writeHead(503); response.end(); }

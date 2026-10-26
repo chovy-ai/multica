@@ -75,7 +75,7 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 
 ```sh
 pnpm --filter @multica/desktop exec vitest run src/main/local-codex-pool.test.ts src/main/local-conversation-service.test.ts src/main/local-conversation-queue.test.ts src/main/local-provider-runner.test.ts
-pnpm --filter @multica/desktop typecheck:node
+pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/desktop exec eslint src/main/local-codex-*.ts src/main/local-conversation-service.ts src/main/local-conversation-service.test.ts
 git diff --check
 ```
