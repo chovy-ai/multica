@@ -13,6 +13,7 @@ import { CONTEXT_MCP_NAME, CONTEXT_MCP_TOKEN_ENV, CONTEXT_MCP_TOOLS } from "./lo
 import { runLocalProvider } from "./local-provider-runner";
 import { CREATE_TASK_MENTION_ID } from "@multica/tutti-agent-gui-host/local-protocol";
 import { DeveloperLogExporter, createDeveloperLogTool } from "./developer-log-export";
+import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
 import { LocalTimingLog } from "./local-timing-log";
 import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 
@@ -116,8 +117,14 @@ describe("built-in Multica context MCP", () => {
     const data = await fixture();
     const log = new LocalTimingLog(join(data.root, "diagnostics"));
     createLocalTiming({ source: "main", conversationId: data.source.id, provider: "codex" }, log.write).mark("provider.first_text");
+    const web = new WebDiagnosticLog(join(data.root, "diagnostics"), "https://test.invalid", scope.userId);
+    web.console({ level: "warning", message: "Web transport retry" });
+    const daemonPath = join(data.root, "daemon.log");
+    await writeFile(daemonPath, "12:34:56.789 INF daemon connected\n");
     const exporter = new DeveloperLogExporter({
-      log, exportsRoot: join(data.root, "exports"),
+      log,
+      runtimeLogs: async (_scope, since, until) => ({ web: await web.snapshot(since, until), daemon: await snapshotDaemonLog(daemonPath) }),
+      exportsRoot: join(data.root, "exports"),
       runtime: { appVersion: "test", platform: "test", arch: "test", electronVersion: "test", chromeVersion: "test", nodeVersion: "test", packaged: false },
       assertScope: (scope) => data.service.assertScope(scope),
       conversations: async (scope) => (await data.service.request(scope, "list", {})).map((entry) => entry.id),
@@ -129,8 +136,11 @@ describe("built-in Multica context MCP", () => {
     expect(run.systemPrompt).toContain("use export_developer_logs");
     expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("export_developer_logs");
     const result = textResult(await client.callTool({ name: "export_developer_logs", arguments: { request_id: "diagnose" } }));
-    expect(result).toMatchObject({ format: "json", recordCount: 1, filter: { conversationId: data.source.id } });
-    expect(JSON.parse(await readFile(result.path, "utf8")).records[0].stage).toBe("provider.first_text");
+    expect(result).toMatchObject({ format: "json", recordCount: 3, timingRecordCount: 1, webRecordCount: 1, daemonLineCount: 1, filter: { conversationId: data.source.id } });
+    const bundle = JSON.parse(await readFile(result.path, "utf8"));
+    expect(bundle.records[0].stage).toBe("provider.first_text");
+    expect(bundle.sources.web.records[0].message).toBe("Web transport retry");
+    expect(bundle.sources.daemon.text).toContain("daemon connected");
     const denied = await client.callTool({ name: "export_developer_logs", arguments: { request_id: "foreign", conversation_id: "foreign" } });
     expect(denied.isError).toBe(true);
   });

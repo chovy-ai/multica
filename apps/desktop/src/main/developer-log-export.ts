@@ -7,6 +7,7 @@ import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timi
 import type { DeveloperLogQuery, DeveloperLogSaveResult } from "../shared/developer-logs";
 import type { WorkspaceMcpTool } from "./local-workspace-tools";
 import { LocalTimingLog } from "./local-timing-log";
+import type { DaemonLogSource, RuntimeLogSource } from "./developer-runtime-logs";
 
 const querySchema = z.object({
   sinceMinutes: z.number().int().min(1).max(10080),
@@ -30,6 +31,7 @@ interface Options {
   runtime: RuntimeInfo;
   assertScope(scope: LocalConversationScope): void;
   conversations(scope: LocalConversationScope): Promise<string[]>;
+  runtimeLogs(scope: LocalConversationScope, since: number, until: number): Promise<{ web: RuntimeLogSource; daemon: DaemonLogSource }>;
   chooseSavePath(filename: string): Promise<string | null>;
 }
 
@@ -65,15 +67,21 @@ export class DeveloperLogExporter {
     const since = until - query.sinceMinutes * 60_000;
     const { records, incomplete } = await this.options.log.snapshot(new Set(query.conversationId ? [query.conversationId] : ids), since, until);
     this.options.assertScope(scope); signal.throwIfAborted();
+    const sources = await this.options.runtimeLogs(scope, since, until);
+    this.options.assertScope(scope); signal.throwIfAborted();
+    const timingSummary = summarize(records);
+    const webRecordCount = sources.web.records.length;
+    const daemonLineCount = sources.daemon.text.split("\n").filter(Boolean).length;
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: new Date(until).toISOString(),
       runtime: this.options.runtime,
       workspaceId: scope.workspaceId,
       filter: { since: new Date(since).toISOString(), until: new Date(until).toISOString(), conversationId: query.conversationId ?? null },
-      coverage: { incomplete, retainedFiles: 2, maxFileBytes: 5 * 1024 * 1024, historicalLogsMayHaveRotated: true },
-      summary: summarize(records),
+      coverage: { incomplete: incomplete || sources.web.incomplete || sources.daemon.incomplete, retainedFiles: 2, maxFileBytes: 5 * 1024 * 1024, historicalLogsMayHaveRotated: true },
+      summary: { ...timingSummary, timingRecordCount: timingSummary.recordCount, webRecordCount, daemonLineCount, recordCount: timingSummary.recordCount + webRecordCount + daemonLineCount },
       records,
+      sources: { web: { ...sources.web, scope: "account", timeFilterApplied: true }, daemon: sources.daemon },
     };
   }
 
@@ -108,7 +116,7 @@ export class DeveloperLogExporter {
       throw new Error(signal.aborted ? "Developer log export cancelled" : "Could not export developer logs");
     }
     await this.prune().catch(() => undefined);
-    return { path, format: "json", ...bundle.summary, incomplete: bundle.coverage.incomplete, filter: bundle.filter };
+    return { path, format: "json", ...bundle.summary, incomplete: bundle.coverage.incomplete, filter: bundle.filter, sources: { web: { status: bundle.sources.web.status, truncated: bundle.sources.web.truncated }, daemon: { status: bundle.sources.daemon.status, truncated: bundle.sources.daemon.truncated, timeFilterApplied: false } } };
   }
 
   private async prune() {
@@ -128,7 +136,7 @@ export function createDeveloperLogTool(exporter: DeveloperLogExporter, scope: Lo
   };
   return {
     name: "export_developer_logs",
-    description: "Export retained local developer timing logs and runtime versions to a private JSON file. Defaults to this conversation and the last 60 minutes; scope=workspace includes only this account's selected workspace. No cloud login is required. Returns a local path and stage summary; read the file with a native file tool. Does not include message text, tool payloads, images, credentials or raw provider logs. Use when the user requests diagnostics, reuse request_id on retries, and never upload the file without the user's request. Local exports are kept for up to 7 days, at most 20 files.",
+    description: "Export developer diagnostics together in one private JSON file: scoped conversation stage timings, this account's Web renderer console, runtime versions and the current desktop profile's daemon log tail. Conversation/workspace and since_minutes filter timings; Web logs use the same time range across the account, and daemon logs are a bounded profile-wide tail without a time/conversation filter. Defaults to this conversation and 60 minutes. No cloud login required. Returns the local path, per-source availability/truncation and counts; read with a native file tool. Common credentials, URLs and payload fields are scrubbed, but diagnostic text may contain private details: review before sharing, and never upload without the user's request. Reuse request_id on retries. Auto exports are kept up to 7 days, at most 20 files.",
     inputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async call(raw, signal) {

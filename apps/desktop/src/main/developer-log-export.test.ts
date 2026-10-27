@@ -1,9 +1,10 @@
 // @vitest-environment node
-import { mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { LocalTimingLog } from "./local-timing-log";
+import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
 import { DeveloperLogExporter, createDeveloperLogTool } from "./developer-log-export";
 
 const scope = { userId: "user", workspaceId: "workspace" };
@@ -13,17 +14,20 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "multica-export-"));
   const log = new LocalTimingLog(root);
   const selected = join(root, "selected.json");
+  const webLog = new WebDiagnosticLog(root, "https://test.invalid", scope.userId);
+  const daemonPath = join(root, "daemon.log");
   let active = true;
   const options = {
     log, exportsRoot: join(root, "exports"), runtime,
     assertScope: () => { if (!active) throw new Error("Account is no longer active"); },
     conversations: vi.fn(async () => ["conversation", "second"]),
+    runtimeLogs: vi.fn(async (_scope: typeof scope, since: number, until: number) => ({ web: await webLog.snapshot(since, until), daemon: await snapshotDaemonLog(daemonPath) })),
     chooseSavePath: vi.fn(async (): Promise<string | null> => selected),
   };
   const now = Date.now();
   const record = { version: 1, source: "main", stage: "provider.first_text", event: "mark", elapsedMs: 42, at: new Date(now).toISOString(), conversationId: "conversation", turnId: "turn", requestId: "request", provider: "codex", message: "NEVER_EXPORT", env: { token: "NEVER_EXPORT" } };
   for (const value of [record, { ...record, conversationId: "second" }, { ...record, conversationId: "foreign" }, { ...record, at: new Date(now - 2 * 86400000).toISOString() }]) log.write(value);
-  return { root, log, selected, options, exporter: new DeveloperLogExporter(options), deactivate: () => { active = false; }, cleanup: async () => { await log.flush(); await rm(root, { recursive: true, force: true }); } };
+  return { root, log, webLog, daemonPath, selected, options, exporter: new DeveloperLogExporter(options), deactivate: () => { active = false; }, cleanup: async () => { await log.flush(); await webLog.flush(); await rm(root, { recursive: true, force: true }); } };
 }
 
 describe("developer log export", () => {
@@ -45,6 +49,57 @@ describe("developer log export", () => {
         expect((await stat(exported.path)).mode & 0o777).toBe(0o600);
         expect((await stat(f.selected)).mode & 0o777).toBe(0o600);
       }
+    } finally { await f.cleanup(); }
+  });
+  it("includes Web and daemon logs in the same UI and MCP bundle with honest source coverage", async () => {
+    const f = await fixture();
+    try {
+      f.webLog.console({ level: "error", message: "fetch failed token=NEVER_EXPORT" });
+      await writeFile(f.daemonPath, "12:34:56.789 ERR connection failed token=NEVER_EXPORT\n");
+      await f.exporter.save(scope);
+      const ui = JSON.parse(await readFile(f.selected, "utf8"));
+      const result = await createDeveloperLogTool(f.exporter, scope, "conversation").call({ request_id: "combined" }, signal()) as { path: string };
+      const mcp = JSON.parse(await readFile(result.path, "utf8"));
+      for (const bundle of [ui, mcp]) {
+        expect(bundle.schemaVersion).toBe(2);
+        expect(bundle.sources.web).toMatchObject({ status: "available", scope: "account", timeFilterApplied: true, records: [{ level: "error", message: "fetch failed token=[REDACTED]" }] });
+        expect(bundle.sources.daemon).toMatchObject({ status: "available", scope: "desktop-profile", timeFilterApplied: false, text: expect.stringContaining("connection failed") });
+        expect(bundle.summary).toMatchObject({ webRecordCount: 1, daemonLineCount: 1 });
+        expect(bundle.summary.recordCount).toBe(bundle.summary.timingRecordCount + 2);
+        expect(JSON.stringify(bundle)).not.toContain("NEVER_EXPORT");
+      }
+      expect(mcp.records).toHaveLength(1);
+      expect(ui.records).toHaveLength(2);
+      await rm(f.daemonPath);
+      const absent = await f.exporter.export(scope, { sinceMinutes: 60 }, signal());
+      expect(absent.sources.daemon.status).toBe("missing");
+    } finally { await f.cleanup(); }
+  });
+  it("still saves Web and timing records when the daemon source cannot be read", async () => {
+    const f = await fixture();
+    try {
+      f.webLog.console({ level: "info", message: "Web ready" });
+      await mkdir(f.daemonPath);
+      await f.exporter.save(scope);
+      const bundle = JSON.parse(await readFile(f.selected, "utf8"));
+      expect(bundle.sources.web.status).toBe("available");
+      expect(bundle.sources.daemon.status).toBe("unreadable");
+      expect(bundle.coverage.incomplete).toBe(true);
+      expect(bundle.records).toHaveLength(2);
+    } finally { await f.cleanup(); }
+  });
+  it("rejects account changes while collecting runtime sources before saving", async () => {
+    const f = await fixture();
+    try {
+      const readSources = f.options.runtimeLogs.getMockImplementation()!;
+      f.options.runtimeLogs.mockImplementationOnce(async (...args) => {
+        const sources = await readSources(...args);
+        f.deactivate();
+        return sources;
+      });
+      await expect(f.exporter.save(scope)).rejects.toThrow("Account is no longer active");
+      expect(f.options.chooseSavePath).not.toHaveBeenCalled();
+      expect(await readdir(f.root)).not.toContain("selected.json");
     } finally { await f.cleanup(); }
   });
   it("does not save when cancelled or when the account changes in the save dialog", async () => {

@@ -1344,6 +1344,11 @@ function startLogTail(win: BrowserWindow, retryCount = 0): void {
   });
 }
 
+/** Read-only diagnostic source; never resolves to the terminal CLI's default profile. */
+export function daemonDiagnosticLogPath(): string | null {
+  return targetApiBaseUrl ? profileLogPath(deriveProfileName(targetApiBaseUrl)) : null;
+}
+
 function stopLogTail(): void {
   if (logTailWatcher) {
     unwatchFile(logTailWatcher.path, logTailWatcher.listener);
