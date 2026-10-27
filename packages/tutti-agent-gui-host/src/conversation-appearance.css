@@ -226,6 +226,10 @@ html.multica-agent-gui .workspace-agents-status-panel__detail-markdown.agent-gui
   line-height: var(--text-body--line-height);
 }
 
+html.multica-agent-gui[data-multica-presentation="conversation"]:not([data-side-pane="true"]) .agent-gui-conversation__assistant-markdown {
+  max-width: 100%;
+}
+
 html.multica-agent-gui .agent-gui-node__timeline .workspace-agents-status-panel__detail-turn-summary {
   color: var(--muted-foreground);
   font-size: var(--text-caption);
