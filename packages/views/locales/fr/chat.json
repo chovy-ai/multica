@@ -1,4 +1,10 @@
 {
+  "desktop": {
+    "local_conversation": {
+      "waiting_for_answer": "En attente de votre réponse",
+      "waiting_for_answer_label": "En attente de votre réponse : {{title}}"
+    }
+  },
   "page": {
     "title": "Discussion",
     "select_prompt": "Choisissez une conversation, ou démarrez-en une nouvelle avec +",

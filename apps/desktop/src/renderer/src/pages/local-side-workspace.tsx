@@ -112,11 +112,11 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
       try {
         const source = await getLocalConversationClient(window.desktopAPI.localConversations).request(scope, "read", { id: sessionId });
         const { file, line } = await resolveConversationFile({ source, value,
-          read: (path) => getLocalConversationClient(window.desktopAPI.localConversations).request(scope, "previewRead", { root: source.cwd, path, id: source.id }),
+          read: (path) => getLocalConversationClient(window.desktopAPI.localConversations).request(scope, "previewRead", { path, id: source.id }),
           list: (path) => getLocalConversationClient(window.desktopAPI.localConversations).request(scope, "previewList", { root: source.cwd, path, id: source.id }),
         });
         if (!mounted.current || (owner === "new" && !isCurrent())) return;
-        addTo(owner, { id: `file:${crypto.randomUUID()}`, kind: "file", sourceId: source.id, line, location: { root: source.cwd, path: file.path, name: file.name, kind: "file" } });
+        addTo(owner, { id: `file:${crypto.randomUUID()}`, kind: "file", sourceId: source.id, line, location: { root: file.root ?? source.cwd, path: file.path, name: file.name, kind: "file" } });
       } catch (error) {
         if (!(error instanceof FileLinkPreviewError)) throw error;
         if (isCurrent()) setError(fileLinkErrorMessage(error, latest.current.chinese));

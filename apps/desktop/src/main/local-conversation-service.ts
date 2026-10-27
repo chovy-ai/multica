@@ -381,7 +381,11 @@ export class LocalConversationService {
       case "previewList": case "previewRead": {
         const cwd = params.id ? session().cwd : undefined;
         const reader = new LocalResourceReader(join(this.options.root, this.key(scope)));
-        const root = text(params.root, "preview root", 4096), path = text(params.path, "preview path", 4096);
+        const path = text(params.path, "preview path", 4096);
+        if (method === "previewRead" && params.root === undefined) {
+          result = await reader.readLink(path, cwd); break;
+        }
+        const root = text(params.root, "preview root", 4096);
         result = method === "previewList" ? await reader.list(root, path, cwd) : await reader.read(root, path, cwd); break;
       }
       case "sideCreate": {

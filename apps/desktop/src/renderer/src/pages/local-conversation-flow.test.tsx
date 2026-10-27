@@ -3,8 +3,9 @@ import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LocalConversation, LocalFolderProject } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalFolderProject, LocalUserQuestion } from "@multica/tutti-agent-gui-host/local-protocol";
 import type { Project } from "@multica/core/types";
+import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 import { LocalConversationFlowPage } from "./local-conversation-flow";
 import { useProjectVisibilityStore } from "../stores/local-conversation-project-visibility";
 import { useConversationLayoutStore } from "../stores/local-conversation-layout";
@@ -20,7 +21,7 @@ vi.mock("@multica/views/navigation", () => ({
   useNavigation: () => ({ pathname: mock.pathname, searchParams: new URLSearchParams({ session: mock.selected }), replace: mock.replace }),
   AppLink: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a>,
 }));
-vi.mock("@multica/views/i18n", () => ({ useLocale: () => "zh-Hans" }));
+vi.mock("@multica/views/i18n", () => ({ useLocale: () => "zh-Hans", useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: { title: string }) => selector(chat).replace("{{title}}", options?.title ?? "") }) }));
 vi.mock("@multica/ui/hooks/use-mobile", () => ({ useIsCompact: () => mock.compact }));
 vi.mock("@multica/views/runtimes/provider-logo", () => ({ ProviderLogo: () => null }));
 vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: () => <textarea aria-label="Conversation draft" /> }));
@@ -97,6 +98,54 @@ describe("restoring the selected conversation after a tab switch", () => {
 });
 
 describe("local conversation execution indicators", () => {
+  const question = (request_id: string): LocalUserQuestion => ({ request_id, status: "pending", createdAt: "2026-01-01", updatedAt: "2026-01-01", questions: [{ id: "choice", question: "Which approach?", options: [{ label: "Simple" }, { label: "Detailed" }], multiSelect: false, allowFreeText: true }] });
+
+  it.each(["codex", "claude"] as const)("shows pending %s questions in an unselected row and updates after answers and cancellation", async (provider) => {
+    source = { ...source, provider, turns: [{ id: "question-turn", status: "running", createdAt: "2026-01-01", events: [], questions: [question("first"), question("second")] }] };
+    const other = { ...source, id: "other", title: "Other conversation", turns: [] };
+    mock.selected = other.id;
+    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [other, source] : []);
+    let notify!: Parameters<typeof window.desktopAPI.localConversations.subscribe>[0];
+    vi.spyOn(window.desktopAPI.localConversations, "subscribe").mockImplementation((listener) => { notify = listener; return () => {}; });
+    const mounted = render(page());
+    const warning = await screen.findByRole("button", { name: "等待你的回答：Original" });
+    const row = screen.getByRole("link", { name: /Original/ });
+    expect(row).not.toHaveAttribute("aria-current");
+    expect(row).toHaveTextContent("等待你的回答");
+    expect(screen.queryByRole("status", { name: "会话运行中：Original" })).not.toBeInTheDocument();
+    fireEvent.click(warning);
+    expect(mock.replace).toHaveBeenCalledWith(`/test/conversations?provider=${provider}&session=source`);
+
+    const updateQuestions = async (statuses: LocalUserQuestion["status"][]) => {
+      source = { ...source, turns: source.turns.map((turn) => ({ ...turn, questions: turn.questions!.map((item, index) => ({ ...item, status: statuses[index]! })) })) };
+      act(() => notify({ userId: "user", workspaceId: "workspace" }, source.id));
+      await waitFor(() => expect(qc.getQueryData(["test-local-sessions"])).toEqual([other, source]));
+    };
+    await updateQuestions(["answered", "pending"]);
+    expect(screen.getByRole("button", { name: "等待你的回答：Original" })).toBeVisible();
+    await updateQuestions(["answered", "answered"]);
+    expect(await screen.findByRole("status", { name: "会话运行中：Original" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "等待你的回答：Original" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Original/ })).toHaveTextContent(`${provider === "codex" ? "Codex" : "Claude Code"} · Result`);
+    await updateQuestions(["answered", "pending"]);
+    expect(screen.getByRole("button", { name: "等待你的回答：Original" })).toBeVisible();
+    await updateQuestions(["answered", "cancelled"]);
+    expect(screen.queryByRole("button", { name: "等待你的回答：Original" })).not.toBeInTheDocument();
+
+    mounted.unmount();
+    render(page());
+    expect(await screen.findByRole("status", { name: "会话运行中：Original" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "等待你的回答：Original" })).not.toBeInTheDocument();
+  });
+
+  it.each(["completed", "failed", "cancelled"] as const)("does not warn about stale pending questions in a %s turn", async (status) => {
+    source.turns = [{ id: "old-turn", status, createdAt: "2026-01-01", events: [], questions: [question("stale")], backgroundTasks: [{ id: "watcher", description: "Monitor progress", status: "running" }] }];
+    render(page());
+    expect(await screen.findByRole("status", { name: "后台运行中：Original（1）" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "等待你的回答：Original" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Original/ })).toHaveTextContent("Codex · Result");
+  });
+
   it("distinguishes background monitoring from a foreground reply and can stop it from the session menu", async () => {
     source = { ...source, provider: "claude", turns: [{ id: "finished-turn", status: "completed", createdAt: "2026-01-01", events: [], backgroundTasks: [{ id: "watcher", description: "Wait for PR to merge", status: "running" }] }] };
     mock.request.mockImplementation(async (_scope, method) => {

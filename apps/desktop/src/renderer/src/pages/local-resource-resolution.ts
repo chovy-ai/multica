@@ -13,7 +13,7 @@ const missing = (error: unknown) => /\b(?:ENOENT|ENOTDIR)\b/.test(error instance
 const denied = (error: unknown) => /\b(?:EACCES|EPERM)\b|outside the selected folder|Choose this folder/.test(error instanceof Error ? error.message : String(error));
 
 interface Input {
-  source: Pick<LocalConversation, "cwd" | "messages">;
+  source: Pick<LocalConversation, "cwd" | "messages"> & Partial<Pick<LocalConversation, "turns">>;
   value: string;
   read(path: string): Promise<LocalPreviewFile>;
   list(path: string): Promise<LocalPreviewLocation[]>;
@@ -34,13 +34,33 @@ export async function resolveConversationFile({ source, value, read, list }: Inp
 
   const suffix = target.path.replace(/^(?:\.\/)+/, "");
   const hints = new Set<string>();
+  const addHint = (value: string, absoluteOnly = false) => {
+    const hint = localResourceTarget(value)?.path;
+    if (!hint || (absoluteOnly && !absolute(hint)) || !hint.endsWith(`/${suffix}`) || hint.split("/").includes("..")) return;
+    hints.add(hint);
+    if (hints.size > 8) throw new FileLinkPreviewError("incomplete");
+  };
   if (source.messages.reduce((size, message) => size + message.content.length, 0) > 2_000_000) throw new FileLinkPreviewError("incomplete");
   for (const message of source.messages) {
     for (const match of message.content.matchAll(/`([^`\r\n]+)`|\]\((?:<([^>\r\n]+)>|([^\s)]+))\)/g)) {
-      const hint = localResourceTarget(match[1] ?? match[2] ?? match[3] ?? "")?.path;
-      if (!hint || !hint.endsWith(`/${suffix}`) || hint.split("/").includes("..")) continue;
-      hints.add(hint);
-      if (hints.size > 8) throw new FileLinkPreviewError("incomplete");
+      addHint(match[1] ?? match[2] ?? match[3] ?? "");
+    }
+  }
+  // Replies can abbreviate files that tools addressed by absolute path. These
+  // inputs are hints only: never execute commands or infer shell cwd changes.
+  let inputSize = 0;
+  for (const turn of source.turns ?? []) {
+    for (const event of turn.events) {
+      if (event.type !== "tool_use") continue;
+      for (const value of Object.values(event.input ?? {})) {
+        if (typeof value !== "string") continue;
+        inputSize += value.length;
+        if (inputSize > 2_000_000) throw new FileLinkPreviewError("incomplete");
+        addHint(value, true);
+        for (const match of value.matchAll(/"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s"'`;|&<>]+)/g)) {
+          addHint(match[1] ?? match[2] ?? match[3] ?? "", true);
+        }
+      }
     }
   }
   if (!hints.size) throw new FileLinkPreviewError("missing");

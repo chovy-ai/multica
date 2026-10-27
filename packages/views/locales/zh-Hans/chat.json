@@ -1,4 +1,10 @@
 {
+  "desktop": {
+    "local_conversation": {
+      "waiting_for_answer": "等待你的回答",
+      "waiting_for_answer_label": "等待你的回答：{{title}}"
+    }
+  },
   "page": {
     "title": "聊天",
     "select_prompt": "选择一个对话，或点 + 新建",

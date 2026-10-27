@@ -69,7 +69,7 @@ it.each([
 ])("previews a transcript file using the source folder and decoded path: %s", async (href, path, line) => {
   const { ref } = setup();
   await act(async () => { await ref.current!.openResource("main", href); });
-  expect(request).toHaveBeenCalledWith(scope, "previewRead", { root: "/project", path, id: "main" });
+  expect(request).toHaveBeenCalledWith(scope, "previewRead", { path, id: "main" });
   expect(await screen.findByRole("tab", { name: "test.ts" })).toHaveAttribute("aria-selected", "true");
   if (line) expect(await screen.findByText(`第 ${line} 行`)).toBeVisible();
 });
@@ -77,6 +77,25 @@ it("rejects foreign file URLs before reading a local resource", async () => {
   const { ref } = setup();
   await expect(ref.current!.openResource("main", "file://server/project/cases.html")).rejects.toThrow("Use a local file path");
   expect(request.mock.calls.filter(([, method]) => method === "previewRead")).toEqual([]);
+});
+it("keeps the authorized root when a tool reference resolves outside the source cwd", async () => {
+  const path = "/selected repo/server/internal/daemon/runtime_mcp.go";
+  sessions[0]!.turns = [{ id: "turn", status: "completed", createdAt: "2026-10-24", events: [
+    { type: "tool_use", seq: 1, tool: "Read", input: { file_path: path }, created_at: "2026-10-24" },
+  ] }];
+  request.mockImplementation(async (_scope, method, params) => {
+    if (method === "read") return sessions[0];
+    if (method === "previewRead") {
+      if (params.path !== path) throw new Error("ENOENT");
+      return { root: "/selected repo", path, name: "runtime_mcp.go", mimeType: "text/plain", text: "package daemon", size: 14, truncated: false };
+    }
+    return undefined;
+  });
+  const { ref } = setup();
+  await act(async () => { await ref.current!.openResource("main", "runtime_mcp.go"); });
+  expect(await screen.findByText("package daemon")).toBeVisible();
+  expect(request).toHaveBeenCalledWith(scope, "previewRead", { root: "/selected repo", path, name: "runtime_mcp.go", kind: "file", id: "main" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 it("shows one recoverable file error and preserves the main draft instead of stacking IPC toasts", async () => {
   let missing = true;
