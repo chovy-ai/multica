@@ -200,6 +200,10 @@ func daemonPIDPathForProfile(profile string) string {
 	return filepath.Join(daemonDirForProfile(profile), "daemon.pid")
 }
 
+func daemonLocalAPITokenPath(profile string) string {
+	return filepath.Join(daemonDirForProfile(profile), daemon.LocalAPITokenFile)
+}
+
 func daemonLogPathForProfile(profile string) string {
 	return filepath.Join(daemonDirForProfile(profile), "daemon.log")
 }
@@ -1129,6 +1133,16 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 	defer removeDaemonPortIfOwned(profile, os.Getpid())
 
+	localToken, err := daemon.NewLocalAPIToken()
+	if err != nil {
+		return err
+	}
+	if err := daemon.WriteLocalAPIToken(daemonLocalAPITokenPath(profile), localToken); err != nil {
+		return fmt.Errorf("publish daemon local API token: %w", err)
+	}
+	defer daemon.RemoveLocalAPITokenIfOwned(daemonLocalAPITokenPath(profile), localToken)
+	cfg.LocalAPIToken = localToken
+
 	ctx, stop := notifyShutdownContext(context.Background())
 	defer stop()
 
@@ -1313,7 +1327,7 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 		pid, _ := health["pid"].(float64)
 		if pid > 0 {
 			fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", int(pid))
-			if err := requestDaemonShutdown(healthPort); err != nil {
+			if err := requestDaemonShutdown(profile, healthPort); err != nil {
 				if p, perr := os.FindProcess(int(pid)); perr == nil {
 					_ = p.Kill()
 				}
@@ -1389,7 +1403,7 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	// GenerateConsoleCtrlEvent can't reach it; HTTP works on both
 	// platforms and triggers the same context-cancel path the daemon
 	// already uses for self-restart.
-	if err := requestDaemonShutdown(healthPort); err != nil {
+	if err := requestDaemonShutdown(profile, healthPort); err != nil {
 		fmt.Fprintf(os.Stderr, "Graceful shutdown request failed: %v — falling back to forced kill.\n", err)
 		if kerr := process.Kill(); kerr != nil {
 			return fmt.Errorf("kill daemon (pid %d): %w", int(pid), kerr)
@@ -1418,11 +1432,15 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 // requestDaemonShutdown POSTs to the daemon's /shutdown endpoint to ask it
 // to exit gracefully. Returns an error if the request could not be delivered
 // (network error, non-2xx status, or the endpoint predates this change).
-func requestDaemonShutdown(healthPort int) error {
+func requestDaemonShutdown(profile string, healthPort int) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d/shutdown", healthPort)
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		return err
+	}
+	// Daemons that predate the token ignore the header; a missing file sends none.
+	if token, _ := daemon.ReadLocalAPIToken(daemonLocalAPITokenPath(profile)); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)

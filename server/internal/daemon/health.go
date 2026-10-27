@@ -388,12 +388,16 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 // top-level context. Used by `multica daemon stop` so we don't depend on
 // OS-signal delivery, which is unreliable on Windows once the daemon is
 // spawned with DETACHED_PROCESS (no shared console with the stop caller).
-// The listener is bound to 127.0.0.1 only, so only local processes can hit
-// this endpoint.
+// Loopback binding alone does not stop a web page from POSTing here, so the
+// caller must present the profile's local API token.
 func (d *Daemon) shutdownHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !d.authorizeLocalRequest(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

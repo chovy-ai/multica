@@ -352,10 +352,11 @@ func TestShutdownHandlerPostCancelsDaemonContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	d := &Daemon{cancelFunc: cancel}
+	d := &Daemon{cancelFunc: cancel, cfg: Config{LocalAPIToken: "local-secret"}}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/shutdown", nil)
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:19514/shutdown", nil)
+	req.Header.Set("Authorization", "Bearer local-secret")
 	d.shutdownHandler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -1008,4 +1009,46 @@ func TestHealthHandlerReportsProfileIdentity(t *testing.T) {
 			t.Errorf("launched_by should be omitted for a standalone daemon, got %v", raw["launched_by"])
 		}
 	})
+}
+
+func TestShutdownHandlerRejectsUnauthorizedRequests(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		token  string
+		host   string
+		auth   string
+		origin string
+	}{
+		{name: "missing token", token: "local-secret", host: "127.0.0.1:19514"},
+		{name: "wrong token", token: "local-secret", host: "127.0.0.1:19514", auth: "Bearer other"},
+		{name: "rebinding host", token: "local-secret", host: "attacker.example:19514", auth: "Bearer local-secret"},
+		{name: "browser origin", token: "local-secret", host: "localhost:19514", auth: "Bearer local-secret", origin: "https://attacker.example"},
+		{name: "daemon without token", host: "127.0.0.1:19514", auth: "Bearer "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cancelled := make(chan struct{}, 1)
+			d := &Daemon{cfg: Config{LocalAPIToken: tc.token}, cancelFunc: func() { cancelled <- struct{}{} }}
+			req := httptest.NewRequest(http.MethodPost, "http://"+tc.host+"/shutdown", nil)
+			if tc.auth != "" {
+				req.Header.Set("Authorization", tc.auth)
+			}
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			rec := httptest.NewRecorder()
+			d.shutdownHandler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("expected 403, got %d", rec.Code)
+			}
+			select {
+			case <-cancelled:
+				t.Fatal("unauthorized request cancelled the daemon")
+			case <-time.After(20 * time.Millisecond):
+			}
+		})
+	}
 }
