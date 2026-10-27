@@ -23,7 +23,7 @@ import { useLocale } from "@multica/views/i18n";
 import { ProviderLogo } from "@multica/views/runtimes/provider-logo";
 import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
-import type { LocalConversation, LocalConversationClient, LocalConversationScope, LocalConversationMethods, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationMethods, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
 import { localMessageDisplayContent } from "@multica/tutti-agent-gui-host/local-protocol";
 import { createLocalConversationParentService, localConversationKey, localTargetId } from "../platform/local-conversation-service";
 import { groupLocalConversations, projectForDirectory } from "../platform/local-conversation-projects";
@@ -415,7 +415,6 @@ export function LocalConversationFlowPage() {
             {selected && <Button variant="ghost" size="sm" className="max-w-48" aria-label={labels.directory} disabled={selected.messages.length > 0} title={`${automaticDirectory ? directoryName : selected.cwd}${selected.messages.length ? ` · ${labels.directoryLocked}` : ""}`} onClick={() => { void client.request(scope, "directory", { id: selected.id }).then(() => qc.invalidateQueries({ queryKey: localConversationKey(scope) })).catch(report); }}><FolderOpen className="size-4" /><span className="truncate">{directoryName}</span></Button>}
             <IconButton aria-expanded={sideOpen} label={sideOpen ? (chinese ? "关闭右侧面板" : "Close right workspace") : (chinese ? "打开右侧面板" : "Open right workspace")} onClick={() => sideWorkspace.current?.toggle()}><PanelRightOpen /></IconButton>
           </div>
-          <LocalConversationReadReceipt client={client} scope={scope} entry={selected} active={active && mainVisible && (!compact || !showList)} />
           <LocalRuntimeNotice scope={scope} chinese={chinese} />
           <TuttiAgentGuiPanel locateRequest={locateRequest ?? undefined} restoreDraftRequest={referenceDraft} key={`${workspace.id}:${userId}`} serviceFactory={factory} workspaceId={workspace.id} workspaceSlug={slug} userId={userId}
             activeSessionId={selectedId} selectedAgentId={localTargetId(provider)} active={active && mainVisible && (!compact || !showList)} composerFocusSequence={focusSequence || undefined}
@@ -427,28 +426,4 @@ export function LocalConversationFlowPage() {
       </ResizablePanel>
     </ResizablePanelGroup>
   </div>;
-}
-
-function LocalConversationReadReceipt({ client, scope, entry, active }: { client: LocalConversationClient; scope: LocalConversationScope; entry?: LocalConversation; active: boolean }) {
-  const qc = useQueryClient();
-  const id = entry?.id;
-  const messageId = entry?.messages.at(-1)?.id;
-  const unread = entry?.hasUnread === true;
-  const { userId, workspaceId } = scope;
-  useEffect(() => {
-    if (!active || !unread || !id || !messageId) return;
-    let pending = false;
-    const markRead = () => {
-      if (pending || document.visibilityState !== "visible" || !document.hasFocus()) return;
-      pending = true;
-      void client.request({ userId, workspaceId }, "markRead", { id, messageId })
-        .then(() => qc.invalidateQueries({ queryKey: localConversationKey({ userId, workspaceId }) }))
-        .catch(() => { pending = false; });
-    };
-    markRead();
-    window.addEventListener("focus", markRead);
-    document.addEventListener("visibilitychange", markRead);
-    return () => { window.removeEventListener("focus", markRead); document.removeEventListener("visibilitychange", markRead); };
-  }, [client, qc, userId, workspaceId, id, messageId, active, unread]);
-  return null;
 }

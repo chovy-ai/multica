@@ -12,6 +12,7 @@ import { ComposerFooterControls, type ProviderDraft } from "./composer-footer-co
 import { createMulticaContextMentions } from "./context-mentions";
 import { SideEntryProvider } from "./side-entry";
 import { ResourceLinkProvider } from "./resource-link";
+import { ReplyPresentationProvider } from "./rendered-reply";
 
 type RuntimeHandle = ReturnType<typeof createMulticaAgentGuiRuntime>;
 type NodeState = AgentGUIProps["state"];
@@ -170,7 +171,7 @@ export function AgentGuiApplication({
     }
   })), [client, handle]);
 
-  return <ResourceLinkProvider client={client} scope={{ workspaceId: initial.workspaceId, workspaceSlug: initial.workspaceSlug, appOrigin: snapshot.appOrigin }} agents={workspace.agents}><SideEntryProvider enabled={snapshot.sideWorkspace === true} sidePane={snapshot.sidePane} client={client} handle={handle} sessionId={node.lastActiveAgentSessionId ? handle.toServerSessionId(node.lastActiveAgentSessionId) : null} chinese={snapshot.locale === "zh-CN"}><AgentGUI
+  return <ReplyPresentationProvider client={client} enabled={snapshot.local === true} active={snapshot.hostActive === true && snapshot.hostVisible === true && snapshot.activeSessionId === imageSessionId} sessionId={node.lastActiveAgentSessionId ?? null} toServerSessionId={handle.toServerSessionId}><ResourceLinkProvider client={client} scope={{ workspaceId: initial.workspaceId, workspaceSlug: initial.workspaceSlug, appOrigin: snapshot.appOrigin }} agents={workspace.agents}><SideEntryProvider enabled={snapshot.sideWorkspace === true} sidePane={snapshot.sidePane} client={client} handle={handle} sessionId={node.lastActiveAgentSessionId ? handle.toServerSessionId(node.lastActiveAgentSessionId) : null} chinese={snapshot.locale === "zh-CN"}><AgentGUI
     identity={{ nodeId: `multica-agent-gui:${snapshot.workspaceId}`, workspaceId: snapshot.workspaceId, currentUserId: snapshot.userId, title: "Agent GUI" }}
     workspace={{ path: "", agentSettings: { avoidGroupingEdits: false }, prepareExternalPromptFiles: prepareFiles }}
     frame={{ position: { x: 0, y: 0 }, ...size, desktopSize: size, isActive: snapshot.hostActive ?? true, isVisible: snapshot.hostVisible ?? true, embedded: true }}
@@ -206,5 +207,5 @@ export function AgentGuiApplication({
       pendingTarget={pendingTarget} onCancelTargetSwitch={() => setPendingTarget(null)}
       onLeaveSession={(target, fromSession, draft) => { setPendingTarget({ target, fromSession, draft }); setNode((current) => ({ ...current, lastActiveAgentSessionId: null })); }}
       onSelectAgent={(target) => { setPendingTarget(null); setNode((current) => current.agentTargetId === target.id ? current : { ...current, provider: target.provider, agentTargetId: target.id, lastActiveAgentSessionId: null }); }} /> }}
-  /></SideEntryProvider></ResourceLinkProvider>;
+  /></SideEntryProvider></ResourceLinkProvider></ReplyPresentationProvider>;
 }

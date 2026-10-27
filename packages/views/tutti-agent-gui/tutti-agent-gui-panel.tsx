@@ -57,6 +57,7 @@ export function TuttiAgentGuiPanel(props: Props) {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [src, setSrc] = useState<string>();
   const sequence = useRef(Date.now());
+  const documentReady = useRef(false);
   const sentRestore = useRef<string | null>(null);
   const initRef = useRef({ locale, theme: resolvedTheme, activeSessionId: props.activeSessionId, selectedAgentId: props.selectedAgentId, composerFocusSequence: props.composerFocusSequence });
   initRef.current = { locale, theme: resolvedTheme, activeSessionId: props.activeSessionId, selectedAgentId: props.selectedAgentId, composerFocusSequence: props.composerFocusSequence };
@@ -70,7 +71,7 @@ export function TuttiAgentGuiPanel(props: Props) {
     return { ...workspace, workspaceId, workspaceSlug, userId, appOrigin: resourceNavigation.current.appOrigin,
       activeSessionId: state.activeSessionId, selectedAgentId: state.selectedAgentId,
       composerFocusSequence: state.composerFocusSequence,
-      hostActive: latest.current.active,
+      hostActive: latest.current.active && (workspace.local !== true || documentReady.current),
       hostVisible: visible.current,
       locale: state.locale.startsWith("zh") ? "zh-CN" : "en",
       theme: state.theme === "dark" ? "dark" : "light" };
@@ -102,6 +103,7 @@ export function TuttiAgentGuiPanel(props: Props) {
     });
     serviceRef.current = service;
     sentRestore.current = null;
+    documentReady.current = false;
     setStatus("loading");
     const release = service.subscribe((event: AgentGuiHostEvent) => {
       if (current()) port?.postMessage({ type: "event", event });
@@ -121,11 +123,12 @@ export function TuttiAgentGuiPanel(props: Props) {
     const ready = async (event: MessageEvent) => {
       if (!current() || !isAgentGuiFrameMessage(event, iframe.current?.contentWindow ?? null) || event.data?.version !== 1) return;
       if (event.data.type === "multica:agent-gui:rendered") {
-        if (port) { clearTimeout(timer); setStatus("ready"); }
+        if (port) { documentReady.current = true; clearTimeout(timer); setStatus("ready"); }
         return;
       }
       if (event.data.type !== "multica:agent-gui:ready" || connecting) return;
       connecting = true;
+      documentReady.current = false;
       setStatus("loading");
       waitForRender();
       port?.close();
@@ -139,7 +142,7 @@ export function TuttiAgentGuiPanel(props: Props) {
         port = responsePort;
         responsePort.onmessage = (message: MessageEvent) => {
           const data = message.data;
-          if (!current() || !data || typeof data.id !== "string") return;
+          if (!current() || port !== responsePort || !data || typeof data.id !== "string") return;
           if (data.type === "cancel") { cancelled.add(data.id); return; }
           if (data.type !== "request" || typeof data.method !== "string") return;
           const backgroundAllowed = data.method === "workspace.load" || data.method === "session.load"
@@ -149,7 +152,10 @@ export function TuttiAgentGuiPanel(props: Props) {
             // A prompt admitted to the queue must survive focus and tab changes.
             || (["session.send", "queue.enqueue", "host.openSide", "host.startSide"].includes(data.method) && data.params?.queued === true);
           const interactive = visible.current && document.visibilityState === "visible" && document.hasFocus();
-          if (!interactive && !backgroundAllowed) {
+          const invalidLocalReceipt = initial.local === true && data.method === "session.markRead"
+            && (!documentReady.current || !interactive || data.params?.sessionId !== latest.current.activeSessionId
+              || typeof data.params?.messageId !== "string" || !data.params.messageId || data.params.messageId.length > 128);
+          if (invalidLocalReceipt || (!interactive && !backgroundAllowed)) {
             responsePort.postMessage({ type: "response", id: data.id, error: { message: "This Agent GUI tab is inactive", code: "inactive_host", status: 409 } });
             return;
           }

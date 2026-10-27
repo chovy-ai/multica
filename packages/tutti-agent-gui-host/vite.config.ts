@@ -8,6 +8,26 @@ import tailwindcss from "@tailwindcss/vite";
 
 const hostPresentationAdaptations = [
   {
+    path: "/agentConversation/projection/agentConversationProjection.ts",
+    original: '        lastMessage.body = joinAdjacentAssistantMessageBodies(',
+    replacement: '        lastMessage.sourceTimelineItems = mergeSourceTimelineItems(lastMessage.sourceTimelineItems, nextMessage.sourceTimelineItems);\n        lastMessage.body = joinAdjacentAssistantMessageBodies(',
+  },
+  {
+    path: "/agentConversation/components/AgentMessageBlock.tsx",
+    original: '    const content =',
+    replacement: '    const contentBody =',
+  },
+  {
+    path: "/agentConversation/components/AgentMessageBlock.tsx",
+    original: '    const editAction =',
+    replacement: '    const content = <RenderedReply message={message}>{contentBody}</RenderedReply>;\n    const editAction =',
+  },
+  {
+    path: "/agentConversation/components/AgentMessageBlock.tsx",
+    original: 'import { Fragment, useCallback, type JSX, type ReactNode } from "react";',
+    replacement: 'import { Fragment, useCallback, type JSX, type ReactNode } from "react";\nimport { RenderedReply } from "@multica-rendered-reply";',
+  },
+  {
     path: "/agentConversation/components/AgentSystemNoticeMessage.tsx",
     original: '        <div className="font-medium text-[var(--text-secondary)]">{title}</div>',
     replacement: '        <div className="font-medium text-[var(--text-secondary)]">{title}</div>\n        {notice?.noticeKind === "background_task" && message.body.trim() !== title ? <div role="status" className="mt-1 whitespace-pre-line break-words text-[12px] leading-5">{message.body}</div> : null}',
@@ -480,6 +500,7 @@ export default defineConfig({
       "@multica-composer-file-picker": fileURLToPath(new URL("./src/composer-file-picker.ts", import.meta.url)),
       "@multica-large-text-paste": fileURLToPath(new URL("./src/large-text-paste.ts", import.meta.url)),
       "@multica-resource-link": fileURLToPath(new URL("./src/resource-link.tsx", import.meta.url)),
+      "@multica-rendered-reply": fileURLToPath(new URL("./src/rendered-reply.tsx", import.meta.url)),
       "@multica-side-entry": fileURLToPath(new URL("./src/side-entry.tsx", import.meta.url)),
       "@multica-html-preview": fileURLToPath(new URL("./src/html-preview/markdown-pre.tsx", import.meta.url)),
       "@multica-mention-row": fileURLToPath(new URL("./src/mention-row.tsx", import.meta.url)),

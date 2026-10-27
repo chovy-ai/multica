@@ -125,7 +125,7 @@ export interface AgentGuiRpcMethods {
   "session.fork": { params: { sessionId: string; turnId: string; requestId: string }; result: ChatSession };
   "session.pin": { params: { sessionId: string; pinned: boolean }; result: ChatSession };
   "session.delete": { params: { sessionId: string }; result: void };
-  "session.markRead": { params: { sessionId: string; turnId?: string }; result: void };
+  "session.markRead": { params: { sessionId: string; turnId?: string; messageId?: string }; result: void };
   "session.cancel": { params: { sessionId: string; taskId: string }; result: CancelTaskResponse };
   "session.watch": { params: { sessionIds: string[] }; result: void };
   "task.messages": { params: { taskId: string }; result: AgentGuiTaskMessagePayload[] };

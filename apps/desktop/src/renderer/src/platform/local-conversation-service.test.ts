@@ -50,24 +50,29 @@ async function setup(getSelectionIntent?: () => string) {
   return { bridge, run, service, usage, client, onLocalSelect, onShowMessage };
 }
 describe("local providers and official agent invocation routing", () => {
-  it("projects persisted unread state and fences GUI read receipts to their observed turn", async () => {
+  it("projects persisted unread state and acknowledges only explicitly presented, previously loaded reply IDs", async () => {
     const { bridge, service } = await setup();
     const session = await bridge.request("session.create", { agentId: "local:codex" });
     const send = async () => {
-      const result = await bridge.request("session.send", { sessionId: session.id, content: "hello" });
+      await bridge.request("session.send", { sessionId: session.id, content: "hello" });
       await vi.waitFor(async () => expect((await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: session.id })).turns.at(-1)?.status).toBe("completed"));
-      return result.task_id;
+      return (await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: session.id })).messages.at(-1)!.id;
     };
     const first = await send();
     expect((await bridge.load()).sessions[0]?.has_unread).toBe(true);
+    await bridge.request("session.markRead", { sessionId: session.id, messageId: first });
+    expect((await bridge.load()).sessions[0]?.has_unread).toBe(true);
     await bridge.request("session.load", { sessionId: session.id });
-    await bridge.request("session.markRead", { sessionId: session.id, turnId: first });
+    await bridge.request("session.markRead", { sessionId: session.id });
+    await bridge.request("session.markRead", { sessionId: session.id, turnId: "old-attention" });
+    expect((await bridge.load()).sessions[0]?.has_unread).toBe(true);
+    await bridge.request("session.markRead", { sessionId: session.id, messageId: first });
     expect((await bridge.load()).sessions[0]?.has_unread).toBe(false);
     const second = await send();
     await bridge.request("session.load", { sessionId: session.id });
-    await bridge.request("session.markRead", { sessionId: session.id, turnId: first });
+    await bridge.request("session.markRead", { sessionId: session.id, messageId: first });
     expect((await bridge.load()).sessions[0]?.has_unread).toBe(true);
-    await bridge.request("session.markRead", { sessionId: session.id, turnId: second });
+    await bridge.request("session.markRead", { sessionId: session.id, messageId: second });
     expect((await bridge.load()).sessions[0]?.has_unread).toBe(false);
     expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
   });

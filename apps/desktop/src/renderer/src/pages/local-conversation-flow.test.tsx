@@ -108,7 +108,7 @@ describe("local conversation execution indicators", () => {
     expect(screen.queryByRole("status", { name: "未读回复：Original" })).not.toBeInTheDocument();
     expect(mock.request.mock.calls.some(([, method]) => method === "markRead")).toBe(false);
   });
-  it("acknowledges the selected reply only when the window is focused", async () => {
+  it("does not acknowledge a selected reply merely because the window gains focus", async () => {
     source.hasUnread = true;
     const focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
     render(page());
@@ -116,7 +116,7 @@ describe("local conversation execution indicators", () => {
     expect(mock.request.mock.calls.some(([, method]) => method === "markRead")).toBe(false);
     focus.mockReturnValue(true);
     fireEvent.focus(window);
-    await waitFor(() => expect(mock.request).toHaveBeenCalledWith({ userId: "user", workspaceId: "workspace" }, "markRead", { id: "source", messageId: "message" }));
+    expect(mock.request.mock.calls.some(([, method]) => method === "markRead")).toBe(false);
     expect(screen.queryByRole("status", { name: "未读回复：Original" })).not.toBeInTheDocument();
   });
   it("does not acknowledge the selected reply in an inactive tab", async () => {

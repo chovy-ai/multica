@@ -58,6 +58,36 @@ beforeEach(() => {
 afterEach(() => { cleanup(); clients.splice(0).forEach((qc) => qc.clear()); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("isolated Agent GUI document lifetime", () => {
+  it("accepts local reply receipts only from the current visible rendered session and live channel", async () => {
+    const view = render(<TuttiAgentGuiPanel {...props} activeSessionId="session" />, { wrapper: TestProvider });
+    mock.services[0]!.load.mockResolvedValue({ local: true, agents: [], sessions: [] });
+    const frame = await ready(window.location.origin, undefined, false);
+    const port = channels[0]!.port1;
+    const receipt = (id: string, params: unknown, target = port) => act(async () => {
+      target.onmessage!(new MessageEvent("message", { data: { type: "request", id, method: "session.markRead", params } }));
+    });
+    await receipt("loading", { sessionId: "session", messageId: "reply" });
+    expect(mock.services[0]!.request).not.toHaveBeenCalled();
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: "loading", error: expect.anything() }));
+    await act(async () => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin: window.location.origin, data: { type: "multica:agent-gui:rendered", version: 1 } })));
+    await receipt("missing-id", { sessionId: "session", turnId: "old-turn" });
+    await receipt("old-selection", { sessionId: "previous-session", messageId: "reply" });
+    expect(mock.services[0]!.request).not.toHaveBeenCalled();
+    await receipt("presented", { sessionId: "session", messageId: "reply" });
+    expect(mock.services[0]!.request).toHaveBeenCalledWith("session.markRead", { sessionId: "session", messageId: "reply" });
+    mock.services[0]!.request.mockClear();
+    mock.foreground = false;
+    await receipt("unfocused", { sessionId: "session", messageId: "reply" });
+    mock.foreground = true;
+    await act(async () => view.rerender(<TuttiAgentGuiPanel {...props} activeSessionId="session" active={false} />));
+    await receipt("hidden", { sessionId: "session", messageId: "reply" });
+    expect(mock.services[0]!.request).not.toHaveBeenCalled();
+    await act(async () => view.rerender(<TuttiAgentGuiPanel {...props} activeSessionId="next-session" />));
+    await receipt("selection-changed", { sessionId: "session", messageId: "reply" });
+    await ready();
+    await receipt("retired-port", { sessionId: "next-session", messageId: "reply" }, port);
+    expect(mock.services[0]!.request).not.toHaveBeenCalled();
+  });
   it("dismisses child popovers on host pointer actions without intercepting the host action or leaking listeners", async () => {
     const view = render(<TuttiAgentGuiPanel {...props} />, { wrapper: TestProvider });
     const frame = await ready();

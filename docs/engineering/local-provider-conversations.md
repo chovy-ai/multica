@@ -256,6 +256,27 @@ git diff --check
 截图：[项目分组](../../.tmp/local-conversations/08-project-groups.png)。项目归属只保存在本机，折叠状态暂不跨重启保存；本次未增加拖拽移动或本机目录分组模式。
 
 
+## Unread reply receipts
+
+The main process derives `hasUnread` from the full conversation history before
+returning compact list snapshots. A persisted `lastReadMessageId` keeps read state
+across restarts without changing the conversation's recency. Older history,
+imports and forks start read; new successful replies raise attention.
+
+Local read receipts originate from the committed final reply component in the
+GUI document. The pinned host build adapter adds `RenderedReply` around actual
+message content without modifying the vendor source. Its receipt carries the
+original session and message IDs, rather than inferring the latest reply from a
+turn ID. The host accepts it only on the live document connection after startup,
+for the currently selected visible session while the window is focused. The
+local parent service also requires that the exact reply was previously loaded.
+The main process advances the cursor monotonically to that message alone.
+
+Selecting a list item, loading history, or writing GUI attention state cannot
+mark a local reply read. Loading/error screens and hidden or unfocused views
+preserve unread state. A later reply within an already completed turn requires
+its own presentation receipt. Cloud chat keeps its existing attention behavior.
+
 ## Desktop runtime compatibility
 
 Local conversation requests first query the main process's `capabilities` endpoint.

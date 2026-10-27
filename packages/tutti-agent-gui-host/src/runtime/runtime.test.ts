@@ -77,8 +77,8 @@ function backend(storage = new Map<string, string>()) {
   };
 }
 
-async function setup(data = backend()) {
-  const handle = createMulticaAgentGuiRuntime(data.client, init);
+async function setup(data = backend(), snapshot = init) {
+  const handle = createMulticaAgentGuiRuntime(data.client, snapshot);
   handles.push(handle);
   await handle.initialize();
   return { handle, ...data };
@@ -750,16 +750,21 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
     release();
   });
 
-  it("maps the source engine's unread-removal write to one real server mark-read", async () => {
+  it.each([false, true])("maps attention reads to server receipts only for cloud sessions (local=%s)", async (local) => {
     const data = backend();
     data.sessions.push(session);
     const key = "turn:server-session:server-task-1:completed";
     data.storage.set("attention-read-state-v1", JSON.stringify({ completed: { readIds: [], unreadIds: [key] }, failed: { readIds: [], unreadIds: [] } }));
-    const { handle } = await setup(data);
+    const { handle } = await setup(data, { ...init, local });
     const engine = handle.runtime.getSessionEngine(init.workspaceId);
     engine.dispatch({ type: "attention/hydrateRequested", commandId: "hydrate-1", userId: init.userId, workspaceId: init.workspaceId });
     await vi.waitFor(() => expect(engine.getSnapshot().attentionReadState.partitionsByUserId[init.userId]?.hydrated).toBeTruthy());
     engine.dispatch({ type: "attention/read", userId: init.userId, agentSessionId: "server-session" });
+    await vi.waitFor(() => expect(JSON.parse(data.storage.get("attention-read-state-v1")!).completed.unreadIds).not.toContain(key));
+    if (local) {
+      expect(data.request.mock.calls.filter(([method]) => method === "session.markRead")).toHaveLength(0);
+      return;
+    }
     await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "session.markRead")).toHaveLength(1));
     expect(data.request.mock.calls.find(([method]) => method === "session.markRead")?.[1]).toEqual({ sessionId: "server-session", turnId: "server-task-1" });
     engine.dispatch({ type: "attention/read", userId: init.userId, agentSessionId: "server-session" });

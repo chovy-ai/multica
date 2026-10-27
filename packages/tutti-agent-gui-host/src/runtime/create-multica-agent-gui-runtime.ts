@@ -749,6 +749,8 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
           failed: { readIds: [...command.failed.readIds], unreadIds: [...command.failed.unreadIds] },
         };
         await client.request("storage.write", { key: "attention-read-state-v1", value: JSON.stringify(attention) });
+        // Local history is acknowledged only by the rendered reply component.
+        if (init.local) return undefined;
         const nextUnread = new Set([...attention.completed.unreadIds, ...attention.failed.unreadIds]);
         const read = new Set([...command.completed.readIds, ...command.failed.readIds, ...previousUnread.filter((id) => !nextUnread.has(id))]);
         const turnsToMark: { sessionId: string; turnId: string }[] = [];
