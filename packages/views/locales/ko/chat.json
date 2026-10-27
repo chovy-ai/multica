@@ -1,4 +1,10 @@
 {
+  "desktop": {
+    "local_conversation": {
+      "waiting_for_answer": "답변을 기다리고 있습니다",
+      "waiting_for_answer_label": "답변을 기다리고 있습니다: {{title}}"
+    }
+  },
   "page": {
     "title": "채팅",
     "select_prompt": "대화를 선택하거나 +로 새로 시작하세요",
