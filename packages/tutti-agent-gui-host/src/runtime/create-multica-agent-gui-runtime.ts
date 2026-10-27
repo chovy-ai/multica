@@ -75,6 +75,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
   const sendPromises = new Map<string, Promise<unknown>>();
   const pendingIdentities = new Map<string, { promise: Promise<string>; resolve(id: string): void; reject(error: unknown): void }>();
   let workspace: AgentGuiWorkspaceState = { agents: init.agents, executionTargets: init.executionTargets, local: init.local, sessions: init.sessions, pendingTasks: init.pendingTasks };
+  let workspaceRevision = 0;
   let workspaceLoad: Promise<AgentActivitySnapshot> | null = null;
   let workspaceDirty = false;
   let disposed = false;
@@ -383,42 +384,50 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     watchQueue = watchQueue.catch(() => {}).then(() => client.request("session.watch", { sessionIds }));
     return watchQueue;
   }
+  function receiveWorkspace(next: AgentGuiWorkspaceState) {
+    const previousPending = workspace.pendingTasks;
+    workspace = next;
+    workspaceRevision++;
+    const pendingBySession = new Map<string, NonNullable<AgentGuiWorkspaceState["pendingTasks"]>[number]>();
+    for (const task of workspace.pendingTasks ?? []) {
+      const current = pendingBySession.get(task.chat_session_id);
+      if (!current || current.status === "queued" && task.status !== "queued") pendingBySession.set(task.chat_session_id, task);
+    }
+    const sessions = workspace.sessions.map((session) => {
+      const id = ledger.guiId(session.id);
+      const detail = details.get(id);
+      if (detail) {
+        detail.session = session;
+        return projectDetail(detail, executionTargets(workspace).find((entry) => entry.id === session.agent_id), transcripts.get(id) ?? new Map(), ledger, init.locale).session;
+      }
+      return projectPendingSession(session, executionTargets(workspace).find((entry) => entry.id === session.agent_id), ledger, pendingBySession.get(session.id));
+    });
+    engine.dispatch({ type: "session/snapshotReceived", sessions: sessions.map(withModel) });
+    for (const session of sessions) markAvailability(session);
+    // A disappearing aggregate row does not prove a completion outcome.
+    // Reconcile that previously live conversation against real detail once.
+    if (workspace.pendingTasks !== undefined) {
+      const refresh = new Set((previousPending ?? [])
+        .filter((task) => !workspace.pendingTasks!.some((next) => next.task_id === task.task_id && next.status === task.status))
+        .map((task) => ledger.guiId(task.chat_session_id)));
+      for (const task of workspace.pendingTasks) {
+        const id = ledger.guiId(task.chat_session_id);
+        if (details.has(id) && !(previousPending ?? []).some((previous) => previous.task_id === task.task_id && previous.status === task.status)) refresh.add(id);
+      }
+      for (const id of refresh) void loadSession(id).catch(reportError);
+    }
+    for (const listener of workspaceListeners) listener();
+  }
+
   async function loadWorkspace(): Promise<AgentActivitySnapshot> {
     scope(workspaceId);
     if (workspaceLoad) return workspaceLoad;
     workspaceLoad = (async () => {
-      const previousPending = workspace.pendingTasks;
-      workspace = await client.request("workspace.load", {});
+      const revision = workspaceRevision;
+      const next = await client.request("workspace.load", {});
       scope(workspaceId);
-      const pendingBySession = new Map<string, NonNullable<AgentGuiWorkspaceState["pendingTasks"]>[number]>();
-      for (const task of workspace.pendingTasks ?? []) {
-        const current = pendingBySession.get(task.chat_session_id);
-        if (!current || current.status === "queued" && task.status !== "queued") pendingBySession.set(task.chat_session_id, task);
-      }
-      const sessions = workspace.sessions.map((session) => {
-        const id = ledger.guiId(session.id);
-        const detail = details.get(id);
-        if (detail) {
-          detail.session = session;
-          return projectDetail(detail, executionTargets(workspace).find((entry) => entry.id === session.agent_id), transcripts.get(id) ?? new Map(), ledger, init.locale).session;
-        }
-        return projectPendingSession(session, executionTargets(workspace).find((entry) => entry.id === session.agent_id), ledger, pendingBySession.get(session.id));
-      });
-      engine.dispatch({ type: "session/snapshotReceived", sessions: sessions.map(withModel) });
-      for (const session of sessions) markAvailability(session);
-      // A disappearing aggregate row does not prove a completion outcome.
-      // Reconcile that previously live conversation against real detail once.
-      if (workspace.pendingTasks !== undefined) {
-        const refresh = new Set((previousPending ?? [])
-          .filter((task) => !workspace.pendingTasks!.some((next) => next.task_id === task.task_id && next.status === task.status))
-          .map((task) => ledger.guiId(task.chat_session_id)));
-        for (const task of workspace.pendingTasks) {
-          const id = ledger.guiId(task.chat_session_id);
-          if (details.has(id) && !(previousPending ?? []).some((previous) => previous.task_id === task.task_id && previous.status === task.status)) refresh.add(id);
-        }
-        for (const id of refresh) void loadSession(id).catch(reportError);
-      }
-      for (const listener of workspaceListeners) listener();
+      // An init received during this request already carries newer host state.
+      if (revision === workspaceRevision) receiveWorkspace(next);
       return projectSnapshot(engine.getSnapshot());
     })().finally(() => {
       workspaceLoad = null;
@@ -853,7 +862,17 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
   };
 
   const unsubscribe = client.subscribe((event) => {
-    if (disposed || !initialized) return;
+    if (disposed) return;
+    if (event.type === "init") {
+      const snapshot = event.snapshot;
+      if (snapshot.workspaceId !== workspaceId || snapshot.userId !== init.userId) return;
+      if (snapshot.generation !== undefined && snapshot.generation < latestGeneration) return;
+      latestGeneration = Math.max(latestGeneration, snapshot.generation ?? 0);
+      // This subscription precedes the application's selection subscription.
+      receiveWorkspace(snapshot);
+      return;
+    }
+    if (!initialized) return;
     if (event.type === "connection") {
       engine.dispatch({ type: "engine/connectionChanged", status: event.connected ? "connected" : "disconnected", workspaceId });
       return;
