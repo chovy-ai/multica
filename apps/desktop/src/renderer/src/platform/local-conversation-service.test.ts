@@ -52,6 +52,23 @@ async function setup(getSelectionIntent?: () => string) {
   return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage };
 }
 describe("local providers and official agent invocation routing", () => {
+  it.each(["codex", "claude"] as const)("keeps %s thinking settings through the renderer bridge and a queued side conversation", async (provider) => {
+    const { bridge, service, run } = await setup();
+    const session = await bridge.request("session.create", { agentId: `local:${provider}` });
+    await bridge.request("session.send", { sessionId: session.id, content: "First", model: "model", reasoningEffort: "high" });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0]).toMatchObject({ model: "model", reasoningEffort: "high" });
+    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: session.id })).pending).toEqual({}));
+    expect(await bridge.request("session.load", { sessionId: session.id })).toMatchObject({ reasoningEffort: "high" });
+    await bridge.request("queue.enqueue", { sessionId: session.id, paused: true, queued: true, item: {
+      requestId: "queued-side", content: "Next", model: "model", reasoningEffort: "low",
+      display: { id: "queued-side", createdAtUnixMs: 1, content: [{ type: "text", text: "Next" }] },
+    } });
+    const side = await bridge.request("host.openSide", { sessionId: session.id, requestId: "side", queuedRequestId: "queued-side", queued: true });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run.mock.calls[1]?.[0]).toMatchObject({ reasoningEffort: "low" });
+    expect(await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: side.id })).toMatchObject({ reasoningEffort: "low" });
+  });
   it.each([
     ["large cases.pos", "application/octet-stream", 7_600_000],
     ["pasted screenshot.png", "image/png", 128],

@@ -75,6 +75,7 @@ export interface AgentGuiSessionDetail {
   session: ChatSession;
   /** Saved native model used when no GUI preference exists (for example, a new fork). */
   model?: string | null;
+  reasoningEffort?: import("./local-protocol").LocalReasoningEffort | null;
   permissionMode?: LocalPermissionMode;
   messages: ChatMessage[];
   pending: ChatPendingTask;
@@ -118,7 +119,7 @@ export interface AgentGuiRpcMethods {
     result: ChatSession;
   };
   "session.send": {
-    params: { sessionId: string; content: string; attachmentIds?: string[]; references?: AgentGuiContextReference[]; model?: string; permissionMode?: LocalPermissionMode; queued?: true; requestId?: string };
+    params: { sessionId: string; content: string; attachmentIds?: string[]; references?: AgentGuiContextReference[]; model?: string; reasoningEffort?: import("./local-protocol").LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; queued?: true; requestId?: string };
     result: SendChatMessageResponse;
   };
   "session.rename": { params: { sessionId: string; title: string }; result: ChatSession };

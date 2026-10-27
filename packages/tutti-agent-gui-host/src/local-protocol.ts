@@ -1,3 +1,13 @@
+import type { RuntimeModel } from "@multica/core/types";
+
+export const LOCAL_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
+export type LocalReasoningEffort = typeof LOCAL_REASONING_EFFORTS[number];
+export function isLocalReasoningEffort(value: unknown): value is LocalReasoningEffort {
+  return LOCAL_REASONING_EFFORTS.some((effort) => effort === value);
+}
+export function localReasoningLevels(models: RuntimeModel[], model: string | null | undefined) {
+  return models.find((entry) => model ? entry.id === model : entry.default)?.thinking?.supported_levels ?? [];
+}
 export type LocalProviderId = "codex" | "claude";
 export const LOCAL_PERMISSION_MODES = ["default", "auto", "full-access"] as const;
 export type LocalPermissionMode = typeof LOCAL_PERMISSION_MODES[number];
@@ -55,7 +65,7 @@ export interface LocalConversation {
   id: string; title: string; provider: LocalProviderId; cwd: string; pinned: boolean;
   titleMode?: "auto" | "manual";
   titleGeneration?: "pending" | "complete" | "failed";
-  archived: boolean; model: string | null; permissionMode?: LocalPermissionMode; providerSessionId?: string;
+  archived: boolean; model: string | null; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; providerSessionId?: string;
   forkedFrom?: string;
   importedFrom?: { provider: LocalProviderId; sessionId: string };
   forkedFromTurnId?: string;
@@ -75,8 +85,8 @@ export interface LocalImportResult {
   skipped: { sourceId: string; conversationId: string }[];
   failed: { sourceId: string; error: string }[];
 }
-export interface LocalConversationModels { supported: boolean; models: { id: string; label: string; default?: boolean }[] }
-export interface LocalSidePrompt { content: string; attachmentIds?: string[]; references?: { kind: "session" | "issue" | "agent"; id: string }[]; model?: string; permissionMode?: LocalPermissionMode; requestId: string }
+export interface LocalConversationModels { supported: boolean; models: RuntimeModel[] }
+export interface LocalSidePrompt { content: string; attachmentIds?: string[]; references?: { kind: "session" | "issue" | "agent"; id: string }[]; model?: string; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; requestId: string }
 export interface LocalQueuedPrompt extends LocalSidePrompt {
   prompt?: string;
   display: LocalQueueDisplayPrompt;
@@ -145,14 +155,14 @@ export interface LocalConversationMethods {
   fork: { params: { id: string; turnId?: string; requestId?: string }; result: LocalConversation };
   update: { params: { id: string; title?: string; pinned?: boolean; archived?: boolean; projectId?: string | null }; result: LocalConversation };
   directory: { params: { id: string }; result: LocalConversation };
-  send: { params: { id: string; content: string; prompt?: string; references?: { kind: "session" | "issue" | "agent"; id: string }[]; attachmentIds?: string[]; model?: string; permissionMode?: LocalPermissionMode; requestId?: string }; result: { messageId: string; turnId: string; createdAt: string; replayed?: boolean } };
+  send: { params: { id: string; content: string; prompt?: string; references?: { kind: "session" | "issue" | "agent"; id: string }[]; attachmentIds?: string[]; model?: string; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; requestId?: string }; result: { messageId: string; turnId: string; createdAt: string; replayed?: boolean } };
   fileStore: { params: { name: string; mimeType: string; data: string }; result: { id: string } };
   fileInfo: { params: { id: string }; result: { name: string; mimeType: string; path: string; url: string; size: number } };
   fileRead: { params: { id: string }; result: { name: string; mimeType: string; data: string; path: string; size: number } };
   imageRead: { params: { id: string; path: string }; result: LocalPreviewFile };
   cancel: { params: { id: string; turnId: string }; result: LocalConversationTurn };
   answerQuestion: { params: { id: string; turnId: string; requestId: string; answers: Record<string, string | string[]> }; result: void };
-  models: { params: { provider: LocalProviderId }; result: LocalConversationModels };
+  models: { params: { provider: LocalProviderId; force?: boolean }; result: LocalConversationModels };
   usage: { params: { provider: LocalProviderId; id?: string; force?: boolean }; result: LocalProviderUsage };
   remoteBegin: { params: { id: string; content: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
   remoteUpdate: { params: { id: string; turnId: string; sessionId?: string; taskId?: string; events?: LocalConversationEvent[]; output?: string; error?: string; status?: LocalConversationTurn["status"] }; result: void };

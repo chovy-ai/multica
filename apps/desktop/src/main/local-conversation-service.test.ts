@@ -24,6 +24,25 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   return { service, options };
 }
 describe("local conversation persistence and execution", () => {
+  it("persists thinking effort, forwards it to execution, inherits it in forks and resets on model changes", async () => {
+    const { service, options } = await setup();
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    const first = await service.request(scope, "send", { id: entry.id, content: "hello", model: "model-a", reasoningEffort: "high" });
+    await vi.waitFor(() => expect(options.run).toHaveBeenCalled());
+    expect(options.run.mock.calls[0]?.[0]).toMatchObject({ model: "model-a", reasoningEffort: "high" });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+    const fork = await service.request(scope, "fork", { id: entry.id, turnId: first.turnId });
+    expect(fork).toMatchObject({ reasoningEffort: "high" });
+    await service.request(scope, "send", { id: entry.id, content: "next", model: "model-b" });
+    await vi.waitFor(() => expect(options.run).toHaveBeenCalledTimes(2));
+    expect(options.run.mock.calls[1]?.[0]).toMatchObject({ model: "model-b", reasoningEffort: null });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns.at(-1)?.status).toBe("completed"));
+    await service.stop();
+    const restarted = new LocalConversationService(options); restarted.setCurrentUser(scope.userId);
+    cleanups.unshift(() => restarted.stop());
+    expect(await restarted.request(scope, "read", { id: fork.id })).toMatchObject({ reasoningEffort: "high" });
+    expect(await restarted.request(scope, "read", { id: entry.id })).toMatchObject({ reasoningEffort: null });
+  });
   it("previews a selected external file without granting its siblings or another workspace access", async () => {
     const { service, options } = await setup();
     const entry = await service.request(scope, "create", { provider: "claude" });

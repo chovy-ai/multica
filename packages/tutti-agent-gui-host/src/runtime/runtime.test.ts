@@ -979,3 +979,67 @@ it("projects a single authored input and both named agent results from durable i
   expect(result.messages.filter((item)=>item.role==="assistant").map((item)=>item.payload.content)).toEqual(["**设计评审师**\n\nResult design","**代码审查师**\n\nResult code"]);
   expect(result.turns).toHaveLength(2);
 });
+
+
+describe("local thinking settings", () => {
+  it("keeps the saved choice on write failure, respects refreshed capabilities and preserves an explicit default during activation", async () => {
+    const data = backend();
+    const original = data.request.getMockImplementation()!;
+    let rejectSave = false;
+    let levels = ["low", "high"];
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "models.list") return { supported: true, models: [{ id: "test-model", label: "Test", thinking: { supported_levels: levels.map((value) => ({ value, label: value })) } }] };
+      if (method === "storage.write" && params.key === "reasoning-preferences-v1" && rejectSave) throw new Error("storage full");
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true }); handles.push(handle);
+    await handle.initialize();
+    await handle.setModelSelection(agent.id, null, "test-model");
+    await handle.setReasoningSelection(agent.id, null, "high");
+    rejectSave = true;
+    await expect(handle.setReasoningSelection(agent.id, null, "low")).rejects.toThrow("storage full");
+    expect(handle.getReasoningSelection(agent.id)).toBe("high");
+    rejectSave = false; levels = ["low"];
+    await handle.loadModelCatalog(agent.id, { force: true });
+    expect(handle.getReasoningSelection(agent.id)).toBeNull();
+    await handle.setReasoningSelection(agent.id, null, null);
+    handle.runtime.getSessionEngine(init.workspaceId).activateSession({ mode: "new", agentSessionId: "default-draft", agentTargetId: agent.id,
+      settings: { reasoningEffort: "high" }, requestId: "default-activation", clientSubmitId: "default-submit", initialContent: [{ type: "text", text: "Default" }] });
+    await vi.waitFor(() => expect(data.request.mock.calls.find(([method]) => method === "session.send")?.[1]).toMatchObject({ reasoningEffort: null }));
+    await expect(handle.setReasoningSelection(agent.id, "default-draft", "low")).rejects.toMatchObject({ code: "run_in_progress" });
+  });
+  it.each([undefined, "desktop"] as const)("keeps draft selection through activation, delivery, and restart (queue owner: %s)", async (queueOwner) => {
+    const data = backend();
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "models.list") return { supported: true, models: [{ id: "test-model", label: "Test", thinking: { supported_levels: [{ value: "low", label: "Low" }, { value: "high", label: "High" }] } }] };
+      if (method === "queue.enqueue") return { revision: 1, paused: false, items: [params.item] };
+      const result = await original(method, params);
+      return method === "workspace.load" ? { ...result, local: true, queueOwner } : result;
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true }); handles.push(handle);
+    await handle.initialize();
+    await handle.setModelSelection(agent.id, null, "test-model");
+    await handle.setReasoningSelection(agent.id, null, "high");
+    const options = await handle.runtime.getComposerOptions({ workspaceId: init.workspaceId, agentTargetId: agent.id });
+    expect(options).toMatchObject({ reasoningConfigurable: true, reasoningEfforts: [{ value: "low", label: "Low" }, { value: "high", label: "High" }], effectiveSettings: { reasoningEffort: "high" } });
+    handle.runtime.getSessionEngine(init.workspaceId).activateSession({ mode: "new", agentSessionId: "thinking-draft", agentTargetId: agent.id,
+      requestId: "thinking-activation", clientSubmitId: "thinking-submit", initialContent: [{ type: "text", text: "Think" }] });
+    const method = queueOwner ? "queue.enqueue" : "session.send";
+    await vi.waitFor(() => expect(data.request.mock.calls.find(([name]) => name === method)?.[1]).toMatchObject(queueOwner ? { item: { reasoningEffort: "high", model: "test-model" } } : { reasoningEffort: "high", model: "test-model" }));
+    expect(handle.getReasoningSelection(agent.id, "thinking-draft")).toBe("high");
+    const restarted = createMulticaAgentGuiRuntime(data.client, { ...init, local: true }); handles.push(restarted);
+    await restarted.initialize();
+    await restarted.runtime.getSession(init.workspaceId, session.id);
+    expect(restarted.getReasoningSelection(agent.id, session.id)).toBe("high");
+    await restarted.setModelSelection(agent.id, session.id, "unsupported-model");
+    expect(restarted.getReasoningSelection(agent.id, session.id)).toBeNull();
+    await expect(restarted.setReasoningSelection(agent.id, session.id, "high")).rejects.toMatchObject({ code: "invalid_reasoning_effort" });
+  });
+  it("rejects thinking changes on managed agent connections", async () => {
+    const data = backend();
+    const { handle } = await setup(data);
+    await expect(handle.setReasoningSelection(agent.id, null, "high")).rejects.toMatchObject({ code: "invalid_reasoning_effort" });
+    expect(handle.getReasoningSelection(agent.id)).toBeNull();
+  });
+});

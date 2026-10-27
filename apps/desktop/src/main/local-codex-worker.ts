@@ -32,6 +32,13 @@ export class LocalCodexWorker {
     const timed = <T>(stage: LocalTimingStage, action: () => Promise<T>) => input.timing ? input.timing.measure(stage, action) : action();
     if (input.resume) await timed("provider.thread_wait", async () => this.unloading.get(input.resume!));
     signal.throwIfAborted();
+    let model = input.model ?? native.model ?? null;
+    if (input.resume && !model) {
+      // An explicit model override prevents resume from restoring a previous effort.
+      const catalog = await this.rpc.request("model/list", { limit: 100 });
+      model = catalog.data?.find((entry: CodexObject) => entry.isDefault)?.id;
+      if (typeof model !== "string" || !model) throw new Error("Could not resolve the default Codex model. Select a model explicitly and retry.");
+    }
     const id = randomUUID();
     const env = input.env ?? process.env;
     const mcpServers: CodexObject = Object.create(null);
@@ -46,10 +53,10 @@ export class LocalCodexWorker {
     // These are non-secret locations and scope identifiers. MCP credentials stay in the bridge.
     const scopedEnv = Object.fromEntries(["MULTICA_TASK_CONFIG_ROOT", "MULTICA_SERVER_URL", "MULTICA_WORKSPACE_ID", "MULTICA_SETTINGS_MCP_URL"]
       .filter((name) => env[name] !== undefined).map((name) => [name, name === "MULTICA_SETTINGS_MCP_URL" && input.mcp ? mcpServers[CONTEXT_MCP_NAME].url : env[name]]));
-    const config = { mcp_servers: mcpServers, shell_environment_policy: { set: scopedEnv } };
+    const config = { ...(input.reasoningEffort ? { model_reasoning_effort: input.reasoningEffort } : {}), mcp_servers: mcpServers, shell_environment_policy: { set: scopedEnv } };
     const permissions = input.permissionMode === "auto" ? { approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" }
       : input.permissionMode === "full-access" ? { approvalPolicy: "never", sandbox: "danger-full-access" } : {};
-    const params = { cwd: input.cwd, model: input.model ?? native.model ?? null, config,
+    const params = { cwd: input.cwd, model, config,
       developerInstructions: [native.developer_instructions, input.systemPrompt].filter(Boolean).join("\n\n") || null, ...permissions,
       ...(input.resume ? { threadId: input.resume, excludeTurns: true } : {}),
     };
@@ -106,7 +113,7 @@ export class LocalCodexWorker {
         }
       };
       unsubscribe = this.rpc.subscribe(receive);
-      const started = await timed("provider.turn_start", () => this.rpc.request("turn/start", { threadId, input: [{ type: "text", text: input.content, text_elements: [] }] }));
+      const started = await timed("provider.turn_start", () => this.rpc.request("turn/start", { threadId, effort: input.reasoningEffort ?? native.model_reasoning_effort ?? null, input: [{ type: "text", text: input.content, text_elements: [] }] }));
       if (typeof started.turn?.id === "string") turnId = started.turn.id;
       if (!turnId) throw new Error("Codex returned no turn ID");
       for (const message of buffered) receive(message); buffered.length = 0;

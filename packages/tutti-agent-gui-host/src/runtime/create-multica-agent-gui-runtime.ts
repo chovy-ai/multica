@@ -25,9 +25,10 @@ import type {
   AgentGuiTaskMessagePayload,
 } from "../protocol";
 import { executionTargets } from "../protocol";
+import { ReasoningPreferences } from "./reasoning-preferences";
 import { ModelPreferences } from "./model-preferences";
 import { PermissionPreferences } from "./permission-preferences";
-import { isLocalPermissionMode, type LocalPermissionMode } from "../local-protocol";
+import { isLocalReasoningEffort, localReasoningLevels, isLocalPermissionMode, type LocalReasoningEffort, type LocalPermissionMode } from "../local-protocol";
 import { RuntimeLedger } from "./ledger";
 import { composerOptions, projectDetail, projectPendingSession, projectSession } from "./projection";
 import { createDesktopQueueEngine } from "./desktop-queue-engine";
@@ -56,6 +57,10 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
   let modelWrites: Promise<void> = Promise.resolve();
   const modelHydration = client.request("storage.read", { key: "model-preferences-v1" }).then((value) => { modelPreferences.hydrate(value); });
   void modelHydration.catch(() => {});
+  const reasoningPreferences = new ReasoningPreferences();
+  const reasoningCatalogs = new Map<string, Awaited<ReturnType<typeof loadReasoningCatalog>>>();
+  const reasoningHydration = init.local ? client.request("storage.read", { key: "reasoning-preferences-v1" }).then((value) => { reasoningPreferences.hydrate(value); }) : Promise.resolve();
+  void reasoningHydration.catch(() => {});
   const permissionPreferences = new PermissionPreferences();
   const permissionListeners = new Set<() => void>();
   let permissionRevision = 0;
@@ -149,8 +154,9 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         scope(input.workspaceId);
         const session = engine.getSnapshot().sessionLifecycle.sessionsById[input.agentSessionId];
         if (!session?.agentTargetId) throw new MulticaAgentGuiError("Conversation is not loaded.", "session_not_loaded");
-        if (Object.keys(input.settings).some((key) => key !== "model")) unsupported("Non-model conversation settings");
-        await setModelSelection(session.agentTargetId, input.agentSessionId, input.settings.model ?? null);
+        if (Object.keys(input.settings).some((key) => key !== "model" && !(init.local && key === "reasoningEffort"))) unsupported("Non-model conversation settings");
+        if ("model" in input.settings) await setModelSelection(session.agentTargetId, input.agentSessionId, input.settings.model ?? null);
+        if ("reasoningEffort" in input.settings) await setReasoningSelection(session.agentTargetId, input.agentSessionId, input.settings.reasoningEffort ?? null);
         return { agentSessionId: input.agentSessionId, session: projectSnapshot(engine.getSnapshot()).sessions.find((entry) => entry.agentSessionId === input.agentSessionId) };
       },
     },
@@ -287,9 +293,60 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     if (modelPreferences.has(agentId, serverId)) return modelPreferences.get(agentId, serverId);
     return sessionId ? details.get(sessionId)?.model ?? null : null;
   }
+  async function loadReasoningCatalog(agentId: string, options?: { force?: boolean; signal?: AbortSignal }) {
+    const catalog = await client.request("models.list", { agentId, ...(options?.force ? { force: true } : {}) }, { signal: options?.signal });
+    reasoningCatalogs.set(agentId, catalog);
+    return catalog;
+  }
+  function selectedReasoning(agentId: string, sessionId?: string | null): LocalReasoningEffort | null {
+    if (!init.local) return null;
+    const detail = sessionId ? details.get(sessionId) : undefined;
+    if (detail && detail.session.agent_id !== agentId) return null;
+    const model = selectedModel(agentId, sessionId);
+    const selection = reasoningPreferences.get(agentId, sessionId ? ledger.serverId(sessionId) : null);
+    const effort = selection ? (selection.model === model ? selection.effort : null)
+      : model === (detail?.model ?? null) ? detail?.reasoningEffort ?? null : null;
+    const catalog = reasoningCatalogs.get(agentId);
+    return effort && (!catalog || localReasoningLevels(catalog.models, model ?? descriptor(agentId).model).some((level) => level.value === effort)) ? effort : null;
+  }
+  async function reasoningForSend(agentId: string, sessionId?: string | null) {
+    await reasoningHydration;
+    await modelWrites.catch(() => {});
+    if (selectedReasoning(agentId, sessionId)) await loadReasoningCatalog(agentId);
+    return selectedReasoning(agentId, sessionId);
+  }
+  function setReasoningSelection(agentId: string, sessionId: string | null | undefined, effort: string | null) {
+    const operation = modelWrites.catch(() => {}).then(async () => {
+      await reasoningHydration;
+      await modelHydration;
+      scope(workspaceId);
+      const agent = assertInvoke(agentId, sessionId ?? undefined);
+      if (!init.local || (effort !== null && !isLocalReasoningEffort(effort))) throw new MulticaAgentGuiError("Invalid thinking effort.", "invalid_reasoning_effort");
+      if (sessionId) {
+        const session = details.get(sessionId)?.session ?? workspace.sessions.find((entry) => entry.id === ledger.serverId(sessionId));
+        if (!session || session.agent_id !== agentId) throw new MulticaAgentGuiError("The thinking scope does not belong to this provider.", "invalid_session", 409);
+      }
+      if (isModelSelectionBusy(sessionId)) throw new MulticaAgentGuiError("Wait for this run to finish before changing thinking effort.", "run_in_progress", 409);
+      const model = selectedModel(agentId, sessionId);
+      if (effort !== null && !localReasoningLevels((await loadReasoningCatalog(agentId)).models, model ?? agent.model).some((level) => level.value === effort)) throw new MulticaAgentGuiError("This model does not support that thinking effort.", "invalid_reasoning_effort");
+      // The catalog request can overlap a newly accepted turn.
+      if (isModelSelectionBusy(sessionId)) throw new MulticaAgentGuiError("Wait for this run to finish before changing thinking effort.", "run_in_progress", 409);
+      const next = new ReasoningPreferences(); next.hydrate(reasoningPreferences.serialize());
+      next.set(agentId, sessionId ? ledger.serverId(sessionId) : null, model, effort);
+      await client.request("storage.write", { key: "reasoning-preferences-v1", value: next.serialize() });
+      scope(workspaceId); reasoningPreferences.hydrate(next.serialize());
+      if (sessionId) {
+        const current = projectSnapshot(engine.getSnapshot()).sessions.find((entry) => entry.agentSessionId === sessionId);
+        if (current) engine.dispatch({ type: "session/upserted", session: withModel(current) });
+      }
+      modelRevision++; modelListeners.forEach((listener) => listener());
+    });
+    modelWrites = operation;
+    return operation;
+  }
   function withModel(session: AgentActivitySession): AgentActivitySession {
     const agent = executionTargets(workspace).find((entry) => entry.id === session.agentTargetId);
-    return { ...session, settings: { ...session.settings, model: selectedModel(session.agentTargetId ?? "", session.agentSessionId) ?? agent?.model ?? null } };
+    return { ...session, settings: { ...session.settings, ...(init.local ? { reasoningEffort: selectedReasoning(session.agentTargetId ?? "", session.agentSessionId) } : {}), model: selectedModel(session.agentTargetId ?? "", session.agentSessionId) ?? agent?.model ?? null } };
   }
   function isModelSelectionBusy(sessionId?: string | null) {
     if (!sessionId) return false;
@@ -554,7 +611,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     await modelWrites.catch(() => {});
     const agent = assertInvoke(input.agentTargetId);
     if (input.initialGoalControl || input.initialTuttiModeActivation || input.isolation || input.cwd) unsupported("Goal, Tutti mode and local project activation");
-    if (input.settings && Object.entries(input.settings).some(([key, value]) => key !== "model" && value != null && value !== false)) unsupported("Non-model conversation settings");
+    if (input.settings && Object.entries(input.settings).some(([key, value]) => key !== "model" && !(init.local && key === "reasoningEffort") && value != null && value !== false)) unsupported("Non-model conversation settings");
     let serverId = ledger.serverId(input.agentSessionId);
     if (serverId === input.agentSessionId) {
       if (ledger.creation(input.agentSessionId)) throw unconfirmed();
@@ -573,6 +630,10 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         modelPreferences.set(agent.id, session.id, model);
         await client.request("storage.write", { key: "model-preferences-v1", value: modelPreferences.serialize() });
         if (init.local) {
+          await reasoningHydration;
+          const effort = reasoningPreferences.get(agent.id) ? selectedReasoning(agent.id) : (isLocalReasoningEffort(input.settings?.reasoningEffort) ? input.settings.reasoningEffort : null);
+          reasoningPreferences.set(agent.id, session.id, model, effort);
+          await client.request("storage.write", { key: "reasoning-preferences-v1", value: reasoningPreferences.serialize() });
           await permissionHydration;
           await permissionWrites.catch(() => {});
           permissionPreferences.set(agent.id, session.id, selectedPermission(agent.id));
@@ -611,9 +672,10 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         deliveryBarrierTurnId: null, failedPromptId: null, failureMessage: null, inFlight: null, sendNextPromptId: null, suspendReason: null, uncertainDelivery: null },
     } }, [...attachments.values()])[0]!.prompts[0]!;
     const timing = init.local ? createLocalTiming({ source: "gui", conversationId: sessionId, requestId: input.clientSubmitId }) : undefined;
+    const reasoningEffort = await reasoningForSend(session.agent_id, input.agentSessionId);
     const enqueue = () => client.request("queue.enqueue", { sessionId, paused, queued: true, item: { ...encoded, requestId: input.clientSubmitId, display,
       ...(selectedModel(session.agent_id, input.agentSessionId) ? { model: selectedModel(session.agent_id, input.agentSessionId)! } : {}),
-      permissionMode: selectedPermission(session.agent_id, input.agentSessionId),
+      reasoningEffort, permissionMode: selectedPermission(session.agent_id, input.agentSessionId),
     } });
     const result = await (timing ? timing.measure("gui.submit", enqueue) : enqueue());
     desktopQueue.receive(input.agentSessionId, result);
@@ -649,11 +711,12 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         await persist();
         try {
           const timing = init.local ? createLocalTiming({ source: "gui", conversationId: session.id, requestId: input.clientSubmitId }) : undefined;
+          const reasoningEffort = init.local && !recipients.length ? await reasoningForSend(session.agent_id, input.agentSessionId) : null;
           const submit = () => client.request("session.send", {
             sessionId: session.id, ...encoded, requestId: input.clientSubmitId,
             ...(input.submitDiagnostics?.queued === true ? { queued: true as const } : {}),
             ...(!recipients.length && selectedModel(session.agent_id, input.agentSessionId) ? { model: selectedModel(session.agent_id, input.agentSessionId)! } : {}),
-            ...(init.local && !recipients.length ? { permissionMode: selectedPermission(session.agent_id, input.agentSessionId) } : {}),
+            ...(init.local && !recipients.length ? { reasoningEffort, permissionMode: selectedPermission(session.agent_id, input.agentSessionId) } : {}),
           }, { signal });
           const response = await (timing ? timing.measure("gui.submit", submit) : submit());
           ledger.setSubmission(input.clientSubmitId, { sessionId: session.id, state: "accepted", response });
@@ -738,7 +801,12 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         const agent = descriptor(command.targetKey);
         const options = composerOptions(agent);
         const model = selectedModel(agent.id, command.agentSessionId) ?? agent.model ?? null;
-        return { ...options, effectiveModel: model, effectiveSettings: { ...options.effectiveSettings, model } };
+        const catalog = init.local ? await loadReasoningCatalog(agent.id) : null;
+        const reasoningEffort = selectedReasoning(agent.id, command.agentSessionId);
+        const levels = catalog ? localReasoningLevels(catalog.models, model) : [];
+        return { ...options, ...(catalog ? { models: catalog.models.map((entry) => ({ value: entry.id, label: entry.label })), modelConfigurable: catalog.supported !== false } : {}),
+          reasoningEfforts: levels.map((entry) => ({ value: entry.value, label: entry.label })), reasoningConfigurable: levels.length > 0,
+          effectiveModel: model, effectiveSettings: { ...options.effectiveSettings, model, ...(init.local ? { reasoningEffort } : {}) } };
       }
       case "session/unactivate": return undefined;
       case "attention/readState/read": return attention;
@@ -895,8 +963,9 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       const encoded = encodeContent([...(prompt.runtimeContent ?? prompt.content)]);
       const session = details.get(agentSessionId)?.session;
       const model = session ? selectedModel(session.agent_id, agentSessionId) : null;
+      const reasoningEffort = session ? await reasoningForSend(session.agent_id, agentSessionId) : null;
       // The durable desktop receipt owns this prompt before queue removal.
-      const side = await client.request("host.openSide", { sessionId, requestId, queued: true, pending: { ...encoded, ...(model ? { model } : {}), ...(init.local && session ? { permissionMode: selectedPermission(session.agent_id, agentSessionId) } : {}), requestId } });
+      const side = await client.request("host.openSide", { sessionId, requestId, queued: true, pending: { ...encoded, ...(model ? { model } : {}), ...(init.local && session ? { reasoningEffort, permissionMode: selectedPermission(session.agent_id, agentSessionId) } : {}), requestId } });
       engine.dispatch({ type: "queue/removed", agentSessionId, promptId });
       await persist();
       if (!wasPaused) engine.dispatch({ type: "queue/resumed", agentSessionId });
@@ -908,6 +977,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       ledger.hydrate(await client.request("storage.read", { key: STORAGE_KEY }));
       await modelHydration;
       await permissionHydration;
+      await reasoningHydration;
       const readState = await client.request("storage.read", { key: "attention-read-state-v1" });
       if (readState) {
         const value = JSON.parse(readState);
@@ -925,6 +995,13 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       engine.dispatch({ type: "engine/connectionChanged", status: "connected", workspaceId });
     },
     getWorkspaceState: () => workspace,
+    loadModelCatalog: async (agentId: string, options?: { force?: boolean; signal?: AbortSignal }) => {
+      const result = await loadReasoningCatalog(agentId, options);
+      modelRevision++; modelListeners.forEach((listener) => listener());
+      return result;
+    },
+    getReasoningSelection: selectedReasoning,
+    setReasoningSelection,
     getModelSelection: selectedModel,
     setModelSelection,
     getPermissionSelection: selectedPermission,
