@@ -566,7 +566,8 @@ export function TabBar() {
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: { distance: 5 },
+      // Vertical pointer movement alone must not turn a tab click into a drag.
+      activationConstraint: { distance: { x: 5 } },
     }),
   );
 
