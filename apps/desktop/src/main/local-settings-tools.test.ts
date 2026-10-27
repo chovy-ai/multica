@@ -95,7 +95,8 @@ describe("execution-scoped Settings capabilities", () => {
     await expect(f.call("settings_update_status", { id: "target", fields: { category: "closed" }, request_id: "bad" })).rejects.toThrow();
     await expect(f.call("settings_update_property", { id: "property", fields: { type: "number" }, request_id: "bad" })).rejects.toThrow();
     await expect(f.call("settings_list_workflows", { path: "https://example.invalid" })).rejects.toThrow();
-    await expect(f.call("settings_create_mcp_server", { name: "private", url: "https://user:password@example.test/mcp", request_id: "bad-url" })).rejects.toThrow("credential-bearing");
+    await expect(f.call("settings_create_mcp_server", { name: "files", config: { type: "http", url: "file:///etc/passwd" }, request_id: "bad-url" })).rejects.toThrow();
+    await expect(f.call("settings_create_mcp_server", { name: "extra", config: { command: "node", shell: true }, request_id: "bad-field" })).rejects.toThrow();
     const foreign = await fixture({ request: async () => ({ id: "flow", workspace_id: "foreign" }) });
     await expect(foreign.call("settings_delete_workflow", { id: "flow", request_id: "delete" })).rejects.toThrow("another workspace");
     expect(foreign.confirm).not.toHaveBeenCalled();
@@ -138,6 +139,21 @@ describe("execution-scoped Settings capabilities", () => {
     expect(await f.call("settings_list_properties")).toMatchObject({ properties: [{ config: { options: [{ id: "option", name: "QA" }] } }] });
     expect(JSON.stringify(await f.call("settings_list_mcp_servers"))).not.toContain("PRIVATE");
     expect(await f.call("settings_list_mcp_servers")).toEqual([{ id: "server", name: "Public", transport: "http" }]);
+  });
+
+  it("creates and replaces stdio and HTTP MCP configs after confirmation without echoing them", async () => {
+    const f = await fixture();
+    const stdio = { command: "/Applications/Multica.app/Contents/MacOS/Multica", args: ["mcp.js"], env: { ELECTRON_RUN_AS_NODE: "1", API_KEY: "PRIVATE" } };
+    const created = await f.call("settings_create_mcp_server", { name: "developer_logs", config: stdio, request_id: "stdio" });
+    expect(f.request).toHaveBeenCalledWith({ method: "POST", path: "/api/workspaces/workspace/mcp-servers", body: { name: "developer_logs", config: stdio } }, expect.any(AbortSignal));
+    expect(f.confirm).toHaveBeenCalledWith(expect.objectContaining({ operation: "settings_create_mcp_server", input: { name: "developer_logs", config: stdio } }), expect.any(AbortSignal));
+    expect(JSON.stringify(created)).not.toContain("PRIVATE");
+    const http = { type: "http", url: "https://mcp.example.test/mcp", headers: { Authorization: "Bearer PRIVATE" } };
+    const updated = await f.call("settings_update_mcp_server", { id: "target", config: http, request_id: "http" });
+    expect(f.request).toHaveBeenLastCalledWith({ method: "PUT", path: "/api/workspaces/workspace/mcp-servers/target", body: { config: http } }, expect.any(AbortSignal));
+    expect(f.confirm).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(updated)).not.toContain("PRIVATE");
+    for (const file of await readdir(f.options.root)) expect(await readFile(join(f.options.root, file), "utf8")).not.toContain("PRIVATE");
   });
 
   it("displays new token values only to the human, with no secret in replies or durable receipts", async () => {
