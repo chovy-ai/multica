@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { Button, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuLabel, DropdownMenuSeparator } from "@tutti-os/ui-system/components";
+import { Button, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@tutti-os/ui-system/components";
 import { ChevronDownIcon } from "@tutti-os/ui-system/icons";
 import type { AgentGUIProps } from "@tutti-os/agent-gui/agent-gui";
 import type { RuntimeModelsResult } from "@multica/core/types";
@@ -148,28 +148,38 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
         </Button>
       </DropdownMenuTrigger>
       {/* Portals remain React descendants of the source window click-capture guard. */}
-      <DropdownMenuContent className="multica-composer-footer-menu nodrag" align="end" side="top">
+      <DropdownMenuContent className="multica-composer-footer-menu multica-model-picker-menu nodrag" align="end" side="top" collisionPadding={16}>
         <DropdownMenuLabel>{labels.model}</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={selected ?? ""} onValueChange={(value) => { void changeModel(value); }}>
-          <DropdownMenuRadioItem value="" disabled={busy || saving}>{labels.default}{defaultModel ? ` · ${defaultModel}` : ""}</DropdownMenuRadioItem>
-          {catalog?.supported !== false && catalog?.models.map((model) => <DropdownMenuRadioItem key={model.id} value={model.id} disabled={busy || saving} title={model.id}>{model.label || model.id}</DropdownMenuRadioItem>)}
-          {configured && catalog && !known && <DropdownMenuItem disabled>{configured} · {labels.unknown}</DropdownMenuItem>}
-          {catalog?.unavailableModels?.map((model) => <DropdownMenuItem key={`unavailable:${model.id}`} disabled title={model.reason}>{model.label || model.id}{model.reason ? ` · ${model.reason}` : ""}</DropdownMenuItem>)}
-        </DropdownMenuRadioGroup>
+        <div className="multica-model-picker-list">
+          <DropdownMenuRadioGroup value={selected ?? ""} onValueChange={(value) => { void changeModel(value); }}>
+            <DropdownMenuRadioItem value="" disabled={busy || saving}>{labels.default}{defaultModel ? ` · ${defaultModel}` : ""}</DropdownMenuRadioItem>
+            {catalog?.supported !== false && catalog?.models.map((model) => <DropdownMenuRadioItem key={model.id} value={model.id} disabled={busy || saving} title={model.id}>{model.label || model.id}</DropdownMenuRadioItem>)}
+            {configured && catalog && !known && <DropdownMenuItem disabled>{configured} · {labels.unknown}</DropdownMenuItem>}
+            {catalog?.unavailableModels?.map((model) => <DropdownMenuItem key={`unavailable:${model.id}`} disabled title={model.reason}>{model.label || model.id}{model.reason ? ` · ${model.reason}` : ""}</DropdownMenuItem>)}
+          </DropdownMenuRadioGroup>
+          {loading && <DropdownMenuItem disabled>{labels.loading}</DropdownMenuItem>}
+          {catalog?.supported === false && <DropdownMenuItem disabled>{labels.unsupported}</DropdownMenuItem>}
+          {catalog?.supported && catalog.models.length === 0 && <DropdownMenuItem disabled>{labels.empty}</DropdownMenuItem>}
+          {error && <div className="multica-composer-footer-error" role="alert">{labels.failed}: {error}</div>}
+        </div>
         {snapshot.local && catalog && <>
           <DropdownMenuSeparator />
-          <DropdownMenuLabel>{chinese ? "思考强度" : "Thinking effort"}</DropdownMenuLabel>
-          {levels.length > 0 ? <DropdownMenuRadioGroup value={selectedEffort ?? ""} onValueChange={(value) => { void changeEffort(value); }}>
-            <DropdownMenuRadioItem value="" disabled={busy || saving}>{labels.default}</DropdownMenuRadioItem>
-            {levels.map((level) => <DropdownMenuRadioItem key={level.value} value={level.value} disabled={busy || saving} title={level.description}>{effortLabel(level.value, level.label)}</DropdownMenuRadioItem>)}
-          </DropdownMenuRadioGroup> : <DropdownMenuItem disabled>{configured
+          {levels.length > 0 ? <DropdownMenuSub>
+            <DropdownMenuSubTrigger disabled={busy || saving} className="multica-model-picker-effort">
+              <span>{chinese ? "思考强度" : "Thinking effort"}</span>
+              <span className="multica-model-picker-effort-value">{selectedEffort ? effortLabel(selectedEffort, levels.find((level) => level.value === selectedEffort)?.label ?? selectedEffort) : labels.default}</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="multica-composer-footer-menu multica-model-picker-effort-menu nodrag" collisionPadding={16}>
+              <DropdownMenuLabel>{chinese ? "思考强度" : "Thinking effort"}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={selectedEffort ?? ""} onValueChange={(value) => { void changeEffort(value); }}>
+                <DropdownMenuRadioItem value="" disabled={busy || saving}>{labels.default}</DropdownMenuRadioItem>
+                {levels.map((level) => <DropdownMenuRadioItem key={level.value} value={level.value} disabled={busy || saving} title={level.description}>{effortLabel(level.value, level.label)}</DropdownMenuRadioItem>)}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub> : <DropdownMenuItem disabled>{configured
             ? (chinese ? "此模型未提供可用强度" : "No effort options reported for this model")
             : (chinese ? "选择模型后可调整思考强度" : "Choose a model to adjust thinking effort")}</DropdownMenuItem>}
         </>}
-        {loading && <DropdownMenuItem disabled>{labels.loading}</DropdownMenuItem>}
-        {catalog?.supported === false && <DropdownMenuItem disabled>{labels.unsupported}</DropdownMenuItem>}
-        {catalog?.supported && catalog.models.length === 0 && <DropdownMenuItem disabled>{labels.empty}</DropdownMenuItem>}
-        {error && <div className="multica-composer-footer-error" role="alert">{labels.failed}: {error}</div>}
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={loading || busy} onSelect={(event) => { event.preventDefault(); void load(true); }}>{error ? labels.retry : labels.refresh}</DropdownMenuItem>
         <p className="multica-composer-footer-help">{labels.modelScope}</p>

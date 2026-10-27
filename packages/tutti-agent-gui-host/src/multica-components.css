@@ -447,6 +447,49 @@ html.multica-agent-gui .multica-composer-footer-menu [role^="menuitem"] {
   overflow-wrap: anywhere;
 }
 
+/* Reserve the settings/footer while only the model catalog scrolls. */
+html.multica-agent-gui .multica-model-picker-menu {
+  display: flex;
+  flex-direction: column;
+  max-height: min(calc(var(--spacing) * 90), var(--radix-dropdown-menu-content-available-height));
+  overflow: hidden;
+}
+
+html.multica-agent-gui .multica-model-picker-menu > * {
+  flex-shrink: 0;
+}
+
+html.multica-agent-gui .multica-model-picker-menu > .multica-model-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+html.multica-agent-gui .multica-model-picker-effort {
+  gap: calc(var(--spacing) * 2);
+}
+
+html.multica-agent-gui .multica-model-picker-effort-value {
+  margin-inline-start: auto;
+  color: var(--muted-foreground);
+}
+
+html.multica-agent-gui .multica-model-picker-effort > svg {
+  margin-inline-start: 0;
+  flex-shrink: 0;
+}
+
+html.multica-agent-gui .multica-model-picker-effort-menu {
+  width: calc(var(--spacing) * 40);
+  max-height: var(--radix-dropdown-menu-content-available-height);
+}
+
+html.multica-agent-gui .multica-model-picker-list [role="menuitemradio"][data-state="checked"] {
+  background: var(--surface-selected);
+  color: var(--surface-selected-foreground);
+}
+
 html.multica-agent-gui .multica-composer-agent-option {
   display: flex;
   flex: 1 1 auto;

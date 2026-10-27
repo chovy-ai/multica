@@ -44,12 +44,17 @@ it.each(["codex", "claude"] as const)("selects and displays %s thinking effort, 
     container.querySelector('[data-testid="multica-model-picker"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
   });
   const option = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((entry) => entry.textContent === label)!;
+  const openEffort = () => act(async () => {
+    document.querySelector('.multica-model-picker-effort')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  });
   await open();
   expect(document.body.textContent).toContain("Thinking effort");
+  await openEffort();
   await act(async () => option("High").click());
   expect(handle.getReasoningSelection(target.id)).toBe("high");
   expect(container.querySelector('[data-testid="multica-model-picker"]')?.textContent).toContain("High");
   await open();
+  await openEffort();
   expect(option("High").getAttribute("aria-checked")).toBe("true");
   await act(async () => option("Plain").click());
   expect(handle.getReasoningSelection(target.id)).toBeNull();
