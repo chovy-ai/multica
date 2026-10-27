@@ -92,6 +92,28 @@ export; daemon text is scrubbed only in the exported copy. Raw log files are not
 modified. Arbitrary diagnostic text can still contain private information, so
 review bundles before sharing. They are never uploaded automatically.
 
+### Agents outside desktop conversations
+
+`multica_desktop_context` exists only inside desktop conversations, so agents run
+by the daemon (and Codex in a terminal) use a separate stdio MCP,
+`multica_developer_logs`. On startup the desktop registers it in the user's Codex
+config through `codex mcp add`; the daemon copies that config into each task, so
+every Codex agent inherits it. The command is the desktop's own executable with
+`ELECTRON_RUN_AS_NODE=1` running `out/main/developer-logs-mcp.js`, so no separate
+Node install is needed. Registration is skipped when Codex is missing, when the
+entry is already current, or when the user disabled it; the last desktop
+started wins when several builds are installed.
+
+The server only reads files the desktop already writes. The desktop publishes
+`<userData>/local-conversations/diagnostics/developer-logs-mcp.json` (API URL,
+signed-in user ID or null, daemon log path, runtime versions; no credentials) at
+startup and on account changes, and the server reads it on each call. It exposes
+one tool, `export_developer_logs(since_minutes)`, writing the same schema version 2
+bundle into the same exports folder. Without a desktop conversation list,
+timings cover **every local conversation in the time range**
+(`filter.timingScope: "device"`, `workspaceId: null`); the Web log is the
+published account's, and is omitted while signed out.
+
 ## Request flow
 
 ```text

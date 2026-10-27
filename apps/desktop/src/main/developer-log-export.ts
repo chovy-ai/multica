@@ -16,7 +16,7 @@ const querySchema = z.object({
 const exportFilename = /^multica-developer-logs-[\dTZ-]+-[\da-f-]+\.json$/;
 const retentionMs = 7 * 24 * 60 * 60 * 1000;
 
-interface RuntimeInfo {
+export interface RuntimeInfo {
   appVersion: string;
   platform: string;
   arch: string;
@@ -53,6 +53,54 @@ function summarize(records: LocalTimingRecord[]) {
   };
 }
 
+/** Shared by the desktop exporter and the standalone stdio MCP so both files have one format. */
+export function buildDeveloperLogBundle(input: {
+  runtime: RuntimeInfo; workspaceId: string | null; since: number; until: number; conversationId: string | null;
+  timing: { records: LocalTimingRecord[]; incomplete: boolean }; sources: { web: RuntimeLogSource; daemon: DaemonLogSource };
+  timingScope?: "device";
+}) {
+  const { records, incomplete } = input.timing;
+  const timingSummary = summarize(records);
+  const webRecordCount = input.sources.web.records.length;
+  const daemonLineCount = input.sources.daemon.text.split("\n").filter(Boolean).length;
+  return {
+    schemaVersion: 2,
+    exportedAt: new Date(input.until).toISOString(),
+    runtime: input.runtime,
+    workspaceId: input.workspaceId,
+    filter: { since: new Date(input.since).toISOString(), until: new Date(input.until).toISOString(), conversationId: input.conversationId, ...(input.timingScope ? { timingScope: input.timingScope } : {}) },
+    coverage: { incomplete: incomplete || input.sources.web.incomplete || input.sources.daemon.incomplete, retainedFiles: 2, maxFileBytes: 5 * 1024 * 1024, historicalLogsMayHaveRotated: true },
+    summary: { ...timingSummary, timingRecordCount: timingSummary.recordCount, webRecordCount, daemonLineCount, recordCount: timingSummary.recordCount + webRecordCount + daemonLineCount },
+    records,
+    sources: { web: { ...input.sources.web, scope: "account", timeFilterApplied: true }, daemon: input.sources.daemon },
+  };
+}
+type DeveloperLogBundle = ReturnType<typeof buildDeveloperLogBundle>;
+
+function exportFileName() { return `multica-developer-logs-${new Date().toISOString().replaceAll(/[:.]/g, "-")}-${randomUUID()}.json`; }
+
+/** Writes a bundle into the private exports folder and keeps it bounded. */
+export async function writeDeveloperLogExport(exportsRoot: string, bundle: DeveloperLogBundle, check: () => void = () => undefined) {
+  const path = join(exportsRoot, exportFileName());
+  try {
+    await mkdir(exportsRoot, { recursive: true, mode: 0o700 });
+    check();
+    await writeFile(path, JSON.stringify(bundle, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    check();
+  } catch (error) {
+    await rm(path, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  await pruneDeveloperLogExports(exportsRoot).catch(() => undefined);
+  return { path, format: "json", ...bundle.summary, incomplete: bundle.coverage.incomplete, filter: bundle.filter, sources: { web: { status: bundle.sources.web.status, truncated: bundle.sources.web.truncated }, daemon: { status: bundle.sources.daemon.status, truncated: bundle.sources.daemon.truncated, timeFilterApplied: false } } };
+}
+
+async function pruneDeveloperLogExports(exportsRoot: string) {
+  const files = await Promise.all((await readdir(exportsRoot)).filter((name) => exportFilename.test(name)).map(async (name) => ({ path: join(exportsRoot, name), modified: (await stat(join(exportsRoot, name))).mtimeMs })));
+  files.sort((a, b) => b.modified - a.modified);
+  await Promise.all(files.filter((file, index) => index >= 20 || Date.now() - file.modified > retentionMs).map((file) => rm(file.path, { force: true })));
+}
+
 /** Both export entry points use the same bounded, account/workspace-scoped snapshot. */
 export class DeveloperLogExporter {
   constructor(private options: Options) {}
@@ -65,32 +113,17 @@ export class DeveloperLogExporter {
     if (query.conversationId && !ids.includes(query.conversationId)) throw new Error("Conversation is unavailable in the current workspace");
     const until = Date.now();
     const since = until - query.sinceMinutes * 60_000;
-    const { records, incomplete } = await this.options.log.snapshot(new Set(query.conversationId ? [query.conversationId] : ids), since, until);
+    const timing = await this.options.log.snapshot(new Set(query.conversationId ? [query.conversationId] : ids), since, until);
     this.options.assertScope(scope); signal.throwIfAborted();
     const sources = await this.options.runtimeLogs(scope, since, until);
     this.options.assertScope(scope); signal.throwIfAborted();
-    const timingSummary = summarize(records);
-    const webRecordCount = sources.web.records.length;
-    const daemonLineCount = sources.daemon.text.split("\n").filter(Boolean).length;
-    return {
-      schemaVersion: 2,
-      exportedAt: new Date(until).toISOString(),
-      runtime: this.options.runtime,
-      workspaceId: scope.workspaceId,
-      filter: { since: new Date(since).toISOString(), until: new Date(until).toISOString(), conversationId: query.conversationId ?? null },
-      coverage: { incomplete: incomplete || sources.web.incomplete || sources.daemon.incomplete, retainedFiles: 2, maxFileBytes: 5 * 1024 * 1024, historicalLogsMayHaveRotated: true },
-      summary: { ...timingSummary, timingRecordCount: timingSummary.recordCount, webRecordCount, daemonLineCount, recordCount: timingSummary.recordCount + webRecordCount + daemonLineCount },
-      records,
-      sources: { web: { ...sources.web, scope: "account", timeFilterApplied: true }, daemon: sources.daemon },
-    };
+    return buildDeveloperLogBundle({ runtime: this.options.runtime, workspaceId: scope.workspaceId, since, until, conversationId: query.conversationId ?? null, timing, sources });
   }
-
-  private filename() { return `multica-developer-logs-${new Date().toISOString().replaceAll(/[:.]/g, "-")}-${randomUUID()}.json`; }
 
   async save(scope: LocalConversationScope): Promise<DeveloperLogSaveResult> {
     const signal = new AbortController().signal;
     const bundle = await this.bundle(scope, { sinceMinutes: 1440 }, signal);
-    const path = await this.options.chooseSavePath(this.filename());
+    const path = await this.options.chooseSavePath(exportFileName());
     this.options.assertScope(scope);
     if (!path) return { status: "cancelled" };
     const temporary = join(dirname(path), `.multica-logs-${randomUUID()}.tmp`);
@@ -105,24 +138,9 @@ export class DeveloperLogExporter {
 
   async export(scope: LocalConversationScope, query: DeveloperLogQuery, signal: AbortSignal) {
     const bundle = await this.bundle(scope, query, signal);
-    const path = join(this.options.exportsRoot, this.filename());
     try {
-      await mkdir(this.options.exportsRoot, { recursive: true, mode: 0o700 });
-      this.options.assertScope(scope); signal.throwIfAborted();
-      await writeFile(path, JSON.stringify(bundle, null, 2) + "\n", { mode: 0o600, flag: "wx" });
-      this.options.assertScope(scope); signal.throwIfAborted();
-    } catch {
-      await rm(path, { force: true }).catch(() => undefined);
-      throw new Error(signal.aborted ? "Developer log export cancelled" : "Could not export developer logs");
-    }
-    await this.prune().catch(() => undefined);
-    return { path, format: "json", ...bundle.summary, incomplete: bundle.coverage.incomplete, filter: bundle.filter, sources: { web: { status: bundle.sources.web.status, truncated: bundle.sources.web.truncated }, daemon: { status: bundle.sources.daemon.status, truncated: bundle.sources.daemon.truncated, timeFilterApplied: false } } };
-  }
-
-  private async prune() {
-    const files = await Promise.all((await readdir(this.options.exportsRoot)).filter((name) => exportFilename.test(name)).map(async (name) => ({ path: join(this.options.exportsRoot, name), modified: (await stat(join(this.options.exportsRoot, name))).mtimeMs })));
-    files.sort((a, b) => b.modified - a.modified);
-    await Promise.all(files.filter((file, index) => index >= 20 || Date.now() - file.modified > retentionMs).map((file) => rm(file.path, { force: true })));
+      return await writeDeveloperLogExport(this.options.exportsRoot, bundle, () => { this.options.assertScope(scope); signal.throwIfAborted(); });
+    } catch { throw new Error(signal.aborted ? "Developer log export cancelled" : "Could not export developer logs"); }
   }
 }
 
