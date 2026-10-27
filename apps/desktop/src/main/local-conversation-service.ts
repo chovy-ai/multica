@@ -39,6 +39,10 @@ function provider(value: unknown): LocalProviderId {
   return value;
 }
 
+function lastTurnStartedAt(entry: LocalConversation): string {
+  return entry.turns.at(-1)?.createdAt ?? entry.createdAt;
+}
+
 async function projectDirectory(path: string): Promise<string> {
   if (!isAbsolute(path)) throw new Error("Choose an absolute project folder");
   try {
@@ -328,7 +332,10 @@ export class LocalConversationService {
         const entry = session();
         await this.claudeConversations.get(`${this.key(scope)}:${entry.id}`)?.worker.stopBackground(); result = undefined; break;
       }
-      case "list": result = [...rows.values()].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)).map((entry) => ({ ...entry, promptQueue: this.queueSnapshot(scope, entry), messages: entry.messages.slice(-1), turns: entry.turns.filter((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running")) })); break;
+      case "list": result = [...rows.values()].sort((a, b) => Number(b.pinned) - Number(a.pinned)
+        || lastTurnStartedAt(b).localeCompare(lastTurnStartedAt(a))
+        || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)
+      ).map((entry) => ({ ...entry, promptQueue: this.queueSnapshot(scope, entry), messages: entry.messages.slice(-1), turns: entry.turns.filter((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running")) })); break;
       case "read": {
         const entry = session();
         await this.recoverOutputImages(scope, entry);

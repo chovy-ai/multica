@@ -24,6 +24,98 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   return { service, options };
 }
 describe("local conversation persistence and execution", () => {
+  it.each(["codex", "claude"] as const)("orders %s conversations by turn start through output, reverse completion and restart", async (provider) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const at = (minute: number) => vi.setSystemTime(new Date(`2026-10-27T10:${String(minute).padStart(2, "0")}:00Z`));
+    const runs: { emit: Parameters<typeof runLocalProvider>[1]; finish: () => void }[] = [];
+    const { service, options } = await setup(async (_input, emit) => {
+      await new Promise<void>((resolve) => runs.push({ emit, finish: resolve }));
+      return { output: "Reply" };
+    });
+    try {
+      at(0);
+      const a = await service.request(scope, "create", { provider });
+      const b = await service.request(scope, "create", { provider });
+      await service.request(scope, "send", { id: a.id, content: "A first" });
+      await vi.waitFor(() => expect(runs).toHaveLength(1));
+      at(1);
+      await service.request(scope, "send", { id: b.id, content: "B first" });
+      await vi.waitFor(() => expect(runs).toHaveLength(2));
+      const order = async () => (await service.request(scope, "list", {})).map((entry) => entry.id);
+      expect(await order()).toEqual([b.id, a.id]);
+      at(2); runs[1]!.finish();
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: b.id })).turns[0]?.status).toBe("completed"));
+      at(3); runs[0]!.emit({ type: "tool_use", tool: "Read", call_id: "read-file", input: {} });
+      expect(await order()).toEqual([b.id, a.id]);
+      at(4); runs[0]!.emit({ type: "text", content: "A streaming reply" });
+      expect(await order()).toEqual([b.id, a.id]);
+      at(5); runs[0]!.finish();
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: a.id })).turns[0]?.status).toBe("completed"));
+      expect(await order()).toEqual([b.id, a.id]);
+      await service.stop();
+      const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId);
+      cleanups.unshift(() => reopened.stop());
+      expect((await reopened.request(scope, "list", {})).map((entry) => entry.id)).toEqual([b.id, a.id]);
+      at(6);
+      await reopened.request(scope, "send", { id: a.id, content: "A next" });
+      await vi.waitFor(() => expect(runs).toHaveLength(3));
+      expect((await reopened.request(scope, "list", {})).map((entry) => entry.id)).toEqual([a.id, b.id]);
+    } finally { for (const run of runs) run.finish(); vi.useRealTimers(); }
+  });
+  it("changes queue recency only when a queued message becomes a turn", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { service, options } = await setup();
+    try {
+      vi.setSystemTime(new Date("2026-10-27T10:00:00Z"));
+      const a = await service.request(scope, "create", { provider: "codex" });
+      await service.request(scope, "send", { id: a.id, content: "A first" });
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: a.id })).turns[0]?.status).toBe("completed"));
+      vi.setSystemTime(new Date("2026-10-27T10:01:00Z"));
+      const b = await service.request(scope, "create", { provider: "codex" });
+      await service.request(scope, "send", { id: b.id, content: "B first" });
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: b.id })).turns[0]?.status).toBe("completed"));
+      const item = { requestId: "queued-next", content: "A queued", display: { id: "queued-next", content: [{ type: "text" as const, text: "A queued" }], createdAtUnixMs: Date.now() } };
+      vi.setSystemTime(new Date("2026-10-27T10:03:00Z"));
+      await service.request(scope, "queueEnqueue", { id: a.id, item, paused: true });
+      const order = async () => (await service.request(scope, "list", {})).map((entry) => entry.id);
+      expect(await order()).toEqual([b.id, a.id]);
+      await service.request(scope, "queueUpdate", { id: a.id, action: "remove", requestId: item.requestId });
+      expect(await order()).toEqual([b.id, a.id]);
+      await service.request(scope, "queueEnqueue", { id: a.id, item, paused: true });
+      vi.setSystemTime(new Date("2026-10-27T10:06:00Z"));
+      await service.request(scope, "queueUpdate", { id: a.id, action: "resume" });
+      await vi.waitFor(() => expect(options.run).toHaveBeenCalledTimes(3));
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: a.id })).turns.at(-1)?.status).toBe("completed"));
+      expect(await order()).toEqual([a.id, b.id]);
+      expect((await service.request(scope, "read", { id: a.id })).turns.at(-1)?.createdAt).toMatch(/^2026-10-27T10:06:/);
+    } finally { vi.useRealTimers(); }
+  });
+  it("orders complete saved histories before trimming, with pinned priority and deterministic empty/tied ordering", async () => {
+    const { service, options } = await setup();
+    const template = await service.request(scope, "create", { provider: "codex" });
+    await service.stop();
+    const folders = await readdir(options.root);
+    const path = join(options.root, folders.find((folder) => folder.length === 64)!, "conversations.json");
+    const history = (id: string, started: string, created = "2026-10-27T09:00:00Z") => ({
+      ...template, id, createdAt: created, updatedAt: "2026-10-27T11:00:00Z",
+      turns: [{ id: `${id}-turn`, status: "completed", createdAt: started, events: [] }],
+      messages: [
+        { id: `${id}-user`, role: "user", content: "Start", turnId: `${id}-turn`, createdAt: started },
+        { id: `${id}-reply`, role: "assistant", content: "Late reply", turnId: `${id}-turn`, createdAt: "2026-10-27T11:00:00Z" },
+      ],
+    });
+    const imported = { ...history("imported", "2026-10-27T10:01:00Z"), importedFrom: { provider: "codex", sessionId: "native-source" } };
+    const fork = { ...history("fork", "2026-10-27T10:00:00Z", "2026-10-27T12:00:00Z"), forkedFrom: "source" };
+    const empty = { ...template, id: "empty", createdAt: "2026-10-27T10:02:00Z", updatedAt: "2026-10-27T10:02:00Z" };
+    const pinned = { ...history("pinned", "2026-10-27T08:00:00Z"), pinned: true };
+    await writeFile(path, JSON.stringify({ schemaVersion: 1, sessions: [history("z", "2026-10-27T10:00:00Z"), imported, history("a", "2026-10-27T10:00:00Z"), fork, empty, pinned] }));
+    const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId); cleanups.unshift(() => reopened.stop());
+    const list = await reopened.request(scope, "list", {});
+    expect(list.map((entry) => entry.id)).toEqual(["pinned", "empty", "imported", "fork", "a", "z"]);
+    expect(list.every((entry) => entry.turns.length === 0 && entry.messages.length <= 1)).toBe(true);
+    await reopened.request(scope, "update", { id: "a", title: "Rename without a new turn", archived: true });
+    expect((await reopened.request(scope, "list", {})).map((entry) => entry.id)).toEqual(list.map((entry) => entry.id));
+  });
   it("persists thinking effort, forwards it to execution, inherits it in forks and resets on model changes", async () => {
     const { service, options } = await setup();
     const entry = await service.request(scope, "create", { provider: "codex" });
