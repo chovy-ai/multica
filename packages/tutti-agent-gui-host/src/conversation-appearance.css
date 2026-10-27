@@ -45,6 +45,8 @@ html.multica-agent-gui:not([data-side-pane="true"]) .agent-gui-node__detail-prim
 }
 
 html.multica-agent-gui .agent-gui-node__bottom-dock > .agent-gui-node__composer-hero {
+  max-inline-size: calc(100% - 2 * var(--agent-gui-detail-padding-x));
+  min-inline-size: 0;
   pointer-events: auto;
 }
 

@@ -147,6 +147,31 @@ for (const [provider, initialView] of [["codex", "home"], ["codex", "draft"], ["
       expect(gap).toBeLessThanOrEqual(64);
       expect(input!.y).toBeLessThan(600);
     };
+    const expectComposerGutters = async (state: "draft" | "conversation") => {
+      const frame = page.locator("iframe");
+      const shell = gui.getByTestId("agent-gui-composer-input-shell");
+      for (const width of [434, 360, 640, 1280]) {
+        await frame.evaluate((element, width) => { element.style.width = `${width}px`; }, width);
+        if (width === 434) await page.screenshot({ path: `.tmp/composer-gutters-${provider}-${state}.png`, animations: "disabled" });
+        await expect.poll(async () => {
+          const [viewport, input] = await Promise.all([frame.boundingBox(), shell.boundingBox()]);
+          if (!viewport || !input) return false;
+          const left = input.x - viewport.x;
+          const right = viewport.x + viewport.width - input.x - input.width;
+          return left >= 16 && right >= 16 && Math.abs(left - right) <= 1;
+        }, { message: "the composer keeps equal horizontal gutters as adjacent panes open, close, or resize" }).toBe(true);
+        await expectSendOnRight();
+        const overflowingControls = await shell.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return [...element.querySelectorAll("button")].filter((button) => {
+            const rect = button.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && (rect.left < bounds.left || rect.right > bounds.right);
+          }).map((button) => button.getAttribute("aria-label") ?? button.textContent);
+        });
+        expect(overflowingControls).toEqual([]);
+      }
+      await frame.evaluate((element) => { element.style.width = "100%"; });
+    };
     await expectSendOnRight();
     if (initialView === "side") {
       await expect(welcome).toBeHidden();
@@ -173,6 +198,7 @@ for (const [provider, initialView] of [["codex", "home"], ["codex", "draft"], ["
       await expect(gui.locator('.agent-gui-node__composer-hero .agent-gui-node__composer-input-group-hero')).toHaveCSS("border-top-width", "0px");
     };
     await expectHomeHelperTray();
+    if (initialView === "draft") await expectComposerGutters("draft");
     await expect(gui.getByTestId("agent-gui-composer-add-content-trigger")).toBeEnabled();
     await page.screenshot({ path: `.tmp/welcome-${initialView}-${provider}.png` });
     if (initialView === "home") {
@@ -222,6 +248,8 @@ for (const [provider, initialView] of [["codex", "home"], ["codex", "draft"], ["
     await expect(editor).toHaveCount(1);
     await expectSendOnRight();
     if (initialView === "draft") {
+      await editor.fill("A longer draft that must preserve the gutters.\n".repeat(6));
+      await expectComposerGutters("conversation");
       const providerPicker = gui.getByRole("button", { name: chinese ? "本机运行器" : "Local provider", exact: true });
       const otherProvider = provider === "codex" ? "claude" : "codex";
       await providerPicker.click();
