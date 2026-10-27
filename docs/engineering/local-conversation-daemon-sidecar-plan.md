@@ -14,7 +14,8 @@
 
 | # | 验证内容 | 方法 | 不成立时 |
 | --- | --- | --- | --- |
-| S1 | macOS 签名包中，打包的 daemon 以 `ELECTRON_RUN_AS_NODE=1` 启动 `Multica.app` 内的 Electron，Claude Agent SDK 和 Codex 能正常启动 provider；daemon 由登录项或 launchd 拉起时，访问"文稿"目录的权限弹窗归属哪个进程 | 用签名的 Canary 包手工验证 | 归属异常时评估：是否改为由 desktop 在启动时才拉起 sidecar |
+| S1a | 打包的 daemon 以 `ELECTRON_RUN_AS_NODE=1` 运行 `Multica.app` 内的 Electron（hardened runtime 开启，未配置关闭 RunAsNode 的 fuse） | 本地 adhoc 签名包实测 | **已通过**（2026-10-27，Node 24.22 / Electron 44.9.3） |
+| S1b | 正式签名并公证的包中：daemon 由登录项或 launchd 拉起时，sidecar 访问"文稿"目录的权限弹窗归属；公证后 Gatekeeper 是否放行 sidecar | 发布前用 Developer ID 签名的 Canary 包手工验证 | 归属异常时评估：改为由 desktop 在启动时拉起 sidecar |
 | S2 | Windows NSIS 更新时，正在运行的 sidecar（`Multica.exe`）会怎样：被阻塞还是被杀掉；drain 之后再 stop 能否保证更新成功 | 在 Windows 测试机上对比安装新旧版本 | 更新流程中强制先 stop |
 | S3 | `asarUnpack: resources/**` 下，sidecar 的 `index.mjs` 能否解析 Claude Agent SDK 自带的平台二进制和 MCP SDK | 打一个本地包跑最小的 sidecar | 调整打包方式 |
 
@@ -79,7 +80,7 @@ P0 和 P1-A 可以并行：P0 只改 TS，P1-A 只改 Go。
 
 | 风险 | 何时确认 | 处理 |
 | --- | --- | --- |
-| macOS 权限弹窗归属、签名 | S1 | 不成立时回到方案讨论拓扑 |
+| macOS 权限弹窗归属、签名 | S1b（发布前） | 不成立时回到方案讨论拓扑 |
 | Windows 更新被正在运行的 sidecar 阻塞 | S2 | 更新流程中强制先 stop |
 | WSL2 和离线时的功能回退 | 产品确认 | 在 B-6 中给出明确提示 |
 | 旧版 CLI 调用新 daemon 的 `/shutdown` 返回 403 | A-1 | daemon 与 CLI 同属一个安装包；独立安装的旧 CLI 需要升级，在 release notes 中说明 |
