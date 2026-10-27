@@ -292,7 +292,12 @@ export function LocalConversationFlowPage() {
     <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
       <div className={`focus-within:opacity-100 group-hover:opacity-100 ${updatingId === entry.id ? "opacity-100" : "opacity-0"}`}>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<IconButton label={`${projectLabels.actions}：${entry.title}`} disabled={updatingId !== null} aria-busy={updatingId === entry.id} />}>{updatingId === entry.id ? <Loader2 className="size-3.5 animate-spin" /> : <MoreHorizontal className="size-3.5" />}</DropdownMenuTrigger>
+          <DropdownMenuTrigger
+            // Activate on click; desktop accessibility presses may omit compatibility mouse events.
+            onPointerDown={(event) => event.preventBaseUIHandler()}
+            onMouseDown={(event) => event.preventBaseUIHandler()}
+            render={<IconButton label={`${projectLabels.actions}：${entry.title}`} disabled={updatingId !== null} aria-busy={updatingId === entry.id} />}
+          >{updatingId === entry.id ? <Loader2 className="size-3.5 animate-spin" /> : <MoreHorizontal className="size-3.5" />}</DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {renderSessionActions(entry, false)}
           </DropdownMenuContent>

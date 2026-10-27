@@ -331,6 +331,38 @@ describe("local conversation project creation", () => {
 
 describe("local conversation context menu", () => {
   afterEach(() => { window.getSelection()?.removeAllRanges(); });
+  it.each([
+    ["source", "Original", "pointer"],
+    ["other", "Other conversation", "pointer"],
+    ["source", "Original", "mouse"],
+    ["other", "Other conversation", "mouse"],
+  ])("opens actions for %s (%s) with %s input and preserves the active draft", async (id, title, activation) => {
+    const other = { ...source, id: "other", title: "Other conversation" };
+    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, other] : []);
+    mock.copyText.mockResolvedValue(true);
+    render(page());
+    const draft = screen.getByRole("textbox", { name: "Conversation draft" });
+    fireEvent.change(draft, { target: { value: "Keep my draft" } });
+    const trigger = await screen.findByRole("button", { name: `会话操作：${title}` });
+
+    if (activation === "pointer") activateWithPointer(trigger);
+    else {
+      const pointerDown = new MouseEvent("pointerdown", { bubbles: true, button: 0 });
+      Object.defineProperty(pointerDown, "pointerType", { value: "mouse" });
+      fireEvent(trigger, pointerDown);
+      fireEvent.mouseDown(trigger, { button: 0 });
+      await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)); });
+      fireEvent.pointerUp(trigger, { pointerType: "mouse", button: 0 });
+      fireEvent.mouseUp(trigger, { button: 0 });
+      fireEvent.click(trigger, { button: 0, detail: 1 });
+    }
+
+    fireEvent.click(await screen.findByRole("menuitem", { name: "复制会话 ID" }));
+    await waitFor(() => expect(mock.copyText).toHaveBeenCalledExactlyOnceWith(id));
+    expect(mock.replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: /Original/ })).toHaveAttribute("aria-current", "true");
+    expect(draft).toHaveValue("Keep my draft");
+  });
   it.each(["context", "dropdown"])("copies the targeted Multica conversation ID from the %s menu", async (menu) => {
     const other = { ...source, id: "copied-multica-id", providerSessionId: "private-native-id", title: "Other conversation" };
     mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, other] : []);
