@@ -1,6 +1,7 @@
 package localhost
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -51,11 +52,16 @@ func relTo(t *testing.T, from, to string) string {
 
 func noEnv(string) string { return "" }
 
+func manifestJSON(version int, entry, electron string) string {
+	data, _ := json.Marshal(Manifest{ProtocolVersion: version, Entry: entry, Electron: map[string]string{runtime.GOOS: electron}})
+	return string(data)
+}
+
 func TestLocatePackagedSidecar(t *testing.T) {
 	_, exe, electron := packagedLayout(t)
 	dir := filepath.Dir(manifestPath(exe))
 	writeFile(t, filepath.Join(dir, "index.mjs"), "")
-	writeFile(t, manifestPath(exe), `{"protocolVersion":2,"entry":"index.mjs","electron":"`+relTo(t, dir, electron)+`"}`)
+	writeFile(t, manifestPath(exe), manifestJSON(2, "index.mjs", relTo(t, dir, electron)))
 
 	got, err := Locate(exe, noEnv)
 	if err != nil {
@@ -80,7 +86,7 @@ func TestLocateRejectsElectronOutsideInstall(t *testing.T) {
 	writeFile(t, outside, "evil")
 	dir := filepath.Dir(manifestPath(exe))
 	writeFile(t, filepath.Join(dir, "index.mjs"), "")
-	writeFile(t, manifestPath(exe), `{"protocolVersion":2,"entry":"index.mjs","electron":"`+relTo(t, dir, outside)+`"}`)
+	writeFile(t, manifestPath(exe), manifestJSON(2, "index.mjs", relTo(t, dir, outside)))
 
 	if _, err := Locate(exe, noEnv); err == nil {
 		t.Fatal("Locate() accepted an Electron binary outside the application install")
@@ -91,9 +97,10 @@ func TestLocateRejectsAbsoluteAndMissingPaths(t *testing.T) {
 	_, exe, electron := packagedLayout(t)
 	dir := filepath.Dir(manifestPath(exe))
 	for _, body := range []string{
-		`{"protocolVersion":2,"entry":"index.mjs","electron":"` + filepath.ToSlash(electron) + `"}`,
-		`{"protocolVersion":2,"entry":"missing.mjs","electron":"` + relTo(t, dir, electron) + `"}`,
-		`{"protocolVersion":0,"entry":"index.mjs","electron":"x"}`,
+		manifestJSON(2, "index.mjs", filepath.ToSlash(electron)),
+		manifestJSON(2, "missing.mjs", relTo(t, dir, electron)),
+		manifestJSON(0, "index.mjs", "x"),
+		`{"protocolVersion":2,"entry":"index.mjs","electron":{"plan9":"x"}}`,
 	} {
 		writeFile(t, manifestPath(exe), body)
 		if _, err := Locate(exe, noEnv); err == nil || errors.Is(err, ErrNoManifest) {
@@ -107,7 +114,7 @@ func TestLocateHonorsLauncherOverride(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "node"), "")
 	writeFile(t, filepath.Join(dir, "entry.mjs"), "")
 	path := filepath.Join(dir, "manifest.json")
-	writeFile(t, path, `{"protocolVersion":2,"entry":"entry.mjs","electron":"node"}`)
+	writeFile(t, path, manifestJSON(2, "entry.mjs", "node"))
 
 	got, err := Locate(filepath.Join(t.TempDir(), "multica"), func(key string) string {
 		if key == ManifestOverrideEnv {

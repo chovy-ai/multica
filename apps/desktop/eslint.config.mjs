@@ -10,6 +10,12 @@ export default [
       globals: { ...globals.node },
     },
   },
+  // Shipped CommonJS loader the daemon runs with Electron in Node mode.
+  {
+    files: ["resources/local-conversation-host/*.cjs"],
+    languageOptions: { sourceType: "commonjs", globals: { ...globals.node } },
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
   // Security: every renderer-controlled URL that reaches the OS shell or the
   // native download system must flow through the safe wrappers in
   // src/main/external-url.ts (scheme allowlist). Enforce it statically so

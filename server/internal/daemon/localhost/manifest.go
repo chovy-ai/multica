@@ -20,11 +20,12 @@ const ManifestDir = "local-conversation-host"
 const ManifestOverrideEnv = "MULTICA_LOCAL_HOST_MANIFEST"
 
 // Manifest describes how to run the sidecar. Paths are relative to the
-// manifest's directory.
+// manifest's directory. Electron is keyed by GOOS because the packaged
+// executable name differs per platform.
 type Manifest struct {
-	ProtocolVersion int    `json:"protocolVersion"`
-	Entry           string `json:"entry"`
-	Electron        string `json:"electron"`
+	ProtocolVersion int               `json:"protocolVersion"`
+	Entry           string            `json:"entry"`
+	Electron        map[string]string `json:"electron"`
 }
 
 // Sidecar is a resolved, validated manifest.
@@ -91,11 +92,15 @@ func load(path, root string) (Sidecar, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Sidecar{}, fmt.Errorf("parse local host manifest: %w", err)
 	}
-	if m.ProtocolVersion < 1 || m.Entry == "" || m.Electron == "" {
+	if m.ProtocolVersion < 1 || m.Entry == "" {
 		return Sidecar{}, errors.New("local host manifest is incomplete")
 	}
+	electronRel := m.Electron[runtime.GOOS]
+	if electronRel == "" {
+		return Sidecar{}, fmt.Errorf("local host manifest has no Electron executable for %s", runtime.GOOS)
+	}
 	dir := filepath.Dir(path)
-	electron, err := resolveFile(dir, m.Electron, root)
+	electron, err := resolveFile(dir, electronRel, root)
 	if err != nil {
 		return Sidecar{}, fmt.Errorf("local host electron: %w", err)
 	}

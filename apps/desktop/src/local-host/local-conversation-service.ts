@@ -1,7 +1,7 @@
 import { createLocalTiming, localTimingFailure, type LocalTiming, type LocalTimingSink } from "@multica/tutti-agent-gui-host/local-timing";
 import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/core/local-conversation/protocol";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join } from "node:path";
@@ -100,6 +100,36 @@ export class LocalConversationService {
   private importer?: LocalConversationImport;
   constructor(private options: Options) { this.usage = options.usage ?? new LocalProviderUsageReader(); }
   assertScope(scope: LocalConversationScope): void { this.key(scope); }
+  private draining = false;
+  /** While draining, queues stop dispatching so a host restart interrupts nothing new. */
+  setDraining(draining: boolean): void {
+    this.draining = draining;
+    if (draining) return;
+    for (const [key, scope] of this.scopes) for (const entry of this.documents.get(key)?.values() ?? []) this.drainQueue(scope, entry);
+  }
+  /** Work a host restart would interrupt. */
+  busyCount(): number {
+    return this.runs.size + this.forks.size + this.titleRuns.size + this.queueDrains.size;
+  }
+  private async storeFile(scope: LocalConversationScope, name: string, mimeType: string, write: (path: string) => Promise<void>): Promise<string> {
+    const id = randomUUID(); const folder = join(this.options.root, this.key(scope), "files"); await mkdir(folder, { recursive: true, mode: 0o700 });
+    const extension = extname(name).toLowerCase();
+    const imageExtension = new Map([["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/gif", ".gif"], ["image/webp", ".webp"], ["image/svg+xml", ".svg"]]).get(mimeType);
+    const storageName = `${id}.attachment` + (imageExtension || (/^\.[a-z0-9]{1,16}$/.test(extension) ? extension : ""));
+    await write(join(folder, storageName)); await writeFile(join(folder, `${id}.json`), JSON.stringify({ name, mimeType, storageName }), { mode: 0o600 });
+    return id;
+  }
+  /** Takes ownership of an upload the host already streamed to disk. */
+  async adoptFile(scope: LocalConversationScope, tempPath: string, rawName: unknown, rawMimeType: unknown): Promise<string> {
+    const name = text(rawName, "file name", 512); const mimeType = text(rawMimeType, "file type", 256);
+    if ((await stat(tempPath)).size > 25 * 1024 * 1024) throw new Error("File exceeds 25 MB");
+    return this.storeFile(scope, name, mimeType, async (path) => { await rename(tempPath, path); await chmod(path, 0o600); });
+  }
+  /** Resolves an attachment id to the stored file the host may stream. */
+  async resolveFile(scope: LocalConversationScope, id: string): Promise<{ path: string; mimeType: string; name: string }> {
+    const file = await this.request(scope, "fileInfo", { id });
+    return { path: file.path, mimeType: file.mimeType, name: file.name };
+  }
   setCurrentUser(userId: string | null): void {
     if (userId !== this.activeUser && this.codexPool) {
       const pool = this.codexPool; this.codexPool = undefined;
@@ -346,11 +376,7 @@ export class LocalConversationService {
         const name = text(params.name, "file name", 512); const mimeType = text(params.mimeType, "file type", 256); const encoded = text(params.data, "file data", 36_000_000);
         if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new Error("Invalid file encoding");
         const data = Buffer.from(encoded, "base64"); if (data.length > 25 * 1024 * 1024) throw new Error("File exceeds 25 MB");
-        const id = randomUUID(); const folder = join(this.options.root, this.key(scope), "files"); await mkdir(folder, { recursive: true, mode: 0o700 });
-        const extension = extname(name).toLowerCase();
-        const imageExtension = new Map([["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/gif", ".gif"], ["image/webp", ".webp"], ["image/svg+xml", ".svg"]]).get(mimeType);
-        const storageName = `${id}.attachment` + (imageExtension || (/^\.[a-z0-9]{1,16}$/.test(extension) ? extension : ""));
-        await writeFile(join(folder, storageName), data, { mode: 0o600 }); await writeFile(join(folder, `${id}.json`), JSON.stringify({ name, mimeType, storageName }), { mode: 0o600 }); result = { id }; break;
+        result = { id: await this.storeFile(scope, name, mimeType, (path) => writeFile(path, data, { mode: 0o600 })) }; break;
       }
       case "fileInfo": {
         const id = text(params.id, "file", 128); if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error("Invalid file identifier");
@@ -719,7 +745,7 @@ export class LocalConversationService {
   }
 
   private drainQueue(scope: LocalConversationScope, entry: LocalConversation): void {
-    if (this.stopping || scope.userId !== this.activeUser) return;
+    if (this.stopping || this.draining || scope.userId !== this.activeUser) return;
     const key = `${this.key(scope)}:${entry.id}`;
     if (this.queueDrains.has(key) || entry.archived || entry.promptQueue?.paused || !entry.promptQueue?.items.length || this.runsHasSession(entry) || entry.turns.some((turn) => turn.status === "running")) return;
     this.queueDrains.add(key);

@@ -14,6 +14,7 @@
     "./types": "./types/index.ts",
     "./types/*": "./types/*.ts",
     "./local-conversation/protocol": "./local-conversation/protocol.ts",
+    "./local-conversation/wire": "./local-conversation/wire.ts",
     "./attachments": "./attachments/index.ts",
     "./attachments/deliverables": "./attachments/deliverables.ts",
     "./attachments/image-sequence": "./attachments/image-sequence.ts",
