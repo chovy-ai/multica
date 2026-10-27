@@ -262,7 +262,7 @@ func (s *Server) broadcast(method string, params any, subscribedOnly bool) {
 }
 
 func (s *Server) onSidecarStatus(status SidecarStatus, instance string) {
-	s.broadcast("sidecarStatus", map[string]any{"status": status, "instance": instance}, false)
+	s.broadcast("sidecarStatus", SidecarStatusNotification{Status: status, Instance: instance}, false)
 	if status != StatusReady {
 		return
 	}
@@ -272,7 +272,7 @@ func (s *Server) onSidecarStatus(status SidecarStatus, instance string) {
 	s.mu.Unlock()
 	// A replacement instance invalidates every client's view of the data.
 	if previous != "" && previous != instance {
-		s.broadcast("resync", map[string]any{"instance": instance}, true)
+		s.broadcast("resync", ResyncNotification{Instance: instance}, true)
 	}
 }
 
@@ -332,11 +332,7 @@ func (s *Server) requireSidecar(ctx context.Context) (*Conn, error) {
 func (s *Server) handleClient(ctx context.Context, c *client, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "session.set":
-		p, err := decode[struct {
-			UserID string            `json:"userId"`
-			APIURL string            `json:"apiUrl"`
-			Env    map[string]string `json:"env"`
-		}](params)
+		p, err := decode[SessionParams](params)
 		if err != nil {
 			return nil, err
 		}
@@ -347,28 +343,22 @@ func (s *Server) handleClient(ctx context.Context, c *client, method string, par
 		if err != nil {
 			return nil, err
 		}
-		if err := conn.Call(ctx, "session.set", map[string]any{"connectionId": c.id, "userId": p.UserID, "apiUrl": p.APIURL, "env": p.Env}, nil); err != nil {
+		if err := conn.Call(ctx, "session.set", SidecarSessionParams{ConnectionID: c.id, UserID: p.UserID, APIURL: p.APIURL, Env: p.Env}, nil); err != nil {
 			return nil, err
 		}
 		c.mu.Lock()
 		c.userID = p.UserID
 		c.mu.Unlock()
 		status, instance := s.sup.Status()
-		return map[string]any{"connectionId": c.id, "status": status, "instance": instance}, nil
+		return SessionResult{ConnectionID: c.id, Status: status, Instance: instance}, nil
 	case "subscribe":
-		p, err := decode[struct {
-			Since string `json:"since"`
-		}](params)
+		p, err := decode[SubscribeParams](params)
 		if err != nil {
 			return nil, err
 		}
 		return s.subscribe(c, p.Since), nil
 	case "request":
-		p, err := decode[struct {
-			Scope  Scope           `json:"scope"`
-			Method string          `json:"method"`
-			Params json.RawMessage `json:"params"`
-		}](params)
+		p, err := decode[RequestParams](params)
 		if err != nil {
 			return nil, err
 		}
@@ -379,20 +369,16 @@ func (s *Server) handleClient(ctx context.Context, c *client, method string, par
 		if err != nil {
 			return nil, err
 		}
-		return conn.CallRaw(ctx, "request", map[string]any{"connectionId": c.id, "scope": p.Scope, "method": p.Method, "params": p.Params})
+		return conn.CallRaw(ctx, "request", SidecarRequestParams{ConnectionID: c.id, Scope: p.Scope, Method: p.Method, Params: p.Params})
 	case "hostReply":
-		p, err := decode[struct {
-			ID     string          `json:"id"`
-			Result json.RawMessage `json:"result"`
-			Error  *RPCError       `json:"error"`
-		}](params)
+		p, err := decode[HostReplyParams](params)
 		if err != nil {
 			return nil, err
 		}
 		return nil, s.resolveHostRequest(c, p.ID, hostReply{result: p.Result, err: p.Error})
 	case "sidecar.drain":
 		busy, err := s.Drain(ctx)
-		return map[string]any{"busy": busy}, err
+		return DrainResult{Busy: busy}, err
 	case "sidecar.undrain":
 		return map[string]any{}, s.Undrain(ctx)
 	case "sidecar.stop":
@@ -423,7 +409,7 @@ func formatCursor(instance string, seq uint64) string {
 
 // subscribe replays what the client missed when the buffer still covers it;
 // otherwise the client must resynchronize from list/read.
-func (s *Server) subscribe(c *client, since string) map[string]any {
+func (s *Server) subscribe(c *client, since string) SubscribeResult {
 	s.mu.Lock()
 	c.mu.Lock()
 	c.subscribed = true
@@ -460,15 +446,15 @@ func (s *Server) subscribe(c *client, since string) map[string]any {
 	s.mu.Unlock()
 
 	if resync {
-		_ = c.conn.Notify("resync", map[string]any{"instance": instance})
+		_ = c.conn.Notify("resync", ResyncNotification{Instance: instance})
 	}
 	for _, rec := range replay {
-		_ = c.conn.Notify("event", map[string]any{"cursor": formatCursor(instance, rec.seq), "event": rec.event})
+		_ = c.conn.Notify("event", EventNotification{Cursor: formatCursor(instance, rec.seq), Event: rec.event})
 	}
 	for _, req := range pending {
-		_ = c.conn.Notify("hostRequest", map[string]any{"id": req.id, "kind": req.kind, "payload": req.payload})
+		_ = c.conn.Notify("hostRequest", HostRequestNotification{ID: req.id, Kind: req.kind, Payload: req.payload})
 	}
-	return map[string]any{"cursor": cursor, "resync": resync}
+	return SubscribeResult{Cursor: cursor, Resync: resync}
 }
 
 // --- sidecar → daemon ---
@@ -476,10 +462,7 @@ func (s *Server) subscribe(c *client, since string) map[string]any {
 func (s *Server) handleSidecar(ctx context.Context, instance, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "event":
-		p, err := decode[struct {
-			Seq   uint64          `json:"seq"`
-			Event json.RawMessage `json:"event"`
-		}](params)
+		p, err := decode[SidecarEventParams](params)
 		if err != nil {
 			return nil, err
 		}
@@ -489,11 +472,7 @@ func (s *Server) handleSidecar(ctx context.Context, instance, method string, par
 		s.broadcast("timing", json.RawMessage(params), true)
 		return nil, nil
 	case "log":
-		p, _ := decode[struct {
-			Level   string         `json:"level"`
-			Message string         `json:"message"`
-			Fields  map[string]any `json:"fields"`
-		}](params)
+		p, _ := decode[LogParams](params)
 		attrs := []any{}
 		for k, v := range p.Fields {
 			attrs = append(attrs, k, v)
@@ -503,11 +482,7 @@ func (s *Server) handleSidecar(ctx context.Context, instance, method string, par
 		s.cfg.Logger.Log(ctx, level, "local host: "+p.Message, attrs...)
 		return nil, nil
 	case "host.request":
-		p, err := decode[struct {
-			ConnectionID string          `json:"connectionId"`
-			Kind         string          `json:"kind"`
-			Payload      json.RawMessage `json:"payload"`
-		}](params)
+		p, err := decode[HostRequestParams](params)
 		if err != nil {
 			return nil, err
 		}
@@ -527,7 +502,7 @@ func (s *Server) recordEvent(instance string, seq uint64, event json.RawMessage)
 		s.ring = append(s.ring[:0], s.ring[len(s.ring)-eventBufferSize:]...)
 	}
 	s.mu.Unlock()
-	s.broadcast("event", map[string]any{"cursor": formatCursor(instance, seq), "event": event}, true)
+	s.broadcast("event", EventNotification{Cursor: formatCursor(instance, seq), Event: event}, true)
 }
 
 // hostRequest delivers a request to exactly the connection that originated
@@ -546,10 +521,10 @@ func (s *Server) hostRequest(ctx context.Context, connectionID, kind string, pay
 		s.mu.Lock()
 		delete(s.hostPending, req.id)
 		s.mu.Unlock()
-		_ = c.conn.Notify("hostRequestResolved", map[string]any{"id": req.id})
+		_ = c.conn.Notify("hostRequestResolved", HostRequestResolvedNotification{ID: req.id})
 	}()
 
-	if err := c.conn.Notify("hostRequest", map[string]any{"id": req.id, "kind": kind, "payload": payload}); err != nil {
+	if err := c.conn.Notify("hostRequest", HostRequestNotification{ID: req.id, Kind: kind, Payload: payload}); err != nil {
 		return nil, AppError("settings_host_unavailable", "The desktop that should handle this request disconnected")
 	}
 	timer := time.NewTimer(hostRequestTTL)
@@ -605,12 +580,8 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request, ref string) {
 		writeAppError(w, http.StatusServiceUnavailable, err)
 		return
 	}
-	var file struct {
-		Path     string `json:"path"`
-		MimeType string `json:"mimeType"`
-		Name     string `json:"name"`
-	}
-	if err := conn.Call(r.Context(), "file.resolve", map[string]any{"scope": scope, "fileRef": ref}, &file); err != nil {
+	var file FileResolveResult
+	if err := conn.Call(r.Context(), "file.resolve", FileResolveParams{Scope: scope, FileRef: ref}, &file); err != nil {
 		writeAppError(w, http.StatusNotFound, err)
 		return
 	}
@@ -681,10 +652,8 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, http.StatusBadRequest, fmt.Errorf("read upload: %w", err))
 		return
 	}
-	var out struct {
-		ID string `json:"id"`
-	}
-	if err := conn.Call(r.Context(), "file.commit", map[string]any{"scope": scope, "tempPath": tmp.Name(), "name": name, "mimeType": mimeType, "size": size}, &out); err != nil {
+	var out FileCommitResult
+	if err := conn.Call(r.Context(), "file.commit", FileCommitParams{Scope: scope, TempPath: tmp.Name(), Name: name, MimeType: mimeType, Size: size}, &out); err != nil {
 		writeAppError(w, http.StatusBadRequest, err)
 		return
 	}

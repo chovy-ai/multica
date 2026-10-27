@@ -206,9 +206,7 @@ func (s *supervisor) start() error {
 
 	conn := NewConn(newLineTransport(stdout, stdin, nil), func(ctx context.Context, method string, params json.RawMessage) (any, error) {
 		if method == "busy" {
-			var p struct {
-				Count int64 `json:"count"`
-			}
+			var p BusyParams
 			if json.Unmarshal(params, &p) == nil {
 				s.busy.Store(p.Count)
 			}
@@ -301,9 +299,7 @@ func (s *supervisor) Drain(ctx context.Context) (int64, error) {
 	if conn == nil {
 		return 0, nil
 	}
-	var out struct {
-		Busy int64 `json:"busy"`
-	}
+	var out DrainResult
 	if err := conn.Call(ctx, "drain", struct{}{}, &out); err != nil {
 		return 0, err
 	}

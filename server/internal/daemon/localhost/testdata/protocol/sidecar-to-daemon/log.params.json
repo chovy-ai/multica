@@ -1,0 +1,7 @@
+{
+  "level": "WARN",
+  "message": "codex pool slot recycled",
+  "fields": {
+    "reason": "config drift"
+  }
+}

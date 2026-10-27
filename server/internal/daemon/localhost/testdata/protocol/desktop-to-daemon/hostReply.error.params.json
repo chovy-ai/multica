@@ -1,0 +1,10 @@
+{
+  "id": "0f1e2d3c4b5a6978",
+  "error": {
+    "code": -32000,
+    "message": "The user declined",
+    "data": {
+      "code": "declined"
+    }
+  }
+}

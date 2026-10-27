@@ -1,0 +1,8 @@
+{
+  "userId": "5f0c2a1e-0000-4000-8000-000000000001",
+  "apiUrl": "https://api.multica.ai",
+  "env": {
+    "PATH": "/usr/local/bin:/usr/bin",
+    "HOME": "/Users/me"
+  }
+}
