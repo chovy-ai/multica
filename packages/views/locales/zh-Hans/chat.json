@@ -3,6 +3,26 @@
     "local_conversation": {
       "waiting_for_answer": "等待你的回答",
       "waiting_for_answer_label": "等待你的回答：{{title}}"
+    },
+    "side_activity": {
+      "idle": "未开始",
+      "running": "运行中",
+      "waiting": "等待你回答",
+      "completed": "已完成",
+      "failed": "执行失败",
+      "cancelled": "已取消",
+      "loading": "正在加载活动...",
+      "unavailable": "活动不可用",
+      "load_failed": "无法加载工作摘要。",
+      "retry": "重试",
+      "first_output": "正在等待首次输出...",
+      "thinking": "正在思考...",
+      "using_tool": "正在使用 {{tool}}",
+      "tool_progress": "工具：{{completed}}/{{total}}",
+      "summary": "工作摘要",
+      "partial_output": "最后输出",
+      "no_output": "未保存文本输出。",
+      "finished_tool": "已完成 {{tool}}"
     }
   },
   "page": {

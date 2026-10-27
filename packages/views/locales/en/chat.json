@@ -3,6 +3,26 @@
     "local_conversation": {
       "waiting_for_answer": "Waiting for your answer",
       "waiting_for_answer_label": "Waiting for your answer: {{title}}"
+    },
+    "side_activity": {
+      "idle": "Not started",
+      "running": "Running",
+      "waiting": "Waiting for your answer",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "loading": "Loading activity...",
+      "unavailable": "Activity unavailable",
+      "load_failed": "Could not load the work summary.",
+      "retry": "Retry",
+      "first_output": "Waiting for the first output...",
+      "thinking": "Thinking...",
+      "using_tool": "Using {{tool}}",
+      "tool_progress": "Tools: {{completed}}/{{total}}",
+      "summary": "Work summary",
+      "partial_output": "Latest output",
+      "no_output": "No text output was saved.",
+      "finished_tool": "Finished {{tool}}"
     }
   },
   "page": {
