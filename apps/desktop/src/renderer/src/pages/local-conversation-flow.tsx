@@ -2,7 +2,7 @@ import { getLocalConversationClient, LocalRuntimeUpdateRequired } from "../platf
 import { LocalRuntimeNotice } from "./local-runtime-notice";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Archive, ChevronDown, ChevronRight, Clock3, Copy, FolderKanban, FolderMinus, FolderOpen, FolderPlus, GitFork, Loader2, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square } from "lucide-react";
+import { ArrowLeft, Archive, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, FolderKanban, FolderMinus, FolderOpen, FolderPlus, GitFork, Loader2, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
@@ -19,7 +19,7 @@ import { useCurrentWorkspace, useRequiredWorkspaceSlug, useWorkspacePaths } from
 import { getCurrentSlug } from "@multica/core/platform";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useNavigation, AppLink } from "@multica/views/navigation";
-import { useLocale } from "@multica/views/i18n";
+import { useLocale, useT } from "@multica/views/i18n";
 import { ProviderLogo } from "@multica/views/runtimes/provider-logo";
 import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
@@ -47,6 +47,7 @@ export function LocalConversationFlowPage() {
   const paths = useWorkspacePaths();
   const { pathname, searchParams, replace, openInNewTab, push } = useNavigation();
   const chinese = useLocale().startsWith("zh");
+  const { t } = useT("chat");
   const compact = useIsCompact();
   const [sessionListWidth] = useState(() => useConversationLayoutStore.getState().sessionListWidth);
   const sessionListPanel = useRef<HTMLDivElement>(null);
@@ -275,6 +276,7 @@ export function LocalConversationFlowPage() {
   };
   const renderSession = (entry: LocalConversation) => {
     const entryRunning = entry.turns.some((turn) => turn.status === "running");
+    const waitingForAnswer = entry.turns.some((turn) => turn.status === "running" && turn.questions?.some((question) => question.status === "pending"));
     const background = entry.turns.flatMap((turn) => (turn.backgroundTasks ?? []).filter((task) => task.status === "running" && !task.ambient));
     return <ContextMenu key={entry.id}>
     <ContextMenuTrigger className="group relative block select-text" data-session-id={entry.id} onContextMenu={(event) => {
@@ -285,7 +287,7 @@ export function LocalConversationFlowPage() {
       onClick={(event) => { event.preventDefault(); select(entry.id, entry.provider); }}
       className={`flex min-w-0 items-start gap-3 rounded-lg px-3 py-3 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring ${entryRunning || background.length ? "pr-16" : `group-hover:pr-11 group-focus-within:pr-11 ${updatingId === entry.id ? "pr-11" : ""}`} ${selectedId === entry.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}>
       <span aria-hidden="true" className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/50 text-foreground"><ProviderLogo provider={entry.provider} className="size-5" /></span>
-      <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5">{entry.pinned && <Pin aria-label={labels.pinned} className="size-3 shrink-0 text-muted-foreground" />}<span className="truncate font-medium">{entry.title}</span></span><span className="mt-0.5 block truncate text-caption text-muted-foreground">{entry.provider === "codex" ? "Codex" : "Claude Code"} · {localMessageDisplayContent(entry.messages.at(-1)) || labels.storage}</span></span>
+      <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5">{entry.pinned && <Pin aria-label={labels.pinned} className="size-3 shrink-0 text-muted-foreground" />}<span className="truncate font-medium">{entry.title}</span></span><span className={`mt-0.5 block truncate text-caption ${waitingForAnswer ? "text-foreground" : "text-muted-foreground"}`}>{waitingForAnswer ? t($ => $.desktop.local_conversation.waiting_for_answer) : <>{entry.provider === "codex" ? "Codex" : "Claude Code"} · {localMessageDisplayContent(entry.messages.at(-1)) || labels.storage}</>}</span></span>
     </AppLink>
     <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
       <div className={`focus-within:opacity-100 group-hover:opacity-100 ${updatingId === entry.id ? "opacity-100" : "opacity-0"}`}>
@@ -296,7 +298,9 @@ export function LocalConversationFlowPage() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {entryRunning && <Spinner aria-label={chinese ? `会话运行中：${entry.title}` : `Conversation running: ${entry.title}`} className="shrink-0 text-muted-foreground motion-reduce:animate-none" />}
+      {waitingForAnswer ? <IconButton size="icon-xs" label={t($ => $.desktop.local_conversation.waiting_for_answer_label, { title: entry.title })} onClick={() => select(entry.id, entry.provider)}>
+        <CircleHelp aria-hidden="true" className="size-4 text-muted-foreground" />
+      </IconButton> : entryRunning && <Spinner aria-label={chinese ? `会话运行中：${entry.title}` : `Conversation running: ${entry.title}`} className="shrink-0 text-muted-foreground motion-reduce:animate-none" />}
       {!entryRunning && background.length > 0 && <span role="status" aria-label={chinese ? `后台运行中：${entry.title}（${background.length}）` : `Background tasks: ${entry.title} (${background.length})`} title={`${chinese ? "后台运行中" : "Running in background"}\n${background.map((task) => task.description).join("\n")}`} className="flex shrink-0 items-center text-muted-foreground"><Clock3 aria-hidden="true" className="size-4" /></span>}
     </div>
     </ContextMenuTrigger>
