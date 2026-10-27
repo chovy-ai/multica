@@ -30,6 +30,37 @@ it("uses the cited path directly when the conversation already runs in the proje
   expect((await f.open()).file.path).toBe("/workspace/output/batch/walkthrough.md");
   expect(f.list).not.toHaveBeenCalled();
 });
+it.each([
+  { file_path: "/workspace/server/internal/daemon/runtime_mcp.go" },
+  { command: "sed -n 56,90p /workspace/server/internal/daemon/runtime_mcp.go" },
+])("resolves a short reference from an absolute tool input: %j", async (input) => {
+  const f = fixture("Read `runtime_mcp.go`.");
+  const source = { ...f.source, turns: [{ id: "turn", status: "completed" as const, createdAt: "2026-10-25", events: [
+    { type: "tool_use" as const, seq: 1, tool: "Read", input, created_at: "2026-10-25" },
+  ] }] };
+  f.add("/workspace/server/internal/daemon/runtime_mcp.go");
+  expect(await resolveConversationFile({ source, value: "runtime_mcp.go#L56", read: f.read, list: f.list })).toMatchObject({
+    file: { path: "/workspace/server/internal/daemon/runtime_mcp.go" }, line: 56,
+  });
+  expect(f.list).not.toHaveBeenCalled();
+});
+it("does not choose between tool references to different files with the same name", async () => {
+  const f = fixture("Read `runtime_mcp.go`.");
+  const paths = ["/workspace/first/runtime_mcp.go", "/workspace/second/runtime_mcp.go"];
+  paths.forEach(f.add);
+  const source = { ...f.source, turns: [{ id: "turn", status: "completed" as const, createdAt: "2026-10-25", events: paths.map((path, seq) => (
+    { type: "tool_use" as const, seq, input: { file_path: path }, created_at: "2026-10-25" }
+  )) }] };
+  await expect(resolveConversationFile({ source, value: "runtime_mcp.go", read: f.read, list: f.list })).rejects.toMatchObject({ kind: "ambiguous" });
+});
+it("bounds tool history and never infers uniqueness from an incomplete scan", async () => {
+  const f = fixture("Read `runtime_mcp.go`.");
+  const source = { ...f.source, turns: [{ id: "turn", status: "completed" as const, createdAt: "2026-10-25", events: [
+    { type: "tool_use" as const, seq: 1, input: { command: "x".repeat(2_000_001) }, created_at: "2026-10-25" },
+  ] }] };
+  await expect(resolveConversationFile({ source, value: "runtime_mcp.go", read: f.read, list: f.list })).rejects.toMatchObject({ kind: "incomplete" });
+  expect(f.read).toHaveBeenCalledTimes(1);
+});
 it("does not guess between two projects containing the same cited file", async () => {
   const f = fixture(); for (const project of ["project", "other"]) f.add(`/workspace/${project}/output/batch/walkthrough.md`);
   await expect(f.open()).rejects.toMatchObject({ kind: "ambiguous" });
