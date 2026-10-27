@@ -85,6 +85,93 @@ async function setup(data = backend()) {
 }
 
 describe("Multica Agent GUI runtime with the original session engine", () => {
+  it.each(["claude-code", "codex"].flatMap((provider) => [false, true].map((desktopQueue) => ({ provider, desktopQueue }))))("loads and submits to an externally created $provider session before workspace refresh completes (desktop queue: $desktopQueue)", async ({ provider, desktopQueue }) => {
+    const data = backend();
+    const localInit = { ...init, local: true, queueOwner: desktopQueue ? "desktop" as const : undefined, agents: [{ ...init.agents[0]!, provider }] };
+    const original = data.request.getMockImplementation()!;
+    const staleWorkspace = { agents: localInit.agents, sessions: [] };
+    let delayRefresh = false;
+    let finishRefresh!: () => void;
+    const gate = new Promise<void>((resolve) => { finishRefresh = resolve; });
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") { if (delayRefresh) await gate; return staleWorkspace; }
+      if (method === "queue.enqueue") return { revision: 1, paused: false, items: [params.item] };
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, localInit);
+    handles.push(handle);
+    await handle.initialize();
+    delayRefresh = true;
+    const refresh = handle.runtime.load(init.workspaceId);
+    // Match the host's create-success -> init -> selection/subscription order.
+    await data.client.request("session.create", { agentId: agent.id });
+    const errors = vi.fn();
+    let release = () => {};
+    const unsubscribe = data.client.subscribe((event) => {
+      if (event.type === "init") release = handle.runtime.ensureSessionSynchronized!({ workspaceId: init.workspaceId, agentSessionId: session.id, onError: errors });
+    });
+    try {
+      data.emit({ type: "init", snapshot: { ...localInit, sessions: [...data.sessions], activeSessionId: session.id } });
+      await expect(handle.runtime.getSession(init.workspaceId, session.id)).resolves.toMatchObject({ agentSessionId: session.id });
+      expect(handle.toServerSessionId(session.id)).toBe(session.id);
+      expect(data.request.mock.calls.some(([method, params]) => method === "session.watch" && params.sessionIds.includes(session.id))).toBe(true);
+      finishRefresh();
+      await refresh;
+      expect(handle.toServerSessionId(session.id)).toBe(session.id);
+      expect(handle.runtime.getSnapshot(init.workspaceId).sessions.map((entry) => entry.agentSessionId)).toContain(session.id);
+      const engine = handle.runtime.getSessionEngine(init.workspaceId);
+      engine.submitPrompt({ agentSessionId: session.id, clientSubmitId: "external-first-send", content: [{ type: "text", text: "First message" }] });
+      await vi.waitFor(() => expect(data.request.mock.calls.some(([method, params]) =>
+        method === (desktopQueue ? "queue.enqueue" : "session.send") && params.sessionId === session.id && (desktopQueue ? params.item.content : params.content) === "First message")).toBe(true));
+      expect(errors).not.toHaveBeenCalled();
+      expect(data.request.mock.calls.filter(([method]) => method === "session.create")).toHaveLength(1);
+    } finally {
+      unsubscribe(); release(); finishRefresh(); await refresh;
+    }
+  });
+
+  it("keeps init received during initialization and rapid session switches ahead of an older workspace response", async () => {
+    const data = backend();
+    const original = data.request.getMockImplementation()!;
+    let finishRefresh!: () => void;
+    const gate = new Promise<void>((resolve) => { finishRefresh = resolve; });
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") { await gate; return { agents: init.agents, sessions: [] }; }
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, init);
+    handles.push(handle);
+    const initializing = handle.initialize();
+    try {
+      await vi.waitFor(() => expect(data.request.mock.calls.some(([method]) => method === "workspace.load")).toBe(true));
+      const second = { ...session, id: "second-session" };
+      data.emit({ type: "init", snapshot: { ...init, sessions: [session], activeSessionId: session.id } });
+      data.emit({ type: "init", snapshot: { ...init, sessions: [session, second], activeSessionId: second.id } });
+      data.emit({ type: "init", snapshot: { ...init, sessions: [session, second], activeSessionId: session.id } });
+      expect(handle.toServerSessionId(session.id)).toBe(session.id);
+      expect(handle.toServerSessionId(second.id)).toBe(second.id);
+      finishRefresh();
+      await initializing;
+      expect(handle.getWorkspaceState().sessions.map((entry) => entry.id)).toEqual([session.id, second.id]);
+      expect(handle.runtime.getSnapshot(init.workspaceId).sessions.map((entry) => entry.agentSessionId)).toEqual([session.id, second.id]);
+    } finally { finishRefresh(); await initializing; }
+  });
+
+  it("rejects unknown identities and ignores foreign or stale init snapshots", async () => {
+    const { handle, emit, request } = await setup();
+    const snapshot = { ...init, sessions: [session], activeSessionId: session.id, generation: 2 };
+    emit({ type: "init", snapshot: { ...snapshot, workspaceId: "foreign-workspace" } });
+    emit({ type: "init", snapshot: { ...snapshot, userId: "foreign-user" } });
+    expect(handle.toServerSessionId(session.id)).toBeNull();
+    await expect(handle.runtime.getSession(init.workspaceId, session.id)).rejects.toMatchObject({ code: "session_not_ready" });
+    expect(request.mock.calls.filter(([method]) => method === "session.load")).toHaveLength(0);
+    emit({ type: "init", snapshot });
+    emit({ type: "init", snapshot: { ...snapshot, sessions: [], generation: 1 } });
+    expect(handle.toServerSessionId(session.id)).toBe(session.id);
+    expect(handle.toServerSessionId("unknown-session")).toBeNull();
+    await expect(handle.runtime.getSession(init.workspaceId, "unknown-session")).rejects.toMatchObject({ code: "session_not_ready" });
+  });
+
   it("migrates a browser-saved local queue once and remounts against Electron without suspending it", async () => {
     const saved = { agentSessionId: session.id, prompts: [{ id: "old-prompt", clientSubmitId: "old-submit", createdAtUnixMs: 1, content: [{ type: "text", text: "saved continuation" }] }] };
     const data = backend(new Map([["runtime-ledger-v1", JSON.stringify({ promptQueues: [saved] })]])); data.sessions.push(session);
