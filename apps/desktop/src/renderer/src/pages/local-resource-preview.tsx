@@ -7,6 +7,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { copyText } from "@multica/ui/lib/clipboard";
 import type { LocalConversationScope, LocalPreviewLocation } from "@multica/tutti-agent-gui-host/local-protocol";
 import type { WebPreviewState, WebPreviewCommand } from "../../../shared/resource-preview";
+import { ChromeProfileImport } from "./chrome-profile-import";
 
 export function PreviewFolder({ location, selected, scope, sessionId, onSelect, chinese, defaultExpanded = true }: { location: LocalPreviewLocation; selected?: string; scope: LocalConversationScope; sessionId?: string; onSelect: (file: LocalPreviewLocation) => void; chinese: boolean; defaultExpanded?: boolean }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -73,6 +74,6 @@ export function WebResourcePreview({ id, url, scope: owner, active, chinese, onC
     <div ref={content} className="relative min-h-0 flex-1 bg-background" data-web-preview={id}>
       {error || state.error ? <div role="alert" className="p-4 text-body"><p>{error || state.error}</p><Button className="mt-3" variant="outline" size="sm" onClick={() => { setError(""); void command({ action: "reload" }); }}>{chinese ? "重试" : "Retry"}</Button></div> : state.loading ? <div role="status" className="flex h-full items-center justify-center gap-2 text-body text-muted-foreground"><Loader2 className="size-4 animate-spin" />{chinese ? "正在打开网页…" : "Opening webpage…"}</div> : null}
     </div>
-    <div className="flex shrink-0 justify-between border-t p-2"><Button variant="ghost" size="sm" onClick={() => onReference(state.url || url, state.title || url)}><Globe className="size-4" />{chinese ? "引用到主对话" : "Reference in main chat"}</Button><Button variant="ghost" size="sm" onClick={() => { void window.desktopAPI.openExternal(state.url || url); }}><ExternalLink className="size-4" />{chinese ? "在浏览器中打开" : "Open in browser"}</Button></div>
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-1 border-t p-2"><Button variant="ghost" size="sm" onClick={() => onReference(state.url || url, state.title || url)}><Globe className="size-4" />{chinese ? "引用到主对话" : "Reference in main chat"}</Button><ChromeProfileImport key={JSON.stringify([scope.userId, scope.workspaceId, id])} scope={scope} previewId={id} chinese={chinese} /><Button variant="ghost" size="sm" onClick={() => { void window.desktopAPI.openExternal(state.url || url); }}><ExternalLink className="size-4" />{chinese ? "在浏览器中打开" : "Open in browser"}</Button></div>
   </div>;
 }

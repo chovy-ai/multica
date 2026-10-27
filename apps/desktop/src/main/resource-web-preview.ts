@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { WebContentsView, type BrowserWindow } from "electron";
 import type { WebPreviewCommand, WebPreviewState } from "../shared/resource-preview";
+import { ResourceChromeProfileImport } from "./resource-chrome-profile-import";
 
 export function previewUrl(value: unknown): string {
   if (typeof value !== "string" || value.length > 8192) throw new Error("Invalid webpage address");
@@ -12,7 +13,29 @@ export function previewUrl(value: unknown): string {
 /** Remote pages have their own sandboxed WebContents, without the application preload. */
 export class ResourceWebPreview {
   private entries = new Map<string, { owner: string; view: WebContentsView; error?: string }>();
-  constructor(private window: BrowserWindow) { window.once("closed", () => this.dispose()); }
+  readonly chromeProfiles: ResourceChromeProfileImport;
+  constructor(private window: BrowserWindow, importOptions: ConstructorParameters<typeof ResourceChromeProfileImport>[1]) {
+    window.once("closed", () => this.dispose());
+    this.chromeProfiles = new ResourceChromeProfileImport((owner, id) => {
+      const entry = this.entries.get(id);
+      if (!entry || entry.owner !== owner || entry.view.webContents.isDestroyed()) throw new Error("Invalid preview target");
+      const session = entry.view.webContents.session;
+      return {
+        cookies: session.cookies,
+        isAvailable: () => this.entries.get(id) === entry && !entry.view.webContents.isDestroyed(),
+        reload: () => {
+          for (const [tabId, item] of this.entries) {
+            const contents = item.view.webContents;
+            if (item.owner === owner && !contents.isDestroyed() && contents.session === session) {
+              item.error = undefined;
+              contents.reload();
+              this.publish(tabId);
+            }
+          }
+        },
+      };
+    }, importOptions);
+  }
   private state(id: string): WebPreviewState {
     const entry = this.entries.get(id)!; const contents = entry.view.webContents;
     return { id, url: contents.getURL(), title: contents.getTitle(), loading: contents.isLoading(), canGoBack: contents.navigationHistory.canGoBack(), canGoForward: contents.navigationHistory.canGoForward(), error: entry.error };
@@ -27,6 +50,7 @@ export class ResourceWebPreview {
     let entry = this.entries.get(id);
     if (entry && entry.owner !== owner) throw new Error("Preview belongs to another workspace");
     if (action === "close") {
+      this.chromeProfiles.closeTab(owner, id);
       if (entry) { this.window.contentView.removeChildView(entry.view); entry.view.webContents.close(); this.entries.delete(id); } return null;
     }
     if (!entry) {
@@ -63,5 +87,5 @@ export class ResourceWebPreview {
     }
     return this.state(id);
   }
-  dispose() { for (const entry of this.entries.values()) { if (!this.window.isDestroyed()) this.window.contentView.removeChildView(entry.view); if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } this.entries.clear(); }
+  dispose() { this.chromeProfiles.dispose(); for (const entry of this.entries.values()) { if (!this.window.isDestroyed()) this.window.contentView.removeChildView(entry.view); if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } this.entries.clear(); }
 }
