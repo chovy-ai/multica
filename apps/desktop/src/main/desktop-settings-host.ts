@@ -2,10 +2,15 @@ import { randomUUID } from "node:crypto";
 import { clipboard, dialog, ipcMain, type BrowserWindow } from "electron";
 import { SETTINGS_OPERATIONS } from "@multica/core/settings/operations";
 import type { SettingsHostMessage, SettingsHostReply } from "../shared/settings-host";
-import type { SettingsHostRequest, SettingsToolOptions } from "../local-host/local-settings-tools";
+import { confirmThenApply, type SettingsHostRequest, type SettingsToolOptions } from "../local-host/local-settings-tools";
+import type { SettingsRequest, SettingsScope } from "@multica/core/settings/operations";
 import { publicSettingsValue, SettingsOperationError } from "../shared/settings-operation-error";
 
-export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null, getUser: () => string | null | undefined, getGeneration: () => number): Pick<SettingsToolOptions, "host" | "confirm" | "showSecret"> {
+/**
+ * Desktop owns human confirmation: a confirmed write is performed here with
+ * `apply`, never by the conversation host that asked for it.
+ */
+export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null, getUser: () => string | null | undefined, getGeneration: () => number, apply: (request: SettingsRequest, signal: AbortSignal, scope: SettingsScope) => Promise<unknown>): Pick<SettingsToolOptions, "host" | "confirmAndApply"> {
   const pending = new Map<string, { window: BrowserWindow; generation: number; resolve(value: unknown): void; reject(error: Error): void }>();
   ipcMain.handle("settings-host:reply", (event, reply: SettingsHostReply) => {
     if (!reply || typeof reply.id !== "string") throw new Error("Invalid settings reply");
@@ -38,7 +43,7 @@ export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null,
   };
   return {
     host,
-    confirm: async (request, signal) => {
+    confirmAndApply: confirmThenApply({ request: apply, confirm: async (request, signal) => {
       const window = windowFor(request), generation = getGeneration();
       // Validate the selected account/workspace in the renderer before showing a native approval.
       await host({ ...request, operation: "settings_assert_scope", input: {} }, signal);
@@ -52,8 +57,7 @@ export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null,
       if (response.response !== 1) return false;
       await host({ ...request, operation: "settings_assert_scope", input: {} }, signal);
       return true;
-    },
-    showSecret: async (name, secret, scope, signal) => {
+    }, showSecret: async (name, secret, scope, signal) => {
       signal.throwIfAborted();
       await host({ operation: "settings_assert_scope", scope, input: {} }, signal);
       const window = windowFor({ operation: "settings_create_token", scope, input: {} });
@@ -61,6 +65,6 @@ export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null,
       signal.throwIfAborted();
       windowFor({ operation: "settings_create_token", scope, input: {} });
       if (result.response === 0) clipboard.writeText(secret);
-    },
+    } }),
   };
 }

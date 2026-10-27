@@ -9,14 +9,15 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { createSettingsTools, type SettingsToolOptions } from "./local-settings-tools";
+import { confirmThenApply, createSettingsTools, type SettingsToolOptions } from "./local-settings-tools";
 import { settingsHttpError } from "../shared/settings-operation-error";
 import { startLocalContextMcp } from "./local-context-mcp";
 import { LocalContextData } from "./local-context-data";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
-async function fixture(overrides: Partial<SettingsToolOptions> = {}) {
+type FixtureOverrides = Partial<SettingsToolOptions> & { confirm?: (request: unknown, signal: AbortSignal) => Promise<boolean>; showSecret?: (name: string, secret: string, scope: unknown, signal: AbortSignal) => Promise<void> };
+async function fixture(overrides: FixtureOverrides = {}) {
   const root = await mkdtemp(join(tmpdir(), "settings-mcp-")); roots.push(root);
   const request = vi.fn(async ({ method, path, body }) => {
     if (path.endsWith("/members")) return [{ id: "membership", user_id: "user", role: "admin", workspace_id: "workspace" }];
@@ -35,7 +36,9 @@ async function fixture(overrides: Partial<SettingsToolOptions> = {}) {
     return { id: "target", workspace_id: "workspace", ...body };
   });
   const confirm = vi.fn(async () => true), host = vi.fn(async () => ({ status: "applied" })), showSecret = vi.fn(async () => {});
-  const options: SettingsToolOptions = { root, workspaceId: "workspace", userId: "user", cloudAvailable: true, request, confirm, host, showSecret, ...overrides };
+  const { confirm: confirmOverride, showSecret: secretOverride, ...rest } = overrides;
+  const effectiveRequest = rest.request ?? request;
+  const options: SettingsToolOptions = { root, workspaceId: "workspace", userId: "user", cloudAvailable: true, request: effectiveRequest, host, confirmAndApply: confirmThenApply({ confirm: confirmOverride ?? confirm, request: (apply, signal) => effectiveRequest(apply, signal), showSecret: "showSecret" in overrides ? secretOverride : showSecret }), ...rest };
   const tools = createSettingsTools(options);
   const call = (name: string, input: Record<string, unknown> = {}) => {
     const tool = tools.find((entry) => entry.name === name);
@@ -52,7 +55,7 @@ describe("execution-scoped Settings capabilities", () => {
     const offline = createSettingsTools({ ...f.options, cloudAvailable: false });
     expect(offline.map((entry) => entry.name)).toContain("settings_update_device");
     expect(offline.map((entry) => entry.name)).not.toContain("settings_create_workflow");
-    expect(createSettingsTools({ ...f.options, showSecret: undefined }).map((entry) => entry.name)).not.toContain("settings_create_token");
+    expect(createSettingsTools({ ...f.options, confirmAndApply: undefined }).map((entry) => entry.name)).not.toContain("settings_create_token");
     expect(f.tools.every((entry) => entry.name.startsWith("settings_"))).toBe(true);
   });
 
@@ -79,6 +82,14 @@ describe("execution-scoped Settings capabilities", () => {
     expect(await f.call("settings_delete_workflow", { id: "flow", request_id: "delete-flow" })).toMatchObject({ status: "cancelled" });
     expect(f.request.mock.calls.every(([request]) => request.method === "GET")).toBe(true);
     await expect(f.call("settings_delete_workflow", { id: "flow", request_id: "new", approved: true })).rejects.toThrow();
+  });
+
+  it("leaves confirmed writes to the host, so an approval alone never makes the tool write", async () => {
+    const confirmAndApply = vi.fn(async () => ({ approved: true as const, raw: { id: "flow", workspace_id: "workspace" } }));
+    const f = await fixture({ confirmAndApply });
+    expect(await f.call("settings_delete_workflow", { id: "flow", request_id: "host-applied" })).toMatchObject({ status: "applied" });
+    expect(confirmAndApply).toHaveBeenCalledWith(expect.objectContaining({ operation: "settings_delete_workflow" }), expect.objectContaining({ method: "DELETE" }), expect.any(AbortSignal));
+    expect(f.request.mock.calls.every(([request]) => request.method === "GET")).toBe(true);
   });
 
   it("preserves unrelated code settings and uses the atomic status-order endpoint", async () => {

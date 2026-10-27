@@ -14,7 +14,7 @@ import type { AskLocalUser } from "./local-user-question";
 import type { LocalQueueCloudRequest } from "./local-queued-cloud-run";
 import { SETTINGS_MCP_INSTRUCTIONS } from "@multica/core/settings/operations";
 import { createSettingsTools, type SettingsToolOptions } from "./local-settings-tools";
-import { settingsHttpError } from "../shared/settings-operation-error";
+import { multicaWorkspaceRequest } from "./multica-api-request";
 const executeFile = promisify(execFile);
 const createdTaskSchema = CreateIssueResponseSchema.pick({ id: true, workspace_id: true, identifier: true, title: true, status: true });
 type CreatedTask = { id: string; workspace_id: string; identifier: string; title: string; status: string };
@@ -37,7 +37,7 @@ interface Options {
   verifyAccount?: (token: string, signal: AbortSignal) => Promise<string | null>;
   local?: (scope: LocalConversationScope) => LocalContextReader;
   localActions?: (scope: LocalConversationScope) => NonNullable<WorkspaceToolOptions["local"]>;
-  settings?: Pick<SettingsToolOptions, "host" | "confirm" | "showSecret">;
+  settings?: Pick<SettingsToolOptions, "host" | "confirmAndApply">;
   developerLogTool?: (scope: LocalConversationScope, conversationId?: string) => WorkspaceMcpTool;
 }
 
@@ -152,24 +152,9 @@ export class LocalMulticaContext {
         },
       } : undefined;
       const workspaceRequest: WorkspaceToolOptions["request"] = async (method, path, body, callSignal) => {
-          if (!token) throw new Error("Cloud Multica operations are unavailable. Reconnect the desktop login/runtime.");
-          const form = body instanceof FormData;
-          const response = await fetch(`${this.options.apiUrl.replace(/\/+$/, "")}${path}`, {
-            method, headers: { Authorization: `Bearer ${token}`, "X-Workspace-ID": scope.workspaceId, ...(body !== undefined && !form ? { "Content-Type": "application/json" } : {}) },
-            ...(body !== undefined ? { body: form ? body : JSON.stringify(body) } : {}), redirect: "error", signal: AbortSignal.any([signal, callSignal, AbortSignal.timeout(form ? 60000 : 15000)]),
-          });
-          if (!response.ok) {
-            let error: unknown;
-            try { error = await response.json(); } catch { /* An error response may have no JSON body. */ }
-            throw settingsHttpError(response.status, error, token);
-          }
-          let value: unknown;
-          try { value = response.status === 204 ? null : await response.json(); }
-          catch { throw new Error("The server did not confirm the operation result. Inspect current state before repeating a write."); }
-          callSignal.throwIfAborted();
-          const next = response.headers.get("X-Agent-Tasks-Next-Cursor");
-          return next && Array.isArray(value) ? { items: value, has_more: true, next_cursor: next } : value;
-        };
+        if (!token) throw new Error("Cloud Multica operations are unavailable. Reconnect the desktop login/runtime.");
+        return multicaWorkspaceRequest({ apiUrl: this.options.apiUrl, token, workspaceId: scope.workspaceId }, method, path, body, AbortSignal.any([signal, callSignal]));
+      };
       const workspaceTools = this.options.workspaceOperations ? createWorkspaceTools({
         workspaceId: scope.workspaceId, userId: scope.userId, conversationId: current?.conversationId, appUrl: this.options.appUrl,
         ...(current?.readAvatarFile ? { avatar: { receiptsRoot: join(this.options.root, "..", "avatar-operation-receipts"), readFile: current.readAvatarFile } } : {}),

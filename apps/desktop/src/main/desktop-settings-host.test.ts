@@ -11,29 +11,38 @@ function fixture() {
   const mainFrame = {};
   const webContents = { mainFrame, send: vi.fn((_channel, request) => queueMicrotask(() => fake.handlers.get("settings-host:reply")!({ sender: webContents, senderFrame: mainFrame }, { id: request.id, ok: true, result: { status: "ready" } }))) };
   const window = { webContents, isDestroyed: () => false } as unknown as BrowserWindow;
-  const host = createDesktopSettingsHost(() => window, () => user, () => generation);
-  return { host, window, webContents, changeUser: () => { user = "other"; generation++; } };
+  const apply = vi.fn(async (request: { path: string }) => request.path === "/api/tokens" ? { id: "pat", token: "PRIVATE" } : { id: "member" });
+  const host = createDesktopSettingsHost(() => window, () => user, () => generation, apply);
+  return { host, window, webContents, apply, changeUser: () => { user = "other"; generation++; } };
 }
 describe("native Settings confirmation", () => {
-  it("defaults to cancel and requires an actual native confirmation result", async () => {
+  it("defaults to cancel and applies the write itself only after an actual native confirmation", async () => {
     const f = fixture();
     const request = { operation: "settings_remove_member", scope: { userId: "user", workspaceId: "workspace" }, input: { id: "member" } };
-    expect(await f.host.confirm!(request, new AbortController().signal)).toBe(false);
+    const write = { method: "DELETE" as const, path: "/api/workspaces/workspace/members/member" };
+    expect(await f.host.confirmAndApply!(request, write, new AbortController().signal)).toEqual({ approved: false });
     expect(fake.show).toHaveBeenCalledWith(f.window, expect.objectContaining({ defaultId: 0, cancelId: 0, buttons: ["Cancel", "Apply"] }));
+    expect(f.apply).not.toHaveBeenCalled();
     fake.show.mockResolvedValueOnce({ response: 1 });
-    expect(await f.host.confirm!(request, new AbortController().signal)).toBe(true);
+    expect(await f.host.confirmAndApply!(request, write, new AbortController().signal)).toEqual({ approved: true, raw: { id: "member" } });
+    expect(f.apply).toHaveBeenCalledWith(write, expect.any(AbortSignal), request.scope);
   });
+  const tokenRequest = { operation: "settings_create_token", scope: { userId: "user", workspaceId: "workspace" }, input: { name: "Key" } };
+  const tokenWrite = { method: "POST" as const, path: "/api/tokens", body: { name: "Key" } };
   it("refuses to display token values after the account changes", async () => {
-    const f = fixture(); f.changeUser();
-    await expect(f.host.showSecret!("Key", "PRIVATE", { userId: "user", workspaceId: "workspace" }, new AbortController().signal)).rejects.toThrow("same signed-in account");
-    expect(fake.show).not.toHaveBeenCalled();
+    const f = fixture();
+    fake.show.mockImplementationOnce(async () => { f.changeUser(); return { response: 1 }; });
+    await expect(f.host.confirmAndApply!(tokenRequest, tokenWrite, new AbortController().signal)).rejects.toThrow();
+    expect(fake.show).toHaveBeenCalledTimes(1);
   });
-  it("copies a new token only when the human selects Copy token", async () => {
-    const f = fixture(); fake.show.mockResolvedValueOnce({ response: 1 });
-    await f.host.showSecret!("Key", "PRIVATE", { userId: "user", workspaceId: "workspace" }, new AbortController().signal);
+  it("shows a created token only to the human and copies it only on Copy token", async () => {
+    const f = fixture();
+    fake.show.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 1 });
+    expect(await f.host.confirmAndApply!(tokenRequest, tokenWrite, new AbortController().signal)).toEqual({ approved: true, raw: { id: "pat" } });
     expect(fake.copy).not.toHaveBeenCalled();
-    fake.show.mockResolvedValueOnce({ response: 0 });
-    await f.host.showSecret!("Key", "PRIVATE", { userId: "user", workspaceId: "workspace" }, new AbortController().signal);
+    fake.show.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
+    const outcome = await f.host.confirmAndApply!(tokenRequest, tokenWrite, new AbortController().signal);
+    expect(JSON.stringify(outcome)).not.toContain("PRIVATE");
     expect(fake.copy).toHaveBeenCalledWith("PRIVATE");
   });
   it("rejects replies from another renderer and aborts pending host requests", async () => {

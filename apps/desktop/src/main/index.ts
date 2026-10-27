@@ -16,6 +16,8 @@ import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chr
 import { generateLocalConversationTitle } from "../local-host/local-conversation-title-generator";
 import { LocalMulticaContext } from "../local-host/local-multica-context";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
+import { multicaWorkspaceRequest } from "../local-host/multica-api-request";
+import { SettingsOperationError } from "../shared/settings-operation-error";
 import type { LocalConversationMethod, LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
@@ -673,7 +675,11 @@ if (!gotTheLock) {
         apiUrl: runtimeConfigResult.config.apiUrl,
         appUrl: runtimeConfigResult.config.appUrl,
         workspaceOperations: true,
-        settings: createDesktopSettingsHost(() => mainWindow, () => settingsUserId, () => authSessionGeneration),
+        settings: createDesktopSettingsHost(() => mainWindow, () => settingsUserId, () => authSessionGeneration, async ({ method, path, body }, signal, scope) => {
+          const credentials = await readDesktopProfileCredentials(localApiUrl);
+          if (credentials.userId !== scope.userId || !credentials.token) throw new SettingsOperationError("account_mismatch", "The desktop is signed in to another account");
+          return multicaWorkspaceRequest({ apiUrl: localApiUrl, token: credentials.token, workspaceId: scope.workspaceId }, method, path, body, signal);
+        }),
         cliPath: bundledCliPath(),
         readProfile: () => readDesktopProfileCredentials(localApiUrl),
         local: (scope) => ({

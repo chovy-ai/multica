@@ -7,13 +7,43 @@ import type { WorkspaceMcpTool } from "./local-workspace-tools";
 import { publicSettingsValue, SettingsOperationError } from "../shared/settings-operation-error";
 
 export interface SettingsHostRequest { operation: string; scope: SettingsScope; input: Record<string, unknown> }
+export type SettingsConfirmRequest = SettingsHostRequest & { impact?: unknown };
+export type SettingsApplyOutcome = { approved: false } | { approved: true; raw: unknown };
+/**
+ * Asks a human and, only on approval, performs `apply` on the host side, so
+ * the caller can never turn a forged approval into a write. `apply` is null
+ * for host-only operations, which the caller runs through `host` afterwards.
+ */
+export type ConfirmAndApply = (request: SettingsConfirmRequest, apply: SettingsRequest | null, signal: AbortSignal) => Promise<SettingsApplyOutcome>;
 export interface SettingsToolOptions extends SettingsScope {
   root: string;
   cloudAvailable: boolean;
   request(request: SettingsRequest, signal: AbortSignal): Promise<unknown>;
   host?: (request: SettingsHostRequest, signal: AbortSignal) => Promise<unknown>;
-  confirm?: (request: SettingsHostRequest & { impact?: unknown }, signal: AbortSignal) => Promise<boolean>;
+  confirmAndApply?: ConfirmAndApply;
+}
+
+/**
+ * Host-side composition of ConfirmAndApply. A created token's secret is shown
+ * to the human and stripped from the result, so it never reaches the agent.
+ */
+export function confirmThenApply(parts: {
+  confirm(request: SettingsConfirmRequest, signal: AbortSignal): Promise<boolean>;
+  request(request: SettingsRequest, signal: AbortSignal, scope: SettingsScope): Promise<unknown>;
   showSecret?: (name: string, secret: string, scope: SettingsScope, signal: AbortSignal) => Promise<void>;
+}): ConfirmAndApply {
+  return async (request, apply, signal) => {
+    if (!await parts.confirm(request, signal)) return { approved: false };
+    signal.throwIfAborted();
+    if (!apply) return { approved: true, raw: null };
+    const raw = await parts.request(apply, signal, request.scope);
+    if (request.operation !== "settings_create_token") return { approved: true, raw };
+    const result = object(raw);
+    if (typeof result.token !== "string" || !result.token) throw new SettingsOperationError("result_unconfirmed", "The server did not confirm token creation");
+    if (!parts.showSecret) throw new SettingsOperationError("secret_display_unavailable", "The token was created but could not be displayed. Revoke it in Settings; do not create another token automatically.");
+    await parts.showSecret(String(request.input.name), result.token, request.scope, signal);
+    return { approved: true, raw: { id: result.id ?? null } };
+  };
 }
 type Row = Record<string, unknown>;
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, canonical(entry)])) : value;
@@ -79,7 +109,7 @@ async function writeOnce(options: SettingsToolOptions, operation: string, reques
 
 export function createSettingsTools(options: SettingsToolOptions): WorkspaceMcpTool[] {
   const scope = { workspaceId: options.workspaceId, userId: options.userId };
-  const available = SETTINGS_OPERATIONS.filter((operation) => (operation.request ? options.cloudAvailable : Boolean(options.host)) && (operation.name !== "settings_create_token" || Boolean(options.showSecret)));
+  const available = SETTINGS_OPERATIONS.filter((operation) => (operation.request ? options.cloudAvailable : Boolean(options.host)) && (operation.name !== "settings_create_token" || Boolean(options.confirmAndApply)));
   const tools: WorkspaceMcpTool[] = [{
     name: "settings_capabilities",
     description: "Discover Settings operations for this execution, account, workspace and device. Permission hints are not authorization; the server evaluates resource ownership and feature gates on every call.",
@@ -92,7 +122,7 @@ export function createSettingsTools(options: SettingsToolOptions): WorkspaceMcpT
         const member = Array.isArray(members) ? members.map(object).find((entry) => entry.user_id === scope.userId) : undefined;
         if (typeof member?.role === "string") role = member.role;
       }
-      return { workspace_id: scope.workspaceId, user_id: scope.userId, role, cloud_available: options.cloudAvailable, confirmation_available: Boolean(options.confirm), feature_gates: { project_workflows_v1: "server_evaluated" }, domains: SETTINGS_DOMAINS, operations: available.map(({ name, domain, write, confirm, permission }) => ({ name, domain, write, human_confirmation: confirm, permission, authorization: permission === "admin" && role !== "unknown" ? ["owner", "admin"].includes(role) ? "eligible" : "denied" : "server_or_host_evaluated" })) };
+      return { workspace_id: scope.workspaceId, user_id: scope.userId, role, cloud_available: options.cloudAvailable, confirmation_available: Boolean(options.confirmAndApply), feature_gates: { project_workflows_v1: "server_evaluated" }, domains: SETTINGS_DOMAINS, operations: available.map(({ name, domain, write, confirm, permission }) => ({ name, domain, write, human_confirmation: confirm, permission, authorization: permission === "admin" && role !== "unknown" ? ["owner", "admin"].includes(role) ? "eligible" : "denied" : "server_or_host_evaluated" })) };
     },
   }];
   for (const operation of available) {
@@ -118,15 +148,17 @@ export function createSettingsTools(options: SettingsToolOptions): WorkspaceMcpT
       }
       const preview = input.dry_run === true || (operation.name === "settings_device_action" && input.action === "check_update");
       const needsConfirmation = !preview && (operation.confirm || Number(object(object(impact).plan).affected_issues) > 0);
+      const request = operation.request?.(scope, input) ?? null;
+      if (request && operation.name === "settings_update_code_settings") request.body = { settings: { ...object(object(before).settings), ...object(input.fields) } };
+      let confirmed: SettingsApplyOutcome | undefined;
       if (needsConfirmation) {
-        if (!options.confirm) throw new SettingsOperationError("confirmation_unavailable", "This action requires the desktop confirmation UI");
-        if (!await options.confirm({ ...hostRequest, impact: publicSettingsValue(impact ?? before) }, signal)) return { status: "cancelled", operation: operation.name, workspace_id: scope.workspaceId };
+        if (!options.confirmAndApply) throw new SettingsOperationError("confirmation_unavailable", "This action requires the desktop confirmation UI");
+        confirmed = await options.confirmAndApply({ ...hostRequest, impact: publicSettingsValue(impact ?? before) }, request, signal);
+        if (!confirmed.approved) return { status: "cancelled", operation: operation.name, workspace_id: scope.workspaceId };
         signal.throwIfAborted();
       }
-      if (!operation.request) return options.host!(hostRequest, signal);
-      const request = operation.request(scope, input);
-      if (operation.name === "settings_update_code_settings") request.body = { settings: { ...object(object(before).settings), ...object(input.fields) } };
-      const raw = await options.request(request, signal);
+      if (!request) return options.host!(hostRequest, signal);
+      const raw = confirmed?.approved ? confirmed.raw : await options.request(request, signal);
       signal.throwIfAborted();
       if (operation.domain !== "profile" && operation.domain !== "tokens") checkWorkspace(raw, scope);
       if (operation.name === "settings_read_workspace" && object(raw).id !== scope.workspaceId) throw new SettingsOperationError("workspace_mismatch", "The setting belongs to another workspace");
@@ -134,13 +166,8 @@ export function createSettingsTools(options: SettingsToolOptions): WorkspaceMcpT
       if (["settings_create_workflow", "settings_create_status", "settings_create_label", "settings_create_property", "settings_create_quick_action", "settings_create_mcp_server"].includes(operation.name)) {
         if (typeof object(raw).id !== "string" || !object(raw).id || (operation.domain !== "mcp" && object(raw).workspace_id !== scope.workspaceId)) throw new SettingsOperationError("result_unconfirmed", "The server did not confirm a created resource in this workspace. Read current settings before another creation.");
       }
-      if (operation.name === "settings_create_token") {
-        const result = object(raw);
-        if (typeof result.token !== "string" || !result.token) throw new SettingsOperationError("result_unconfirmed", "The server did not confirm token creation");
-        if (!options.showSecret) throw new SettingsOperationError("secret_display_unavailable", "The token was created but could not be displayed. Revoke it in Settings; do not create another token automatically.");
-        await options.showSecret(String(input.name), result.token, scope, signal);
-        return { status: "applied", operation: operation.name, id: result.id ?? null, secret_displayed_to_user: true };
-      }
+      // Token creation always confirms, so the host already showed and stripped the secret.
+      if (operation.name === "settings_create_token") return { status: "applied", operation: operation.name, id: object(raw).id ?? null, secret_displayed_to_user: true };
       if (operation.name === "settings_list_tokens") {
         const values = Array.isArray(raw) ? raw : object(raw).tokens;
         if (!Array.isArray(values)) throw new SettingsOperationError("invalid_response", "The token metadata response is invalid");
