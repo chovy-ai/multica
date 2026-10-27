@@ -88,8 +88,8 @@ With a desktop renderer Vite server running, `e2e/chrome-profile-import.spec.ts`
 - `packages/tutti-agent-gui-host/src/side-entry.tsx`: selected-text toolbar, resource links, source locator, queue menu action.
 - `packages/tutti-agent-gui-host/src/runtime/create-multica-agent-gui-runtime.ts`: queue transfer and ownership reconciliation.
 - `packages/tutti-agent-gui-host/src/side-context.ts`: bounded quoted source context.
-- `apps/desktop/src/main/local-conversation-service.ts`: durable Side creation, receipts and execution.
-- `apps/desktop/src/main/local-resource-reader.ts`: canonical local file grants.
+- `apps/desktop/src/local-host/local-conversation-service.ts`: durable Side creation, receipts and execution.
+- `apps/desktop/src/local-host/local-resource-reader.ts`: canonical local file grants.
 - `apps/desktop/src/main/resource-web-preview.ts`: isolated native webpage lifecycle.
 - `apps/desktop/src/renderer/src/pages/local-side-workspace.tsx`: shared resource tabs and existing Agent GUI composition.
 - `apps/desktop/src/renderer/src/pages/local-resource-preview.tsx`: folder tree, file preview and webpage toolbar.
@@ -101,7 +101,7 @@ The source-vendor GUI remains unchanged; existing pinned compile adapters inject
 Desktop unit/component scope: 76 tests across resource reading, local service, parent-service routing, flow composition and shared workspace. Host unit/runtime scope: 57 tests. The final GUI regression suite covers queue transfer, quoted Side entry, empty Side, existing Fork, provider drafts/references, HTML/SVG rendering and mention panels. The final combined run passed all 25 tests; see `../../.tmp/side-all-final.log`. The production workspace regression also checks keyboard resizing, overflow tabs, expansion, restoration, closing, narrow mode, draft preservation and zero page errors.
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-resource-reader.test.ts src/main/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/pages/local-side-workspace.test.tsx
+pnpm --filter @multica/desktop test src/local-host/local-resource-reader.test.ts src/local-host/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/pages/local-side-workspace.test.tsx
 pnpm --filter @multica/tutti-agent-gui-host test
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/tutti-agent-gui-host typecheck

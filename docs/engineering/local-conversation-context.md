@@ -51,7 +51,7 @@ multica project resource list '<project-id>' --output json
 
 ```sh
 cd server && go test ./cmd/multica -run 'Test(IssueContext|RunIssueCommentList|TimelineFilterApply)' -count=1
-pnpm --filter @multica/desktop test src/main/local-codex-instructions.test.ts src/main/local-multica-context.test.ts src/main/local-conversation-service.test.ts src/main/local-provider-runner.test.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-codex-instructions.test.ts src/local-host/local-multica-context.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-provider-runner.test.ts src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/desktop build
 git diff --check

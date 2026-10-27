@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
 import type { DeveloperLogQuery, DeveloperLogSaveResult } from "../shared/developer-logs";
-import type { WorkspaceMcpTool } from "./local-workspace-tools";
+import type { WorkspaceMcpTool } from "../local-host/local-workspace-tools";
 import { LocalTimingLog } from "./local-timing-log";
 import type { DaemonLogSource, RuntimeLogSource } from "./developer-runtime-logs";
 

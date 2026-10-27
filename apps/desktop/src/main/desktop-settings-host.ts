@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { clipboard, dialog, ipcMain, type BrowserWindow } from "electron";
 import { SETTINGS_OPERATIONS } from "@multica/core/settings/operations";
 import type { SettingsHostMessage, SettingsHostReply } from "../shared/settings-host";
-import type { SettingsHostRequest, SettingsToolOptions } from "./local-settings-tools";
+import type { SettingsHostRequest, SettingsToolOptions } from "../local-host/local-settings-tools";
 import { publicSettingsValue, SettingsOperationError } from "../shared/settings-operation-error";
 
 export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null, getUser: () => string | null | undefined, getGeneration: () => number): Pick<SettingsToolOptions, "host" | "confirm" | "showSecret"> {

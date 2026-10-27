@@ -41,6 +41,22 @@ export default [
       "no-restricted-syntax": "off",
     },
   },
+  // The local conversation host runs as a daemon-launched sidecar, so it must
+  // stay free of Electron and of the desktop main process; host capabilities
+  // are injected by whoever constructs it.
+  {
+    files: ["src/local-host/**/*.ts"],
+    ignores: ["src/local-host/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [{ name: "electron", message: "local-host runs outside Electron; inject host capabilities instead." }],
+          patterns: [{ group: ["electron/*", "../main/*", "../renderer/*", "../preload/*"], message: "local-host must not depend on Electron or desktop process code." }],
+        },
+      ],
+    },
+  },
   // Navigation boundary (MUL-4741): the tab Coordinator must be the only
   // navigation initiator — a Router location change without a Coordinator
   // token is a protocol error. Application code must not navigate directly;

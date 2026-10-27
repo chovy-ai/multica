@@ -12,9 +12,9 @@ import { LocalConversationService } from "./local-conversation-service";
 import { CONTEXT_MCP_NAME, CONTEXT_MCP_TOKEN_ENV, CONTEXT_MCP_TOOLS } from "./local-context-mcp";
 import { runLocalProvider } from "./local-provider-runner";
 import { CREATE_TASK_MENTION_ID } from "@multica/core/local-conversation/protocol";
-import { DeveloperLogExporter, createDeveloperLogTool } from "./developer-log-export";
-import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
-import { LocalTimingLog } from "./local-timing-log";
+import { DeveloperLogExporter, createDeveloperLogTool } from "../main/developer-log-export";
+import { WebDiagnosticLog, snapshotDaemonLog } from "../main/developer-runtime-logs";
+import { LocalTimingLog } from "../main/local-timing-log";
 import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 
 const cleanups: (() => Promise<unknown>)[] = [];

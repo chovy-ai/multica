@@ -43,7 +43,7 @@ HTML 不插入宿主 DOM。iframe 只设置 `sandbox="allow-scripts"`，不赋�
 ## 验证
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-conversation-service.test.ts src/main/local-provider-runner.test.ts src/main/html-preview-navigation.test.ts src/main/local-codex-instructions.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-conversation-service.test.ts src/local-host/local-provider-runner.test.ts src/main/html-preview-navigation.test.ts src/local-host/local-codex-instructions.test.ts
 pnpm --filter @multica/tutti-agent-gui-host test
 pnpm --filter @multica/tutti-agent-gui-host typecheck
 pnpm --filter @multica/desktop typecheck

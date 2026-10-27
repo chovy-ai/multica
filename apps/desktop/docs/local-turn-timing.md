@@ -185,8 +185,8 @@ late `provider.exit` after `provider.result` instead indicates process teardown.
 Tests inject fake executables/SDK transports and never call a real model:
 
 ```sh
-pnpm --filter @multica/desktop exec vitest run src/main/local-timing-log.test.ts src/main/local-provider-runner.test.ts src/main/local-conversation-service.test.ts src/main/local-conversation-queue.test.ts src/main/local-claude-conversation.test.ts src/main/local-multica-context.test.ts src/renderer/src/platform/local-conversation-service.test.ts
-pnpm --filter @multica/desktop exec vitest run src/main/developer-log-export.test.ts src/main/developer-runtime-logs.test.ts src/main/local-context-mcp.test.ts src/main/local-codex-pool.test.ts src/renderer/src/components/labs-settings-tab.test.tsx
+pnpm --filter @multica/desktop exec vitest run src/main/local-timing-log.test.ts src/local-host/local-provider-runner.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-conversation-queue.test.ts src/local-host/local-claude-conversation.test.ts src/local-host/local-multica-context.test.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop exec vitest run src/main/developer-log-export.test.ts src/main/developer-runtime-logs.test.ts src/local-host/local-context-mcp.test.ts src/local-host/local-codex-pool.test.ts src/renderer/src/components/labs-settings-tab.test.tsx
 pnpm --filter @multica/views exec vitest run settings/components/settings-page.test.tsx settings/components/settings-navigation.test.ts locales/parity.test.ts
 pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/local-timing.test.ts src/runtime/runtime.test.ts
 pnpm --filter @multica/desktop typecheck

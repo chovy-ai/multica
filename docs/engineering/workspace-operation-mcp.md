@@ -61,9 +61,9 @@ API 路径、HTTP 方法和请求字段沿用服务端现有协议。任务搜�
 ## 验证
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-workspace-tools.test.ts src/main/local-context-mcp.test.ts src/main/local-multica-context.test.ts src/main/local-provider-runner.test.ts src/main/local-conversation-service.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-workspace-tools.test.ts src/local-host/local-context-mcp.test.ts src/local-host/local-multica-context.test.ts src/local-host/local-provider-runner.test.ts src/local-host/local-conversation-service.test.ts
 pnpm --filter @multica/desktop typecheck:node
-pnpm --filter @multica/desktop exec eslint src/main/local-workspace-tools.ts src/main/local-workspace-tools.test.ts src/main/local-context-data.ts src/main/local-context-mcp.ts src/main/local-multica-context.ts src/main/index.ts
+pnpm --filter @multica/desktop exec eslint src/local-host/local-workspace-tools.ts src/local-host/local-workspace-tools.test.ts src/local-host/local-context-data.ts src/local-host/local-context-mcp.ts src/local-host/local-multica-context.ts src/main/index.ts
 git diff --check
 ```
 
