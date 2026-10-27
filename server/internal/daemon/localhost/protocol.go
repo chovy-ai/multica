@@ -13,6 +13,9 @@ type SessionParams struct {
 	UserID string            `json:"userId"`
 	APIURL string            `json:"apiUrl"`
 	Env    map[string]string `json:"env"`
+	// LegacyDataDir is Desktop's former in-process data directory, migrated
+	// once into the sidecar's data directory.
+	LegacyDataDir string `json:"legacyDataDir,omitempty"`
 }
 
 type SessionResult struct {
@@ -75,10 +78,11 @@ type ResyncNotification struct {
 // Daemon → sidecar requests. init uses InitParams.
 
 type SidecarSessionParams struct {
-	ConnectionID string            `json:"connectionId"`
-	UserID       string            `json:"userId"`
-	APIURL       string            `json:"apiUrl"`
-	Env          map[string]string `json:"env"`
+	ConnectionID  string            `json:"connectionId"`
+	UserID        string            `json:"userId"`
+	APIURL        string            `json:"apiUrl"`
+	Env           map[string]string `json:"env"`
+	LegacyDataDir string            `json:"legacyDataDir,omitempty"`
 }
 
 type SidecarRequestParams struct {

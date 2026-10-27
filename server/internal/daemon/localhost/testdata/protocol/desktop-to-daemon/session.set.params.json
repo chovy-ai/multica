@@ -4,5 +4,6 @@
   "env": {
     "PATH": "/usr/local/bin:/usr/bin",
     "HOME": "/Users/me"
-  }
+  },
+  "legacyDataDir": "/Users/me/Library/Application Support/Multica/local-conversations"
 }

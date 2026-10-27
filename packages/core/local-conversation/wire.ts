@@ -27,7 +27,7 @@ export const helloSchema = z.object({
 });
 
 // Desktop → daemon.
-export const sessionParamsSchema = z.object({ userId: z.string(), apiUrl: z.string(), env }).strict();
+export const sessionParamsSchema = z.object({ userId: z.string(), apiUrl: z.string(), env, legacyDataDir: z.string().optional() }).strict();
 export const sessionResultSchema = z.object({ connectionId: z.string(), status, instance: z.string() });
 export const subscribeParamsSchema = z.object({ since: z.string() }).strict();
 export const subscribeResultSchema = z.object({ cursor: z.string(), resync: z.boolean() });
@@ -44,7 +44,7 @@ export const resyncNotificationSchema = z.object({ instance: z.string() });
 
 // Daemon → sidecar.
 export const initParamsSchema = z.object({ instance: z.string(), protocolVersion: z.number(), dataDir: z.string(), profileDir: z.string(), cliPath: z.string() }).strict();
-export const sidecarSessionParamsSchema = z.object({ connectionId: z.string(), userId: z.string(), apiUrl: z.string(), env }).strict();
+export const sidecarSessionParamsSchema = z.object({ connectionId: z.string(), userId: z.string(), apiUrl: z.string(), env, legacyDataDir: z.string().optional() }).strict();
 export const sidecarRequestParamsSchema = z.object({ connectionId: z.string(), scope, method: z.string(), params: z.unknown() }).strict();
 export const fileResolveParamsSchema = z.object({ scope, fileRef: z.string() }).strict();
 export const fileResolveResultSchema = z.object({ path: z.string(), mimeType: z.string(), name: z.string() }).strict();

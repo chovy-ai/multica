@@ -343,7 +343,7 @@ func (s *Server) handleClient(ctx context.Context, c *client, method string, par
 		if err != nil {
 			return nil, err
 		}
-		if err := conn.Call(ctx, "session.set", SidecarSessionParams{ConnectionID: c.id, UserID: p.UserID, APIURL: p.APIURL, Env: p.Env}, nil); err != nil {
+		if err := conn.Call(ctx, "session.set", SidecarSessionParams{ConnectionID: c.id, UserID: p.UserID, APIURL: p.APIURL, Env: p.Env, LegacyDataDir: p.LegacyDataDir}, nil); err != nil {
 			return nil, err
 		}
 		c.mu.Lock()

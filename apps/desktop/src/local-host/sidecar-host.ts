@@ -11,6 +11,7 @@ import { appError, type JsonRpcPeer } from "./json-rpc";
 import { LocalConversationService } from "./local-conversation-service";
 import { generateLocalConversationTitle } from "./local-conversation-title-generator";
 import { LocalMulticaContext } from "./local-multica-context";
+import { migrateLegacyData } from "./legacy-migration";
 
 /** Methods that start model work; a draining host refuses them so a restart interrupts nothing new. */
 const STARTS_WORK = new Set<string>(["send", "remoteSend", "fork", "sideCreate", "importSessions"]);
@@ -133,6 +134,9 @@ export function createSidecarHost(peer: () => JsonRpcPeer, options: SidecarHostO
         Object.assign(process.env, params.env);
         serviceApiUrl = params.apiUrl;
         const current = init;
+        // Migrate only before the service loads anything: a loaded scope would
+        // later overwrite the merged file. A later channel migrates on the next start.
+        if (params.legacyDataDir && !service) await migrateLegacyData(params.legacyDataDir, current.dataDir);
         service ??= (options.createService ?? createConversationService)({ apiUrl: params.apiUrl, dataDir: current.dataDir, profileDir: current.profileDir, cliPath: current.cliPath }, bridge);
         const ready = await service;
         if (activeUser !== params.userId) { activeUser = params.userId; ready.setCurrentUser(params.userId); }
