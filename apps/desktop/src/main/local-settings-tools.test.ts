@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createSettingsTools, type SettingsToolOptions } from "./local-settings-tools";
-import { settingsHttpError } from "./settings-operation-error";
+import { settingsHttpError } from "../shared/settings-operation-error";
 import { startLocalContextMcp } from "./local-context-mcp";
 import { LocalContextData } from "./local-context-data";
 

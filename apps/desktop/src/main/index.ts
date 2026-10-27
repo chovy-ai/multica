@@ -29,7 +29,7 @@ import { getAppVersion } from "./app-version";
 import { DEVELOPER_LOGS_MCP_NAME, writeDeveloperLogsManifest } from "./developer-logs-mcp-server";
 import { registerCodexStdioMcp } from "./codex-mcp-registration";
 import { findLocalProvider } from "./local-provider-runner";
-import { deriveProfileName, profileLogPath } from "./daemon-profile";
+import { deriveProfileName, profileLogPath, readDesktopProfileCredentials } from "./daemon-profile";
 import { loadRuntimeConfig } from "./runtime-config-loader";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import {
@@ -667,6 +667,7 @@ if (!gotTheLock) {
     });
 
     if (runtimeConfigResult.ok) {
+      const localApiUrl = runtimeConfigResult.config.apiUrl;
       const queryContext = new LocalMulticaContext({
         root: join(app.getPath("userData"), "local-conversations", "cli-context"),
         apiUrl: runtimeConfigResult.config.apiUrl,
@@ -674,6 +675,7 @@ if (!gotTheLock) {
         workspaceOperations: true,
         settings: createDesktopSettingsHost(() => mainWindow, () => settingsUserId, () => authSessionGeneration),
         cliPath: bundledCliPath(),
+        readProfile: () => readDesktopProfileCredentials(localApiUrl),
         local: (scope) => ({
           list: () => localConversations!.request(scope, "list", {}),
           read: (id) => localConversations!.request(scope, "read", { id }),

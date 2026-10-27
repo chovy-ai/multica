@@ -7,7 +7,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { LocalContextData } from "./local-context-data";
 import type { WorkspaceMcpTool } from "./local-workspace-tools";
 import { userQuestionShape, type AskLocalUser } from "./local-user-question";
-import { SettingsOperationError } from "./settings-operation-error";
+import { SettingsOperationError } from "../shared/settings-operation-error";
 
 export const CONTEXT_MCP_NAME = "multica_desktop_context";
 export const CONTEXT_MCP_TOKEN_ENV = "MULTICA_CONTEXT_MCP_TOKEN";

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { SETTINGS_DOMAINS, SETTINGS_OPERATIONS, type SettingsScope, type SettingsRequest } from "@multica/core/settings/operations";
 import type { WorkspaceMcpTool } from "./local-workspace-tools";
-import { publicSettingsValue, SettingsOperationError } from "./settings-operation-error";
+import { publicSettingsValue, SettingsOperationError } from "../shared/settings-operation-error";
 
 export interface SettingsHostRequest { operation: string; scope: SettingsScope; input: Record<string, unknown> }
 export interface SettingsToolOptions extends SettingsScope {

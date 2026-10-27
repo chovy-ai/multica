@@ -36,7 +36,7 @@ describe("local Multica query context", () => {
     vi.stubEnv("MULTICA_TOKEN", "wrong-parent-token"); vi.stubEnv("MULTICA_TASK_ID", "wrong-task"); vi.stubEnv("MULTICA_AGENT_ID", "wrong-agent"); vi.stubEnv("MULTICA_DAEMON_PORT", "1234"); vi.stubEnv("ANTHROPIC_BASE_URL", "https://user-model-service.test");
     const { options, context } = await fixture();
     const prepared = await context.prepare(scope, new AbortController().signal);
-    expect(options.readProfile).toHaveBeenCalledWith("desktop-example.test");
+    expect(options.readProfile).toHaveBeenCalled();
     expect(options.verifyAccount).toHaveBeenCalledWith("mul_test_credential", expect.any(AbortSignal));
     const directory = prepared.env.MULTICA_TASK_CONFIG_ROOT!;
     expect(JSON.parse(await readFile(join(directory, "config.json"), "utf8"))).toEqual({ token: "mul_test_credential", server_url: "https://example.test", workspace_id: "workspace" });

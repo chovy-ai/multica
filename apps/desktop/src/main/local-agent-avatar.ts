@@ -6,7 +6,7 @@ import { parseWithFallback } from "@multica/core/api/schema";
 import { AttachmentResponseSchema } from "@multica/core/api/schemas";
 import type { AvatarFile } from "./local-avatar-file";
 import type { WorkspaceMcpTool, WorkspaceToolOptions } from "./local-workspace-tools";
-import { SettingsOperationError } from "./settings-operation-error";
+import { SettingsOperationError } from "../shared/settings-operation-error";
 
 export interface AgentAvatarOptions {
   workspaceId: string;

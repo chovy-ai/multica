@@ -5,7 +5,6 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { isTaskCreationReference, type LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { parseWithFallback } from "@multica/core/api/schema";
 import { CreateIssueResponseSchema } from "@multica/core/api/schemas";
-import { deriveProfileName, profileConfigPath, profileUserIdPath } from "./daemon-profile";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { LocalContextData, type LocalContextReader } from "./local-context-data";
@@ -15,7 +14,7 @@ import type { AskLocalUser } from "./local-user-question";
 import type { LocalQueueCloudRequest } from "./local-queued-cloud-run";
 import { SETTINGS_MCP_INSTRUCTIONS } from "@multica/core/settings/operations";
 import { createSettingsTools, type SettingsToolOptions } from "./local-settings-tools";
-import { settingsHttpError } from "./settings-operation-error";
+import { settingsHttpError } from "../shared/settings-operation-error";
 const executeFile = promisify(execFile);
 const createdTaskSchema = CreateIssueResponseSchema.pick({ id: true, workspace_id: true, identifier: true, title: true, status: true });
 type CreatedTask = { id: string; workspace_id: string; identifier: string; title: string; status: string };
@@ -33,7 +32,8 @@ interface Options {
   appUrl?: string;
   workspaceOperations?: boolean;
   cliPath: string;
-  readProfile?: (profile: string) => Promise<{ userId: string; token: string; serverUrl: string }>;
+  /** Reads the desktop daemon profile that owns this API URL; the host knows where profiles live. */
+  readProfile: () => Promise<{ userId: string; token: string; serverUrl: string }>;
   verifyAccount?: (token: string, signal: AbortSignal) => Promise<string | null>;
   local?: (scope: LocalConversationScope) => LocalContextReader;
   localActions?: (scope: LocalConversationScope) => NonNullable<WorkspaceToolOptions["local"]>;
@@ -62,12 +62,7 @@ export class LocalMulticaContext {
 
   private async credentials(scope: LocalConversationScope, signal: AbortSignal): Promise<string | null> {
     try {
-      const profile = deriveProfileName(this.options.apiUrl);
-      const loaded = this.options.readProfile ? await this.options.readProfile(profile) : await (async () => {
-        const userId = (await readFile(profileUserIdPath(profile), "utf8")).trim();
-        const config = JSON.parse(await readFile(profileConfigPath(profile), "utf8"));
-        return { userId, token: config.token, serverUrl: config.server_url };
-      })();
+      const loaded = await this.options.readProfile();
       if (loaded.userId !== scope.userId || typeof loaded.token !== "string" || !loaded.token || typeof loaded.serverUrl !== "string" || loaded.serverUrl.replace(/\/+$/, "") !== this.options.apiUrl.replace(/\/+$/, "")) return null;
       // Verify the copied token, not just the mutable profile's account sidecar.
       const owner = this.options.verifyAccount ? await this.options.verifyAccount(loaded.token, signal) : await (async () => {

@@ -3,7 +3,7 @@ import { clipboard, dialog, ipcMain, type BrowserWindow } from "electron";
 import { SETTINGS_OPERATIONS } from "@multica/core/settings/operations";
 import type { SettingsHostMessage, SettingsHostReply } from "../shared/settings-host";
 import type { SettingsHostRequest, SettingsToolOptions } from "./local-settings-tools";
-import { publicSettingsValue, SettingsOperationError } from "./settings-operation-error";
+import { publicSettingsValue, SettingsOperationError } from "../shared/settings-operation-error";
 
 export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null, getUser: () => string | null | undefined, getGeneration: () => number): Pick<SettingsToolOptions, "host" | "confirm" | "showSecret"> {
   const pending = new Map<string, { window: BrowserWindow; generation: number; resolve(value: unknown): void; reject(error: Error): void }>();

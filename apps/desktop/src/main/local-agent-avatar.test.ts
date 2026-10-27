@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAgentAvatarTool } from "./local-agent-avatar";
 import type { WorkspaceToolOptions } from "./local-workspace-tools";
-import { SettingsOperationError } from "./settings-operation-error";
+import { SettingsOperationError } from "../shared/settings-operation-error";
 
 const roots: string[] = [];
 const signal = new AbortController().signal;
