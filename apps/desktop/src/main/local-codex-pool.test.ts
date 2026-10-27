@@ -47,6 +47,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
   const reply=result=>send({id:r.id,result});
   if(r.method==='initialize') return reply({});
   if(r.method==='initialized') return;
+  if(r.method==='model/list') return reply({data:[{id:"native-default",isDefault:true}]});
   if(r.method==='config/read') return reply({config:JSON.parse(fs.readFileSync(process.env.TEST_CONFIG,'utf8'))});
   if(r.method==='thread/start'||r.method==='thread/resume') {
     const id=r.params.threadId||'thread-'+process.pid+'-'+(++next);
@@ -88,10 +89,28 @@ process.on('SIGTERM',exit); process.stdin.on('end',exit);
     env: { ...process.env, TEST_ROOT: root, TEST_LOG: log, TEST_CONFIG: config, MULTICA_TASK_CONFIG_ROOT: "private-run-path" }, ...extra });
   const calls = async (): Promise<Record<string, any>[]> => (await readFile(log, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
   const update = (revision: number) => writeFile(config, JSON.stringify({ model: "fake-model", developer_instructions: `native instructions revision ${revision}`, mcp_servers: { native: { command: "must-not-run", revision } } }));
-  return { root, pool, input, calls, update };
+  return { root, pool, input, calls, update, config };
 }
 
 describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
+  it("applies thinking effort to new and resumed turns and clears the previous override", async () => {
+    const { pool, input, calls } = await setup();
+    let resume: string | undefined;
+    for (const reasoningEffort of ["high", "low", null] as const) {
+      const result = await pool.run("scope", input("hello", { resume, reasoningEffort }), vi.fn(), new AbortController().signal);
+      resume = result.sessionId;
+    }
+    expect((await calls()).filter((row) => row.method === "turn/start").map((row) => row.params.effort)).toEqual(["high", "low", null]);
+  });
+  it("resolves an unconfigured default model on resume so the old effort is not restored", async () => {
+    const { pool, input, calls, config } = await setup();
+    await writeFile(config, JSON.stringify({ mcp_servers: {} }));
+    const first = await pool.run("scope", input("first", { model: "explicit", reasoningEffort: "high" }), vi.fn(), new AbortController().signal);
+    await pool.run("scope", input("second", { resume: first.sessionId, reasoningEffort: null }), vi.fn(), new AbortController().signal);
+    const log = await calls();
+    expect(log.find((row) => row.method === "thread/resume")?.params.model).toBe("native-default");
+    expect(log.filter((row) => row.method === "turn/start").at(-1)?.params.effort).toBeNull();
+  });
   it("records cold startup, reuse, turn acceptance and unload without logging protocol payloads", async () => {
     const { pool, input } = await setup();
     const first: LocalTimingRecord[] = []; const second: LocalTimingRecord[] = [];

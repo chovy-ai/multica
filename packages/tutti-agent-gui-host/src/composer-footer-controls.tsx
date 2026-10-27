@@ -5,6 +5,7 @@ import type { AgentGUIProps } from "@tutti-os/agent-gui/agent-gui";
 import type { RuntimeModelsResult } from "@multica/core/types";
 import type { AgentGuiExecutionTarget, AgentGuiInitSnapshot, AgentGuiRpcClient } from "./protocol";
 import type { createMulticaAgentGuiRuntime } from "./runtime";
+import { localReasoningLevels } from "./local-protocol";
 import { UsageIndicator } from "./usage-indicator";
 import { PermissionPicker } from "./permission-picker";
 import type { AgentComposerProps } from "../../../vendor/tutti/packages/agent/gui/agent-gui/agentGuiNode/AgentComposer";
@@ -55,6 +56,7 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
   }, [snapshot.composerFocusSequence, snapshot.activeSessionId, snapshot.workspaceId, context.isActive, sessionId, handle, onReadyForFocus]);
   useSyncExternalStore(handle.subscribeModels, handle.getModelRevision);
   const selected = agentId ? handle.getModelSelection(agentId, sessionId) : null;
+  const selectedEffort = agentId ? handle.getReasoningSelection(agentId, sessionId) : null;
   const [catalog, setCatalog] = useState<RuntimeModelsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -99,7 +101,7 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
     abort.current = controller;
     setLoading(true); setError(null);
     try {
-      const result = await client.request("models.list", { agentId, ...(force ? { force: true } : {}) }, { signal: controller.signal });
+      const result = await handle.loadModelCatalog(agentId, { force, signal: controller.signal });
       if (request.current === sequence) setCatalog(result);
     } catch (failure) {
       if (request.current === sequence && !controller.signal.aborted) setError(failure instanceof Error ? failure.message : labels.failed);
@@ -115,10 +117,22 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
       void client.request("host.showMessage", { message, tone: "error" }).catch(() => undefined);
     } finally { setSaving(false); }
   };
+  const changeEffort = async (value: string) => {
+    if (!agentId || busy || saving || unavailable) return;
+    setSaving(true); setError(null);
+    try { await handle.setReasoningSelection(agentId, sessionId, value || null); }
+    catch (failure) {
+      const message = failure instanceof Error ? failure.message : String(failure);
+      setError(message);
+      void client.request("host.showMessage", { message, tone: "error" }).catch(() => undefined);
+    } finally { setSaving(false); }
+  };
   const configured = selected ?? agent?.model ?? null;
   const known = catalog?.models.find((entry) => entry.id === configured);
   const defaultModel = catalog?.models.find((entry) => entry.id === agent?.model)?.label
     || agent?.model || catalog?.models.find((entry) => entry.default)?.label;
+  const levels = localReasoningLevels(catalog?.models ?? [], configured);
+  const effortLabel = (value: string, fallback: string) => chinese ? ({ none: "无", minimal: "极低", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最高", ultra: "超高" }[value] ?? fallback) : fallback;
   const currentLabel = selected ? known?.label || selected : defaultModel ? `${labels.default} · ${defaultModel}` : labels.defaultModel;
 
   return <div className="multica-composer-footer-controls">
@@ -129,7 +143,7 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
         <Button variant="ghost" size="sm" data-testid="multica-model-picker" aria-label={labels.model}
           aria-describedby={modelValueId}
           disabled={busy || saving || unavailable} aria-busy={loading || saving || undefined} title={busy ? labels.running : currentLabel}>
-          <span id={modelValueId} className="multica-composer-footer-control-label">{currentLabel}</span>
+          <span id={modelValueId} className="multica-composer-footer-control-label">{currentLabel}{selectedEffort ? ` · ${effortLabel(selectedEffort, levels.find((level) => level.value === selectedEffort)?.label ?? selectedEffort)}` : ""}</span>
           <ChevronDownIcon aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
@@ -142,6 +156,16 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
           {configured && catalog && !known && <DropdownMenuItem disabled>{configured} · {labels.unknown}</DropdownMenuItem>}
           {catalog?.unavailableModels?.map((model) => <DropdownMenuItem key={`unavailable:${model.id}`} disabled title={model.reason}>{model.label || model.id}{model.reason ? ` · ${model.reason}` : ""}</DropdownMenuItem>)}
         </DropdownMenuRadioGroup>
+        {snapshot.local && catalog && <>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>{chinese ? "思考强度" : "Thinking effort"}</DropdownMenuLabel>
+          {levels.length > 0 ? <DropdownMenuRadioGroup value={selectedEffort ?? ""} onValueChange={(value) => { void changeEffort(value); }}>
+            <DropdownMenuRadioItem value="" disabled={busy || saving}>{labels.default}</DropdownMenuRadioItem>
+            {levels.map((level) => <DropdownMenuRadioItem key={level.value} value={level.value} disabled={busy || saving} title={level.description}>{effortLabel(level.value, level.label)}</DropdownMenuRadioItem>)}
+          </DropdownMenuRadioGroup> : <DropdownMenuItem disabled>{configured
+            ? (chinese ? "此模型未提供可用强度" : "No effort options reported for this model")
+            : (chinese ? "选择模型后可调整思考强度" : "Choose a model to adjust thinking effort")}</DropdownMenuItem>}
+        </>}
         {loading && <DropdownMenuItem disabled>{labels.loading}</DropdownMenuItem>}
         {catalog?.supported === false && <DropdownMenuItem disabled>{labels.unsupported}</DropdownMenuItem>}
         {catalog?.supported && catalog.models.length === 0 && <DropdownMenuItem disabled>{labels.empty}</DropdownMenuItem>}

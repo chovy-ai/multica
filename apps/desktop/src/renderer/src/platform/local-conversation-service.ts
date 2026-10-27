@@ -155,7 +155,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       if (!attachmentFailures.has(id)) options.onShowMessage(chinese ? "部分附件暂时无法加载，会话正文已保留。" : "Some attachments could not be loaded. Conversation text is still available.", "warning");
       attachmentFailures.add(id);
     } else attachmentFailures.delete(id);
-    return { session: projectLocalSession(entry, scope), model: entry.model, promptQueue: entry.promptQueue ?? { revision: 0, paused: false, items: [] },
+    return { session: projectLocalSession(entry, scope), model: entry.model, reasoningEffort: entry.reasoningEffort ?? null, promptQueue: entry.promptQueue ?? { revision: 0, paused: false, items: [] },
       backgroundTasks: entry.turns.flatMap((turn) => (turn.backgroundTasks ?? []).filter((task) => !task.ambient).map((task) => ({ turnId: turn.id, task }))),
       questions: entry.turns.flatMap((turn) => (turn.questions ?? []).map((question) => ({ turnId: turn.id, question }))),
       permissionMode: entry.permissionMode ?? (entry.side || entry.forkedFrom || entry.messages.length > 0 || entry.turns.length > 0 ? "default" : undefined),
@@ -285,7 +285,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
         const files: string[] = Array.isArray(params.attachmentIds) ? params.attachmentIds : [];
         const ids = [...new Set(refs.filter((ref) => ref.kind === "agent").map((ref) => ref.id as string))];
         if (!ids.length) {
-          const sent = await local("send", { id: entry.id, content: params.content, prompt: content, references: refs, attachmentIds: files, model: params.model, permissionMode: params.permissionMode, requestId: params.requestId });
+          const sent = await local("send", { id: entry.id, content: params.content, prompt: content, references: refs, attachmentIds: files, model: params.model, reasoningEffort: params.reasoningEffort, permissionMode: params.permissionMode, requestId: params.requestId });
           return { message_id: sent.messageId, task_id: sent.turnId, created_at: sent.createdAt };
         }
         const state = await remoteWorkspace();
@@ -323,7 +323,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
         return (turn?.events ?? []).map((event) => ({ ...event, task_id: params.taskId, issue_id: "", chat_session_id: entry.id }));
       }
       case "models.list": {
-        const result = await local("models", { provider: localProviderId(params.agentId) });
+        const result = await local("models", { provider: localProviderId(params.agentId), force: params.force });
         return { ...result, id: "local-models", runtime_id: params.agentId, status: "completed" };
       }
       case "usage.read": return local("usage", { provider: localProviderId(params.agentId), ...(params.sessionId ? { id: params.sessionId } : {}), force: params.force === true });

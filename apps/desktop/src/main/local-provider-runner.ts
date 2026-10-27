@@ -1,29 +1,30 @@
 import type { LocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import { spawn } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { constants } from "node:fs";
-import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { createInterface } from "node:readline";
-import { isLocalPermissionMode, type LocalPermissionMode, type LocalProviderId, type LocalConversationEvent, type LocalConversationModels } from "@multica/tutti-agent-gui-host/local-protocol";
+import { isLocalReasoningEffort, isLocalPermissionMode, type LocalReasoningEffort, type LocalPermissionMode, type LocalProviderId, type LocalConversationEvent } from "@multica/tutti-agent-gui-host/local-protocol";
 import { readCodexConfiguration } from "./local-codex-instructions";
 import { CODEX_PLUGIN_ISOLATION_ARGS, codexMcpIsolationArgs, readClaudePluginSettings, type ClaudePluginSettings } from "./local-provider-extensions";
 import { CONTEXT_MCP_NAME, CONTEXT_MCP_TOKEN_ENV, CONTEXT_MCP_TOOLS, type ContextMcpRegistration } from "./local-context-mcp";
 import { inlineOutputImages } from "./local-output-images";
 
-export function providerArgs(provider: LocalProviderId, model?: string | null, resume?: string, systemPrompt?: string, mcp?: ContextMcpRegistration, titleOnly = false, permissionMode: LocalPermissionMode = "default", extensions: { codexMcpServers?: string[]; claudePlugins?: ClaudePluginSettings } = {}): string[] {
+export function providerArgs(provider: LocalProviderId, model?: string | null, resume?: string, systemPrompt?: string, mcp?: ContextMcpRegistration, titleOnly = false, permissionMode: LocalPermissionMode = "default", extensions: { codexMcpServers?: string[]; claudePlugins?: ClaudePluginSettings } = {}, reasoningEffort?: LocalReasoningEffort | null): string[] {
   if (!isLocalPermissionMode(permissionMode)) throw new Error("Invalid permission mode");
+  if (reasoningEffort != null && !isLocalReasoningEffort(reasoningEffort)) throw new Error("Invalid thinking effort");
+  const effort = titleOnly || !reasoningEffort ? [] : provider === "codex" ? ["--config", `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : ["--effort", reasoningEffort];
   const permissions = titleOnly || permissionMode === "default" ? [] : provider === "codex"
     ? [permissionMode === "auto" ? "--approve-for-me" : "--dangerously-bypass-approvals-and-sandbox"]
     : ["--permission-mode", permissionMode === "auto" ? "auto" : "bypassPermissions"];
   if (titleOnly && (resume || mcp)) throw new Error("Title generation must use an independent session");
   if (mcp && extensions.codexMcpServers?.includes(CONTEXT_MCP_NAME)) throw new Error(`Native Codex settings use the reserved Multica MCP name ${CONTEXT_MCP_NAME}. Rename that native entry before using this conversation.`);
-  if (provider === "codex") return [...permissions, "exec", ...(resume ? ["resume"] : []), "--json", "--skip-git-repo-check", ...(systemPrompt ? ["--config", `developer_instructions=${JSON.stringify(systemPrompt)}`] : []),
+  if (provider === "codex") return [...permissions, "exec", ...(resume ? ["resume"] : []), ...effort, "--json", "--skip-git-repo-check", ...(systemPrompt ? ["--config", `developer_instructions=${JSON.stringify(systemPrompt)}`] : []),
     ...CODEX_PLUGIN_ISOLATION_ARGS, ...codexMcpIsolationArgs(extensions.codexMcpServers ?? []),
     ...(titleOnly ? ["--ephemeral", "--sandbox", "read-only", "--disable", "shell_tool", "--disable", "unified_exec"] : []),
     ...(mcp ? ["--config", `mcp_servers.${CONTEXT_MCP_NAME}={url=${JSON.stringify(mcp.url)},bearer_token_env_var=${JSON.stringify(CONTEXT_MCP_TOKEN_ENV)},enabled=true,required=true,default_tools_approval_mode="auto"${mcp.tools?.includes("ask_user_question") ? ",tool_timeout_sec=3600" : ""}}`] : []),
     ...(model ? ["--model", model] : []), ...(resume ? [resume] : []), "-"];
-  return ["--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", ...permissions, ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
+  return ["--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", ...permissions, ...effort, ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     "--strict-mcp-config", "--settings", JSON.stringify(extensions.claudePlugins ?? { enabledPlugins: {}, syncClaudeAiPlugins: false }),
     ...(titleOnly ? ["--no-session-persistence", "--tools", "", "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands"] : []),
     ...(mcp ? ["--mcp-config", mcp.claudeConfigPath, "--system-prompt-snapshot", "off", "--allowedTools", (mcp.tools ?? CONTEXT_MCP_TOOLS).map((tool) => `mcp__${CONTEXT_MCP_NAME}__${tool}`).join(",")] : []),
@@ -116,7 +117,7 @@ function imageFreeContent(content: unknown): unknown {
   return Array.isArray(content) ? content.filter((block) => inlineOutputImages([block]).length === 0) : content;
 }
 
-export async function runLocalProvider(input: { timing?: LocalTiming; provider: LocalProviderId; cwd: string; content: string; model?: string | null; permissionMode?: LocalPermissionMode; resume?: string; systemPrompt?: string; env?: NodeJS.ProcessEnv; mcp?: ContextMcpRegistration; onSessionId?: (id: string) => void; titleOnly?: boolean }, emit: Emit, signal: AbortSignal, executable?: string): Promise<{ output: string; sessionId?: string }> {
+export async function runLocalProvider(input: { timing?: LocalTiming; provider: LocalProviderId; cwd: string; content: string; model?: string | null; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; resume?: string; systemPrompt?: string; env?: NodeJS.ProcessEnv; mcp?: ContextMcpRegistration; onSessionId?: (id: string) => void; titleOnly?: boolean }, emit: Emit, signal: AbortSignal, executable?: string): Promise<{ output: string; sessionId?: string }> {
   const measure = <T>(stage: Parameters<LocalTiming["measure"]>[0], action: () => Promise<T>) => input.timing ? input.timing.measure(stage, action) : action();
   const binary = await measure("provider.lookup", async () => executable ?? await findLocalProvider(input.provider));
   if (!binary) throw new Error(`${input.provider === "codex" ? "Codex" : "Claude Code"} is not installed on this computer.`);
@@ -129,7 +130,7 @@ export async function runLocalProvider(input: { timing?: LocalTiming; provider: 
   if (signal.aborted) throw new Error("Execution cancelled");
   return new Promise((resolve, reject) => {
     // Only an explicit per-conversation selection overrides native permission settings.
-    const child = spawn(binary, providerArgs(input.provider, input.model, input.resume, systemPrompt, input.mcp, input.titleOnly, input.permissionMode, extensions), { cwd: input.cwd, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+    const child = spawn(binary, providerArgs(input.provider, input.model, input.resume, systemPrompt, input.mcp, input.titleOnly, input.permissionMode, extensions, input.reasoningEffort), { cwd: input.cwd, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
     child.once("spawn", () => input.timing?.mark("provider.spawn"));
     child.stdout.on("data", () => { input.timing?.activity(); input.timing?.once("provider.first_stdout"); });
     const parser = new ProviderStream(input.provider, emit);
@@ -166,10 +167,4 @@ export async function runLocalProvider(input: { timing?: LocalTiming; provider: 
   });
 }
 
-export async function localProviderModels(provider: LocalProviderId): Promise<LocalConversationModels> {
-  if (provider === "claude") return { supported: true, models: [{ id: "sonnet", label: "Sonnet" }, { id: "opus", label: "Opus" }, { id: "haiku", label: "Haiku" }] };
-  try {
-    const raw = JSON.parse(await readFile(join(process.env.CODEX_HOME || join(homedir(), ".codex"), "models_cache.json"), "utf8"));
-    return { supported: true, models: (Array.isArray(raw.models) ? raw.models : []).filter((item: Record<string, unknown>) => typeof item.slug === "string" && item.visibility !== "hide").map((item: { slug: string; display_name?: string }) => ({ id: item.slug, label: item.display_name || item.slug })) };
-  } catch { return { supported: true, models: [] }; }
-}
+export { localProviderModels } from "./local-provider-models";

@@ -26,7 +26,7 @@ class Messages<T> {
 async function setup() {
   const output = new Messages<SDKMessage>();
   const received: SDKUserMessage[] = [];
-  const transport = Object.assign(output, { close: vi.fn(() => output.end()), setMcpServers: vi.fn(async () => ({ added: [], removed: [], errors: {} })), setModel: vi.fn(), setPermissionMode: vi.fn(), stopTask: vi.fn(async () => {}) });
+  const transport = Object.assign(output, { applyFlagSettings: vi.fn(async () => {}), close: vi.fn(() => output.end()), setMcpServers: vi.fn(async () => ({ added: [], removed: [], errors: {} })), setModel: vi.fn(), setPermissionMode: vi.fn(), stopTask: vi.fn(async () => {}) });
   const create = vi.fn(async (input: AsyncIterable<SDKUserMessage>, _options: Options) => { void (async () => { for await (const message of input) received.push(message); })(); return transport as unknown as Query; });
   const dispose = vi.fn(async () => {});
   const worker = new LocalClaudeConversation(dispose, { find: async () => "/test-owned/fake-claude", query: create, pluginSettings: async () => ({ enabledPlugins: { "fixture@market": false }, syncClaudeAiPlugins: false }) });
@@ -46,6 +46,21 @@ const reply = (uuid: string | undefined, text: string) => ({ type: "assistant", 
 const result = (uuid: string | undefined, text: string) => ({ type: "result", user_message_uuid: uuid, result: text, is_error: false });
 
 describe("Claude foreground replies and background task ownership", () => {
+  it("changes thinking effort on the reused SDK session and clears an explicit override", async () => {
+    const f = await setup();
+    let n = 0;
+    for (const reasoningEffort of ["high", "low", null] as const) {
+      const running = f.worker.run({ ...f.input, reasoningEffort }, f.emit, new AbortController().signal, f.observer);
+      n++;
+      await vi.waitFor(() => expect(f.received).toHaveLength(n), { interval: 5 });
+      f.push({ type: "system", subtype: "task_started", task_id: "background", description: "Keep transport open" });
+      f.push(reply(f.received[n - 1]!.uuid, "Reply")); f.push(result(f.received[n - 1]!.uuid, "Reply"));
+      await running;
+    }
+    expect(f.create.mock.calls[0]?.[1]).toMatchObject({ effort: "high" });
+    expect(f.create).toHaveBeenCalledOnce();
+    expect(f.transport.applyFlagSettings.mock.calls).toEqual([[{ effortLevel: "low" }], [{ effortLevel: null }]]);
+  });
   it("records initial SDK setup and reused-session delivery as separate stages", async () => {
     const f = await setup(); const records = vi.fn();
     for (const n of [1, 2]) {

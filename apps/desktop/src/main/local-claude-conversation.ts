@@ -52,6 +52,7 @@ export class LocalClaudeConversation {
   private outputTimer?: ReturnType<typeof setInterval>;
   private outputRead?: Promise<void>;
   private model?: string | null;
+  private effort?: Input["reasoningEffort"];
   private permission?: Input["permissionMode"];
   private sessionId?: string;
   private pump?: Promise<void>;
@@ -94,7 +95,7 @@ export class LocalClaudeConversation {
         signal.throwIfAborted();
         const mcpServers = await this.mcpServers(input);
         const settings = await (input.timing ? input.timing.measure("provider.config", () => this.deps.pluginSettings(input.cwd, input.env ?? process.env)) : this.deps.pluginSettings(input.cwd, input.env ?? process.env));
-        this.model = input.model; this.permission = input.permissionMode;
+        this.model = input.model; this.permission = input.permissionMode; this.effort = input.reasoningEffort;
         const createQuery = (): Promise<Query> => this.deps.query(this.messages(), {
           pathToClaudeCodeExecutable: binary, cwd: input.cwd, env: input.env,
           abortController: this.controller, includePartialMessages: true,
@@ -103,6 +104,7 @@ export class LocalClaudeConversation {
           ...(input.resume ? { resume: input.resume } : {}), ...(input.model ? { model: input.model } : {}),
           ...(input.permissionMode && input.permissionMode !== "default" ? { permissionMode: input.permissionMode === "auto" ? "auto" : "bypassPermissions" } : {}),
           ...(input.systemPrompt ? { systemPrompt: { type: "preset", preset: "claude_code", append: input.systemPrompt, snapshot: false } } : {}),
+          ...(input.reasoningEffort ? { effort: claudeEffort(input.reasoningEffort) } : {}),
           mcpServers, allowedTools: [`mcp__${CONTEXT_MCP_NAME}__*`],
         });
         this.query = await (input.timing ? input.timing.measure("provider.sdk_ready", createQuery) : createQuery());
@@ -114,6 +116,10 @@ export class LocalClaudeConversation {
         const changed = await (input.timing ? input.timing.measure("provider.refresh", refresh) : refresh());
         if (Object.keys(changed.errors).length) throw new Error("Could not refresh Multica context for this message");
         if (input.model !== this.model) { await this.query.setModel(input.model ?? undefined); this.model = input.model; }
+        if (input.reasoningEffort !== this.effort) {
+          await this.query.applyFlagSettings({ effortLevel: input.reasoningEffort ? claudeEffort(input.reasoningEffort) : null });
+          this.effort = input.reasoningEffort;
+        }
         if (input.permissionMode !== this.permission) {
           await this.query.setPermissionMode(input.permissionMode === "full-access" ? "bypassPermissions" : input.permissionMode === "auto" ? "auto" : "default");
           this.permission = input.permissionMode;
@@ -292,4 +298,9 @@ function taskUsage(value: unknown): Pick<LocalBackgroundTask, "usage"> {
   const values = [usage.total_tokens, usage.tool_uses, usage.duration_ms];
   if (!values.every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)) return {};
   return { usage: { totalTokens: usage.total_tokens as number, toolUses: usage.tool_uses as number, durationMs: usage.duration_ms as number } };
+}
+
+function claudeEffort(value: string): NonNullable<Options["effort"]> {
+  if (value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max") return value;
+  throw new Error("Invalid Claude thinking effort");
 }

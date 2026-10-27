@@ -9,6 +9,17 @@ import { CONTEXT_MCP_NAME, CONTEXT_MCP_TOOLS } from "./local-context-mcp";
 import { HTML_PREVIEW_INSTRUCTIONS } from "@multica/tutti-agent-gui-host/html-preview";
 
 describe("native local provider transport", () => {
+  it("passes explicit thinking effort to CLI new and resumed runs and preserves defaults otherwise", () => {
+    for (const resume of [undefined, "owned-session"]) {
+      expect(providerArgs("codex", "model", resume, undefined, undefined, false, "default", {}, "xhigh")).toContain('model_reasoning_effort="xhigh"');
+      const claude = providerArgs("claude", "opus", resume, undefined, undefined, false, "default", {}, "high");
+      expect(claude[claude.indexOf("--effort") + 1]).toBe("high");
+      for (const provider of ["codex", "claude"] as const) {
+        expect(providerArgs(provider, null, resume).join(" ")).not.toMatch(/--effort|model_reasoning_effort/);
+        if (!resume) expect(providerArgs(provider, null, undefined, undefined, undefined, true, "default", {}, "high").join(" ")).not.toMatch(/--effort|model_reasoning_effort/);
+      }
+    }
+  });
   it("blocks native plugin loading and inherited MCP servers without disabling standalone skills or hooks", () => {
     for (const resume of [undefined, "owned-session"]) {
       const codex = providerArgs("codex", undefined, resume);
