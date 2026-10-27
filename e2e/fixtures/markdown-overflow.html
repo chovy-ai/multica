@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Assistant Markdown overflow regression</title>
+<style>html, body { margin: 0; height: 100%; } iframe { display: block; width: 100%; height: 100%; border: 0; }</style>
+<iframe title="Markdown regression"></iframe>
+<script>
+const params = new URLSearchParams(location.search);
+const provider = params.get("provider") || "codex";
+const at = "2026-10-27T16:00:00Z";
+const session = { id: "markdown-session", workspace_id: "markdown-workspace", creator_id: "markdown-user", agent_id: `local:${provider}`, title: "Markdown layout", status: "active", created_at: at, updated_at: at, has_unread: false };
+const snapshot = { workspaceId: session.workspace_id, workspaceSlug: "markdown-test", userId: session.creator_id, locale: "en", theme: params.get("theme") || "light", local: true, sidePane: params.has("side"), hostActive: true, hostVisible: true, agents: [], sessions: [session], activeSessionId: session.id, selectedAgentId: session.agent_id,
+  executionTargets: [{ id: session.agent_id, provider, name: provider === "codex" ? "Codex" : "Claude Code", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true }] };
+const columns = Array.from({ length: 24 }, (_, index) => `Column ${index + 1}`);
+const wideTable = `| ${columns.join(" | ")} |\n| ${columns.map(() => "---").join(" | ")} |\n| ${columns.map((_, index) => `Value ${index + 1}`).join(" | ")} |`;
+const content = [
+  "The two workflows reuse the existing accounts and profiles. Ordinary replies should fit the available reading width.",
+  "| Purpose | Workflow |\n| --- | --- |\n| Walkthrough and screenshots | Codex + ego lite |\n| Test verification | Midscene + ego lite |",
+  "Long link: https://example.com/" + "documentation".repeat(18),
+  "Inline command: `" + "configuration_key_".repeat(15) + "`",
+  "```sh\nnpm install -g ./tutti-qa-cli-0.1.0.tgz\ntutti-qa walkthrough --roles owner --out-dir ./walkthrough-result\n```",
+  ...(params.has("wide") ? [wideTable] : []),
+  "[Full integration guide](https://example.com/guide). The CLI and workflow documentation are ready. END_OF_REPLY",
+].join("\n\n");
+let running = params.has("streaming");
+let port;
+const storage = new Map();
+const frame = document.querySelector("iframe");
+window.finishGeneration = () => {
+  running = false;
+  port.postMessage({ type: "event", event: { type: "invalidate", scope: "session", sessionId: session.id } });
+};
+window.addEventListener("message", (event) => {
+  if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== "multica:agent-gui:ready") return;
+  const channel = new MessageChannel(); port = channel.port1;
+  port.onmessage = ({ data: request }) => {
+    if (request.type !== "request") return;
+    let result;
+    switch (request.method) {
+      case "workspace.load": result = snapshot; break;
+      case "session.load": result = { session, messages: [
+        { id: "markdown-question", chat_session_id: session.id, role: "user", content: "Show the workflow setup", task_id: "markdown-run", created_at: at },
+        ...(!running ? [{ id: "markdown-answer", chat_session_id: session.id, role: "assistant", content, task_id: "markdown-run", created_at: at }] : []),
+      ], tasks: [], pending: running ? { task_id: "markdown-run", status: "running", created_at: at } : {} }; break;
+      case "task.messages": result = running ? [{ seq: 1, type: "text", content, created_at: at }] : []; break;
+      case "context.tasks": result = []; break;
+      case "storage.read": result = storage.get(request.params.key) ?? null; break;
+      case "storage.write": storage.set(request.params.key, request.params.value); break;
+      case "models.list": result = { id: "markdown-catalog", runtime_id: session.agent_id, status: "completed", supported: true, models: [] }; break;
+      case "usage.read": result = { provider, context: { usedTokens: null, limitTokens: null, model: null, updatedAt: null }, account: { status: "unavailable", windows: [], plan: null, updatedAt: null } }; break;
+      case "session.watch": case "session.markRead": case "host.promptApplied": break;
+      default: document.body.dataset.unexpectedRequest = request.method;
+        port.postMessage({ type: "response", id: request.id, error: { message: `Unexpected request ${request.method}` } }); return;
+    }
+    port.postMessage({ type: "response", id: request.id, result });
+  };
+  port.start();
+  frame.contentWindow.postMessage({ type: "multica:agent-gui:connect", snapshot }, location.origin, [channel.port2]);
+});
+frame.src = "/tutti-agent-gui/index.html";
+</script>
+</html>
