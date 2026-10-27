@@ -451,10 +451,15 @@ export class LocalConversationService {
         const folderId = params.folderProjectId == null ? null : text(params.folderProjectId, "local project", 128);
         const folder = folderId ? this.folderProjects.get(this.key(scope))?.find((project) => project.id === folderId) : undefined;
         if (folderId && !folder) throw new Error("Local folder project not found in this workspace");
-        const cwd = folder ? await projectDirectory(folder.path) : join(this.options.root, this.key(scope), "workdirs", id);
+        const sourceId = params.directorySourceId === undefined ? undefined : text(params.directorySourceId, "directory source", 128);
+        const source = sourceId ? rows.get(sourceId) : undefined;
+        if (sourceId && !source) throw new Error("Directory source conversation not found in this workspace");
+        if (sourceId && folderId) throw new Error("Choose one directory source");
+        const directory = folder?.path ?? source?.cwd;
+        const cwd = directory ? await projectDirectory(directory) : join(this.options.root, this.key(scope), "workdirs", id);
         this.key(scope);
-        if (folder && cwd !== folder.path) throw new Error("Project folder changed. Add the folder again.");
-        if (!folder) await mkdir(cwd, { recursive: true, mode: 0o700 });
+        if (directory && cwd !== directory) throw new Error("Project folder changed. Add the folder again.");
+        if (!directory) await mkdir(cwd, { recursive: true, mode: 0o700 });
         const title = typeof params.title === "string" ? text(params.title, "title", 256) : "新会话";
         const entry: LocalConversation = { id, provider: choice, cwd, title, titleMode: isDefaultConversationTitle(title) ? "auto" : "manual", pinned: false, archived: false, model: null, projectId, createdAt: at, updatedAt: at, messages: [], turns: [] };
         rows.set(id, entry); await this.save(scope); this.changed(scope, entry); result = entry; break;

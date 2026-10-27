@@ -244,6 +244,8 @@ git diff --check
 - `folderProjects` 读取本机目录清单。分组通过会话 `cwd` 匹配已引入目录；未匹配的会话归入“未分配项目”。已有云端 `projectId` 仍仅表示任务关联，不参与本地目录分组。
 - 组内“＋”调用 `create` 并传入 `folderProjectId`。主进程查找本工作区的目录记录、重新校验路径后，将其作为 Codex / Claude Code 的工作目录；未指定目录的会话仍使用独立临时工作目录。失效目录会明确报错，不会悄悄换成其他目录。
 - 顶部新建继承当前会话匹配的本地目录，分叉继续继承原工作目录。搜索支持目录名称与路径。空目录分组会保留，重启后仍可见。
+- GUI 的 `AgentGuiSession.localDirectory` 独立携带实际 `cwd` 与可选的项目路径；自动生成的工作目录显示为“不使用项目”，显式选择的目录显示对应项目。该字段只在桌面 GUI 适配边界生成，不写入云端 `ChatSession` 或本机会话文件。
+- 同一运行器切换模型保留目录；Codex / Claude Code 之间切换时，宿主跨输入器挂载保留草稿和项目路径。首次发送才通过 GUI `session.create.cwd` 创建新会话。桌面适配把已引入目录解析为 `folderProjectId`，手动选择过的其他目录解析为当前作用域会话的 `directorySourceId`；主进程重新校验目录及真实路径。目录失效或来源不属于当前工作区时明确失败；无项目的新会话仍创建自己的独立工作目录。
 - 会话菜单中的“关联工作区项目”独立保留原 `projectId` 关联，不更改本机工作目录。项目的“从列表移除”、撤销和恢复仅操作本机显示偏好，不删除文件、项目记录或会话。
 - 使用 Multica 现有 Button、IconButton、DropdownMenu 和语义字体、颜色及间距样式。分类不重新挂载对话组件，因此当前对话和草稿可保留。
 
@@ -251,6 +253,9 @@ git diff --check
 
 ```sh
 pnpm --filter @multica/desktop test src/main/local-folder-projects.test.ts src/main/local-conversation-service.test.ts src/main/local-conversation-import.test.ts src/renderer/src/platform/local-conversation-projects.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/stores/local-conversation-project-visibility.test.ts
+pnpm --filter @multica/desktop exec vitest run src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/runtime/runtime.test.ts
+pnpm exec playwright test e2e/local-project-context.spec.ts e2e/local-provider-gui.spec.ts --project=chromium
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/desktop exec eslint src/main/local-conversation-service.ts src/main/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.tsx src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/platform/local-conversation-projects.ts src/renderer/src/platform/local-conversation-projects.test.ts src/renderer/src/platform/local-conversation-service.ts src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/desktop build

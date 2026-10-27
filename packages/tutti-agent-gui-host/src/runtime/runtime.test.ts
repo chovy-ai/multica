@@ -85,6 +85,33 @@ async function setup(data = backend()) {
 }
 
 describe("Multica Agent GUI runtime with the original session engine", () => {
+  it("keeps a local project during model changes and forwards its directory when activating a new session", async () => {
+    const data = backend();
+    const directory = { cwd: "/example/project", projectPath: "/example/project" };
+    const localSession = { ...session, localDirectory: directory };
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") return { agents: init.agents, sessions: [localSession], local: true };
+      if (method === "session.load") return { session: localSession, messages: [], pending: {}, tasks: [] };
+      if (method === "session.create") return localSession;
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true, sessions: [localSession] });
+    handles.push(handle); await handle.initialize();
+    const loaded = await handle.runtime.getSession(init.workspaceId, session.id);
+    expect(loaded).toMatchObject({ cwd: directory.cwd, noProject: false });
+    await handle.setModelSelection(agent.id, session.id, "another-model");
+    expect(handle.runtime.getSnapshot(init.workspaceId).sessions[0]).toMatchObject({ cwd: directory.cwd, noProject: false, settings: { model: "another-model" } });
+    const engine = handle.runtime.getSessionEngine(init.workspaceId);
+    engine.activateSession({ mode: "new", agentSessionId: "project-draft", agentTargetId: agent.id,
+      cwd: directory.cwd, requestId: "project-create", clientSubmitId: "project-submit" });
+    await vi.waitFor(() => expect(data.request).toHaveBeenCalledWith("session.create", expect.objectContaining({ cwd: directory.cwd }), expect.anything()));
+    await vi.waitFor(() => expect(handle.toServerSessionId("project-draft")).toBe(session.id));
+    expect(await handle.runtime.getSession(init.workspaceId, "project-draft")).toMatchObject({ cwd: directory.cwd, noProject: false });
+    const restored = createMulticaAgentGuiRuntime(data.client, { ...init, local: true, sessions: [localSession] });
+    handles.push(restored); await restored.initialize();
+    expect(await restored.runtime.getSession(init.workspaceId, session.id)).toMatchObject({ cwd: directory.cwd, noProject: false });
+  });
   it.each(["claude-code", "codex"].flatMap((provider) => [false, true].map((desktopQueue) => ({ provider, desktopQueue }))))("loads and submits to an externally created $provider session before workspace refresh completes (desktop queue: $desktopQueue)", async ({ provider, desktopQueue }) => {
     const data = backend();
     const localInit = { ...init, local: true, queueOwner: desktopQueue ? "desktop" as const : undefined, agents: [{ ...init.agents[0]!, provider }] };

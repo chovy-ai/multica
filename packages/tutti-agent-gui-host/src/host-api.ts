@@ -1,5 +1,6 @@
 import type { AgentHostInputApi } from "@tutti-os/agent-gui";
 import type { AgentGuiInitSnapshot, AgentGuiRpcClient, AgentGuiWorkspaceState } from "./protocol";
+import { localGuiProjects } from "./local-projects";
 
 export function createAgentGuiHostApi(
   client: AgentGuiRpcClient,
@@ -17,6 +18,16 @@ export function createAgentGuiHostApi(
   };
   return {
     meta: { workspaceId: snapshot.workspaceId },
+    ...(snapshot.local ? { userProjects: {
+      list: async () => ({ projects: localGuiProjects(workspaceSource.getWorkspaceState()) }),
+      subscribe: workspaceSource.subscribeWorkspace,
+      use: async ({ path }: { path: string }) => {
+        const project = localGuiProjects(workspaceSource.getWorkspaceState()).find((entry) => entry.path === path);
+        if (!project) throw new Error("Local project directory not found in this workspace");
+        return project;
+      },
+      pin: async () => { throw new Error("Manage local projects from the conversation list"); },
+    } } : {}),
     onHostEvent(listener) {
       const settings = () => new Map(workspaceSource.getWorkspaceState().agents.map(({ agent }) => [agent.id, JSON.stringify(agent.runtime_config)]));
       let previous = settings();

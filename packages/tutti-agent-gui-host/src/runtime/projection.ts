@@ -7,8 +7,9 @@ import {
   type AgentActivityTurn,
   type AgentActivityInteraction,
 } from "@tutti-os/agent-activity-core";
-import type { AgentTask, ChatSession, PendingChatTaskItem } from "@multica/core/types";
-import type { AgentGuiExecutionTarget, AgentGuiSessionDetail, AgentGuiTaskMessagePayload } from "../protocol";
+import type { AgentTask, PendingChatTaskItem } from "@multica/core/types";
+import type { AgentGuiSession, AgentGuiExecutionTarget, AgentGuiSessionDetail, AgentGuiTaskMessagePayload } from "../protocol";
+import { localProjectSectionKey } from "../local-projects";
 import { RuntimeLedger } from "./ledger";
 import { chatAuthoredPrompt } from "@multica/core/chat/context-snapshot";
 import { localMessageDisplayContent } from "../local-protocol";
@@ -44,7 +45,7 @@ export function composerOptions(agent: AgentGuiExecutionTarget): AgentActivityCo
 }
 
 export function projectSession(
-  session: ChatSession,
+  session: AgentGuiSession,
   agent: AgentGuiExecutionTarget | undefined,
   ledger: RuntimeLedger,
   turns: AgentActivityTurn[] = [],
@@ -52,12 +53,13 @@ export function projectSession(
 ): AgentActivitySession {
   const guiId = ledger.guiId(session.id);
   const latestTurn = [...turns].sort((a, b) => b.updatedAtUnixMs - a.updatedAtUnixMs)[0] ?? null;
+  const projectPath = session.localDirectory?.projectPath ?? null;
   return normalizeAgentActivitySession({
     workspaceId: session.workspace_id, agentSessionId: guiId,
     provider: agent?.provider ?? "unknown", agentTargetId: session.agent_id,
-    railSectionKey: "conversations",
+    railSectionKey: projectPath ? localProjectSectionKey(projectPath) : "conversations",
     providerSessionId: null, userId: session.creator_id, title: session.title,
-    cwd: "", noProject: true, activeTurnId,
+    cwd: projectPath ?? "", noProject: !projectPath, activeTurnId,
     activeTurn: turns.find((turn) => turn.turnId === activeTurnId) ?? null,
     latestTurn, latestTurnInteractions: [], pendingInteractions: [],
     settings: { model: agent?.model || null },
@@ -74,7 +76,7 @@ export function projectSession(
 
 /** The aggregate identifies a live run, but does not expose its start time. */
 export function projectPendingSession(
-  session: ChatSession,
+  session: AgentGuiSession,
   agent: AgentGuiExecutionTarget | undefined,
   ledger: RuntimeLedger,
   pending: PendingChatTaskItem | undefined,

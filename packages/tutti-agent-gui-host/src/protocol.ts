@@ -38,6 +38,10 @@ export function executionTargets(state: AgentGuiWorkspaceState): AgentGuiExecuti
   }));
 }
 
+export interface AgentGuiSession extends ChatSession {
+  localDirectory?: { cwd: string; projectPath: string | null };
+}
+
 export interface AgentGuiWorkspaceState {
   queueOwner?: "desktop";
   sideWorkspace?: boolean;
@@ -46,7 +50,8 @@ export interface AgentGuiWorkspaceState {
   agents: AgentGuiAgentDescriptor[];
   executionTargets?: AgentGuiExecutionTarget[];
   local?: boolean;
-  sessions: ChatSession[];
+  sessions: AgentGuiSession[];
+  folderProjects?: import("./local-protocol").LocalFolderProject[];
   pendingTasks?: PendingChatTaskItem[];
 }
 
@@ -72,7 +77,7 @@ export interface AgentGuiSessionDetail {
   promptQueue?: import("./local-protocol").LocalPromptQueue;
   backgroundTasks?: { turnId: string; task: LocalBackgroundTask }[];
   questions?: { turnId: string; question: LocalUserQuestion }[];
-  session: ChatSession;
+  session: AgentGuiSession;
   /** Saved native model used when no GUI preference exists (for example, a new fork). */
   model?: string | null;
   reasoningEffort?: import("./local-protocol").LocalReasoningEffort | null;
@@ -115,16 +120,16 @@ export interface AgentGuiRpcMethods {
   "workspace.load": { params: Record<string, never>; result: AgentGuiWorkspaceState };
   "session.load": { params: { sessionId: string }; result: AgentGuiSessionDetail };
   "session.create": {
-    params: { agentId: string; title?: string; projectId?: string | null };
-    result: ChatSession;
+    params: { agentId: string; title?: string; projectId?: string | null; cwd?: string };
+    result: AgentGuiSession;
   };
   "session.send": {
     params: { sessionId: string; content: string; attachmentIds?: string[]; references?: AgentGuiContextReference[]; model?: string; reasoningEffort?: import("./local-protocol").LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; queued?: true; requestId?: string };
     result: SendChatMessageResponse;
   };
-  "session.rename": { params: { sessionId: string; title: string }; result: ChatSession };
-  "session.fork": { params: { sessionId: string; turnId: string; requestId: string }; result: ChatSession };
-  "session.pin": { params: { sessionId: string; pinned: boolean }; result: ChatSession };
+  "session.rename": { params: { sessionId: string; title: string }; result: AgentGuiSession };
+  "session.fork": { params: { sessionId: string; turnId: string; requestId: string }; result: AgentGuiSession };
+  "session.pin": { params: { sessionId: string; pinned: boolean }; result: AgentGuiSession };
   "session.delete": { params: { sessionId: string }; result: void };
   "session.markRead": { params: { sessionId: string }; result: void };
   "session.cancel": { params: { sessionId: string; taskId: string }; result: CancelTaskResponse };

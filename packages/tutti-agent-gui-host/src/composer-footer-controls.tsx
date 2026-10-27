@@ -12,7 +12,7 @@ import type { AgentComposerProps } from "../../../vendor/tutti/packages/agent/gu
 
 export type ProviderDraft = AgentComposerProps["draftContent"];
 type FooterContext = Parameters<NonNullable<NonNullable<AgentGUIProps["renderSlots"]>["composerFooterAccessory"]>>[0]
-  & Partial<Pick<AgentComposerProps, "draftContent" | "onDraftContentChange">>;
+  & Partial<Pick<AgentComposerProps, "draftContent" | "onDraftContentChange" | "onProjectPathChange">>;
 type Handle = ReturnType<typeof createMulticaAgentGuiRuntime>;
 interface Props {
   context: FooterContext;
@@ -20,8 +20,8 @@ interface Props {
   handle: Handle;
   targets: AgentGuiExecutionTarget[];
   snapshot: AgentGuiInitSnapshot;
-  pendingTarget?: { target: AgentGuiExecutionTarget; fromSession: string; draft?: ProviderDraft } | null;
-  onLeaveSession(target: AgentGuiExecutionTarget, fromSession: string, draft?: ProviderDraft): void;
+  pendingTarget?: { target: AgentGuiExecutionTarget; fromSession: string; draft?: ProviderDraft; projectPath?: string | null } | null;
+  onLeaveSession(target: AgentGuiExecutionTarget, fromSession: string, draft?: ProviderDraft, projectPath?: string | null): void;
   onCancelTargetSwitch(): void;
   onSelectAgent(agent: AgentGuiExecutionTarget): void;
   onReadyForFocus(sequence: number): void;
@@ -31,6 +31,7 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
   const modelValueId = useId();
   const agentValueId = useId();
   const onDraftContentChange = context.onDraftContentChange;
+  const onProjectPathChange = context.onProjectPathChange;
   const chinese = snapshot.locale === "zh-CN";
   const sessionId = context.agentSessionId || null;
   const serverSessionId = sessionId ? handle.toServerSessionId(sessionId) : null;
@@ -70,9 +71,10 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
     // target earlier lets that conversation's metadata restore the old target.
     if (!sessionId) {
       if (pendingTarget.draft) onDraftContentChange?.(pendingTarget.draft, "home");
+      if (snapshot.local) onProjectPathChange?.(pendingTarget.projectPath ?? null);
       onSelectAgent(pendingTarget.target);
     } else if (sessionId !== pendingTarget.fromSession) onCancelTargetSwitch();
-  }, [pendingTarget, sessionId, onDraftContentChange, onSelectAgent, onCancelTargetSwitch]);
+  }, [pendingTarget, sessionId, onDraftContentChange, onProjectPathChange, snapshot.local, onSelectAgent, onCancelTargetSwitch]);
   const unavailable = !agent?.canInvoke || !agent.runtimeBound;
   const labels = chinese ? {
     model: "模型", agent: snapshot.local ? "本机运行器" : "智能体", default: "默认", loading: "正在加载模型…", retry: "重试", refresh: "刷新模型",
@@ -188,7 +190,7 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
           if (id === agentId || busy || saving) return;
           const target = targets.find((entry) => entry.id === id);
           if (target?.canInvoke && target.runtimeBound) {
-            if (sessionId) onLeaveSession(target, sessionId, snapshot.local ? context.draftContent : undefined);
+            if (sessionId) onLeaveSession(target, sessionId, snapshot.local ? context.draftContent : undefined, snapshot.local ? context.composerSettings?.selectedProjectPath : undefined);
             else onSelectAgent(target);
           }
         }}>

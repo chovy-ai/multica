@@ -48,7 +48,7 @@ export function AgentGuiApplication({
   const [node, setNode] = useState<NodeState>(() => initialNodeState(initial, handle));
   // The composer remounts between an existing conversation and its home.
   // Keep the requested target outside that composer until the old session exits.
-  const [pendingTarget, setPendingTarget] = useState<{ target: ReturnType<typeof executionTargets>[number]; fromSession: string; draft?: ProviderDraft } | null>(null);
+  const [pendingTarget, setPendingTarget] = useState<{ target: ReturnType<typeof executionTargets>[number]; fromSession: string; draft?: ProviderDraft; projectPath?: string | null } | null>(null);
   const nodeRef = useRef(node);
   nodeRef.current = node;
   const lastSelection = useRef({ sessionId: initial.activeSessionId, agentId: node.agentTargetId });
@@ -204,7 +204,7 @@ export function AgentGuiApplication({
     }}
     renderSlots={{ composerFooterAccessory: (context) => <ComposerFooterControls context={context} client={client} handle={handle} targets={executionTargets(workspace)} snapshot={snapshot} onReadyForFocus={setComposerFocusSequence}
       pendingTarget={pendingTarget} onCancelTargetSwitch={() => setPendingTarget(null)}
-      onLeaveSession={(target, fromSession, draft) => { setPendingTarget({ target, fromSession, draft }); setNode((current) => ({ ...current, lastActiveAgentSessionId: null })); }}
+      onLeaveSession={(target, fromSession, draft, projectPath) => { setPendingTarget({ target, fromSession, draft, projectPath }); setNode((current) => ({ ...current, lastActiveAgentSessionId: null })); }}
       onSelectAgent={(target) => { setPendingTarget(null); setNode((current) => current.agentTargetId === target.id ? current : { ...current, provider: target.provider, agentTargetId: target.id, lastActiveAgentSessionId: null }); }} /> }}
   /></SideEntryProvider></ResourceLinkProvider>;
 }
