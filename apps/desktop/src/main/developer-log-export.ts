@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
-import type { LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
 import type { DeveloperLogQuery, DeveloperLogSaveResult } from "../shared/developer-logs";
 import type { WorkspaceMcpTool } from "./local-workspace-tools";

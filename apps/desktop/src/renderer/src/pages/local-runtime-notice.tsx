@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { Alert, AlertDescription } from "@multica/ui/components/ui/alert";
-import type { LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { getLocalConversationClient, localRuntimeRestartMessage } from "../platform/local-conversation-client";
 
 export function LocalRuntimeNotice({ scope, chinese }: { scope: LocalConversationScope; chinese: boolean }) {

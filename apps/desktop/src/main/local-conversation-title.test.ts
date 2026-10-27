@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LocalConversation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 import { CHAT_CONTEXT_SNAPSHOT_END, CHAT_CONTEXT_SNAPSHOT_START } from "@multica/core/chat/context-snapshot";
 import { LocalConversationService } from "./local-conversation-service";
 import { refreshGeneratedConversationTitle, summarizeLocalConversationTitle } from "./local-conversation-title";

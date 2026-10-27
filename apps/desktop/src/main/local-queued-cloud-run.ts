@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { parseWithFallback } from "@multica/core/api/schema";
 import { AttachmentResponseSchema, ChatSessionSchema, ChatMessagesPageSchema, SendChatMessageResponseSchema, AgentTaskListSchema, TaskMessageListSchema } from "@multica/core/api/schemas";
-import type { LocalConversation, LocalConversationMethods, LocalConversationScope, LocalConversationTurn, LocalQueuedPrompt } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationMethods, LocalConversationScope, LocalConversationTurn, LocalQueuedPrompt } from "@multica/core/local-conversation/protocol";
 import { HTML_PREVIEW_INSTRUCTIONS } from "@multica/tutti-agent-gui-host/html-preview";
 import { sideExecutionContent } from "@multica/tutti-agent-gui-host/side-context";
 import type { AgentTask, Attachment, ChatMessagesPage, ChatSession, SendChatMessageResponse, TaskMessagePayload } from "@multica/core/types";

@@ -1,9 +1,9 @@
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/core/local-conversation/protocol";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LocalConversation, LocalFolderProject, LocalUserQuestion } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalFolderProject, LocalUserQuestion } from "@multica/core/local-conversation/protocol";
 import type { Project } from "@multica/core/types";
 import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 import { LocalConversationFlowPage } from "./local-conversation-flow";

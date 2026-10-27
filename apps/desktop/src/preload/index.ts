@@ -20,7 +20,7 @@ import {
   type IssueWindowRequest,
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
-import type { LocalConversationClient, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationClient, LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import type {
   DaemonStatus,
   LocalRuntimeProbe,

@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
-import type { LocalConversation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 
 const imageTypes: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
 export interface OutputImage { data: string; mimeType: string; name: string }

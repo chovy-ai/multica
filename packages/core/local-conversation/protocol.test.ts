@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { localMessageDisplayContent } from "./local-protocol";
+import { localMessageDisplayContent } from "./protocol";
 
 describe("local image message display", () => {
   it("hides standalone image markers while retaining authored paragraphs and the stored message", () => {

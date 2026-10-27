@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalConversationService } from "./local-conversation-service";
 import { LocalConversationImport } from "./local-conversation-import";
 import type { NativeHistoryReader, NativeHistorySession } from "./local-native-history";
-import type { LocalConversation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.unstubAllEnvs(); });

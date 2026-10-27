@@ -1,5 +1,5 @@
 import { chatAuthoredPrompt } from "@multica/core/chat/context-snapshot";
-import type { LocalConversation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 
 const defaultTitles = new Set(["新会话", "新建会话", "New conversation", "New Conversation"]);
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });

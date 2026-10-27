@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalConversationService } from "./local-conversation-service";
-import type { LocalQueuedPrompt } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalQueuedPrompt } from "@multica/core/local-conversation/protocol";
 import type { runLocalProvider } from "./local-provider-runner";
 
 const scope = { userId: "queue-user", workspaceId: "queue-workspace" };

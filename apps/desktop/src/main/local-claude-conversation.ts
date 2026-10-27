@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute } from "node:path";
 import type { Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { LocalBackgroundTask, LocalConversationEvent } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalBackgroundTask, LocalConversationEvent } from "@multica/core/local-conversation/protocol";
 import { CONTEXT_MCP_NAME } from "./local-context-mcp";
 import { findLocalProvider, ProviderStream, type runLocalProvider } from "./local-provider-runner";
 import { readClaudePluginSettings } from "./local-provider-extensions";

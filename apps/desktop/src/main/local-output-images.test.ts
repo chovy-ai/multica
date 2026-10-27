@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { discoverCodexOutputImages, inlineOutputImages } from "./local-output-images";
-import type { LocalConversation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });

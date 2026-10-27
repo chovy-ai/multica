@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalConversationService } from "../../../main/local-conversation-service";
 import type { runLocalProvider } from "../../../main/local-provider-runner";
 import { createLocalConversationParentService } from "./local-conversation-service";
-import type { LocalConversationClient } from "@multica/tutti-agent-gui-host/local-protocol";
-import { CREATE_TASK_MENTION_ID } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationClient } from "@multica/core/local-conversation/protocol";
+import { CREATE_TASK_MENTION_ID } from "@multica/core/local-conversation/protocol";
 
 const mock = vi.hoisted(() => ({ api: {
   listAgents: vi.fn(), listMembers: vi.fn(), listRuntimes: vi.fn(), listChatSessions: vi.fn(), listPendingChatTasks: vi.fn(),

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import type { LocalConversation, LocalFolderProject } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalFolderProject } from "@multica/core/local-conversation/protocol";
 import { groupLocalConversations, projectForDirectory } from "./local-conversation-projects";
 
 const projects = [{ id: "a", title: "Shared title", path: "/repo-a" }, { id: "b", title: "Shared title", path: "/repo-b" }] as LocalFolderProject[];

@@ -1,6 +1,6 @@
 import { render, screen, cleanup } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { LOCAL_CONVERSATION_METHODS } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS } from "@multica/core/local-conversation/protocol";
 import { LocalRuntimeNotice } from "./local-runtime-notice";
 
 afterEach(cleanup);

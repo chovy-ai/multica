@@ -3,7 +3,7 @@ import { open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import type { LocalAccountUsage, LocalContextUsage, LocalConversation, LocalProviderId, LocalProviderUsage, LocalUsageWindow } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalAccountUsage, LocalContextUsage, LocalConversation, LocalProviderId, LocalProviderUsage, LocalUsageWindow } from "@multica/core/local-conversation/protocol";
 import { findLocalProvider } from "./local-provider-runner";
 
 type RecordValue = Record<string, unknown>;

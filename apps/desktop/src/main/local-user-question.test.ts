@@ -9,7 +9,7 @@ import { LocalConversationService } from "./local-conversation-service";
 import { LocalMulticaContext } from "./local-multica-context";
 import { CONTEXT_MCP_TOKEN_ENV } from "./local-context-mcp";
 import { userQuestionAnswers, userQuestionSchema } from "./local-user-question";
-import type { LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalProviderId } from "@multica/core/local-conversation/protocol";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const release of cleanup.splice(0).reverse()) await release(); });

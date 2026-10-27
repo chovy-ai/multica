@@ -21,7 +21,7 @@ import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 interface DesktopAPI {
   developerLogs: import("../shared/developer-logs").DeveloperLogsClient;
   settingsHost?: import("../shared/settings-host").SettingsHostClient;
-  localConversations: import("@multica/tutti-agent-gui-host/local-protocol").LocalConversationClient;
+  localConversations: import("@multica/core/local-conversation/protocol").LocalConversationClient;
   resourcePreview: import("../shared/resource-preview").ResourcePreviewClient;
   /** App version + normalized OS, captured synchronously at preload time. */
   appInfo: {

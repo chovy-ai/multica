@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
-import type { LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 
 interface ProjectVisibilityState {
   hiddenByScope: Record<string, string[]>;

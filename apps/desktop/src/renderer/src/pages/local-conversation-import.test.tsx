@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LocalConversationClient, LocalImportCandidate } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationClient, LocalImportCandidate } from "@multica/core/local-conversation/protocol";
 import { LocalConversationImportButton } from "./local-conversation-import";
 
 vi.mock("@multica/views/runtimes/provider-logo", () => ({ ProviderLogo: () => <span /> }));

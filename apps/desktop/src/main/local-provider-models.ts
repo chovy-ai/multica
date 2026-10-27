@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { RuntimeModel } from "@multica/core/types";
 import type { ModelInfo, Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { isLocalReasoningEffort, type LocalConversationModels, type LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import { isLocalReasoningEffort, type LocalConversationModels, type LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { findLocalProvider } from "./local-provider-runner";
 
 interface Dependencies {

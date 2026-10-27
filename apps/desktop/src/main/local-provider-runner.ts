@@ -4,7 +4,7 @@ import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, join } from "node:path";
 import { createInterface } from "node:readline";
-import { isLocalReasoningEffort, isLocalPermissionMode, type LocalReasoningEffort, type LocalPermissionMode, type LocalProviderId, type LocalConversationEvent } from "@multica/tutti-agent-gui-host/local-protocol";
+import { isLocalReasoningEffort, isLocalPermissionMode, type LocalReasoningEffort, type LocalPermissionMode, type LocalProviderId, type LocalConversationEvent } from "@multica/core/local-conversation/protocol";
 import { readCodexConfiguration } from "./local-codex-instructions";
 import { CODEX_PLUGIN_ISOLATION_ARGS, codexMcpIsolationArgs, readClaudePluginSettings, type ClaudePluginSettings } from "./local-provider-extensions";
 import { CONTEXT_MCP_NAME, CONTEXT_MCP_TOKEN_ENV, CONTEXT_MCP_TOOLS, type ContextMcpRegistration } from "./local-context-mcp";

@@ -1,4 +1,4 @@
-import type { RuntimeModel } from "@multica/core/types";
+import type { RuntimeModel } from "../types";
 
 export const LOCAL_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 export type LocalReasoningEffort = typeof LOCAL_REASONING_EFFORTS[number];

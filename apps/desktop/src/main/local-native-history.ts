@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { LocalConversation, LocalConversationEvent, LocalImportCandidate, LocalImportPage, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationEvent, LocalImportCandidate, LocalImportPage, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { findLocalProvider } from "./local-provider-runner";
 
 type Row = Record<string, unknown>;

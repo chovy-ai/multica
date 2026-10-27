@@ -1,4 +1,4 @@
-import type { LocalConversation, LocalFolderProject } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalFolderProject } from "@multica/core/local-conversation/protocol";
 
 export interface LocalConversationProjectGroup {
   id: string | null;

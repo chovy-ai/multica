@@ -2,7 +2,7 @@ import type { LocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
-import { isTaskCreationReference, type LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import { isTaskCreationReference, type LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { parseWithFallback } from "@multica/core/api/schema";
 import { CreateIssueResponseSchema } from "@multica/core/api/schemas";
 import { deriveProfileName, profileConfigPath, profileUserIdPath } from "./daemon-profile";

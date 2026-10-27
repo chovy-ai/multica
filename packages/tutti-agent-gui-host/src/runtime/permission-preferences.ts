@@ -1,4 +1,4 @@
-import { isLocalPermissionMode, type LocalPermissionMode } from "../local-protocol";
+import { isLocalPermissionMode, type LocalPermissionMode } from "@multica/core/local-conversation/protocol";
 
 export class PermissionPreferences {
   private values = new Map<string, LocalPermissionMode>();

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { LocalUserQuestionInput, LocalUserQuestionResult } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalUserQuestionInput, LocalUserQuestionResult } from "@multica/core/local-conversation/protocol";
 
 const question = z.object({
   id: z.string().min(1).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),

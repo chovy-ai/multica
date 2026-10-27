@@ -16,7 +16,7 @@ import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chr
 import { generateLocalConversationTitle } from "./local-conversation-title-generator";
 import { LocalMulticaContext } from "./local-multica-context";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
-import type { LocalConversationMethod, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationMethod, LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";

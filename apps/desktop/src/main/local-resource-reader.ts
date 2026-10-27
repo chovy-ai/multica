@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
-import type { LocalPreviewFile, LocalPreviewLocation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalPreviewFile, LocalPreviewLocation } from "@multica/core/local-conversation/protocol";
 import { readAvatarFile } from "./local-avatar-file";
 
 /** Only dialog-selected roots and this conversation's working directory are readable. */

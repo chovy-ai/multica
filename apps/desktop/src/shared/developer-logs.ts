@@ -1,4 +1,4 @@
-import type { LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 
 export interface DeveloperLogQuery {
   sinceMinutes: number;

@@ -1,6 +1,6 @@
 import type { AgentSessionEngine, EngineQueuedPrompt, PromptQueueRecord } from "@tutti-os/agent-activity-core";
 import { selectEngineSubmitWouldBeVisibleInQueue } from "@tutti-os/agent-activity-core";
-import type { LocalPromptQueue } from "../local-protocol";
+import type { LocalPromptQueue } from "@multica/core/local-conversation/protocol";
 type SubmitInput = Parameters<AgentSessionEngine["submitPrompt"]>[0];
 interface PendingPrompt {
   input: SubmitInput;

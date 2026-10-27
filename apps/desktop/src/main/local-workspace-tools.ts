@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { paths } from "@multica/core/paths";
-import type { LocalConversationMethods } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationMethods } from "@multica/core/local-conversation/protocol";
 import { createAgentAvatarTool, type AgentAvatarOptions } from "./local-agent-avatar";
 
 type Row = Record<string, unknown>;

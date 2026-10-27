@@ -50,7 +50,7 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 Codex 的独立助手消息聚合到同一轮正文时，补齐上一条消息末尾的两个换行以保留 Markdown 段落边界；消息内部的增量、列表和代码块原样保留。一次性 CLI 与普通会话的 app-server 路径使用同一分隔规则，实时 text 事件拼接结果与最终保存正文一致。空消息不新增分隔，重复完成事件不重复输出。该规则只影响新执行，不改写已保存的历史，也不改变 IPC 或持久化格式。回归见 `local-provider-runner.test.ts`、`local-codex-stream.test.ts` 和 `local-conversation-service.test.ts`，覆盖流式输出、完成与重开会话。
 
 - `packages/tutti-agent-gui-host/src/protocol.ts`：执行目标与云端智能体分离，未改 vendored Tutti 源码。
-- `packages/tutti-agent-gui-host/src/local-protocol.ts`：仅桌面的本机会话 IPC 协议。
+- `packages/core/local-conversation/protocol.ts`：仅桌面的本机会话 IPC 协议。
 - `apps/desktop/src/main/local-provider-runner.ts`：发现已安装 CLI、解析一次性执行输出；继续服务标题生成等调用。
 - `apps/desktop/src/main/local-codex-pool.ts`：仅供对话流 Codex 普通轮次使用的双 app-server 实例池。
 - `apps/desktop/src/main/local-provider-fork.ts`：创建独立的原生会话分支，不向模型提交消息。

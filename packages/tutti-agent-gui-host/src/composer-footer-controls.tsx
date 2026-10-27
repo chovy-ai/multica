@@ -5,7 +5,7 @@ import type { AgentGUIProps } from "@tutti-os/agent-gui/agent-gui";
 import type { RuntimeModelsResult } from "@multica/core/types";
 import type { AgentGuiExecutionTarget, AgentGuiInitSnapshot, AgentGuiRpcClient } from "./protocol";
 import type { createMulticaAgentGuiRuntime } from "./runtime";
-import { localReasoningLevels } from "./local-protocol";
+import { localReasoningLevels } from "@multica/core/local-conversation/protocol";
 import { UsageIndicator } from "./usage-indicator";
 import { PermissionPicker } from "./permission-picker";
 import type { AgentComposerProps } from "../../../vendor/tutti/packages/agent/gui/agent-gui/agentGuiNode/AgentComposer";

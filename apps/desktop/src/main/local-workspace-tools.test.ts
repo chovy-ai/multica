@@ -11,7 +11,7 @@ import { LocalMulticaContext } from "./local-multica-context";
 import { LocalConversationService } from "./local-conversation-service";
 import { CONTEXT_MCP_TOKEN_ENV } from "./local-context-mcp";
 import { providerArgs, runLocalProvider } from "./local-provider-runner";
-import { CREATE_TASK_MENTION_ID } from "@multica/tutti-agent-gui-host/local-protocol";
+import { CREATE_TASK_MENTION_ID } from "@multica/core/local-conversation/protocol";
 import { readAvatarFile } from "./local-avatar-file";
 
 type Row = Record<string, unknown>;

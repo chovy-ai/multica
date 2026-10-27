@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION, type LocalConversationClient } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION, type LocalConversationClient } from "@multica/core/local-conversation/protocol";
 import { getLocalConversationClient, LocalRuntimeUpdateRequired } from "./local-conversation-client";
 
 const scope = { userId: "reader", workspaceId: "workspace" };

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { runLocalProvider } from "./local-provider-runner";
 import { conversationTitleSource, normalizeModelConversationTitle } from "./local-conversation-title";
 

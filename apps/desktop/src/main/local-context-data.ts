@@ -1,4 +1,4 @@
-import type { LocalConversation, LocalConversationMethods } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationMethods } from "@multica/core/local-conversation/protocol";
 
 export interface LocalContextReader {
   list(): Promise<LocalConversation[]>;

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import type { LocalConversation, LocalConversationScope, LocalImportPage, LocalImportResult, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationScope, LocalImportPage, LocalImportResult, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { LocalNativeHistory, type NativeHistoryReader } from "./local-native-history";
 import { forkLocalProvider } from "./local-provider-fork";
 

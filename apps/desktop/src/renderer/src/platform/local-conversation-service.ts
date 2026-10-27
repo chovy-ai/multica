@@ -5,10 +5,10 @@ import { chatKeys } from "@multica/core/chat/queries";
 import type { AgentTask, Attachment } from "@multica/core/types";
 import { createAgentGuiParentService, type ParentServiceOptions } from "@multica/views/conversation-flow/service";
 import type { AgentGuiHostEvent, AgentGuiRpcMethod, AgentGuiRpcMethods, AgentGuiSessionDetail, AgentGuiWorkspaceState } from "@multica/tutti-agent-gui-host/protocol";
-import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationScope, LocalConversationTurn, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationScope, LocalConversationTurn, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { HTML_PREVIEW_INSTRUCTIONS } from "@multica/tutti-agent-gui-host/html-preview";
 import { sideExecutionContent } from "@multica/tutti-agent-gui-host/side-context";
-import { isTaskCreationReference, localMessageDisplayContent } from "@multica/tutti-agent-gui-host/local-protocol";
+import { isTaskCreationReference, localMessageDisplayContent } from "@multica/core/local-conversation/protocol";
 import { isAutomaticLocalDirectory } from "@multica/tutti-agent-gui-host/local-projects";
 import type { AgentGuiSession } from "@multica/tutti-agent-gui-host/protocol";
 import { projectForDirectory } from "./local-conversation-projects";
@@ -70,7 +70,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     }
     return cloudState;
   };
-  const local = <M extends import("@multica/tutti-agent-gui-host/local-protocol").LocalConversationMethod>(method: M, params: import("@multica/tutti-agent-gui-host/local-protocol").LocalConversationMethods[M]["params"]) => { assertCurrent(); return client.request(scope, method, params); };
+  const local = <M extends import("@multica/core/local-conversation/protocol").LocalConversationMethod>(method: M, params: import("@multica/core/local-conversation/protocol").LocalConversationMethods[M]["params"]) => { assertCurrent(); return client.request(scope, method, params); };
   const read = (id: string) => local("read", { id });
   const fileAttachment = async (id: string): Promise<Attachment> => {
     const file = await local("fileInfo", { id });
@@ -243,7 +243,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     switch (method) {
       case "queue.enqueue": {
         // Transfer ownership before any asynchronous view-bound preparation.
-        const item = params.item as import("@multica/tutti-agent-gui-host/local-protocol").LocalQueuedPrompt;
+        const item = params.item as import("@multica/core/local-conversation/protocol").LocalQueuedPrompt;
         const ids = [...new Set(item.references?.filter((reference) => reference.kind === "agent").map((reference) => reference.id) ?? [])];
         if (ids.length) {
           if (item.references?.some(isTaskCreationReference)) throw new Error("New task requires the current local provider");

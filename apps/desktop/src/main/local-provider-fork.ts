@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { findLocalProvider } from "./local-provider-runner";
 import { readCodexConfiguration } from "./local-codex-instructions";
 import { CODEX_PLUGIN_ISOLATION_ARGS, codexMcpIsolationArgs } from "./local-provider-extensions";

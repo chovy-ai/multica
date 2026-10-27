@@ -242,7 +242,7 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
   it("migrates a browser-saved local queue once and remounts against Electron without suspending it", async () => {
     const saved = { agentSessionId: session.id, prompts: [{ id: "old-prompt", clientSubmitId: "old-submit", createdAtUnixMs: 1, content: [{ type: "text", text: "saved continuation" }] }] };
     const data = backend(new Map([["runtime-ledger-v1", JSON.stringify({ promptQueues: [saved] })]])); data.sessions.push(session);
-    let queue: import("../local-protocol").LocalPromptQueue = { revision: 0, paused: false, items: [] };
+    let queue: import("@multica/core/local-conversation/protocol").LocalPromptQueue = { revision: 0, paused: false, items: [] };
     const original = data.request.getMockImplementation()!;
     data.request.mockImplementation(async (method, params) => {
       if (method === "queue.enqueue") { queue = { revision: queue.revision + 1, paused: params.paused === true, items: [params.item] }; return structuredClone(queue); }

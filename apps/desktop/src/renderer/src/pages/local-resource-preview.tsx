@@ -5,7 +5,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Input } from "@multica/ui/components/ui/input";
 import { copyText } from "@multica/ui/lib/clipboard";
-import type { LocalConversationScope, LocalPreviewLocation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationScope, LocalPreviewLocation } from "@multica/core/local-conversation/protocol";
 import type { WebPreviewState, WebPreviewCommand } from "../../../shared/resource-preview";
 import { ChromeProfileImport } from "./chrome-profile-import";
 

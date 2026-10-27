@@ -1,11 +1,11 @@
 import { createLocalTiming, localTimingFailure, type LocalTiming, type LocalTimingSink } from "@multica/tutti-agent-gui-host/local-timing";
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/core/local-conversation/protocol";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join } from "node:path";
-import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationMethod, LocalConversationMethods, LocalConversationScope, LocalFolderProject, LocalProviderId, LocalUserQuestionResult, LocalQueuedPrompt, LocalPromptBlock } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationMethod, LocalConversationMethods, LocalConversationScope, LocalFolderProject, LocalProviderId, LocalUserQuestionResult, LocalQueuedPrompt, LocalPromptBlock } from "@multica/core/local-conversation/protocol";
 import { findLocalProvider, localProviderModels, runLocalProvider } from "./local-provider-runner";
 import { LocalProviderUsageReader } from "./local-provider-usage";
 import type { LocalExecutionContext, LocalRunContext } from "./local-multica-context";
@@ -17,7 +17,7 @@ import { LocalConversationImport } from "./local-conversation-import";
 import type { NativeHistoryReader } from "./local-native-history";
 import { LocalResourceReader } from "./local-resource-reader";
 import { sideExecutionContent } from "@multica/tutti-agent-gui-host/side-context";
-import { isLocalReasoningEffort, isLocalPermissionMode, isTaskCreationReference } from "@multica/tutti-agent-gui-host/local-protocol";
+import { isLocalReasoningEffort, isLocalPermissionMode, isTaskCreationReference } from "@multica/core/local-conversation/protocol";
 import { userQuestionSchema, userQuestionAnswers, type AskLocalUser } from "./local-user-question";
 import { LocalClaudeConversation } from "./local-claude-conversation";
 import { LocalCodexPool } from "./local-codex-pool";
@@ -407,7 +407,7 @@ export class LocalConversationService {
         if (turnId && !source.turns.some((turn) => turn.id === turnId)) throw new Error("Source turn not found");
         const end = turnId ? source.messages.findLastIndex((message) => message.turnId === turnId) + 1 : source.messages.length;
         const quote = params.quote === undefined ? undefined : text(params.quote, "selected text", 20000);
-        let pending: import("@multica/tutti-agent-gui-host/local-protocol").LocalSidePrompt | undefined;
+        let pending: import("@multica/core/local-conversation/protocol").LocalSidePrompt | undefined;
         if (params.pending !== undefined) {
           if (!params.pending || typeof params.pending !== "object" || Array.isArray(params.pending)) throw new Error("Invalid queued message");
           const value = params.pending as Record<string, unknown>;

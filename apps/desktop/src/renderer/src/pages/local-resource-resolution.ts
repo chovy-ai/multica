@@ -1,4 +1,4 @@
-import type { LocalConversation, LocalPreviewFile, LocalPreviewLocation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalPreviewFile, LocalPreviewLocation } from "@multica/core/local-conversation/protocol";
 import { localResourceTarget } from "@multica/tutti-agent-gui-host/message-resource-links";
 
 export class FileLinkPreviewError extends Error {
