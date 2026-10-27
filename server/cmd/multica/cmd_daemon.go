@@ -23,6 +23,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon"
+	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	logger_pkg "github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -1142,6 +1143,17 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 	defer daemon.RemoveLocalAPITokenIfOwned(daemonLocalAPITokenPath(profile), localToken)
 	cfg.LocalAPIToken = localToken
+	cfg.ProfileDir = daemonDirForProfile(profile)
+	if exe, err := os.Executable(); err == nil {
+		cfg.LocalHostCLIPath = exe
+		sidecar, err := localhost.Locate(exe, os.Getenv)
+		switch {
+		case err == nil:
+			cfg.LocalHost = &sidecar
+		case !errors.Is(err, localhost.ErrNoManifest):
+			logger.Warn("local conversations disabled: invalid sidecar manifest", "error", err)
+		}
+	}
 
 	ctx, stop := notifyShutdownContext(context.Background())
 	defer stop()

@@ -3,14 +3,14 @@ package daemon
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 )
 
 // LocalAPITokenFile is the per-profile file holding the bearer token that local
@@ -71,22 +71,7 @@ func RemoveLocalAPITokenIfOwned(path, token string) {
 	}
 }
 
-// authorizeLocalRequest admits only requests a local, non-browser client could
-// make: the bearer token, a loopback Host (defeats DNS rebinding), and no
-// Origin header (browsers always send one on cross-origin requests).
+// authorizeLocalRequest gates loopback control endpoints; see localhost.Authorize.
 func (d *Daemon) authorizeLocalRequest(r *http.Request) bool {
-	if d.cfg.LocalAPIToken == "" || r.Header.Get("Origin") != "" {
-		return false
-	}
-	host, _, err := net.SplitHostPort(r.Host)
-	if err != nil {
-		host = r.Host
-	}
-	switch strings.ToLower(strings.Trim(host, "[]")) {
-	case "127.0.0.1", "localhost", "::1":
-	default:
-		return false
-	}
-	presented, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return ok && subtle.ConstantTimeCompare([]byte(presented), []byte(d.cfg.LocalAPIToken)) == 1
+	return localhost.Authorize(r, d.cfg.LocalAPIToken)
 }

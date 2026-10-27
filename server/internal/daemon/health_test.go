@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+
+	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 )
 
 func TestHealthHandlerReportsEmptyCLICommitWithoutFallback(t *testing.T) {
@@ -1048,6 +1050,33 @@ func TestShutdownHandlerRejectsUnauthorizedRequests(t *testing.T) {
 			case <-cancelled:
 				t.Fatal("unauthorized request cancelled the daemon")
 			case <-time.After(20 * time.Millisecond):
+			}
+		})
+	}
+}
+
+func TestHealthHandlerReportsLocalConversationSupport(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		srv  *localhost.Server
+		want string
+	}{
+		{name: "no server", want: "unsupported"},
+		{name: "not bundled", srv: localhost.NewServer(localhost.Config{Token: "t"}), want: "unsupported"},
+		{name: "bundled", srv: localhost.NewServer(localhost.Config{Token: "t", Sidecar: &localhost.Sidecar{ProtocolVersion: 2}}), want: "supported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &Daemon{cfg: Config{CLIVersion: "v1.0.0"}, workspaces: map[string]*workspaceState{}, logger: slog.Default(), local: tc.srv}
+			rec := httptest.NewRecorder()
+			d.healthHandler(time.Now()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+			var resp HealthResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.LocalConversations != tc.want || resp.LocalBusyCount != 0 {
+				t.Fatalf("local_conversations=%q busy=%d, want %q", resp.LocalConversations, resp.LocalBusyCount, tc.want)
 			}
 		})
 	}

@@ -29,6 +29,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -432,6 +433,7 @@ type repoCacheBackend interface {
 // Daemon is the local agent runtime that polls for and executes tasks.
 type Daemon struct {
 	cfg        Config
+	local      *localhost.Server
 	client     *Client
 	repoCache  repoCacheBackend
 	skillCache *SkillBundleCache
@@ -2123,6 +2125,22 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	if err := d.resolveAuth(); err != nil {
 		return err
 	}
+
+	d.local = localhost.NewServer(localhost.Config{
+		Sidecar:    d.cfg.LocalHost,
+		DataDir:    filepath.Join(d.cfg.ProfileDir, "local-conversations"),
+		ProfileDir: d.cfg.ProfileDir,
+		CLIPath:    d.cfg.LocalHostCLIPath,
+		Token:      d.cfg.LocalAPIToken,
+		Logger:     d.logger.With("component", "local-host"),
+	})
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := d.local.Close(stopCtx); err != nil {
+			d.logger.Warn("local conversation service did not stop cleanly", "error", err)
+		}
+	}()
 
 	// Bind and serve the health port before the (potentially slow) preflight,
 	// so `daemon start` and the desktop see a live "starting" daemon instead
