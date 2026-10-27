@@ -50,6 +50,9 @@ export function localMessageDisplayContent(message?: Pick<LocalConversationMessa
   return content === message.content ? content : content.replace(/^\n\n/, "");
 }
 export interface LocalConversation {
+  lastReadMessageId?: string | null;
+  /** Derived from the full history before producing a compact list snapshot. */
+  hasUnread?: boolean;
   promptQueue?: LocalPromptQueue;
   side?: { sourceId: string; turnId?: string; quote?: string; requestId: string; context: { role: string; content: string }[]; pending?: LocalSidePrompt };
   id: string; title: string; provider: LocalProviderId; cwd: string; pinned: boolean;
@@ -141,6 +144,7 @@ export interface LocalConversationMethods {
   providers: { params: Record<string, never>; result: LocalProvider[] };
   list: { params: Record<string, never>; result: LocalConversation[] };
   read: { params: { id: string }; result: LocalConversation };
+  markRead: { params: { id: string; messageId: string }; result: void };
   create: { params: { provider: LocalProviderId; title?: string; projectId?: string | null; folderProjectId?: string | null }; result: LocalConversation };
   fork: { params: { id: string; turnId?: string; requestId?: string }; result: LocalConversation };
   update: { params: { id: string; title?: string; pinned?: boolean; archived?: boolean; projectId?: string | null }; result: LocalConversation };
@@ -183,6 +187,7 @@ export const LOCAL_CONVERSATION_METHODS = {
   providers: true,
   list: true,
   read: true,
+  markRead: true,
   create: true,
   fork: true,
   update: true,

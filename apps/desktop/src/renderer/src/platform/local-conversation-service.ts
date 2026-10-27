@@ -22,7 +22,7 @@ export function localProviderId(target: string): LocalProviderId {
 export function projectLocalSession(entry: LocalConversation, scope: LocalConversationScope): ChatSession {
   const last = entry.messages.at(-1);
   return { id: entry.id, workspace_id: scope.workspaceId, creator_id: scope.userId, agent_id: localTargetId(entry.provider),
-    title: entry.title, status: entry.archived ? "archived" : "active", has_unread: false, pinned: entry.pinned, project_id: entry.projectId ?? null,
+    title: entry.title, status: entry.archived ? "archived" : "active", has_unread: entry.hasUnread === true, pinned: entry.pinned, project_id: entry.projectId ?? null,
     last_message: last ? { content: localMessageDisplayContent(last), role: last.role, created_at: last.createdAt } : null,
     created_at: entry.createdAt, updated_at: entry.updatedAt };
 }
@@ -48,6 +48,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   const scope: LocalConversationScope = { userId: options.userId, workspaceId: options.workspaceId };
   const cloud = createAgentGuiParentService(options);
   const listeners = new Set<(event: AgentGuiHostEvent) => void>();
+  const observedReplies = new Map<string, Map<string, string>>();
   const knownTurns = new Map<string, string>();
   const sending = new Set<string>();
   let disposed = false;
@@ -151,6 +152,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
         ...(attachments.length ? { attachments } : {}), ...(message.failed ? { failure_reason: "agent_error" } : {}) };
     }));
     assertCurrent();
+    observedReplies.set(id, new Map(entry.messages.filter((message) => message.role === "assistant").map((message) => [message.turnId, message.id])));
     if (failedFiles.size) {
       if (!attachmentFailures.has(id)) options.onShowMessage(chinese ? "部分附件暂时无法加载，会话正文已保留。" : "Some attachments could not be loaded. Conversation text is still available.", "warning");
       attachmentFailures.add(id);
@@ -276,7 +278,13 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       case "session.rename": return projectLocalSession(await local("update", { id: params.sessionId, title: params.title }), scope);
       case "session.pin": return projectLocalSession(await local("update", { id: params.sessionId, pinned: params.pinned }), scope);
       case "session.delete": throw new Error("Archive local conversations from the session list");
-      case "session.markRead": case "session.watch": return undefined;
+      case "session.markRead": {
+        const replies = observedReplies.get(params.sessionId);
+        const messageId = params.turnId ? replies?.get(params.turnId) : [...(replies?.values() ?? [])].at(-1);
+        if (messageId) await local("markRead", { id: params.sessionId, messageId });
+        return undefined;
+      }
+      case "session.watch": return undefined;
       case "session.send": {
         const entry = await read(params.sessionId);
         const refs = Array.isArray(params.references) ? params.references : [];

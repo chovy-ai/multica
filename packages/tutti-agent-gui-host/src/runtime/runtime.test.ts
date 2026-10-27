@@ -761,7 +761,7 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
     await vi.waitFor(() => expect(engine.getSnapshot().attentionReadState.partitionsByUserId[init.userId]?.hydrated).toBeTruthy());
     engine.dispatch({ type: "attention/read", userId: init.userId, agentSessionId: "server-session" });
     await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "session.markRead")).toHaveLength(1));
-    expect(data.request.mock.calls.find(([method]) => method === "session.markRead")?.[1]).toEqual({ sessionId: "server-session" });
+    expect(data.request.mock.calls.find(([method]) => method === "session.markRead")?.[1]).toEqual({ sessionId: "server-session", turnId: "server-task-1" });
     engine.dispatch({ type: "attention/read", userId: init.userId, agentSessionId: "server-session" });
     expect(data.request.mock.calls.filter(([method]) => method === "session.markRead")).toHaveLength(1);
   });

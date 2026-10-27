@@ -751,12 +751,12 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         await client.request("storage.write", { key: "attention-read-state-v1", value: JSON.stringify(attention) });
         const nextUnread = new Set([...attention.completed.unreadIds, ...attention.failed.unreadIds]);
         const read = new Set([...command.completed.readIds, ...command.failed.readIds, ...previousUnread.filter((id) => !nextUnread.has(id))]);
-        const sessionsToMark = new Set<string>();
+        const turnsToMark: { sessionId: string; turnId: string }[] = [];
         for (const completionId of read) {
-          const guiId = /^turn:([^:]+):[^:]+:(completed|failed)$/.exec(completionId)?.[1];
-          if (guiId) sessionsToMark.add(ledger.serverId(guiId));
+          const match = /^turn:([^:]+):([^:]+):(completed|failed)$/.exec(completionId);
+          if (match) turnsToMark.push({ sessionId: ledger.serverId(match[1]!), turnId: match[2]! });
         }
-        await Promise.all([...sessionsToMark].map((sessionId) => client.request("session.markRead", { sessionId })));
+        await Promise.all(turnsToMark.map((params) => client.request("session.markRead", params)));
         return undefined;
       }
       default: return unsupported(command.type);

@@ -24,6 +24,66 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   return { service, options };
 }
 describe("local conversation persistence and execution", () => {
+  it.each(["codex", "claude"] as const)("persists unread %s completions and acknowledges only the observed reply", async (provider) => {
+    const { service: initial, options } = await setup();
+    let service = initial;
+    const entry = await service.request(scope, "create", { provider });
+    const listing = async () => (await service.request(scope, "list", {})).find((row) => row.id === entry.id)!;
+    const complete = async () => {
+      await service.request(scope, "send", { id: entry.id, content: "hello" });
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns.at(-1)?.status).toBe("completed"));
+      return (await service.request(scope, "read", { id: entry.id })).messages.at(-1)!;
+    };
+    const first = await complete();
+    expect(await listing()).toMatchObject({ hasUnread: true, turns: [] });
+    await service.stop();
+    const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId);
+    cleanups.push(() => reopened.stop());
+    service = reopened;
+    expect((await reopened.request(scope, "list", {}))[0]?.hasUnread).toBe(true);
+    const before = (await listing()).updatedAt;
+    await service.request(scope, "markRead", { id: entry.id, messageId: first.id });
+    expect(await listing()).toMatchObject({ hasUnread: false, updatedAt: before });
+    const second = await complete();
+    await service.request(scope, "markRead", { id: entry.id, messageId: first.id });
+    expect((await listing()).hasUnread).toBe(true);
+    await expect(service.request(scope, "markRead", { id: entry.id, messageId: "unobserved" })).rejects.toThrow();
+    await service.request(scope, "markRead", { id: entry.id, messageId: second.id });
+    await service.request(scope, "markRead", { id: entry.id, messageId: first.id });
+    expect((await listing()).hasUnread).toBe(false);
+    await service.flush();
+    const restored = new LocalConversationService(options); restored.setCurrentUser(scope.userId);
+    cleanups.push(() => restored.stop());
+    expect((await restored.request(scope, "list", {}))[0]?.hasUnread).toBe(false);
+  });
+  it.each(["failed", "cancelled"] as const)("does not show a success unread dot for a %s turn", async (status) => {
+    const { service } = await setup();
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    const sent = await service.request(scope, "remoteBegin", { id: entry.id, content: "hello", agents: [{ id: "agent", name: "Agent" }] });
+    await service.request(scope, "remoteUpdate", { id: entry.id, turnId: sent.turns[0]!.id, output: "Stopped", status });
+    expect((await service.request(scope, "list", {}))[0]?.hasUnread).toBe(false);
+  });
+  it("treats legacy history as read and raises attention only for a new completed reply", async () => {
+    const { service, options } = await setup();
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    await service.request(scope, "send", { id: entry.id, content: "Old history" });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+    await service.stop();
+    const directory = (await readdir(options.root)).find((name) => name.length === 64)!;
+    const path = join(options.root, directory, "conversations.json");
+    const saved = JSON.parse(await readFile(path, "utf8"));
+    delete saved.sessions[0].lastReadMessageId;
+    await writeFile(path, JSON.stringify(saved));
+    const restored = new LocalConversationService(options); restored.setCurrentUser(scope.userId);
+    cleanups.push(() => restored.stop());
+    expect((await restored.request(scope, "list", {}))[0]?.hasUnread).toBe(false);
+    const next = await restored.request(scope, "remoteBegin", { id: entry.id, content: "New run", agents: [{ id: "agent", name: "Agent" }] });
+    expect((await restored.request(scope, "list", {}))[0]?.hasUnread).toBe(false);
+    await restored.request(scope, "remoteUpdate", { id: entry.id, turnId: next.turns[0]!.id, output: "New reply", status: "completed" });
+    expect((await restored.request(scope, "list", {}))[0]?.hasUnread).toBe(true);
+    await expect(restored.request({ ...scope, workspaceId: "other-workspace" }, "markRead", { id: entry.id, messageId: "message" })).rejects.toThrow("not found");
+    await expect(restored.request({ ...scope, userId: "other-user" }, "markRead", { id: entry.id, messageId: "message" })).rejects.toThrow("no longer active");
+  });
   it("uses the pool only for Codex dialogue turns and closes it on account change and shutdown", async () => {
     const { service, options } = await setup();
     const pools: { run: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }[] = [];

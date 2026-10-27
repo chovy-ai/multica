@@ -23,7 +23,7 @@ import { useLocale } from "@multica/views/i18n";
 import { ProviderLogo } from "@multica/views/runtimes/provider-logo";
 import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
-import type { LocalConversation, LocalConversationMethods, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationClient, LocalConversationScope, LocalConversationMethods, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
 import { localMessageDisplayContent } from "@multica/tutti-agent-gui-host/local-protocol";
 import { createLocalConversationParentService, localConversationKey, localTargetId } from "../platform/local-conversation-service";
 import { groupLocalConversations, projectForDirectory } from "../platform/local-conversation-projects";
@@ -283,7 +283,7 @@ export function LocalConversationFlowPage() {
     }}>
     <AppLink ref={(node) => { if (node) sessionLinks.current.set(entry.id, node); else sessionLinks.current.delete(entry.id); }} href={`${paths.conversationFlow()}?${new URLSearchParams({ provider: entry.provider, session: entry.id })}`} aria-current={selectedId === entry.id ? "true" : undefined}
       onClick={(event) => { event.preventDefault(); select(entry.id, entry.provider); }}
-      className={`flex min-w-0 items-start gap-3 rounded-lg px-3 py-3 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring ${entryRunning || background.length ? "pr-16" : `group-hover:pr-11 group-focus-within:pr-11 ${updatingId === entry.id ? "pr-11" : ""}`} ${selectedId === entry.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}>
+      className={`flex min-w-0 items-start gap-3 rounded-lg px-3 py-3 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring ${entryRunning || background.length || entry.hasUnread ? "pr-16" : `group-hover:pr-11 group-focus-within:pr-11 ${updatingId === entry.id ? "pr-11" : ""}`} ${selectedId === entry.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}>
       <span aria-hidden="true" className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/50 text-foreground"><ProviderLogo provider={entry.provider} className="size-5" /></span>
       <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5">{entry.pinned && <Pin aria-label={labels.pinned} className="size-3 shrink-0 text-muted-foreground" />}<span className="truncate font-medium">{entry.title}</span></span><span className="mt-0.5 block truncate text-caption text-muted-foreground">{entry.provider === "codex" ? "Codex" : "Claude Code"} · {localMessageDisplayContent(entry.messages.at(-1)) || labels.storage}</span></span>
     </AppLink>
@@ -297,6 +297,7 @@ export function LocalConversationFlowPage() {
         </DropdownMenu>
       </div>
       {entryRunning && <Spinner aria-label={chinese ? `会话运行中：${entry.title}` : `Conversation running: ${entry.title}`} className="shrink-0 text-muted-foreground motion-reduce:animate-none" />}
+      {!entryRunning && entry.hasUnread === true && selectedId !== entry.id && <span role="status" aria-label={chinese ? `未读回复：${entry.title}` : `Unread reply: ${entry.title}`} className="size-2 shrink-0 rounded-full bg-info" />}
       {!entryRunning && background.length > 0 && <span role="status" aria-label={chinese ? `后台运行中：${entry.title}（${background.length}）` : `Background tasks: ${entry.title} (${background.length})`} title={`${chinese ? "后台运行中" : "Running in background"}\n${background.map((task) => task.description).join("\n")}`} className="flex shrink-0 items-center text-muted-foreground"><Clock3 aria-hidden="true" className="size-4" /></span>}
     </div>
     </ContextMenuTrigger>
@@ -414,6 +415,7 @@ export function LocalConversationFlowPage() {
             {selected && <Button variant="ghost" size="sm" className="max-w-48" aria-label={labels.directory} disabled={selected.messages.length > 0} title={`${automaticDirectory ? directoryName : selected.cwd}${selected.messages.length ? ` · ${labels.directoryLocked}` : ""}`} onClick={() => { void client.request(scope, "directory", { id: selected.id }).then(() => qc.invalidateQueries({ queryKey: localConversationKey(scope) })).catch(report); }}><FolderOpen className="size-4" /><span className="truncate">{directoryName}</span></Button>}
             <IconButton aria-expanded={sideOpen} label={sideOpen ? (chinese ? "关闭右侧面板" : "Close right workspace") : (chinese ? "打开右侧面板" : "Open right workspace")} onClick={() => sideWorkspace.current?.toggle()}><PanelRightOpen /></IconButton>
           </div>
+          <LocalConversationReadReceipt client={client} scope={scope} entry={selected} active={active && mainVisible && (!compact || !showList)} />
           <LocalRuntimeNotice scope={scope} chinese={chinese} />
           <TuttiAgentGuiPanel locateRequest={locateRequest ?? undefined} restoreDraftRequest={referenceDraft} key={`${workspace.id}:${userId}`} serviceFactory={factory} workspaceId={workspace.id} workspaceSlug={slug} userId={userId}
             activeSessionId={selectedId} selectedAgentId={localTargetId(provider)} active={active && mainVisible && (!compact || !showList)} composerFocusSequence={focusSequence || undefined}
@@ -425,4 +427,28 @@ export function LocalConversationFlowPage() {
       </ResizablePanel>
     </ResizablePanelGroup>
   </div>;
+}
+
+function LocalConversationReadReceipt({ client, scope, entry, active }: { client: LocalConversationClient; scope: LocalConversationScope; entry?: LocalConversation; active: boolean }) {
+  const qc = useQueryClient();
+  const id = entry?.id;
+  const messageId = entry?.messages.at(-1)?.id;
+  const unread = entry?.hasUnread === true;
+  const { userId, workspaceId } = scope;
+  useEffect(() => {
+    if (!active || !unread || !id || !messageId) return;
+    let pending = false;
+    const markRead = () => {
+      if (pending || document.visibilityState !== "visible" || !document.hasFocus()) return;
+      pending = true;
+      void client.request({ userId, workspaceId }, "markRead", { id, messageId })
+        .then(() => qc.invalidateQueries({ queryKey: localConversationKey({ userId, workspaceId }) }))
+        .catch(() => { pending = false; });
+    };
+    markRead();
+    window.addEventListener("focus", markRead);
+    document.addEventListener("visibilitychange", markRead);
+    return () => { window.removeEventListener("focus", markRead); document.removeEventListener("visibilitychange", markRead); };
+  }, [client, qc, userId, workspaceId, id, messageId, active, unread]);
+  return null;
 }

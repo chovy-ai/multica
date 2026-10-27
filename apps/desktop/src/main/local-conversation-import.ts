@@ -69,7 +69,7 @@ export class LocalConversationImport {
           if (!branch.messages.length || branch.id !== branchId || branch.provider !== provider) throw new Error("Could not read the independent history branch");
           const entry: LocalConversation = { id: randomUUID(), title: source.title, provider, cwd: source.cwd, providerSessionId: branchId,
             importedFrom: { provider, sessionId: sourceId }, projectId, pinned: false, archived: false, model: null,
-            createdAt: source.createdAt, updatedAt: source.updatedAt, messages: branch.messages, turns: branch.turns };
+            createdAt: source.createdAt, updatedAt: source.updatedAt, lastReadMessageId: branch.messages.at(-1)?.id ?? null, messages: branch.messages, turns: branch.turns };
           rows.set(entry.id, entry);
           try { await this.options.save(scope); } catch (error) { rows.delete(entry.id); throw error; }
           this.check(scope, signal); this.options.notify(scope, entry.id);
