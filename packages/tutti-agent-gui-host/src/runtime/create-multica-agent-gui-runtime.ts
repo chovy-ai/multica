@@ -14,13 +14,14 @@ import {
 import type { AgentGUIRuntime } from "@tutti-os/agent-gui";
 import { extractRichTextMentionsFromContent } from "@tutti-os/ui-rich-text/core";
 import { contentReferencesAttachment } from "@multica/core/types/attachment-url";
-import type { Attachment, ChatSession } from "@multica/core/types";
+import type { Attachment } from "@multica/core/types";
 import type {
   AgentGuiExecutionTarget,
   AgentGuiContextReference,
   AgentGuiInitSnapshot,
   AgentGuiRpcClient,
   AgentGuiSessionDetail,
+  AgentGuiSession,
   AgentGuiWorkspaceState,
   AgentGuiTaskMessagePayload,
 } from "../protocol";
@@ -79,7 +80,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
   const eventListeners = new Set<(event: unknown) => void>();
   const sendPromises = new Map<string, Promise<unknown>>();
   const pendingIdentities = new Map<string, { promise: Promise<string>; resolve(id: string): void; reject(error: unknown): void }>();
-  let workspace: AgentGuiWorkspaceState = { agents: init.agents, executionTargets: init.executionTargets, local: init.local, sessions: init.sessions, pendingTasks: init.pendingTasks };
+  let workspace: AgentGuiWorkspaceState = { agents: init.agents, executionTargets: init.executionTargets, local: init.local, sessions: init.sessions, pendingTasks: init.pendingTasks, folderProjects: init.folderProjects };
   let workspaceRevision = 0;
   let workspaceLoad: Promise<AgentActivitySnapshot> | null = null;
   let workspaceDirty = false;
@@ -419,7 +420,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         : { state: "blocked", reason: "agent_capability_unavailable" },
     });
   }
-  function replaceMetadata(session: ChatSession): AgentActivitySession {
+  function replaceMetadata(session: AgentGuiSession): AgentActivitySession {
     const id = ledger.guiId(session.id);
     const detail = details.get(id);
     if (detail) detail.session = session;
@@ -619,7 +620,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     await modelHydration;
     await modelWrites.catch(() => {});
     const agent = assertInvoke(input.agentTargetId);
-    if (input.initialGoalControl || input.initialTuttiModeActivation || input.isolation || input.cwd) unsupported("Goal, Tutti mode and local project activation");
+    if (input.initialGoalControl || input.initialTuttiModeActivation || input.isolation || (!init.local && input.cwd)) unsupported("Goal, Tutti mode and local project activation");
     if (input.settings && Object.entries(input.settings).some(([key, value]) => key !== "model" && !(init.local && key === "reasoningEffort") && value != null && value !== false)) unsupported("Non-model conversation settings");
     let serverId = ledger.serverId(input.agentSessionId);
     if (serverId === input.agentSessionId) {
@@ -632,7 +633,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       pendingIdentities.set(input.agentSessionId, { promise: identity, resolve: resolveIdentity, reject: rejectIdentity });
       try {
         await persist();
-        const session = await client.request("session.create", { agentId: input.agentTargetId, title: input.title }, { signal });
+        const session = await client.request("session.create", { agentId: input.agentTargetId, title: input.title, ...(init.local && input.cwd ? { cwd: input.cwd } : {}) }, { signal });
         ledger.bind(input.agentSessionId, session.id);
         serverId = session.id;
         const model = selectedModel(agent.id) ?? (input.settings?.model && input.settings.model !== agent.model ? input.settings.model : null);

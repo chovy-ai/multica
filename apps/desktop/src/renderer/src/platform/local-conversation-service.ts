@@ -2,13 +2,16 @@ import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import { getLocalConversationClient } from "./local-conversation-client";
 import { api } from "@multica/core/api";
 import { chatKeys } from "@multica/core/chat/queries";
-import type { AgentTask, Attachment, ChatSession } from "@multica/core/types";
+import type { AgentTask, Attachment } from "@multica/core/types";
 import { createAgentGuiParentService, type ParentServiceOptions } from "@multica/views/conversation-flow/service";
 import type { AgentGuiHostEvent, AgentGuiRpcMethod, AgentGuiRpcMethods, AgentGuiSessionDetail, AgentGuiWorkspaceState } from "@multica/tutti-agent-gui-host/protocol";
 import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationScope, LocalConversationTurn, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
 import { HTML_PREVIEW_INSTRUCTIONS } from "@multica/tutti-agent-gui-host/html-preview";
 import { sideExecutionContent } from "@multica/tutti-agent-gui-host/side-context";
 import { isTaskCreationReference, localMessageDisplayContent } from "@multica/tutti-agent-gui-host/local-protocol";
+import { isAutomaticLocalDirectory } from "@multica/tutti-agent-gui-host/local-projects";
+import type { AgentGuiSession } from "@multica/tutti-agent-gui-host/protocol";
+import { projectForDirectory } from "./local-conversation-projects";
 
 export const localConversationKey = (scope: LocalConversationScope) => ["local-conversations", scope.userId, scope.workspaceId] as const;
 export const localTargetId = (provider: string) => `local:${provider}`;
@@ -19,11 +22,12 @@ export function localProviderId(target: string): LocalProviderId {
 }
 
 /** Translate only at the imported GUI boundary; these records never enter cloud APIs. */
-export function projectLocalSession(entry: LocalConversation, scope: LocalConversationScope): ChatSession {
+export function projectLocalSession(entry: LocalConversation, scope: LocalConversationScope): AgentGuiSession {
   const last = entry.messages.at(-1);
   return { id: entry.id, workspace_id: scope.workspaceId, creator_id: scope.userId, agent_id: localTargetId(entry.provider),
     title: entry.title, status: entry.archived ? "archived" : "active", has_unread: false, pinned: entry.pinned, project_id: entry.projectId ?? null,
     last_message: last ? { content: localMessageDisplayContent(last), role: last.role, created_at: last.createdAt } : null,
+    localDirectory: { cwd: entry.cwd, projectPath: isAutomaticLocalDirectory(entry.cwd) ? null : entry.cwd },
     created_at: entry.createdAt, updated_at: entry.updatedAt };
 }
 export function projectLocalTurn(entry: LocalConversation, turn: LocalConversationTurn): AgentTask {
@@ -117,11 +121,11 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   }
   function scheduleRemote(): void { if (!timer && !polling && !disposed) timer = setTimeout(() => { timer = undefined; void pollRemote().catch(() => {}); }, 100); }
   async function load(): Promise<AgentGuiWorkspaceState> {
-    const [remote, providers, sessions] = await Promise.all([remoteWorkspace(), local("providers", {}), local("list", {})]);
+    const [remote, providers, sessions, folderProjects] = await Promise.all([remoteWorkspace(), local("providers", {}), local("list", {}), local("folderProjects", {})]);
     assertCurrent(); scheduleRemote();
     return { local: true, queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: remote.agents, movedQueueRequests: sessions.flatMap((entry) => entry.side ? [entry.side.requestId] : []),
       executionTargets: providers.map((entry) => ({ id: localTargetId(entry.id), name: entry.name, provider: entry.id, iconUrl: "", canInvoke: entry.available, canFork: true, runtimeBound: entry.available, runtimeOnline: entry.available, unavailableReason: entry.available ? undefined : "未在本机安装" })),
-      sessions: sessions.map((entry) => projectLocalSession(entry, scope)),
+      sessions: sessions.map((entry) => projectLocalSession(entry, scope)), folderProjects,
       pendingTasks: sessions.flatMap((entry) => entry.turns.filter((turn) => turn.status === "running").map((turn) => ({ task_id: turn.id, status: "running", chat_session_id: entry.id }))),
     };
   }
@@ -272,7 +276,21 @@ export function createLocalConversationParentService(options: ParentServiceOptio
         assertCurrent();
         return projectLocalSession(entry, scope);
       }
-      case "session.create": return projectLocalSession(await local("create", { provider: localProviderId(params.agentId), title: params.title }), scope);
+      case "session.create": {
+        let directory: { folderProjectId?: string; directorySourceId?: string } = {};
+        if (params.cwd) {
+          const projects = await local("folderProjects", {});
+          const folder = projectForDirectory(projects, params.cwd);
+          if (folder) directory = { folderProjectId: folder.id };
+          else {
+            const sessions = await local("list", {});
+            const source = sessions.find((entry) => entry.cwd === params.cwd && !isAutomaticLocalDirectory(entry.cwd));
+            if (!source) throw new Error("Local project directory not found in this workspace");
+            directory = { directorySourceId: source.id };
+          }
+        }
+        return projectLocalSession(await local("create", { provider: localProviderId(params.agentId), title: params.title, ...directory }), scope);
+      }
       case "session.rename": return projectLocalSession(await local("update", { id: params.sessionId, title: params.title }), scope);
       case "session.pin": return projectLocalSession(await local("update", { id: params.sessionId, pinned: params.pinned }), scope);
       case "session.delete": throw new Error("Archive local conversations from the session list");

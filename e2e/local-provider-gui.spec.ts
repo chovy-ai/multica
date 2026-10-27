@@ -1,16 +1,16 @@
 import "./env";
 import { expect, test } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
-import type { AgentGuiInitSnapshot } from "../packages/tutti-agent-gui-host/src/protocol";
-import type { ChatSession } from "../packages/core/types";
+import type { AgentGuiInitSnapshot, AgentGuiSession } from "../packages/tutti-agent-gui-host/src/protocol";
 
 test("restores local provider drafts and reopens references after switching conversations", async ({ page }) => {
   const at = "2026-10-24T10:00:00Z";
-  const session = { id: "local-test-conversation", workspace_id: "test-workspace", creator_id: "test-user", agent_id: "local:codex", title: "Local draft", status: "active", created_at: at, updated_at: at, has_unread: false } as ChatSession;
+  const session = { id: "local-test-conversation", workspace_id: "test-workspace", creator_id: "test-user", agent_id: "local:codex", title: "Local draft", status: "active", created_at: at, updated_at: at, has_unread: false, localDirectory: { cwd: "/example/project", projectPath: "/example/project" } } as AgentGuiSession;
   const claudeSession = { ...session, id: "local-claude-conversation", agent_id: "local:claude", title: "Existing Claude conversation" };
   const snapshot: AgentGuiInitSnapshot = {
     workspaceId: session.workspace_id, workspaceSlug: "test", userId: session.creator_id,
     locale: "en", theme: "dark", local: true, hostActive: true, hostVisible: true,
+    folderProjects: [{ id: "project", title: "Project alpha", path: "/example/project", createdAt: at }],
     agents: [], sessions: [session, claudeSession, { ...claudeSession, id: "delayed-claude", title: "Delayed conversation" }], activeSessionId: session.id, selectedAgentId: "local:codex",
     executionTargets: ["codex", "claude"].map((provider) => ({ id: `local:${provider}`, provider, name: provider === "codex" ? "Codex" : "Claude Code", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true })),
   };
@@ -98,6 +98,7 @@ test("restores local provider drafts and reopens references after switching conv
   const provider = gui.getByRole("button", { name: "Local provider", exact: true });
   const model = gui.getByTestId("multica-model-picker");
   await expect(editor).toBeVisible({ timeout: 30_000 });
+  const project = gui.locator("[data-workspace-user-project-trigger-label]:visible");
   await page.getByRole("button", { name: "New Codex draft" }).click();
   await expect(gui.getByRole("heading", { level: 2 })).toBeVisible();
   await editor.fill("HOME_DRAFT_MUST_SURVIVE_PROVIDER_SWITCH");
@@ -163,6 +164,7 @@ test("restores local provider drafts and reopens references after switching conv
   await expect(page.locator("body")).toHaveAttribute("data-selected-provider", "local:claude");
   await expect(provider).toContainText("Claude Code");
   await expect(editor).toContainText("LOCAL_DRAFT_MUST_SURVIVE_PROVIDER_SWITCH");
+  await expect(project).toHaveText("Project alpha");
   await expect(editor).toContainText("Existing Claude conversation");
   await expect(editor).toContainText("provider-switch.txt");
   await editor.press("End");
@@ -170,6 +172,7 @@ test("restores local provider drafts and reopens references after switching conv
   await provider.click();
   await gui.getByRole("menuitemradio", { name: "Codex", exact: true }).click();
   await expect(provider).toContainText("Codex");
+  await expect(project).toHaveText("Project alpha");
   await expect(editor).toContainText("EDITED_AFTER_PROVIDER_SWITCH");
   await expect(editor).toContainText("provider-switch.txt");
   await provider.click();

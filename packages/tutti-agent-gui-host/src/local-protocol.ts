@@ -151,7 +151,7 @@ export interface LocalConversationMethods {
   providers: { params: Record<string, never>; result: LocalProvider[] };
   list: { params: Record<string, never>; result: LocalConversation[] };
   read: { params: { id: string }; result: LocalConversation };
-  create: { params: { provider: LocalProviderId; title?: string; projectId?: string | null; folderProjectId?: string | null }; result: LocalConversation };
+  create: { params: { provider: LocalProviderId; title?: string; projectId?: string | null; folderProjectId?: string | null; directorySourceId?: string }; result: LocalConversation };
   fork: { params: { id: string; turnId?: string; requestId?: string }; result: LocalConversation };
   update: { params: { id: string; title?: string; pinned?: boolean; archived?: boolean; projectId?: string | null }; result: LocalConversation };
   directory: { params: { id: string }; result: LocalConversation };

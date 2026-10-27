@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { QueryClient } from "@tanstack/react-query";
@@ -31,11 +31,13 @@ beforeEach(() => {
   mock.api.listTaskMessages.mockResolvedValue([]);
 });
 async function setup(getSelectionIntent?: () => string) {
-  const root = await mkdtemp(join(tmpdir(), "multica-local-bridge-"));
+  const base = await realpath(await mkdtemp(join(tmpdir(), "multica-local-bridge-")));
+  const root = join(base, "local-conversations");
   const listeners = new Set<Parameters<LocalConversationClient["subscribe"]>[0]>();
   const run = vi.fn<typeof runLocalProvider>(async () => ({ output: "LOCAL_RESULT", sessionId: "native-thread" }));
   const usage = { read: vi.fn(async () => ({ provider: "claude" as const, context: { usedTokens: 120, limitTokens: 1000, model: null, updatedAt: null }, account: { status: "unavailable" as const, plan: null, windows: [], updatedAt: null } })), reset: vi.fn() };
-  const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, find: async () => "/test/fake", chooseDirectory: async () => null, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)) });
+  const chooseDirectory = vi.fn<() => Promise<string | null>>(async () => null);
+  const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, find: async () => "/test/fake", chooseDirectory, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)) });
   service.setCurrentUser("user");
   const client: LocalConversationClient = { request: (scope, method, params) => service.request(scope, method, params), subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -48,10 +50,47 @@ async function setup(getSelectionIntent?: () => string) {
     onSelectSession: vi.fn(), onLocalSelect, onOpenSide, onOpenResource, getSelectionIntent, onOpenTask: vi.fn(), onShowMessage,
     storage: { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: (key) => { values.delete(key); } },
   }, client);
-  cleanups.push(async () => { bridge.dispose(); qc.clear(); await service.stop(); await rm(root, { recursive: true, force: true }); });
-  return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage };
+  cleanups.push(async () => { bridge.dispose(); qc.clear(); await service.stop(); await rm(base, { recursive: true, force: true }); });
+  return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage, base, chooseDirectory };
 }
 describe("local providers and official agent invocation routing", () => {
+  it.each(["codex", "claude"] as const)("keeps the project directory through %s creation, execution and history reload", async (provider) => {
+    const { bridge, service, run, base, chooseDirectory } = await setup();
+    const cwd = join(base, "project"); await mkdir(cwd);
+    chooseDirectory.mockResolvedValue(cwd);
+    const scope = { userId: "user", workspaceId: "ws" };
+    const folder = await service.request(scope, "folderProjectAdd", {});
+    expect((await bridge.load()).folderProjects).toEqual([folder]);
+    const session = await bridge.request("session.create", { agentId: `local:${provider}`, cwd });
+    expect(session.localDirectory).toEqual({ cwd, projectPath: cwd });
+    await bridge.request("session.send", { sessionId: session.id, content: "Read the selected directory" });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0]).toMatchObject({ cwd, provider });
+    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: session.id })).pending).toEqual({}));
+    expect((await bridge.request("session.load", { sessionId: session.id })).session.localDirectory).toEqual({ cwd, projectPath: cwd });
+    expect((await service.request(scope, "read", { id: session.id })).cwd).toBe(cwd);
+    expect((await bridge.load()).sessions.find((entry) => entry.id === session.id)?.localDirectory?.projectPath).toBe(cwd);
+    const noProject = await bridge.request("session.create", { agentId: `local:${provider}` });
+    expect(noProject.localDirectory?.projectPath).toBeNull();
+    expect(noProject.localDirectory?.cwd).not.toBe(cwd);
+    await expect(bridge.request("session.create", { agentId: `local:${provider}`, cwd: "/unknown-directory" })).rejects.toThrow("not found in this workspace");
+    expect(mock.api.createChatSession).not.toHaveBeenCalled();
+  });
+
+  it("inherits manually selected directories by a scoped source and rejects missing or changed directories", async () => {
+    const { bridge, service, base, chooseDirectory } = await setup();
+    const cwd = join(base, "manual"); await mkdir(cwd);
+    const scope = { userId: "user", workspaceId: "ws" };
+    const original = await bridge.request("session.create", { agentId: "local:codex" });
+    chooseDirectory.mockResolvedValue(cwd);
+    await service.request(scope, "directory", { id: original.id });
+    const switched = await bridge.request("session.create", { agentId: "local:claude", cwd });
+    expect(switched.localDirectory).toEqual({ cwd, projectPath: cwd });
+    await expect(service.request({ ...scope, workspaceId: "other" }, "create", { provider: "claude", directorySourceId: original.id })).rejects.toThrow("not found in this workspace");
+    await rm(cwd, { recursive: true });
+    await expect(bridge.request("session.create", { agentId: "local:codex", cwd })).rejects.toThrow();
+    expect((await bridge.load()).sessions).toHaveLength(2);
+  });
   it.each(["codex", "claude"] as const)("keeps %s thinking settings through the renderer bridge and a queued side conversation", async (provider) => {
     const { bridge, service, run } = await setup();
     const session = await bridge.request("session.create", { agentId: `local:${provider}` });

@@ -110,13 +110,13 @@ import { useOptionalAgentHostApi } from "../../../agentActivityHost";`,
   {
     path: "/view/useAgentGUIDetailSideChrome.tsx",
     original: '        agentSessionId: baseComposerProps.agentSessionId,',
-    // Preserve the complete draft across the session-to-home provider handoff.
-    replacement: '        agentSessionId: baseComposerProps.agentSessionId,\n        draftContent: baseComposerProps.draftContent,\n        onDraftContentChange: baseComposerProps.onDraftContentChange,',
+    // Preserve the draft and directory across the session-to-home provider handoff.
+    replacement: '        agentSessionId: baseComposerProps.agentSessionId,\n        draftContent: baseComposerProps.draftContent,\n        onDraftContentChange: baseComposerProps.onDraftContentChange,\n        onProjectPathChange: baseComposerProps.onProjectPathChange,',
   },
   {
     path: "/view/useAgentGUIDetailSideChrome.tsx",
     original: '      baseComposerProps.agentSessionId,',
-    replacement: '      baseComposerProps.agentSessionId,\n      baseComposerProps.draftContent,\n      baseComposerProps.onDraftContentChange,',
+    replacement: '      baseComposerProps.agentSessionId,\n      baseComposerProps.draftContent,\n      baseComposerProps.onDraftContentChange,\n      baseComposerProps.onProjectPathChange,',
   },
   {
     path: "/agentGuiNode/AgentQueuedPromptPanel.tsx",
