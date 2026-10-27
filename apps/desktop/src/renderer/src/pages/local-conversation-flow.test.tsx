@@ -497,7 +497,7 @@ describe("Side conversations in the main session list", () => {
     const fork = { ...source, id: "fork", title: "Independent fork", cwd: "/other", forkedFrom: source.id };
     const archived = { ...source, id: "archived", title: "Archived main", archived: true };
     const rows = [source, fork, archived, side, { ...side, id: "side-draft", title: "Side draft", messages: [] }, { ...side, id: "side-archive", title: "Side archive", archived: true }];
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? rows : [{ id: provider, available: true }]);
+    mock.request.mockImplementation(async (_scope, method, params) => method === "list" ? rows : method === "read" ? rows.find((entry) => entry.id === params.id) : [{ id: provider, available: true }]);
     localStorage.setItem("multica-side-workspace:user:workspace:session:source", JSON.stringify({ tabs: [{ id: "side-tab", kind: "side", sessionId: side.id }], selected: "side-tab", open: true }));
     render(page());
     const list = within(screen.getByTestId("local-conversation-sessions"));
@@ -506,7 +506,7 @@ describe("Side conversations in the main session list", () => {
     expect(list.queryAllByRole("link", { name: /Side/ })).toHaveLength(0);
     expect(within(list.getByRole("button", { name: "Main project" })).getByText("1")).toBeInTheDocument();
     expect(within(list.getByRole("button", { name: "未分配项目" })).getByText("1")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "旁支 · Side exploration" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /旁支 · Side exploration ·/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Quoted source text")).toBeVisible();
     fireEvent.change(list.getByRole("textbox", { name: "搜索会话" }), { target: { value: "Side" } });
     expect(list.getByText("没有匹配的会话")).toBeVisible();

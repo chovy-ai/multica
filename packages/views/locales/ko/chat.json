@@ -3,6 +3,26 @@
     "local_conversation": {
       "waiting_for_answer": "답변을 기다리고 있습니다",
       "waiting_for_answer_label": "답변을 기다리고 있습니다: {{title}}"
+    },
+    "side_activity": {
+      "idle": "시작 전",
+      "running": "실행 중",
+      "waiting": "답변 대기 중",
+      "completed": "완료",
+      "failed": "실패",
+      "cancelled": "취소됨",
+      "loading": "활동 불러오는 중...",
+      "unavailable": "활동을 사용할 수 없음",
+      "load_failed": "작업 요약을 불러오지 못했습니다.",
+      "retry": "다시 시도",
+      "first_output": "첫 출력을 기다리는 중...",
+      "thinking": "생각하는 중...",
+      "using_tool": "{{tool}} 사용 중",
+      "tool_progress": "도구: {{completed}}/{{total}}",
+      "summary": "작업 요약",
+      "partial_output": "최근 출력",
+      "no_output": "저장된 텍스트 출력이 없습니다.",
+      "finished_tool": "{{tool}} 완료"
     }
   },
   "page": {

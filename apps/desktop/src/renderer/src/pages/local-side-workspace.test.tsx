@@ -3,17 +3,20 @@ import { createRef } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { LocalConversation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
 import { LocalSideWorkspace, type SideWorkspaceHandle } from "./local-side-workspace";
+import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 
+vi.mock("@multica/views/i18n", () => ({ useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: Record<string, string | number>) => selector(chat).replace(/{{(\w+)}}/g, (_, key) => String(options?.[key] ?? "")) }) }));
 vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: ({ activeSessionId, active }: { activeSessionId: string; active: boolean }) => <textarea aria-label={`Side draft ${activeSessionId}`} data-active={String(active)} /> }));
 const scope = { userId: "side-user", workspaceId: "side-workspace" };
 let queryClient: QueryClient;
 let sessions: LocalConversation[];
 let request: ReturnType<typeof vi.fn<(scope: unknown, method: string, params: Record<string, unknown>) => Promise<unknown>>>;
 const preview = { request: vi.fn(), subscribe: vi.fn(() => () => {}) };
+const changes = new Set<(scope: LocalConversationScope, id: string) => void>();
 beforeEach(() => {
-  localStorage.clear(); vi.clearAllMocks();
+  localStorage.clear(); vi.clearAllMocks(); changes.clear();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   sessions = [{ id: "main", provider: "codex", title: "Main conversation", cwd: "/project", model: "main-model", messages: [], turns: [], createdAt: "2026-10-24", updatedAt: "2026-10-24", archived: false, pinned: false }];
@@ -26,7 +29,7 @@ beforeEach(() => {
     return undefined;
   });
   preview.request.mockImplementation(async (_scope, command) => command.action === "close" || command.action === "hide" ? null : { id: command.id, url: command.url, title: "Example", loading: false, canGoBack: false, canGoForward: false });
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: () => () => {} }, resourcePreview: preview, openExternal: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: (listener: (scope: LocalConversationScope, id: string) => void) => { changes.add(listener); return () => changes.delete(listener); } }, resourcePreview: preview, openExternal: vi.fn() } });
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {
@@ -49,6 +52,71 @@ it("creates a Side without replacing the main draft, retains its draft when clos
   await waitFor(() => expect(side).toHaveAttribute("data-active", "false"));
   ref.current!.toggle();
   expect(await screen.findByRole("textbox", { name: "Side draft new-side" })).toBe(side); expect(side).toHaveValue("Keep side text");
+});
+it("shows a running Side before its first output and retains the result after reopening", async () => {
+  const side: LocalConversation = { ...sessions[0]!, id: "working-side", title: "Main conversation · Side", side: { sourceId: "main", requestId: "work", context: [] },
+    turns: [{ id: "work", status: "running" as const, createdAt: "2026-10-24", events: [] }] };
+  sessions.push(side);
+  const view = setup();
+  act(() => view.ref.current!.openSide(side.id));
+  expect(await screen.findByRole("tab", { name: /旁支.*运行中/ })).toHaveAttribute("aria-busy", "true");
+  expect(await screen.findByText("正在等待首次输出...")).toBeVisible();
+  const base = request.getMockImplementation()!;
+  const done: LocalConversation = { ...side, updatedAt: "2026-10-25", turns: [{ ...side.turns[0]!, status: "completed" }], messages: [{ id: "answer", turnId: "work", role: "assistant", content: "已检查标签，并验证两种主题。", createdAt: "2026-10-25" }] };
+  request.mockImplementation((scope, method, params) => method === "read" && params.id === side.id ? Promise.resolve(done) : base(scope, method, params));
+  sessions[sessions.indexOf(side)] = { ...done, turns: [] };
+  await act(async () => { changes.forEach((listener) => listener(scope, side.id)); });
+  expect(await screen.findByRole("tab", { name: /旁支.*已完成/ })).toHaveAttribute("aria-busy", "false");
+  expect(screen.getByText("工作摘要")).toBeVisible();
+  expect(screen.getAllByText("已检查标签，并验证两种主题。")[0]).toBeVisible();
+  expect(screen.queryByText("正在等待首次输出...")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "关闭右侧面板" }));
+  act(() => view.ref.current!.toggle());
+  expect(await screen.findByText("工作摘要")).toBeVisible();
+  view.unmount(); setup();
+  expect(await screen.findByText("工作摘要")).toBeVisible();
+});
+it("keeps each Side's activity separate across tab and main conversation switches", async () => {
+  const a: LocalConversation = { ...sessions[0]!, id: "side-a", title: "A", turns: [{ id: "a", status: "running", events: [], createdAt: "2026-10-24" }] };
+  const b: LocalConversation = { ...sessions[0]!, id: "side-b", title: "B", turns: [{ id: "b", status: "cancelled", events: [{ seq: 1, type: "text", content: "B 的部分输出", created_at: "2026-10-24" }], createdAt: "2026-10-24" }] };
+  const other = { ...sessions[0]!, id: "other-main" };
+  sessions.push(a, b, other);
+  const view = setup();
+  act(() => { view.ref.current!.openSide(a.id); view.ref.current!.openSide(b.id); });
+  expect(await screen.findByRole("tab", { name: "旁支 · A · 运行中" })).toHaveAttribute("aria-busy", "true");
+  expect(await screen.findByRole("tab", { name: "旁支 · B · 已取消" })).toHaveAttribute("aria-busy", "false");
+  expect(screen.getAllByText("B 的部分输出")[0]).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "旁支 · A · 运行中" }));
+  expect(screen.getByText("正在等待首次输出...")).toBeVisible();
+  expect(screen.getAllByText("B 的部分输出")[0]).not.toBeVisible();
+  const reads = request.mock.calls.filter(([, method]) => method === "read").length;
+  await act(async () => { changes.forEach((listener) => listener({ ...scope, workspaceId: "another-workspace" }, a.id)); });
+  expect(request.mock.calls.filter(([, method]) => method === "read")).toHaveLength(reads);
+  view.select(other);
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  view.select(sessions[0]!);
+  expect(screen.getByRole("tab", { name: "旁支 · A · 运行中" })).toHaveAttribute("aria-selected", "true");
+});
+it("shows a retry action when the activity detail cannot be read", async () => {
+  const side: LocalConversation = { ...sessions[0]!, id: "retry-side", title: "Retry", turns: [{ id: "failed", status: "failed", error: "Connection interrupted", createdAt: "2026-10-24", events: [] }] };
+  sessions.push({ ...side, turns: [] });
+  let unavailable = true;
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (scope, method, params) => {
+    if (method === "read" && params.id === side.id) {
+      if (unavailable) throw new Error("Read failed");
+      return side;
+    }
+    return base(scope, method, params);
+  });
+  const view = setup(); act(() => view.ref.current!.openSide(side.id));
+  expect(await screen.findByText("无法加载工作摘要。")).toBeVisible();
+  expect(screen.queryByText("工作摘要")).not.toBeInTheDocument();
+  unavailable = false;
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  expect(await screen.findByRole("tab", { name: "旁支 · Retry · 执行失败" })).toHaveAttribute("aria-busy", "false");
+  expect(screen.getByText("Connection interrupted")).toBeVisible();
+  expect(screen.queryByText("无法加载工作摘要。")).not.toBeInTheDocument();
 });
 it("uses the shared tabs for a folder preview, loads subfolders lazily and reads the selected file", async () => {
   const { ref } = setup(); ref.current!.toggle();

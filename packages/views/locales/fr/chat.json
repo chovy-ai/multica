@@ -3,6 +3,26 @@
     "local_conversation": {
       "waiting_for_answer": "En attente de votre réponse",
       "waiting_for_answer_label": "En attente de votre réponse : {{title}}"
+    },
+    "side_activity": {
+      "idle": "Non démarré",
+      "running": "En cours",
+      "waiting": "En attente de votre réponse",
+      "completed": "Terminé",
+      "failed": "Échec",
+      "cancelled": "Annulé",
+      "loading": "Chargement de l’activité...",
+      "unavailable": "Activité indisponible",
+      "load_failed": "Impossible de charger le résumé du travail.",
+      "retry": "Réessayer",
+      "first_output": "En attente de la première sortie...",
+      "thinking": "Réflexion en cours...",
+      "using_tool": "Utilisation de {{tool}}",
+      "tool_progress": "Outils : {{completed}}/{{total}}",
+      "summary": "Résumé du travail",
+      "partial_output": "Dernière sortie",
+      "no_output": "Aucune sortie texte enregistrée.",
+      "finished_tool": "{{tool}} terminé"
     }
   },
   "page": {

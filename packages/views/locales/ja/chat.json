@@ -3,6 +3,26 @@
     "local_conversation": {
       "waiting_for_answer": "回答を待っています",
       "waiting_for_answer_label": "回答を待っています：{{title}}"
+    },
+    "side_activity": {
+      "idle": "未開始",
+      "running": "実行中",
+      "waiting": "回答を待っています",
+      "completed": "完了",
+      "failed": "失敗",
+      "cancelled": "キャンセル済み",
+      "loading": "アクティビティを読み込み中...",
+      "unavailable": "アクティビティを利用できません",
+      "load_failed": "作業の要約を読み込めませんでした。",
+      "retry": "再試行",
+      "first_output": "最初の出力を待っています...",
+      "thinking": "思考中...",
+      "using_tool": "{{tool}} を使用中",
+      "tool_progress": "ツール：{{completed}}/{{total}}",
+      "summary": "作業の要約",
+      "partial_output": "最新の出力",
+      "no_output": "テキスト出力は保存されていません。",
+      "finished_tool": "{{tool}} が完了"
     }
   },
   "page": {
