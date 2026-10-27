@@ -2,7 +2,7 @@ import { getLocalConversationClient, LocalRuntimeUpdateRequired } from "../platf
 import { LocalRuntimeNotice } from "./local-runtime-notice";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Archive, ChevronDown, ChevronRight, Clock3, Copy, FolderKanban, FolderMinus, FolderOpen, FolderPlus, GitFork, Loader2, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Archive, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, FolderKanban, FolderMinus, FolderOpen, FolderPlus, GitFork, Loader2, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
@@ -299,7 +299,7 @@ export function LocalConversationFlowPage() {
         </DropdownMenu>
       </div>
       {waitingForAnswer ? <IconButton size="icon-xs" label={t($ => $.desktop.local_conversation.waiting_for_answer_label, { title: entry.title })} onClick={() => select(entry.id, entry.provider)}>
-        <TriangleAlert aria-hidden="true" className="size-4 text-warning" />
+        <CircleHelp aria-hidden="true" className="size-4 text-muted-foreground" />
       </IconButton> : entryRunning && <Spinner aria-label={chinese ? `会话运行中：${entry.title}` : `Conversation running: ${entry.title}`} className="shrink-0 text-muted-foreground motion-reduce:animate-none" />}
       {!entryRunning && background.length > 0 && <span role="status" aria-label={chinese ? `后台运行中：${entry.title}（${background.length}）` : `Background tasks: ${entry.title} (${background.length})`} title={`${chinese ? "后台运行中" : "Running in background"}\n${background.map((task) => task.description).join("\n")}`} className="flex shrink-0 items-center text-muted-foreground"><Clock3 aria-hidden="true" className="size-4" /></span>}
     </div>
