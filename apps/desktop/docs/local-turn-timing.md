@@ -4,7 +4,7 @@ Local Codex and Claude Code turns write timing records automatically. Restart th
 desktop main process after installing this change; refreshing its page cannot
 enable main-process instrumentation.
 
-## Location and privacy
+## Timing log location and privacy
 
 The active Electron profile writes:
 
@@ -31,7 +31,10 @@ in packaged builds. No diagnostics are uploaded.
 
 On desktop, open **Settings → This device → Labs → Developer logs → Export logs**.
 The native save dialog writes a JSON snapshot of the selected account/workspace's
-retained local conversation records from the last 24 hours. Cancelling writes
+retained local conversation timing records from the last 24 hours, this account’s
+Web renderer logs in that time range, and the desktop daemon log tail together.
+The Web console covers all workspaces for this account. The daemon source covers
+the active desktop-owned CLI profile, not the terminal CLI’s default profile. Cancelling writes
 nothing. Saving uses a private temporary file and an atomic rename; changing
 accounts while the dialog is open cancels the operation. An empty snapshot is a
 valid result when no records remain. Version information describes the running
@@ -59,8 +62,35 @@ MCP exports live in `<userData>/local-conversations/diagnostics/exports/`, with
 directory mode 0700 and file mode 0600. Each export prunes generated bundles
 older than seven days and keeps at most 20. Files saved through the native dialog
 are user-managed. Export bundles include allowlisted runtime versions, filters,
-coverage, summary and validated timing records; raw console/native provider
-logs, conversation text, tool arguments/results and credentials are excluded.
+coverage, summary, validated timing records and separate `sources.web` /
+`sources.daemon` sections (schema version 2). `summary.recordCount` totals timing
+records, Web records and daemon lines; separate counts identify each source.
+The MCP response includes source availability and truncation without injecting
+all log text into the agent’s context.
+
+### Web and daemon sources
+
+Web console output is captured by main in development and packaged builds after
+account identity is known. Files are partitioned by a hash of API URL and user ID
+at `<userData>/local-conversations/diagnostics/web-<hash>.jsonl` with one `.1`
+rotation, 2 MiB per file, private permissions and up to 1,000 pending writes.
+Capture is asynchronous and best effort. Timing console records stay in their
+existing structured source instead of being duplicated. Logs before this feature
+is installed or before account identity is known cannot be recovered.
+
+The daemon snapshot reads at most the last 2 MiB of the current desktop profile’s
+`daemon.log`. It never reads config files or selects an arbitrary agent-supplied
+path. Daemon timestamps contain only local time of day, so **the conversation and
+time filters do not apply to this source**; `timeFilterApplied: false`, scope and
+file modification time make that explicit. Missing, empty, unresolved and
+unreadable sources are distinguished. Partial tail lines are dropped, and
+truncation/read failures are reported without preventing other sources exporting.
+
+Common credential patterns, auth headers, URL query/fragment values, data URLs
+and diagnostic payload fields are scrubbed before Web persistence and again on
+export; daemon text is scrubbed only in the exported copy. Raw log files are not
+modified. Arbitrary diagnostic text can still contain private information, so
+review bundles before sharing. They are never uploaded automatically.
 
 ## Request flow
 
@@ -134,7 +164,7 @@ Tests inject fake executables/SDK transports and never call a real model:
 
 ```sh
 pnpm --filter @multica/desktop exec vitest run src/main/local-timing-log.test.ts src/main/local-provider-runner.test.ts src/main/local-conversation-service.test.ts src/main/local-conversation-queue.test.ts src/main/local-claude-conversation.test.ts src/main/local-multica-context.test.ts src/renderer/src/platform/local-conversation-service.test.ts
-pnpm --filter @multica/desktop exec vitest run src/main/developer-log-export.test.ts src/main/local-context-mcp.test.ts src/main/local-codex-pool.test.ts src/renderer/src/components/labs-settings-tab.test.tsx
+pnpm --filter @multica/desktop exec vitest run src/main/developer-log-export.test.ts src/main/developer-runtime-logs.test.ts src/main/local-context-mcp.test.ts src/main/local-codex-pool.test.ts src/renderer/src/components/labs-settings-tab.test.tsx
 pnpm --filter @multica/views exec vitest run settings/components/settings-page.test.tsx settings/components/settings-navigation.test.ts locales/parity.test.ts
 pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/local-timing.test.ts src/runtime/runtime.test.ts
 pnpm --filter @multica/desktop typecheck

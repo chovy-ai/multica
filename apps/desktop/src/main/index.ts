@@ -1,4 +1,5 @@
 import { LocalTimingLog } from "./local-timing-log";
+import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
 import { DeveloperLogExporter, createDeveloperLogTool } from "./developer-log-export";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, screen } from "electron";
 import { homedir } from "os";
@@ -7,7 +8,7 @@ import { pathToFileURL } from "url";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import fixPath from "fix-path";
 import { setupAutoUpdater } from "./updater";
-import { bundledCliPath, setupDaemonManager } from "./daemon-manager";
+import { bundledCliPath, setupDaemonManager, daemonDiagnosticLogPath } from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
 import { LocalConversationService } from "./local-conversation-service";
 import { ResourceWebPreview } from "./resource-web-preview";
@@ -159,6 +160,15 @@ const mainRendererMessages = new MainRendererMessageQueue();
 let desktopInitialized = false;
 let authSessionGeneration = 0;
 let settingsUserId: string | null | undefined;
+const webDiagnosticLogs = new Map<string, WebDiagnosticLog>();
+function accountWebLog(userId: string): WebDiagnosticLog {
+  let log = webDiagnosticLogs.get(userId);
+  if (!log) {
+    log = new WebDiagnosticLog(join(app.getPath("userData"), "local-conversations", "diagnostics"), runtimeConfigResult?.ok ? runtimeConfigResult.config.apiUrl : "", userId);
+    webDiagnosticLogs.set(userId, log);
+  }
+  return log;
+}
 const rendererRouteContexts = new WeakMap<
   Electron.WebContents,
   RendererRouteContext
@@ -407,17 +417,12 @@ function createWindow(): BrowserWindow {
   // renderer keydown and the application-menu accelerator from double-firing.
   installWindowShortcutHandler(window);
 
-  // Dev-mode renderer diagnostics. When the renderer crashes hard enough
-  // that DevTools can't be opened (white screen with no clickable surface),
-  // the only way to recover the actual JS error is to forward it from the
-  // main process to the dev launcher log. Without these, the
-  // user sees only the daemon-manager polling noise (`Render frame was
-  // disposed before WebFrameMain could be accessed`) which is a downstream
-  // symptom, not the cause.
-  //
-  // Gated by `is.dev` to keep production logs clean — packaged builds ship
-  // failures to crash-reporting separately.
-  window.webContents.on("console-message", ({ message }) => localTimingLog?.console(message));
+  // Keep sanitized renderer diagnostics for local exports in every build.
+  // Development builds also forward the original console to the launcher.
+  window.webContents.on("console-message", (details) => {
+    localTimingLog?.console(details.message);
+    if (settingsUserId) accountWebLog(settingsUserId).console(details);
+  });
   if (devLog) {
     // Forward every renderer-side console.* call. The detail object also
     // carries source URL + line — included so a thrown stack trace from
@@ -698,6 +703,10 @@ if (!gotTheLock) {
         runtime: { appVersion: getAppVersion(), platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, chromeVersion: process.versions.chrome, nodeVersion: process.versions.node, packaged: app.isPackaged },
         assertScope: (scope) => localConversations!.assertScope(scope),
         conversations: async (scope) => (await localConversations!.request(scope, "list", {})).map((conversation) => conversation.id),
+        runtimeLogs: async (scope, since, until) => {
+          const [web, daemon] = await Promise.all([accountWebLog(scope.userId).snapshot(since, until), snapshotDaemonLog(daemonDiagnosticLogPath())]);
+          return { web, daemon };
+        },
         chooseSavePath: async (filename) => {
           if (!mainWindow || mainWindow.isDestroyed()) return null;
           const result = await dialog.showSaveDialog(mainWindow, { defaultPath: join(app.getPath("downloads"), filename), filters: [{ name: "JSON", extensions: ["json"] }] });
@@ -724,7 +733,7 @@ if (!gotTheLock) {
     app.on("before-quit", (event) => {
       if (localShutdown || !localConversations) return;
       event.preventDefault(); localShutdown = true;
-      void localConversations.stop().catch(() => console.warn("[local-conversations] Could not finish saving before exit")).finally(async () => { await localTimingLog?.flush(); app.quit(); });
+      void localConversations.stop().catch(() => console.warn("[local-conversations] Could not finish saving before exit")).finally(async () => { await localTimingLog?.flush(); await Promise.all([...webDiagnosticLogs.values()].map((log) => log.flush())); app.quit(); });
     });
 
     electronApp.setAppUserModelId(

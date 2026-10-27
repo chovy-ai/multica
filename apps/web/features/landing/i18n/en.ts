@@ -196,7 +196,7 @@ export function createEnDict(
       {
         question: "How can I diagnose a slow local conversation?",
         answer:
-          "In the desktop app, open Settings → This device → Labs to export developer logs. The built-in MCP also lets Codex and Claude Code export timings for the current conversation. These local JSON files contain stage timings, error categories and runtime versions; message content, images and credentials are excluded.",
+          "In the desktop app, open Settings → This device → Labs to export one JSON with stage timings, Web frontend logs, the desktop daemon log tail and runtime versions. Codex and Claude Code can export the same sources through the built-in MCP. Common secrets are masked; review logs before sharing. Nothing is uploaded automatically.",
       },
       {
         question: "What coding agents does Multica support?",

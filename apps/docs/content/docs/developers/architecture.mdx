@@ -133,12 +133,15 @@ An issue's assignee is polymorphic and may point to a member, agent, or squad. N
 ## Local conversation diagnostics
 
 On desktop, open **Settings → This device → Labs → Developer logs → Export logs**
-to save retained timing records from this account/workspace's last 24 hours.
-The JSON includes runtime versions, error categories and timings from queueing
-through provider initialization, first output, tool calls and persistence.
+to save one JSON file with workspace conversation timings from the last 24 hours,
+this account's Web renderer logs, the desktop daemon log tail and runtime versions.
+Web logs span the account's workspaces within the time range. Daemon logs are a
+bounded tail from the active desktop profile, without time or conversation filtering.
+Source availability, truncation and separate counts are included.
 
 Codex and Claude Code also receive the built-in `export_developer_logs` MCP tool.
-It defaults to the current conversation and last 60 minutes; `scope=workspace`
-selects the current workspace. Reuse `request_id` on retries. Exports contain no
-message text, tool payloads, images or credentials and are never uploaded
-automatically. A longer filter cannot recover records already rotated out.
+Timing filters default to the current conversation and last 60 minutes;
+`scope=workspace` selects the current workspace. Reuse `request_id` on retries.
+Common secrets and payload fields are masked, but diagnostic text may contain
+private details. Review before sharing; exports are never uploaded automatically.
+A longer filter cannot recover records already rotated out.

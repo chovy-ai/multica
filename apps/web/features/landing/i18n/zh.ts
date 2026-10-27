@@ -196,7 +196,7 @@ export function createZhDict(
       {
         question: "本机会话响应慢，如何排查？",
         answer:
-          "在桌面端打开「设置 → 本设备 → 实验室」，即可导出开发日志。Codex 和 Claude Code 也能通过内置 MCP 导出当前会话的耗时记录。本机 JSON 文件包含阶段耗时、错误类别和运行环境版本，不包含消息正文、图片和凭据。",
+          "在桌面端打开「设置 → 本设备 → 实验室」，即可将阶段耗时、Web 前端日志、桌面守护进程日志尾部和运行环境合并导出为一个 JSON 文件。Codex 和 Claude Code 也能通过内置 MCP 导出这些日志。常见敏感信息会自动脱敏，分享前请检查；不会自动上传。",
       },
       {
         question: "Multica \u652f\u6301\u54ea\u4e9b\u7f16\u7801 智能体\uff1f",
