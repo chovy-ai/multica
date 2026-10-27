@@ -1,4 +1,4 @@
-import { LOCAL_CONVERSATION_METHODS } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/tutti-agent-gui-host/local-protocol";
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -26,13 +26,14 @@ beforeEach(() => {
     return undefined;
   });
   preview.request.mockImplementation(async (_scope, command) => command.action === "close" || command.action === "hide" ? null : { id: command.id, url: command.url, title: "Example", loading: false, canGoBack: false, canGoForward: false });
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: 1, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: () => () => {} }, resourcePreview: preview, openExternal: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: () => () => {} }, resourcePreview: preview, openExternal: vi.fn() } });
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {
   const ref = createRef<SideWorkspaceHandle>(); const onSelectSource = vi.fn(), onShowMessage = vi.fn();
-  const view = render(<QueryClientProvider client={queryClient}><LocalSideWorkspace ref={ref} scope={scope} slug="test" source={sessions[0]} provider="codex" sessions={sessions} chinese active onSelectSource={onSelectSource} onOpenTask={() => {}} onShowMessage={onShowMessage} onReference={() => {}}>{(visible) => <textarea aria-label="Main draft" data-visible={String(visible)} />}</LocalSideWorkspace></QueryClientProvider>);
-  return { ...view, ref, onSelectSource, onShowMessage };
+  const element = (source: LocalConversation | undefined, sessionId: string | null = source?.id ?? null) => <QueryClientProvider client={queryClient}><LocalSideWorkspace ref={ref} scope={scope} slug="test" source={source} sessionId={sessionId} provider="codex" sessions={sessions} chinese active onSelectSource={onSelectSource} onOpenTask={() => {}} onShowMessage={onShowMessage} onReference={() => {}}>{(visible) => <textarea aria-label="Main draft" data-visible={String(visible)} />}</LocalSideWorkspace></QueryClientProvider>;
+  const view = render(element(sessions[0]));
+  return { ...view, ref, onSelectSource, onShowMessage, select: (source: LocalConversation | null) => view.rerender(element(source ?? undefined)), selectId: (id: string) => view.rerender(element(undefined, id)) };
 }
 it("creates a Side without replacing the main draft, retains its draft when closed, and returns to its source", async () => {
   const { ref, onSelectSource } = setup(); const main = screen.getByRole("textbox", { name: "Main draft" });
@@ -129,4 +130,176 @@ it("hides the empty Side hint once the list summary keeps only a message from a 
   expect(screen.queryByText("围绕选中的内容继续提问")).not.toBeInTheDocument();
   act(() => ref.current!.openSide("empty-side"));
   expect(await screen.findByText("围绕选中的内容继续提问")).toBeVisible();
+});
+
+it("isolates layout and selection across A → B → A and restores them after remount", async () => {
+  const b = { ...sessions[0]!, id: "main-b" }; sessions.push(b);
+  const view = setup();
+  await act(async () => { await view.ref.current!.openResource("main", "https://a.example/guide"); });
+  act(() => view.ref.current!.openSide("side-a"));
+  const main = screen.getByRole("textbox", { name: "Main draft" });
+  const draft = screen.getByRole("textbox", { name: "Side draft side-a" });
+  fireEvent.change(draft, { target: { value: "Unsent A" } });
+  view.select(b);
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "关闭右侧面板" })).not.toBeInTheDocument();
+  expect(main).toBe(screen.getByRole("textbox", { name: "Main draft" }));
+  await act(async () => { await view.ref.current!.openResource(b.id, "https://b.example/"); });
+  fireEvent.click(screen.getByRole("button", { name: "关闭右侧面板" }));
+  view.select(sessions[0]!);
+  expect(screen.getByRole("tab", { name: /旁支/ })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("textbox", { name: "Side draft side-a" })).toBe(draft);
+  expect(draft).toHaveValue("Unsent A");
+  view.select(b);
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  act(() => view.ref.current!.toggle());
+  expect(screen.getByRole("tab", { name: "b.example" })).toBeVisible();
+  expect(screen.queryByRole("tab", { name: "a.example" })).not.toBeInTheDocument();
+  view.select(sessions[0]!);
+  view.unmount();
+  const restored = setup();
+  expect(screen.getByRole("tab", { name: /旁支/ })).toHaveAttribute("aria-selected", "true");
+  restored.select(b);
+  expect(screen.getByRole("tab", { name: "b.example" })).toBeVisible();
+});
+
+it("starts each new conversation with an empty closed panel and ignores the old shared layout", async () => {
+  localStorage.setItem(`multica-side-workspace:${scope.userId}:${scope.workspaceId}`, JSON.stringify({ tabs: [{ id: "old", kind: "web", url: "https://old.example/" }], selected: "old", open: true }));
+  const view = setup();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  await act(async () => { await view.ref.current!.openResource("main", "https://a.example/"); });
+  view.select(null);
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  act(() => view.ref.current!.toggle());
+  expect(screen.getByText("在这里继续旁支对话，或查看文件和网页")).toBeVisible();
+  view.select(sessions[0]!);
+  expect(screen.getByRole("tab", { name: "a.example" })).toBeVisible();
+  view.select(null);
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "关闭右侧面板" })).not.toBeInTheDocument();
+});
+
+it("keeps a late file result with its originating conversation", async () => {
+  const b = { ...sessions[0]!, id: "main-b" }; sessions.push(b);
+  let finish!: (value: unknown) => void;
+  request.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const view = setup();
+  let pending!: Promise<void>;
+  act(() => { pending = view.ref.current!.openResource("main", "/project/test.ts"); });
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  view.select(b);
+  await act(async () => { finish(sessions[0]); await pending; });
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  view.select(sessions[0]!);
+  expect(await screen.findByRole("tab", { name: "test.ts" })).toBeVisible();
+});
+
+it("uses the route session ID while its conversation summary is still loading", async () => {
+  const view = setup();
+  await act(async () => { await view.ref.current!.openResource("main", "https://a.example/"); });
+  view.select(null);
+  view.selectId("main");
+  expect(screen.getByRole("tab", { name: "a.example" })).toBeVisible();
+  view.select(sessions[0]!);
+  expect(screen.getByRole("tab", { name: "a.example" })).toBeVisible();
+});
+
+it("releases the outgoing native webpage and restores only the selected conversation's view", async () => {
+  const b = { ...sessions[0]!, id: "main-b" }; sessions.push(b);
+  const view = setup();
+  await act(async () => { await view.ref.current!.openResource("main", "https://a.example/"); });
+  await waitFor(() => expect(preview.request.mock.calls.some(([, command]) => command.action === "show")).toBe(true));
+  const id = preview.request.mock.calls.find(([, command]) => command.action === "show")![1].id;
+  view.select(b);
+  await waitFor(() => expect(preview.request).toHaveBeenCalledWith(scope, { id, action: "close" }));
+  preview.request.mockClear();
+  view.select(sessions[0]!);
+  await waitFor(() => expect(preview.request.mock.calls.some(([, command]) => command.action === "show" && command.id === id)).toBe(true));
+});
+
+it.each([false, true])("routes a late Side creation to its original owner (new page: %s)", async (fromNew) => {
+  const b = { ...sessions[0]!, id: "main-b" }; sessions.push(b);
+  const created = { ...sessions[0]!, id: "created-main" };
+  const base = request.getMockImplementation()!;
+  let finish!: (side: LocalConversation) => void;
+  request.mockImplementation(async (scope, method, params) => {
+    if (method === "create") { sessions.push(created); return created; }
+    if (method === "sideCreate") return new Promise((resolve) => { finish = resolve; });
+    return base(scope, method, params);
+  });
+  const view = setup();
+  if (fromNew) view.select(null);
+  act(() => view.ref.current!.toggle());
+  fireEvent.click(screen.getByRole("button", { name: "新建旁支" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  view.select(b);
+  const origin = fromNew ? created : sessions[0]!;
+  const side = { ...origin, id: "late-side", side: { sourceId: origin.id, requestId: "late", context: [] } }; sessions.push(side);
+  await act(async () => { finish(side); });
+  expect(view.onSelectSource).not.toHaveBeenCalled();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  view.select(origin);
+  expect(screen.getByRole("textbox", { name: "Side draft late-side" })).toBeVisible();
+  expect(request).toHaveBeenCalledWith(scope, "sideCreate", expect.objectContaining({ id: origin.id }));
+});
+
+it("opens a newly created Side under its new main conversation and resets the next new page", async () => {
+  const created = { ...sessions[0]!, id: "created-main" };
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (scope, method, params) => {
+    if (method === "create") { sessions.push(created); return created; }
+    return base(scope, method, params);
+  });
+  const view = setup(); view.select(null);
+  act(() => view.ref.current!.toggle());
+  fireEvent.click(screen.getByRole("button", { name: "新建旁支" }));
+  await waitFor(() => expect(view.onSelectSource).toHaveBeenCalledWith(created.id));
+  view.select(created);
+  expect(screen.getByRole("textbox", { name: "Side draft new-side" })).toBeVisible();
+  view.select(null);
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "关闭右侧面板" })).not.toBeInTheDocument();
+});
+
+it("does not show an outgoing conversation's late file error in the current panel", async () => {
+  const b = { ...sessions[0]!, id: "main-b" }; sessions.push(b);
+  const base = request.getMockImplementation()!;
+  let fail!: (reason: Error) => void;
+  request.mockImplementation((scope, method, params) => method === "previewRead" ? new Promise((_resolve, reject) => { fail = reject; }) : base(scope, method, params));
+  const view = setup();
+  let pending!: Promise<void>;
+  act(() => { pending = view.ref.current!.openResource("main", "/project/missing.ts"); });
+  await waitFor(() => expect(fail).toBeTypeOf("function"));
+  view.select(b); act(() => view.ref.current!.toggle());
+  await act(async () => { fail(new Error("ENOENT: no such file")); await pending; });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+});
+
+it("keeps a late native file picker result in its originating layout", async () => {
+  const b = { ...sessions[0]!, id: "main-b" }; sessions.push(b);
+  const base = request.getMockImplementation()!;
+  let finish!: (value: unknown) => void;
+  request.mockImplementation((scope, method, params) => method === "previewChoose" ? new Promise((resolve) => { finish = resolve; }) : base(scope, method, params));
+  const view = setup(); act(() => view.ref.current!.toggle());
+  fireEvent.click(screen.getByRole("button", { name: "添加右侧内容" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "打开文件" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  view.select(b);
+  await act(async () => { finish({ root: "/project", path: "/project/test.ts", name: "test.ts", kind: "file" }); });
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  view.select(sessions[0]!);
+  expect(screen.getByRole("tab", { name: "test.ts" })).toBeVisible();
+});
+
+it("keeps delayed main-transcript callbacks under the supplied source conversation", async () => {
+  const b = { ...sessions[0]!, id: "main-b" }; sessions.push(b);
+  const view = setup(); view.select(b);
+  act(() => view.ref.current!.openSide("late-main-side", "main"));
+  await act(async () => { await view.ref.current!.openResource("main", "https://a.example/", "main"); });
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  view.select(sessions[0]!);
+  expect(screen.getByRole("tab", { name: "a.example" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: /旁支/ })).toBeVisible();
 });

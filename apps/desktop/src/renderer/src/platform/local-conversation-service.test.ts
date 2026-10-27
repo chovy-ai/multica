@@ -41,13 +41,15 @@ async function setup(getSelectionIntent?: () => string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   const values = new Map<string, string>();
   const onLocalSelect = vi.fn();
+  const onOpenSide = vi.fn();
+  const onOpenResource = vi.fn();
   const onShowMessage = vi.fn();
   const bridge = createLocalConversationParentService({ queryClient: qc, workspaceId: "ws", workspaceSlug: "workspace", userId: "user", isCurrent: () => true, resolveAvatar: (value) => value,
-    onSelectSession: vi.fn(), onLocalSelect, getSelectionIntent, onOpenTask: vi.fn(), onShowMessage,
+    onSelectSession: vi.fn(), onLocalSelect, onOpenSide, onOpenResource, getSelectionIntent, onOpenTask: vi.fn(), onShowMessage,
     storage: { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: (key) => { values.delete(key); } },
   }, client);
   cleanups.push(async () => { bridge.dispose(); qc.clear(); await service.stop(); await rm(root, { recursive: true, force: true }); });
-  return { bridge, run, service, usage, client, onLocalSelect, onShowMessage };
+  return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage };
 }
 describe("local providers and official agent invocation routing", () => {
   it.each([
@@ -340,4 +342,21 @@ describe("recoverable local attachment hydration", () => {
     service.setCurrentUser("another-user");
     await expect(bridge.request("session.load", { sessionId: session.id })).rejects.toThrow();
   });
+});
+
+it("carries the originating conversation through a delayed transcript Side creation", async () => {
+  let intent = "source";
+  const { bridge, client, onOpenSide, onOpenResource } = await setup(() => intent);
+  const source = await bridge.request("session.create", { agentId: "local:codex" });
+  const raw = client.request;
+  let resume!: () => void;
+  const gate = new Promise<void>((resolve) => { resume = resolve; });
+  client.request = (async (scope, method, params) => { if (method === "sideCreate") await gate; return raw(scope, method, params); }) as typeof client.request;
+  const pending = bridge.request("host.openSide", { sessionId: source.id, requestId: "late-side" });
+  intent = "other-main";
+  resume(); const side = await pending;
+  expect(onOpenSide).toHaveBeenCalledWith(side.id, source.id);
+  expect(onOpenSide).toHaveBeenCalledOnce();
+  await bridge.request("host.openResource", { sessionId: source.id, url: "https://a.example/" });
+  expect(onOpenResource).toHaveBeenCalledWith(source.id, "https://a.example/");
 });

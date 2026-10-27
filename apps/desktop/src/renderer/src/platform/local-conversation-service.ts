@@ -37,7 +37,7 @@ export function projectLocalTurn(entry: LocalConversation, turn: LocalConversati
 export function createLocalConversationParentService(options: ParentServiceOptions & {
   onLocalSelect(id: string | null, provider?: LocalProviderId): void;
   getSelectionIntent?: () => string;
-  onOpenSide?: (id: string) => void;
+  onOpenSide?: (id: string, sourceId: string) => void;
   onOpenResource?: (sessionId: string, url: string) => void;
   onLocateSource?: (sessionId: string, turnId?: string, quote?: string) => void;
   storagePrefix?: string;
@@ -255,7 +255,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       case "workspace.load": return load();
       case "host.openSide": {
         const side = params.queuedRequestId ? await local("queueSide", { id: params.sessionId, requestId: params.queuedRequestId }) : await local("sideCreate", { id: params.sessionId, requestId: params.requestId, turnId: params.turnId, quote: params.quote, pending: params.pending });
-        assertCurrent(); options.onOpenSide?.(side.id); return projectLocalSession(side, scope);
+        assertCurrent(); options.onOpenSide?.(side.id, params.sessionId); return projectLocalSession(side, scope);
       }
       case "host.startSide": {
         const side = await read(params.sessionId); const pending = side.side?.pending;
