@@ -143,6 +143,8 @@ export class LocalConversationService {
         const data = JSON.parse(await readFile(join(this.options.root, key, "conversations.json"), "utf8"));
         if (data.schemaVersion !== 1 || !Array.isArray(data.sessions) || data.sessions.some((entry: LocalConversation) => !entry || typeof entry.id !== "string" || !["codex", "claude"].includes(entry.provider) || !Array.isArray(entry.messages) || !Array.isArray(entry.turns))) throw new Error("Invalid local conversation file; the original file was preserved.");
         sessions = data.sessions;
+        // Existing history is read on upgrade; only subsequent replies raise attention.
+        for (const session of sessions) if (session.lastReadMessageId === undefined) session.lastReadMessageId = session.messages.at(-1)?.id ?? null;
         for (const session of sessions) if (session.promptQueue) {
           const queue = session.promptQueue;
           if (!Array.isArray(queue.items) || typeof queue.paused !== "boolean" || !Number.isSafeInteger(queue.revision)) throw new Error("Invalid saved conversation queue");
@@ -169,6 +171,12 @@ export class LocalConversationService {
       this.folderProjects.set(key, folderProjects); this.documents.set(key, value); return value;
     })().finally(() => this.loads.delete(key));
     this.loads.set(key, operation); return operation;
+  }
+  private hasUnread(entry: LocalConversation): boolean {
+    const last = entry.messages.at(-1);
+    return Boolean(last && last.role === "assistant" && !last.failed && last.id !== entry.lastReadMessageId
+      && !entry.turns.some((turn) => turn.status === "running")
+      && entry.turns.find((turn) => turn.id === last.turnId)?.status === "completed");
   }
   private save(scope: LocalConversationScope): Promise<void> {
     const key = this.key(scope);
@@ -328,11 +336,23 @@ export class LocalConversationService {
         const entry = session();
         await this.claudeConversations.get(`${this.key(scope)}:${entry.id}`)?.worker.stopBackground(); result = undefined; break;
       }
-      case "list": result = [...rows.values()].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)).map((entry) => ({ ...entry, promptQueue: this.queueSnapshot(scope, entry), messages: entry.messages.slice(-1), turns: entry.turns.filter((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running")) })); break;
+      case "list": result = [...rows.values()].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)).map((entry) => ({ ...entry, hasUnread: this.hasUnread(entry), promptQueue: this.queueSnapshot(scope, entry), messages: entry.messages.slice(-1), turns: entry.turns.filter((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running")) })); break;
       case "read": {
         const entry = session();
         await this.recoverOutputImages(scope, entry);
-        result = { ...entry, promptQueue: this.queueSnapshot(scope, entry) }; break;
+        result = { ...entry, hasUnread: this.hasUnread(entry), promptQueue: this.queueSnapshot(scope, entry) }; break;
+      }
+      case "markRead": {
+        const entry = session();
+        const index = entry.messages.findIndex((message) => message.id === text(params.messageId, "read message", 128));
+        if (index < 0) throw new Error("Read message not found in this conversation");
+        const previous = entry.messages.findIndex((message) => message.id === entry.lastReadMessageId);
+        if (index > previous) {
+          entry.lastReadMessageId = entry.messages[index]!.id;
+          await this.save(scope);
+          this.options.notify(scope, entry.id);
+        }
+        result = undefined; break;
       }
       case "models": result = await localProviderModels(provider(params.provider)); break;
       case "fileStore": {
@@ -417,7 +437,7 @@ export class LocalConversationService {
           }
         }
         const at = new Date().toISOString();
-        const entry: LocalConversation = { id: randomUUID(), title: `${source.title.slice(0, 230)} · Side`, titleMode: "manual", provider: source.provider, cwd: source.cwd, model: source.model, permissionMode: pending?.permissionMode ?? source.permissionMode, projectId: source.projectId, pinned: false, archived: false, createdAt: at, updatedAt: at, messages: [], turns: [],
+        const entry: LocalConversation = { id: randomUUID(), title: `${source.title.slice(0, 230)} · Side`, titleMode: "manual", provider: source.provider, cwd: source.cwd, model: source.model, permissionMode: pending?.permissionMode ?? source.permissionMode, projectId: source.projectId, pinned: false, archived: false, createdAt: at, updatedAt: at, lastReadMessageId: null, messages: [], turns: [],
           ...(queuedPrompt ? { promptQueue: { revision: 1, paused: false, items: [queuedPrompt] } } : {}),
           side: { sourceId: source.id, turnId, quote, requestId, context: [...(source.side?.context ?? []), ...(source.side?.quote ? [{ role: "reference", content: source.side.quote }] : []), ...source.messages.slice(0, end).map(({ role, content }) => ({ role, content }))], pending } };
         rows.set(entry.id, entry);
@@ -441,7 +461,7 @@ export class LocalConversationService {
         if (folder && cwd !== folder.path) throw new Error("Project folder changed. Add the folder again.");
         if (!folder) await mkdir(cwd, { recursive: true, mode: 0o700 });
         const title = typeof params.title === "string" ? text(params.title, "title", 256) : "新会话";
-        const entry: LocalConversation = { id, provider: choice, cwd, title, titleMode: isDefaultConversationTitle(title) ? "auto" : "manual", pinned: false, archived: false, model: null, projectId, createdAt: at, updatedAt: at, messages: [], turns: [] };
+        const entry: LocalConversation = { id, provider: choice, cwd, title, titleMode: isDefaultConversationTitle(title) ? "auto" : "manual", pinned: false, archived: false, model: null, projectId, createdAt: at, updatedAt: at, lastReadMessageId: null, messages: [], turns: [] };
         rows.set(id, entry); await this.save(scope); this.changed(scope, entry); result = entry; break;
       }
       case "fork": {
@@ -797,6 +817,7 @@ export class LocalConversationService {
       if (turn.remote) turn.remote = { agentId: turn.remote.agentId, agentName: turn.remote.agentName };
     }
     for (const message of entry.messages) { message.id = randomUUID(); message.turnId = turns.get(message.turnId)!; }
+    entry.lastReadMessageId = entry.messages.at(-1)?.id ?? null;
     rows.set(entry.id, entry);
     try { await this.save(scope); }
     catch (error) { rows.delete(entry.id); throw error; }

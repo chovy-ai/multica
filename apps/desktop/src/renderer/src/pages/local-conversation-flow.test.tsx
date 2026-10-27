@@ -97,6 +97,37 @@ describe("restoring the selected conversation after a tab switch", () => {
 });
 
 describe("local conversation execution indicators", () => {
+  it("shows a background conversation's unread reply and preserves the running indicator", async () => {
+    mock.selected = "";
+    source.hasUnread = true;
+    render(page());
+    expect(await screen.findByRole("status", { name: "未读回复：Original" })).toBeVisible();
+    source = { ...source, turns: [{ id: "new-turn", status: "running", createdAt: "2026-01-01", events: [] }] };
+    await act(async () => { await qc.invalidateQueries({ queryKey: ["test-local-sessions"] }); });
+    expect(await screen.findByRole("status", { name: "会话运行中：Original" })).toBeVisible();
+    expect(screen.queryByRole("status", { name: "未读回复：Original" })).not.toBeInTheDocument();
+    expect(mock.request.mock.calls.some(([, method]) => method === "markRead")).toBe(false);
+  });
+  it("acknowledges the selected reply only when the window is focused", async () => {
+    source.hasUnread = true;
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    render(page());
+    await screen.findByRole("link", { name: /Original/ });
+    expect(mock.request.mock.calls.some(([, method]) => method === "markRead")).toBe(false);
+    focus.mockReturnValue(true);
+    fireEvent.focus(window);
+    await waitFor(() => expect(mock.request).toHaveBeenCalledWith({ userId: "user", workspaceId: "workspace" }, "markRead", { id: "source", messageId: "message" }));
+    expect(screen.queryByRole("status", { name: "未读回复：Original" })).not.toBeInTheDocument();
+  });
+  it("does not acknowledge the selected reply in an inactive tab", async () => {
+    source.hasUnread = true;
+    mock.pathname = "/test/chat";
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    render(page());
+    await screen.findByRole("link", { name: /Original/ });
+    fireEvent.focus(window);
+    expect(mock.request.mock.calls.some(([, method]) => method === "markRead")).toBe(false);
+  });
   it("distinguishes background monitoring from a foreground reply and can stop it from the session menu", async () => {
     source = { ...source, provider: "claude", turns: [{ id: "finished-turn", status: "completed", createdAt: "2026-01-01", events: [], backgroundTasks: [{ id: "watcher", description: "Wait for PR to merge", status: "running" }] }] };
     mock.request.mockImplementation(async (_scope, method) => {
