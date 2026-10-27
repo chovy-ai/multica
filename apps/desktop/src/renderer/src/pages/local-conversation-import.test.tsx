@@ -13,7 +13,7 @@ const candidate = (id: string, importedId?: string): LocalImportCandidate => ({ 
 function mount(request: ReturnType<typeof vi.fn>) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } }); clients.push(qc);
   const onImported = vi.fn();
-  const client = { request, subscribe: () => () => {} } as LocalConversationClient;
+  const client = { request, subscribe: () => () => {}, files: { upload: vi.fn(), read: vi.fn(), url: vi.fn() } } as unknown as LocalConversationClient;
   render(<QueryClientProvider client={qc}><LocalConversationImportButton scope={scope} client={client} projects={[{ id: "project-a", title: "Project A" }]} chinese onImported={onImported} /></QueryClientProvider>);
   return { onImported };
 }

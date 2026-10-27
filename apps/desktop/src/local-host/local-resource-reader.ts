@@ -52,12 +52,10 @@ export class LocalResourceReader {
     const location = await this.path(root, path, cwd); const info = await stat(location.path);
     if (!info.isFile()) throw new Error("Select a file to preview");
     if (info.size > 10 * 1024 * 1024) throw new Error("Preview supports files up to 10 MB");
-    const bytes = await readFile(location.path);
     const types: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".html": "text/html", ".htm": "text/html", ".pdf": "application/pdf" };
     const mimeType = types[extname(path).toLowerCase()] ?? "text/plain";
-    const base = { name: basename(location.path), path: location.path, mimeType, size: bytes.length, truncated: false };
-    if (mimeType.startsWith("image/") || mimeType === "application/pdf") return { ...base, data: bytes.toString("base64") };
-    if (bytes.includes(0)) throw new Error("This binary format cannot be previewed");
-    return { ...base, text: bytes.subarray(0, 1024 * 1024).toString("utf8"), truncated: bytes.length > 1024 * 1024 };
+    // Content travels over the host's HTTP file endpoint; only text needs a binary check here.
+    if (!(mimeType.startsWith("image/") || mimeType === "application/pdf") && (await readFile(location.path)).includes(0)) throw new Error("This binary format cannot be previewed");
+    return { name: basename(location.path), path: location.path, mimeType, size: info.size, truncated: false };
   }
 }

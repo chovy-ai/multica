@@ -12,22 +12,43 @@ interface Message { jsonrpc: "2.0"; id?: number; method?: string; params?: unkno
 
 const MAX_MESSAGE_BYTES = 1 << 20;
 
+/** Moves whole JSON-RPC messages; framing belongs to the transport. */
+export interface MessageTransport {
+  send(text: string): void;
+  onMessage(listener: (text: string) => void): void;
+  onClose(listener: () => void): void;
+}
+
+/** Newline-delimited framing over a stream pair, as the daemon uses for the sidecar. */
+export function lineTransport(input: Readable, output: Writable): MessageTransport {
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  return {
+    send: (text) => { output.write(`${text}\n`); },
+    onMessage: (listener) => { lines.on("line", listener); },
+    onClose: (listener) => { lines.once("close", listener); },
+  };
+}
+
 /**
- * Newline-delimited JSON-RPC 2.0 peer over a stream pair, matching the daemon's
- * framing. Requests are served concurrently; notifications run in arrival order
- * because events carry sequence numbers.
+ * JSON-RPC 2.0 peer. Requests are served concurrently; notifications run in
+ * arrival order because events carry sequence numbers.
  */
 export class JsonRpcPeer {
   private nextId = 0;
   private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   private notes: Promise<void> = Promise.resolve();
   private closedError?: Error;
+  private transport: MessageTransport;
+  private handler: Handler;
   readonly closed: Promise<void>;
 
-  constructor(input: Readable, private output: Writable, private handler: Handler) {
-    const lines = createInterface({ input, crlfDelay: Infinity });
-    lines.on("line", (line) => this.receive(line));
-    this.closed = new Promise((resolve) => lines.once("close", () => { this.fail(new Error("connection closed")); resolve(); }));
+  constructor(transport: MessageTransport, handler: Handler);
+  constructor(input: Readable, output: Writable, handler: Handler);
+  constructor(first: MessageTransport | Readable, second: Writable | Handler, third?: Handler) {
+    this.transport = third ? lineTransport(first as Readable, second as Writable) : first as MessageTransport;
+    this.handler = (third ?? second) as Handler;
+    this.transport.onMessage((text) => this.receive(text));
+    this.closed = new Promise((resolve) => this.transport.onClose(() => { this.fail(new Error("connection closed")); resolve(); }));
   }
 
   private fail(error: Error): void {
@@ -68,7 +89,7 @@ export class JsonRpcPeer {
     if (this.closedError) throw this.closedError;
     const line = JSON.stringify(message);
     if (Buffer.byteLength(line) > MAX_MESSAGE_BYTES) throw new Error("message exceeds 1 MiB");
-    this.output.write(`${line}\n`);
+    this.transport.send(line);
   }
 
   notify(method: string, params: unknown): void {

@@ -116,7 +116,11 @@ export interface LocalPromptQueue {
   items: LocalQueuedPrompt[];
 }
 export interface LocalPreviewLocation { root: string; path: string; name: string; kind: "directory" | "file" }
-export interface LocalPreviewFile { name: string; path: string; root?: string; mimeType: string; size: number; text?: string; data?: string; truncated: boolean }
+/**
+ * A previewable file. The host returns `fileRef`, a short-lived grant for the
+ * HTTP file endpoint; Desktop fills `url` (images, PDF) or `text` from it.
+ */
+export interface LocalPreviewFile { name: string; path: string; root?: string; mimeType: string; size: number; fileRef?: string; url?: string; text?: string; truncated: boolean }
 export interface LocalContextUsage {
   usedTokens: number | null; limitTokens: number | null; model: string | null; updatedAt: string | null;
 }
@@ -170,9 +174,19 @@ export interface LocalConversationMethods {
   remoteUpdate: { params: { id: string; turnId: string; sessionId?: string; taskId?: string; events?: LocalConversationEvent[]; output?: string; error?: string; status?: LocalConversationTurn["status"] }; result: void };
 }
 export type LocalConversationMethod = keyof LocalConversationMethods;
+/** File content moves over the host's HTTP file endpoint, never through JSON-RPC or IPC. */
+export interface LocalFileTransport {
+  /** Stores an attachment and returns its id. */
+  upload(scope: LocalConversationScope, file: File): Promise<string>;
+  /** Reads an attachment id or a granted `fileRef`. */
+  read(scope: LocalConversationScope, fileRef: string): Promise<Blob>;
+  /** A URL the renderer can use directly, e.g. as an image source. */
+  url(scope: LocalConversationScope, fileRef: string): string;
+}
 export interface LocalConversationClient {
   request<M extends LocalConversationMethod>(scope: LocalConversationScope, method: M, params: LocalConversationMethods[M]["params"]): Promise<LocalConversationMethods[M]["result"]>;
   subscribe(listener: (scope: LocalConversationScope, sessionId: string) => void): () => void;
+  files: LocalFileTransport;
 }
 
 /** Adding an IPC method requires advertising it to the renderer. */

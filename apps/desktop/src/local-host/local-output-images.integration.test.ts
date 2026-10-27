@@ -58,18 +58,23 @@ it.each(["codex", "claude"] as const)("persists %s output images, restores histo
   const imageEvent = completed.turns[0]!.events.find((event) => event.tool === "ImageGeneration")!;
   const path = JSON.parse(imageEvent.output!).savedPath;
   expect(path).toMatch(/^\/multica-local-images\//); expect(imageEvent.output).not.toContain(png);
-  expect(await service.request(scope, "imageRead", { id: entry.id, path })).toMatchObject({ data: png, mimeType: "image/png" });
+  // Image bytes are streamed by the host through a short-lived grant.
+  const granted = async (owner: LocalConversationService, id: string) => {
+    const image = await owner.request(scope, "imageRead", { id, path });
+    return { ...image, bytes: (await readFile((await owner.resolveFile(scope, image.fileRef!)).path)).toString("base64") };
+  };
+  expect(await granted(service, entry.id)).toMatchObject({ bytes: png, mimeType: "image/png" });
   const unrelated = await service.request(scope, "create", { provider });
   await expect(service.request(scope, "imageRead", { id: unrelated.id, path })).rejects.toThrow("does not belong");
   await writeFile(join(root, "secret.png"), Buffer.from(png, "base64"));
   await expect(service.request(scope, "imageRead", { id: entry.id, path: join(root, "secret.png") })).rejects.toThrow("outside");
   const branch = await service.request(scope, "fork", { id: entry.id });
-  expect(await service.request(scope, "imageRead", { id: branch.id, path })).toMatchObject({ data: png });
+  expect(await granted(service, branch.id)).toMatchObject({ bytes: png });
   await service.stop(); await rm(codexHome, { recursive: true, force: true });
   const restarted = new LocalConversationService(options); restarted.setCurrentUser(scope.userId); stops.push(() => restarted.stop());
   const restored = await restarted.request(scope, "read", { id: entry.id });
   expect(restored.turns[0]!.events.filter((event) => event.tool === "ImageGeneration")).toHaveLength(1);
-  expect(await restarted.request(scope, "imageRead", { id: entry.id, path })).toMatchObject({ data: png });
+  expect(await granted(restarted, entry.id)).toMatchObject({ bytes: png });
   const folders = await readdir(options.root);
   expect(await readFile(join(options.root, folders[0]!, "conversations.json"), "utf8")).not.toContain(png);
   expect(run.mock.calls[0]![0].systemPrompt).toContain("Markdown image syntax");

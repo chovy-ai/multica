@@ -41,6 +41,7 @@ export function getLocalConversationClient(raw: LocalConversationClient): Compat
     listeners.forEach((listener) => listener());
   };
   const client: CompatibleClient = {
+    files: raw.files,
     check(scope) {
       const id = key(scope);
       let pending = checks.get(id);

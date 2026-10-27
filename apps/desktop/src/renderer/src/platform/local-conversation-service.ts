@@ -10,6 +10,7 @@ import { isTaskCreationReference, localMessageDisplayContent } from "@multica/co
 import { isAutomaticLocalDirectory } from "@multica/tutti-agent-gui-host/local-projects";
 import type { AgentGuiSession } from "@multica/tutti-agent-gui-host/protocol";
 import { projectForDirectory } from "./local-conversation-projects";
+import { blobBase64 } from "./local-preview-file";
 
 export const localConversationKey = (scope: LocalConversationScope) => ["local-conversations", scope.userId, scope.workspaceId] as const;
 export const localTargetId = (provider: string) => `local:${provider}`;
@@ -258,16 +259,16 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       }
       case "attachment.upload": {
         if (!(params.file instanceof File) || params.file.size > 25 * 1024 * 1024) throw new Error("Invalid file, or file exceeds 25 MB");
-        const bytes = new Uint8Array(await params.file.arrayBuffer()); let encoded = "";
-        for (let at = 0; at < bytes.length; at += 32768) encoded += String.fromCharCode(...bytes.subarray(at, at + 32768));
-        const saved = await local("fileStore", { name: params.file.name, mimeType: params.file.type || "application/octet-stream", data: btoa(encoded) });
-        return fileAttachment(saved.id);
+        return fileAttachment(await client.files.upload(scope, params.file));
       }
-      case "attachment.read": { const file = await local("fileRead", { id: params.attachmentId }); return { data: file.data, name: file.name, mimeType: file.mimeType }; }
+      case "attachment.read": {
+        const file = await local("fileInfo", { id: params.attachmentId });
+        return { data: await blobBase64(await client.files.read(scope, params.attachmentId)), name: file.name, mimeType: file.mimeType };
+      }
       case "image.read": {
         const file = await local("imageRead", { id: params.sessionId, path: params.path });
-        if (!file.data) throw new Error("Image preview data is unavailable");
-        return { data: file.data, name: file.name, mimeType: file.mimeType };
+        if (!file.fileRef) throw new Error("Image preview data is unavailable");
+        return { data: await blobBase64(await client.files.read(scope, file.fileRef)), name: file.name, mimeType: file.mimeType };
       }
       default: return cloud.request(method, params as never);
     }

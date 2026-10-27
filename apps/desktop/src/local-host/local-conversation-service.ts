@@ -5,7 +5,7 @@ import { access, chmod, mkdir, readFile, realpath, rename, stat, writeFile } fro
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join } from "node:path";
-import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationTurn, LocalConversationMethod, LocalConversationMethods, LocalConversationScope, LocalFolderProject, LocalProviderId, LocalUserQuestionResult, LocalQueuedPrompt, LocalPromptBlock } from "@multica/core/local-conversation/protocol";
+import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationTurn, LocalPreviewFile, LocalConversationMethod, LocalConversationMethods, LocalConversationScope, LocalFolderProject, LocalProviderId, LocalUserQuestionResult, LocalQueuedPrompt, LocalPromptBlock } from "@multica/core/local-conversation/protocol";
 import { findLocalProvider, localProviderModels, runLocalProvider } from "./local-provider-runner";
 import { LocalProviderUsageReader } from "./local-provider-usage";
 import type { LocalExecutionContext, LocalRunContext } from "./local-multica-context";
@@ -125,9 +125,20 @@ export class LocalConversationService {
     if ((await stat(tempPath)).size > 25 * 1024 * 1024) throw new Error("File exceeds 25 MB");
     return this.storeFile(scope, name, mimeType, async (path) => { await rename(tempPath, path); await chmod(path, 0o600); });
   }
-  /** Resolves an attachment id to the stored file the host may stream. */
-  async resolveFile(scope: LocalConversationScope, id: string): Promise<{ path: string; mimeType: string; name: string }> {
-    const file = await this.request(scope, "fileInfo", { id });
+  private fileGrants = new Map<string, { key: string; path: string; mimeType: string; name: string; expires: number }>();
+  /** Lets the host stream one already-authorized file for a short time, by an unguessable reference. */
+  private grantFile(scope: LocalConversationScope, file: { path: string; mimeType: string; name: string }): string {
+    const now = Date.now();
+    for (const [ref, grant] of this.fileGrants) if (grant.expires < now) this.fileGrants.delete(ref);
+    const ref = randomUUID();
+    this.fileGrants.set(ref, { key: this.key(scope), path: file.path, mimeType: file.mimeType, name: file.name, expires: now + 10 * 60_000 });
+    return ref;
+  }
+  /** Resolves a file grant, or an attachment id, to the file the host may stream. */
+  async resolveFile(scope: LocalConversationScope, ref: string): Promise<{ path: string; mimeType: string; name: string }> {
+    const grant = this.fileGrants.get(ref);
+    if (grant && grant.expires >= Date.now() && grant.key === this.key(scope)) return { path: grant.path, mimeType: grant.mimeType, name: grant.name };
+    const file = await this.request(scope, "fileInfo", { id: ref });
     return { path: file.path, mimeType: file.mimeType, name: file.name };
   }
   setCurrentUser(userId: string | null): void {
@@ -400,10 +411,11 @@ export class LocalConversationService {
         const attachment = /^\/multica-local-images\/([0-9a-f-]{36})\/[^/]+$/.exec(path);
         if (attachment) {
           if (!entry.turns.some((turn) => turn.events.some((event) => event.tool === "ImageGeneration" && event.output?.includes(path)))) throw new Error("Image does not belong to this conversation");
-          const file = await this.request(scope, "fileRead", { id: attachment[1]! });
-          result = { name: file.name, path, mimeType: file.mimeType, size: file.size, data: file.data, truncated: false };
+          const file = await this.request(scope, "fileInfo", { id: attachment[1]! });
+          result = { name: file.name, path, mimeType: file.mimeType, size: file.size, truncated: false, fileRef: this.grantFile(scope, file) };
         } else {
-          result = await new LocalResourceReader(join(this.options.root, this.key(scope))).read(entry.cwd, path.startsWith("file:") ? fileURLToPath(path) : path, entry.cwd);
+          const file = await new LocalResourceReader(join(this.options.root, this.key(scope))).read(entry.cwd, path.startsWith("file:") ? fileURLToPath(path) : path, entry.cwd);
+          result = { ...file, fileRef: this.grantFile(scope, file) };
         }
         if (!(result as { mimeType: string }).mimeType.startsWith("image/")) throw new Error("Only images can be rendered inline");
         this.key(scope); break;
@@ -417,11 +429,12 @@ export class LocalConversationService {
         const cwd = params.id ? session().cwd : undefined;
         const reader = new LocalResourceReader(join(this.options.root, this.key(scope)));
         const path = text(params.path, "preview path", 4096);
+        const granted = (file: LocalPreviewFile) => ({ ...file, fileRef: this.grantFile(scope, file) });
         if (method === "previewRead" && params.root === undefined) {
-          result = await reader.readLink(path, cwd); break;
+          result = granted(await reader.readLink(path, cwd)); break;
         }
         const root = text(params.root, "preview root", 4096);
-        result = method === "previewList" ? await reader.list(root, path, cwd) : await reader.read(root, path, cwd); break;
+        result = method === "previewList" ? await reader.list(root, path, cwd) : granted(await reader.read(root, path, cwd)); break;
       }
       case "sideCreate": {
         const source = session();

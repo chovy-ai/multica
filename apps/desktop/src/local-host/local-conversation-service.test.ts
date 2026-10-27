@@ -178,7 +178,10 @@ describe("local conversation persistence and execution", () => {
     await expect(service.request(scope, "previewRead", { path, id: entry.id })).rejects.toThrow("Choose this folder");
     Object.assign(options, { choosePreview: async () => path });
     const location = await service.request(scope, "previewChoose", { kind: "file" });
-    expect(await service.request(scope, "previewRead", { path, id: entry.id })).toMatchObject({ root: location!.root, path: location!.path, text: "package daemon" });
+    const preview = await service.request(scope, "previewRead", { path, id: entry.id });
+    expect(preview).toMatchObject({ root: location!.root, path: location!.path });
+    expect(await readFile((await service.resolveFile(scope, preview.fileRef!)).path, "utf8")).toBe("package daemon");
+    await expect(service.resolveFile({ ...scope, workspaceId: "other" }, preview.fileRef!)).rejects.toThrow();
     await expect(service.request({ ...scope, workspaceId: "other" }, "previewRead", { path })).rejects.toThrow("Choose this folder");
   });
   it("uses the pool only for Codex dialogue turns and closes it on account change and shutdown", async () => {

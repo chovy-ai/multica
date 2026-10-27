@@ -12,11 +12,15 @@ import { LocalConversationService } from "./local-conversation-service";
 import { generateLocalConversationTitle } from "./local-conversation-title-generator";
 import { LocalMulticaContext } from "./local-multica-context";
 import { migrateLegacyData } from "./legacy-migration";
+import { developerLogTool } from "./developer-log-tool";
 
 /** Methods that start model work; a draining host refuses them so a restart interrupts nothing new. */
 const STARTS_WORK = new Set<string>(["send", "remoteSend", "fork", "sideCreate", "importSessions"]);
-/** Cloud agent turns are driven by this host only; Desktop starts them with remoteSend. */
-const HOST_INTERNAL = new Set<string>(["remoteBegin", "remoteUpdate"]);
+/**
+ * Methods Desktop may not call: cloud agent turns are driven by this host (Desktop
+ * starts them with remoteSend), and file bytes travel over HTTP, never JSON-RPC.
+ */
+const HOST_INTERNAL = new Set<string>(["remoteBegin", "remoteUpdate", "fileStore", "fileRead"]);
 
 type Service = Pick<LocalConversationService, "request" | "setCurrentUser" | "setDraining" | "busyCount" | "stop" | "resolveFile" | "adoptFile">;
 
@@ -58,6 +62,8 @@ async function createConversationService(input: { apiUrl: string; dataDir: strin
       file: (id) => service.request(scope, "fileRead", { id }),
     }),
     localActions: (scope) => ({ request: (method, params) => service.request(scope, method, params) }),
+    // Diagnostics stay in Desktop, which owns the renderer and daemon logs.
+    developerLogTool: (scope, conversationId) => developerLogTool((query, signal) => bridge.hostRequest("developer_logs_export", { scope, query }, signal), conversationId),
   });
   await context.initialize();
   // The context only calls back into the service after both exist.

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { QueryClient } from "@tanstack/react-query";
@@ -51,7 +51,18 @@ async function setup(getSelectionIntent?: () => string) {
   };
   const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, find: async () => "/test/fake", chooseDirectory, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)), queueCloudClient: async () => cloud });
   service.setCurrentUser("user");
-  const client: LocalConversationClient = { request: (scope, method, params) => service.request(scope, method, params), subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
+  // Stands in for the daemon's HTTP file endpoint over the same service.
+  const files: LocalConversationClient["files"] = {
+    upload: async (scope, file) => {
+      await mkdir(root, { recursive: true });
+      const upload = join(root, `upload-${crypto.randomUUID()}`);
+      await writeFile(upload, new Uint8Array(await file.arrayBuffer()));
+      return service.adoptFile(scope, upload, file.name, file.type || "application/octet-stream");
+    },
+    read: async (scope, ref) => new Blob([new Uint8Array(await readFile((await service.resolveFile(scope, ref)).path))]),
+    url: (_scope, ref) => `test-file://${ref}`,
+  };
+  const client: LocalConversationClient = { request: (scope, method, params) => service.request(scope, method, params), subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, files };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   const values = new Map<string, string>();
   const onLocalSelect = vi.fn();

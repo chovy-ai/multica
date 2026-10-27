@@ -6,7 +6,7 @@ const scope = { userId: "reader", workspaceId: "workspace" };
 const capabilities = { protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) };
 function setup(response: unknown = capabilities) {
   const request = vi.fn(async (_scope, method) => method === "capabilities" ? response : []);
-  const raw = { request, subscribe: () => () => {} } as LocalConversationClient;
+  const raw = { request, subscribe: () => () => {}, files: { upload: vi.fn(), read: vi.fn(), url: vi.fn() } } as unknown as LocalConversationClient;
   return { raw, request, client: getLocalConversationClient(raw) };
 }
 describe("desktop runtime capability checks", () => {
