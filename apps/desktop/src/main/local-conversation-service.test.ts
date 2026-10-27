@@ -24,6 +24,17 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   return { service, options };
 }
 describe("local conversation persistence and execution", () => {
+  it("previews a selected external file without granting its siblings or another workspace access", async () => {
+    const { service, options } = await setup();
+    const entry = await service.request(scope, "create", { provider: "claude" });
+    const path = join(options.root, "runtime_mcp.go");
+    await writeFile(path, "package daemon");
+    await expect(service.request(scope, "previewRead", { path, id: entry.id })).rejects.toThrow("Choose this folder");
+    Object.assign(options, { choosePreview: async () => path });
+    const location = await service.request(scope, "previewChoose", { kind: "file" });
+    expect(await service.request(scope, "previewRead", { path, id: entry.id })).toMatchObject({ root: location!.root, path: location!.path, text: "package daemon" });
+    await expect(service.request({ ...scope, workspaceId: "other" }, "previewRead", { path })).rejects.toThrow("Choose this folder");
+  });
   it("uses the pool only for Codex dialogue turns and closes it on account change and shutdown", async () => {
     const { service, options } = await setup();
     const pools: { run: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }[] = [];

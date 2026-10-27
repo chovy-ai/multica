@@ -106,7 +106,7 @@ export interface LocalPromptQueue {
   items: LocalQueuedPrompt[];
 }
 export interface LocalPreviewLocation { root: string; path: string; name: string; kind: "directory" | "file" }
-export interface LocalPreviewFile { name: string; path: string; mimeType: string; size: number; text?: string; data?: string; truncated: boolean }
+export interface LocalPreviewFile { name: string; path: string; root?: string; mimeType: string; size: number; text?: string; data?: string; truncated: boolean }
 export interface LocalContextUsage {
   usedTokens: number | null; limitTokens: number | null; model: string | null; updatedAt: string | null;
 }
@@ -134,7 +134,7 @@ export interface LocalConversationMethods {
   sideAccepted: { params: { id: string; requestId: string }; result: void };
   previewChoose: { params: { kind: "file" | "directory" }; result: LocalPreviewLocation | null };
   previewList: { params: { root: string; path: string; id?: string }; result: LocalPreviewLocation[] };
-  previewRead: { params: { root: string; path: string; id?: string }; result: LocalPreviewFile };
+  previewRead: { params: { root?: string; path: string; id?: string }; result: LocalPreviewFile };
   importScan: { params: { provider: LocalProviderId; cursor?: string }; result: LocalImportPage };
   importSessions: { params: { provider: LocalProviderId; ids: string[]; projectId?: string | null }; result: LocalImportResult };
   importCancel: { params: Record<string, never>; result: void };
