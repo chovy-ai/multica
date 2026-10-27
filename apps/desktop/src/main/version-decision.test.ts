@@ -86,4 +86,7 @@ describe("decideVersionAction", () => {
       decideVersionAction(bundled, { ...base, active_task_count: 0 }),
     ).toBe("restart");
   });
+  it("defers while local conversations are running, even with no agent tasks", () => {
+    expect(decideVersionAction("v1.1.0", { status: "running", cli_version: "v1.0.0", active_task_count: 0, local_busy_count: 1 })).toBe("defer");
+  });
 });

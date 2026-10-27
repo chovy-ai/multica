@@ -815,8 +815,11 @@ if (!gotTheLock) {
       if (localShutdown) return;
       event.preventDefault(); localShutdown = true;
       // Local conversations keep running in the daemon; only flush Desktop's own logs.
-      localConversations?.close();
-      void Promise.all([localTimingLog?.flush(), ...[...webDiagnosticLogs.values()].map((log) => log.flush())]).finally(() => app.quit());
+      // An AppImage's executable disappears with its mount, so its sidecar cannot outlive it.
+      const proxy = localConversations;
+      const stopped = process.env.APPIMAGE && proxy ? proxy.stopSidecar().catch(() => {}) : Promise.resolve();
+      void stopped.finally(() => proxy?.close());
+      void Promise.all([stopped, localTimingLog?.flush(), ...[...webDiagnosticLogs.values()].map((log) => log.flush())]).finally(() => app.quit());
     });
 
     electronApp.setAppUserModelId(
@@ -1025,8 +1028,34 @@ if (!gotTheLock) {
     desktopInitialized = true;
     createWindow();
 
-    setupAutoUpdater(() => mainWindow);
-    setupDaemonManager(() => mainWindow);
+    setupAutoUpdater(() => mainWindow, {
+      // The sidecar runs this app's executable: stop it before the installer
+      // replaces the app, after asking when that would interrupt a turn.
+      beforeInstall: async () => {
+        if (!localConversations) return true;
+        const busy = await localConversations.drain().catch(() => 0);
+        if (busy > 0 && mainWindow && !mainWindow.isDestroyed()) {
+          const chinese = app.getLocale().startsWith("zh");
+          const choice = await dialog.showMessageBox(mainWindow, {
+            type: "warning", noLink: true, defaultId: 0, cancelId: 0,
+            buttons: chinese ? ["等待完成", "立即更新"] : ["Wait", "Update now"],
+            message: chinese ? "本地对话仍在运行" : "Local conversations are still running",
+            detail: chinese ? "立即更新会中断正在运行的本地对话。" : "Updating now interrupts the local conversations that are running.",
+          });
+          if (choice.response !== 1) { await localConversations.undrain().catch(() => {}); return false; }
+        }
+        await localConversations.stopSidecar().catch(() => {});
+        return true;
+      },
+    });
+    setupDaemonManager(() => mainWindow, {
+      quiesceLocalConversations: async () => {
+        if (!localConversations) return true;
+        const busy = await localConversations.drain().catch(() => 0);
+        if (busy > 0) await localConversations.undrain().catch(() => {});
+        return busy === 0;
+      },
+    });
     setupLocalDirectory(() => mainWindow);
 
     app.on("activate", () => {

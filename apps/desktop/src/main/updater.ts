@@ -109,7 +109,11 @@ function checkForUpdatesOnce(): Promise<unknown> {
   return p;
 }
 
-export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): void {
+/**
+ * `beforeInstall` lets the app stop work the installer would otherwise kill
+ * or be blocked by; returning false cancels this install request.
+ */
+export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null, options: { beforeInstall?: () => Promise<boolean> } = {}): void {
   const preferencesFilePath = updaterPreferencesPath(app.getPath("userData"));
   let automaticUpdatesEnabled =
     DEFAULT_UPDATER_PREFERENCES.automaticUpdates;
@@ -201,7 +205,8 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
     return autoUpdater.downloadUpdate();
   });
 
-  ipcMain.handle("updater:install", () => {
+  ipcMain.handle("updater:install", async () => {
+    if (options.beforeInstall && !(await options.beforeInstall())) return;
     autoUpdater.quitAndInstall(false, true);
   });
 
