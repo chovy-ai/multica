@@ -8,7 +8,7 @@ Side conversations use the same right workspace as folder, file and web previews
 - Open a queued prompt's menu and choose **Run in side**. The prompt leaves the main queue and starts in an independent Side. The current main execution continues.
 - Open the right workspace and use **+ → New side conversation**, **Open folder**, **Open file** or **Open webpage**.
 - Tabs can be selected with the keyboard, closed, resized and expanded. Newly selected tabs scroll into view. On narrow detail panes, the resource workspace takes focus and offers **Return to main chat**.
-- Side conversations stay in the right workspace and are excluded from the left session list, search, archives and project counts. Ordinary Fork conversations remain in the left list. Closing a resource tab does not delete its conversation. Saved tab layout is scoped to account and workspace.
+- Side conversations stay in the right workspace and are excluded from the left session list, search, archives and project counts. Ordinary Fork conversations remain in the left list. Closing a resource tab does not delete its conversation. Saved tab layout (open/closed state, tabs, selected tab and file selection) is scoped to account, workspace and main conversation. Switching conversations restores that conversation’s layout synchronously; the previous account/workspace-wide layout is not imported because it has no conversation owner. The new-conversation page starts closed and empty on every visit and its temporary layout is not persisted. A Side created from that page is attached to the newly saved main conversation before navigation. Panel width remains a shared preference; expansion, dialogs and loading/error indicators reset when switching conversations.
 - Source location opens the source conversation and scrolls to the selected turn/quotation, using the existing locator for virtualized history.
 
 A Side inherits its source provider (Codex or Claude Code), working directory and project. Its model can be selected independently. The Side provider selector is read-only: a provider change must not detach a Side into an ordinary session and silently drop its source context. Create a Side from a source using the desired provider instead.
@@ -43,7 +43,7 @@ Web
 
 `sideCreate` saves the source messages through the selected turn. Side starts with its own empty visible transcript and no inherited native provider session ID. The first native request receives the bounded source snapshot as quoted data. Follow-up requests resume the Side's own provider session. Parent content created after the snapshot is not inherited automatically. Built-in Multica MCP remains available for explicit earlier-context queries. Nested Side snapshots retain their parent context.
 
-The main and every Side use separate GUI storage namespaces, so their queue, draft and model state do not overwrite one another. Mounted Side editors retain unsent input across tab changes and panel closure. Unsaved composer text is not guaranteed across an application restart; saved conversations, turns, source metadata and workspace tabs are durable.
+The main and every Side use separate GUI storage namespaces, so their queue, draft and model state do not overwrite one another. Mounted Side editors retain unsent input across tab changes, panel closure and main-conversation switches. File opens, native picker results and Side creations update the layout of the conversation that initiated them, even if it is no longer selected; late completions do not navigate away from the current conversation. Native webpage views are released on a main-conversation switch and recreated from the saved URL on return. Unsaved composer text is not guaranteed across an application restart; saved conversations, turns, source metadata and workspace tabs are durable.
 
 ## Queue ownership and recovery
 
@@ -132,3 +132,13 @@ The floating toolbar originally declared a border width without a border color, 
 The toolbar now uses Multica surface-border, raised-surface, radius and menu-shadow tokens, shared extra-small ghost buttons, and 14px icons. The Side action uses the same conversation icon as the Side tabs. Placement measures actual toolbar dimensions instead of assuming a 250px width, keeps an 8px viewport margin and flips below the selection when there is insufficient space above. Resize updates placement.
 
 Validation: all 11 cases in `e2e/local-conversation-queue.spec.ts` pass, including light/dark toolbar styling, narrow-window bounds, Escape dismissal, quoted Side entry and queue transfer for both providers. Host typecheck, scoped ESLint and build pass. Screenshots are `.tmp/side-design/selection-toolbar-light.png` and `selection-toolbar-dark.png`. No real model calls are used.
+
+## Per-conversation layout regression checks
+
+The workspace component tests cover A → B → A isolation, independent open/closed state and selection, remount restoration, legacy-layout exclusion, fresh new-conversation pages, delayed file/picker/Side results, missing conversation summaries, retained Side input and native webpage close/reopen calls. The flow test checks route wiring and confirms that the main editor remains mounted.
+
+```sh
+pnpm --filter @multica/desktop test src/renderer/src/pages/local-side-workspace.test.tsx src/renderer/src/pages/local-conversation-flow.test.tsx
+```
+
+These tests use fake desktop clients and do not execute model CLIs. Native webpage rendering still requires the Electron smoke/desktop acceptance described above.

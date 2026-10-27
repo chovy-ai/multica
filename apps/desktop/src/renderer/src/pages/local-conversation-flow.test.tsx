@@ -1,4 +1,4 @@
-import { LOCAL_CONVERSATION_METHODS } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/tutti-agent-gui-host/local-protocol";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -40,10 +40,10 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   source = { id: "source", title: "Original", provider: "codex", cwd: "/owned/work", providerSessionId: "native", model: null, pinned: false, archived: false, createdAt: "2026-01-01", updatedAt: "2026-01-01", messages: [{ id: "message", role: "assistant", content: "Result", turnId: "turn", createdAt: "2026-01-01" }], turns: [] };
   mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source] : method === "providers" ? [{ id: "codex", available: true }] : undefined);
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: unknown) => method === "capabilities" ? Promise.resolve({ protocolVersion: 1, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : method === "folderProjects" ? mock.folderError ? Promise.reject(mock.folderError) : Promise.resolve(mock.folders) : mock.request(scope, method, params), subscribe: () => () => {} } } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: unknown) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : method === "folderProjects" ? mock.folderError ? Promise.reject(mock.folderError) : Promise.resolve(mock.folders) : mock.request(scope, method, params), subscribe: () => () => {} } } });
   qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
 });
-afterEach(() => { cleanup(); qc.clear(); useProjectVisibilityStore.setState({ hiddenByScope: {} }); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.removeItem("multica_local_conversation_width"); localStorage.removeItem("multica-side-workspace:user:workspace"); });
+afterEach(() => { cleanup(); qc.clear(); useProjectVisibilityStore.setState({ hiddenByScope: {} }); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.removeItem("multica_local_conversation_width"); localStorage.clear(); });
 const page = () => <QueryClientProvider client={qc}><LocalConversationFlowPage /></QueryClientProvider>;
 const folder = (id: string, title: string, path = "/owned/work"): LocalFolderProject => ({ id, title, path, createdAt: "2026-01-01T00:00:00Z" });
 function activateWithPointer(element: HTMLElement) {
@@ -498,7 +498,7 @@ describe("Side conversations in the main session list", () => {
     const archived = { ...source, id: "archived", title: "Archived main", archived: true };
     const rows = [source, fork, archived, side, { ...side, id: "side-draft", title: "Side draft", messages: [] }, { ...side, id: "side-archive", title: "Side archive", archived: true }];
     mock.request.mockImplementation(async (_scope, method) => method === "list" ? rows : [{ id: provider, available: true }]);
-    localStorage.setItem("multica-side-workspace:user:workspace", JSON.stringify({ tabs: [{ id: "side-tab", kind: "side", sessionId: side.id }], selected: "side-tab", open: true }));
+    localStorage.setItem("multica-side-workspace:user:workspace:session:source", JSON.stringify({ tabs: [{ id: "side-tab", kind: "side", sessionId: side.id }], selected: "side-tab", open: true }));
     render(page());
     const list = within(screen.getByTestId("local-conversation-sessions"));
     expect(await list.findByRole("link", { name: /Original/ })).toBeVisible();
@@ -721,4 +721,22 @@ describe("local conversation fork entry", () => {
     render(page());
     expect(await screen.findByRole("button", { name: "分叉会话" })).toBeDisabled();
   });
+});
+
+it("restores each route's Side toggle without remounting the main editor", async () => {
+  const b = { ...source, id: "second", title: "Second" };
+  mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, b] : []);
+  const view = render(page());
+  await screen.findByRole("link", { name: /Original/ });
+  const main = screen.getByRole("textbox", { name: "Conversation draft" });
+  fireEvent.change(main, { target: { value: "Keep draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "打开右侧面板" }));
+  expect(screen.getByText("在这里继续旁支对话，或查看文件和网页")).toBeVisible();
+  mock.selected = b.id; view.rerender(page());
+  expect(screen.getByRole("button", { name: "打开右侧面板" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("在这里继续旁支对话，或查看文件和网页")).not.toBeVisible();
+  mock.selected = source.id; view.rerender(page());
+  expect(screen.getByText("在这里继续旁支对话，或查看文件和网页")).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Conversation draft" })).toBe(main);
+  expect(main).toHaveValue("Keep draft");
 });
