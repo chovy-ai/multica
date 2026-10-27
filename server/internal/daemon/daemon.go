@@ -4999,6 +4999,7 @@ func (d *Daemon) handleUpdate(ctx context.Context, runtimeID string, update *Pen
 	defer func() {
 		if !restarting {
 			d.releaseClaimBarrier()
+			d.resumeLocalAfterAbortedRestart(ctx)
 			d.updating.Store(false)
 		}
 	}()
@@ -5064,6 +5065,11 @@ func (d *Daemon) tryBeginServerUpdate(ctx context.Context) serverUpdateAcquireRe
 		if d.claimsInFlight == 0 {
 			if d.activeTasks.Load() == 0 {
 				d.claimMu.Unlock()
+				if !d.quiesceLocalForRestart(ctx) {
+					d.releaseClaimBarrier()
+					d.updating.Store(false)
+					return serverUpdateRuntimeBusy
+				}
 				return serverUpdateAcquired
 			}
 			d.pauseClaims = false
@@ -5203,6 +5209,46 @@ func (d *Daemon) trySetClaimBarrier() bool {
 	}
 	d.pauseClaims = true
 	return true
+}
+
+// localRestartGate is the part of the local conversation service a restart
+// must coordinate with.
+type localRestartGate interface {
+	Drain(ctx context.Context) (int64, error)
+	Undrain(ctx context.Context) error
+}
+
+// quiesceForRestart drains gate before a restart: it refuses new local turns,
+// then reports whether anything is still running. A busy or unresponsive
+// service is undrained and the restart must defer. Draining before checking
+// closes the window where a turn starts after the idle check.
+func quiesceForRestart(ctx context.Context, gate localRestartGate, logger *slog.Logger) bool {
+	busy, err := gate.Drain(ctx)
+	if err == nil && busy == 0 {
+		return true
+	}
+	if err != nil {
+		logger.Warn("restart deferred: local conversation service did not drain", "error", err)
+	}
+	if uerr := gate.Undrain(ctx); uerr != nil {
+		logger.Warn("local conversation service did not resume after an aborted restart", "error", uerr)
+	}
+	return false
+}
+
+func (d *Daemon) quiesceLocalForRestart(ctx context.Context) bool {
+	return d.local == nil || quiesceForRestart(ctx, d.local, d.logger)
+}
+
+// resumeLocalAfterAbortedRestart undoes quiesceLocalForRestart when the
+// restart is not going to happen after all.
+func (d *Daemon) resumeLocalAfterAbortedRestart(ctx context.Context) {
+	if d.local == nil {
+		return
+	}
+	if err := d.local.Undrain(ctx); err != nil {
+		d.logger.Warn("local conversation service did not resume after an aborted restart", "error", err)
+	}
 }
 
 // releaseClaimBarrier clears the auto-update claim barrier so pollers may

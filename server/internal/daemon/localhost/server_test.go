@@ -138,9 +138,12 @@ func (h *harness) session(c *testClient) string {
 func TestLocalAPIRejectsUnauthorizedRequests(t *testing.T) {
 	h := newHarness(t, true)
 	cases := map[string]func(*http.Request){
-		"missing token":  func(*http.Request) {},
-		"wrong token":    func(r *http.Request) { r.Header.Set("Authorization", "Bearer nope") },
-		"browser origin": func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+testToken); r.Header.Set("Origin", "https://evil.example") },
+		"missing token": func(*http.Request) {},
+		"wrong token":   func(r *http.Request) { r.Header.Set("Authorization", "Bearer nope") },
+		"browser origin": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+testToken)
+			r.Header.Set("Origin", "https://evil.example")
+		},
 		"rebinding host": func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+testToken); r.Host = "evil.example" },
 	}
 	for name, mutate := range cases {
