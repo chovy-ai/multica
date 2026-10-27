@@ -36,7 +36,8 @@ export class LocalTimingLog {
       if (record && record.source !== "main") this.write(record);
     } catch { /* Other console output is never persisted here. */ }
   }
-  snapshot(conversationIds: ReadonlySet<string>, since: number, until: number): Promise<{ records: LocalTimingRecord[]; incomplete: boolean }> {
+  /** `null` reads every conversation, for the device-wide standalone MCP. */
+  snapshot(conversationIds: ReadonlySet<string> | null, since: number, until: number): Promise<{ records: LocalTimingRecord[]; incomplete: boolean }> {
     // Join the write queue so rotation cannot split a snapshot across two generations.
     const snapshot = this.pending.then(async () => {
       const records: LocalTimingRecord[] = [];
@@ -53,7 +54,7 @@ export class LocalTimingLog {
                 const record = parseLocalTiming(JSON.parse(line));
                 if (!record) { incomplete = true; continue; }
                 const at = Date.parse(record.at);
-                if (conversationIds.has(record.conversationId) && at >= since && at <= until) records.push(record);
+                if ((!conversationIds || conversationIds.has(record.conversationId)) && at >= since && at <= until) records.push(record);
               } catch { incomplete = true; }
             }
           } finally { await file.close(); }

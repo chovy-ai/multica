@@ -1,13 +1,39 @@
 import { resolve } from "path";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { builtinModules } from "node:module";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+// Custom chunking replaces the externals electron-vite would otherwise add, so list them here:
+// Electron, Node built-ins and runtime dependencies, except workspace packages that ship raw TypeScript.
+const bundledDeps = new Set(["@multica/tutti-agent-gui-host", "@multica/core"]);
+const runtimeDeps = Object.keys(JSON.parse(readFileSync(resolve("package.json"), "utf8")).dependencies ?? {}).filter((dep) => !bundledDeps.has(dep));
+const mainExternal = (id: string) => id === "electron" || id.startsWith("electron/") || id.startsWith("node:") || builtinModules.includes(id)
+  || runtimeDeps.some((dep) => id === dep || id.startsWith(`${dep}/`));
+
 export default defineConfig({
   main: {
     // Workspace packages expose raw TypeScript; main must bundle their runtime imports.
-    plugins: [externalizeDepsPlugin({ exclude: ["@multica/tutti-agent-gui-host", "@multica/core"] })],
+    build: {
+      externalizeDeps: false,
+      lib: {
+        entry: {
+          index: resolve("src/main/index.ts"),
+          // Standalone stdio MCP that Codex runs with ELECTRON_RUN_AS_NODE=1.
+          "developer-logs-mcp": resolve("src/main/developer-logs-mcp.ts"),
+        },
+      },
+      rolldownOptions: {
+        external: mainExternal,
+        output: {
+          // Keep everything both entries share out of index.js: the standalone
+          // MCP must never load (and so boot) the desktop app.
+          advancedChunks: { groups: [{ name: "developer-logs", test: /src\/main\/(developer-log-export|developer-runtime-logs|developer-logs-mcp-server|local-timing-log)\.ts$|tutti-agent-gui-host\/src\/local-timing\.ts$/ }] },
+        },
+      },
+    },
   },
   preload: {
     // `@electron-toolkit/preload` must be bundled INTO the preload script:

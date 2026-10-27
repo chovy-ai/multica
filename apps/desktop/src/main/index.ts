@@ -25,6 +25,10 @@ import { installNavigationGuard } from "./navigation-guard";
 import { installHtmlPreviewNavigationGuard } from "./html-preview-navigation";
 import { createRendererWebPreferences } from "./renderer-web-preferences";
 import { getAppVersion } from "./app-version";
+import { DEVELOPER_LOGS_MCP_NAME, writeDeveloperLogsManifest } from "./developer-logs-mcp-server";
+import { registerCodexStdioMcp } from "./codex-mcp-registration";
+import { findLocalProvider } from "./local-provider-runner";
+import { deriveProfileName, profileLogPath } from "./daemon-profile";
 import { loadRuntimeConfig } from "./runtime-config-loader";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import {
@@ -160,6 +164,7 @@ const mainRendererMessages = new MainRendererMessageQueue();
 let desktopInitialized = false;
 let authSessionGeneration = 0;
 let settingsUserId: string | null | undefined;
+let publishDeveloperLogsManifest: (() => void) | undefined;
 const webDiagnosticLogs = new Map<string, WebDiagnosticLog>();
 function accountWebLog(userId: string): WebDiagnosticLog {
   let log = webDiagnosticLogs.get(userId);
@@ -713,6 +718,25 @@ if (!gotTheLock) {
           return result.canceled ? null : result.filePath ?? null;
         },
       });
+      // Agents outside desktop conversations (daemon tasks, terminal Codex) reach the
+      // same logs through a stdio MCP that Codex launches with this app's runtime.
+      const diagnosticsDir = join(app.getPath("userData"), "local-conversations", "diagnostics");
+      const apiUrl = runtimeConfigResult.config.apiUrl;
+      publishDeveloperLogsManifest = () => {
+        void writeDeveloperLogsManifest(diagnosticsDir, {
+          version: 1, apiUrl, userId: settingsUserId ?? null,
+          daemonLogPath: daemonDiagnosticLogPath() ?? profileLogPath(deriveProfileName(apiUrl)),
+          runtime: { appVersion: getAppVersion(), platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, chromeVersion: process.versions.chrome, nodeVersion: process.versions.node, packaged: app.isPackaged },
+        }).catch((error: unknown) => console.warn("[developer-logs-mcp] Could not publish the diagnostics manifest", error));
+      };
+      publishDeveloperLogsManifest();
+      void findLocalProvider("codex").then((codex) => registerCodexStdioMcp(codex, {
+        name: DEVELOPER_LOGS_MCP_NAME,
+        command: process.execPath,
+        args: [join(__dirname, "developer-logs-mcp.js"), "--diagnostics", diagnosticsDir],
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+      })).then((result) => console.log(`[developer-logs-mcp] Codex registration: ${result}`))
+        .catch((error: unknown) => console.warn("[developer-logs-mcp] Could not register with Codex", error));
     }
     ipcMain.handle("developer-logs:export", (event, scope: LocalConversationScope) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !developerLogs) throw new Error("Developer logs require the active main window");
@@ -856,6 +880,7 @@ if (!gotTheLock) {
       if (sourceWindow === mainWindow) {
         settingsUserId = userId;
         localConversations?.setCurrentUser(userId);
+        publishDeveloperLogsManifest?.();
         const accountInvalidated = authSessionCoordinator.reportMain(userId);
         if (accountInvalidated) {
           resourcePreview?.dispose();
