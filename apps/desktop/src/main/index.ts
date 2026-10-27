@@ -12,6 +12,7 @@ import { bundledCliPath, setupDaemonManager, daemonDiagnosticLogPath } from "./d
 import { setupLocalDirectory } from "./local-directory";
 import { LocalConversationService } from "./local-conversation-service";
 import { ResourceWebPreview } from "./resource-web-preview";
+import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
 import { generateLocalConversationTitle } from "./local-conversation-title-generator";
 import { LocalMulticaContext } from "./local-multica-context";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
@@ -743,11 +744,24 @@ if (!gotTheLock) {
       return developerLogs.save(scope);
     });
     let resourcePreview: ResourceWebPreview | undefined;
-    ipcMain.handle("resource-preview:request", (event, scope: LocalConversationScope, command: import("../shared/resource-preview").WebPreviewCommand) => {
+    const previewFor = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Preview requires the active main window");
       localConversations.assertScope(scope);
-      resourcePreview ??= new ResourceWebPreview(mainWindow);
-      return resourcePreview.request(JSON.stringify([scope.userId, scope.workspaceId]), command);
+      resourcePreview ??= new ResourceWebPreview(mainWindow, { createSource: () => createMacosChromeCookieImportAdapter({ isEnabled: () => true }) });
+      return { preview: resourcePreview, owner: JSON.stringify([scope.userId, scope.workspaceId]) };
+    };
+    ipcMain.handle("resource-preview:request", (event, scope: LocalConversationScope, command: import("../shared/resource-preview").WebPreviewCommand) => {
+      const { preview, owner } = previewFor(event, scope);
+      return preview.request(owner, command);
+    });
+    ipcMain.handle("resource-preview:chrome-profiles", (event, scope: LocalConversationScope) => previewFor(event, scope).preview.chromeProfiles.list());
+    ipcMain.handle("resource-preview:import-chrome-profile", (event, scope: LocalConversationScope, input: import("../shared/resource-preview").ChromeProfileImportInput) => {
+      const { preview, owner } = previewFor(event, scope);
+      return preview.chromeProfiles.import(owner, input);
+    });
+    ipcMain.handle("resource-preview:cancel-chrome-import", (event, scope: LocalConversationScope, requestId: string) => {
+      const { preview, owner } = previewFor(event, scope);
+      return preview.chromeProfiles.cancel(owner, requestId);
     });
     ipcMain.handle("local-conversation:request", (event, scope: LocalConversationScope, method: LocalConversationMethod, params) => {
       if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Local conversations require the active main window");

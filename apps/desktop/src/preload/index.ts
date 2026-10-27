@@ -115,6 +115,9 @@ const desktopAPI = {
   } satisfies import("../shared/settings-host").SettingsHostClient,
   resourcePreview: {
     request: (scope, command) => ipcRenderer.invoke("resource-preview:request", scope, command),
+    listChromeProfiles: (scope) => ipcRenderer.invoke("resource-preview:chrome-profiles", scope),
+    importChromeProfile: (scope, input) => ipcRenderer.invoke("resource-preview:import-chrome-profile", scope, input),
+    cancelChromeProfileImport: (scope, requestId) => ipcRenderer.invoke("resource-preview:cancel-chrome-import", scope, requestId),
     subscribe: (listener) => { const handler = (_event: Electron.IpcRendererEvent, state: import("../shared/resource-preview").WebPreviewState) => listener(state); ipcRenderer.on("resource-preview:changed", handler); return () => ipcRenderer.removeListener("resource-preview:changed", handler); },
   } satisfies import("../shared/resource-preview").ResourcePreviewClient,
   localConversations: {

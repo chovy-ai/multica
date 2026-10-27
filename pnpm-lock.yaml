@@ -270,6 +270,9 @@ importers:
       '@tanstack/react-query':
         specifier: 'catalog:'
         version: 5.96.2(react@19.2.3)
+      '@tutti-os/browser-node':
+        specifier: workspace:*
+        version: link:../../vendor/tutti/packages/browser/workbench-node
       electron-updater:
         specifier: ^6.8.3
         version: 6.8.3

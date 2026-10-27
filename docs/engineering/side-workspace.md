@@ -61,6 +61,28 @@ Transcript Markdown recognizes bare `file://` addresses, absolute paths, relativ
 
 Webpages load as independent native views, including pages that disallow iframe embedding. They have no application preload, Node integration or desktop bridge. Permissions are denied and navigation is restricted to HTTP(S). Views are hidden while menus/dialogs/resize gestures cover them and are disposed when tabs close or the account changes. Browser login state is separate from Multica's own renderer.
 
+## Import Chrome login state
+
+Open a Side webpage, choose **Import Chrome**, select a local Chrome profile, then choose **Import**. On macOS, allow the Chrome Safe Storage Keychain request if prompted. The dialog reports imported, skipped and failed Cookie counts, or a cancellation, authorization error or empty result. It remains open after an error so the selection can be retried.
+
+This supports Google Chrome Stable profiles at the standard macOS location only. It imports Cookies, not bookmarks, passwords, extensions or Local Storage; some sites will still require signing in again. Expired, damaged and partitioned Cookies are skipped by the existing macOS source adapter. Windows, Linux, Dia and custom Chrome data directories are outside this Side integration.
+
+Cookies merge into the current account/workspace's existing Side webpage session: matching domain/path/name entries are replaced and unrelated Cookies are retained. Multica's own login session and other account/workspace sessions are excluded. Every open Side webpage sharing the target session refreshes after a nonzero import. Source files and Cookie values remain in main; the renderer receives profile display metadata and aggregate results only.
+
+Cancellation, closing the target tab or disposing the preview service aborts preparation before any write. Once writing begins, the import finishes rather than promising rollback; a cancellation request at that point keeps the dialog open until the result arrives. Only one import may run in a workspace at a time. Repeating an import updates the same matching Cookies. Disk-flush failures are reported explicitly because the imported Cookies may not survive restart.
+
+The added preload/main IPC methods share the existing main-frame and scope checks. The host injects the macOS source adapter into `ResourceWebPreview`; `resource-chrome-profile-import.ts` owns request validation, cancellation and writes. No server API, database migration, local conversation history format or session partition key changes are required.
+
+Fixture verification (no real Chrome profile, Keychain access or model calls):
+
+```sh
+pnpm --filter @multica/desktop exec vitest run src/main/resource-chrome-profile-import.test.ts src/main/resource-web-preview.test.ts src/renderer/src/pages/chrome-profile-import.test.tsx src/renderer/src/pages/local-side-workspace.test.tsx
+node --test vendor/tutti/packages/browser/workbench-node/src/chrome-cookie-import/macos/chromeCookieImport.test.ts vendor/tutti/packages/browser/workbench-node/src/chrome-cookie-import/macos/macosChromeCookieImportAdapter.test.ts
+MULTICA_RUN_NATIVE_PREVIEW_SMOKE=1 pnpm --filter @multica/desktop exec electron scripts/side-preview-smoke.cjs
+```
+
+With a desktop renderer Vite server running, `e2e/chrome-profile-import.spec.ts` mounts the production webpage preview against fixture IPC. It verifies selection, counts, scope wiring, hiding/restoring the native view, Escape/focus restoration and overflow in light/wide and dark/narrow layouts. Its screenshots are saved under `.tmp/chrome-profile-design/`. Real website login continuity and interactive Keychain authorization require manual acceptance on macOS.
+
 ## Code boundaries
 
 - `packages/tutti-agent-gui-host/src/side-entry.tsx`: selected-text toolbar, resource links, source locator, queue menu action.
