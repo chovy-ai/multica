@@ -1,4 +1,10 @@
 {
+  "desktop": {
+    "local_conversation": {
+      "waiting_for_answer": "回答を待っています",
+      "waiting_for_answer_label": "回答を待っています：{{title}}"
+    }
+  },
   "page": {
     "title": "チャット",
     "select_prompt": "会話を選ぶか、＋ で新規作成してください",
