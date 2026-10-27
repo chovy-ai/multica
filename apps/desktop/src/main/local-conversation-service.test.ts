@@ -11,6 +11,7 @@ import type { LocalExecutionContext } from "./local-multica-context";
 import type { forkLocalProvider } from "./local-provider-fork";
 import { ForkBoundaryUnavailable } from "./local-provider-fork";
 import { LocalClaudeConversation, type ClaudeRunObserver } from "./local-claude-conversation";
+import { CodexTurnStream } from "./local-codex-stream";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
@@ -24,6 +25,40 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   return { service, options };
 }
 describe("local conversation persistence and execution", () => {
+  it("preserves Codex message paragraphs from live events through completion and reopening", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const { service, options } = await setup(async (_input, emit) => {
+      const stream = new CodexTurnStream(emit);
+      stream.accept("item/completed", { item: { id: "progress", type: "agentMessage", text: "先检查模块。" } });
+      stream.accept("item/agentMessage/delta", { itemId: "final", delta: "已改好：" });
+      stream.accept("item/completed", { item: { id: "final", type: "agentMessage", text: "已改好：\n\n- 模块管理" } });
+      await gate;
+      return { output: stream.parser.output, sessionId: "fixture-thread" };
+    });
+    const expected = "先检查模块。\n\n已改好：\n\n- 模块管理";
+    const liveText = (entry: Awaited<ReturnType<typeof service.request<"read">>>) => entry.turns[0]!.events.filter((event) => event.type === "text").map((event) => event.content).join("");
+    try {
+      const entry = await service.request(scope, "create", { provider: "codex" });
+      await service.request(scope, "send", { id: entry.id, content: "Check modules" });
+      await vi.waitFor(async () => {
+        const running = await service.request(scope, "read", { id: entry.id });
+        expect(running.turns[0]?.status).toBe("running");
+        expect(liveText(running)).toBe(expected);
+        expect(running.messages.filter((message) => message.role === "assistant")).toHaveLength(0);
+      });
+      finish();
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+      const completed = await service.request(scope, "read", { id: entry.id });
+      expect(completed.messages.filter((message) => message.role === "assistant").map((message) => message.content)).toEqual([expected]);
+      await service.stop();
+      const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId);
+      cleanups.unshift(() => reopened.stop());
+      const restored = await reopened.request(scope, "read", { id: entry.id });
+      expect(restored.messages).toEqual(completed.messages);
+      expect(liveText(restored)).toBe(expected);
+    } finally { finish(); }
+  });
   it.each(["codex", "claude"] as const)("orders %s conversations by turn start through output, reverse completion and restart", async (provider) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const at = (minute: number) => vi.setSystemTime(new Date(`2026-10-27T10:${String(minute).padStart(2, "0")}:00Z`));
