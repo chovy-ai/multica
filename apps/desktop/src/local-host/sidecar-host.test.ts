@@ -78,6 +78,16 @@ describe("sidecar host", () => {
     h.close();
   });
 
+  it("keeps cloud agent turns driven by the host", async () => {
+    const h = harness();
+    await h.daemon.call("init", init);
+    await h.daemon.call("session.set", session("c1"));
+    for (const method of ["remoteBegin", "remoteUpdate"]) {
+      await expect(h.daemon.call("request", { connectionId: "c1", scope, method, params: {} })).rejects.toMatchObject({ data: { code: "method_not_allowed" } });
+    }
+    h.close();
+  });
+
   it("resolves and adopts files without moving their bytes over the protocol", async () => {
     const h = harness();
     await h.daemon.call("init", init);

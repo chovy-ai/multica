@@ -188,7 +188,7 @@ daemon → desktop（通知）：`event`、`hostRequest`、`hostRequestResolved`
 | @智能体上传附件到云端 | sidecar 从磁盘读文件流，`multipart/form-data` 直接上传 `POST /api/upload-file`，不经过 base64 |
 | Codex 输出图片 | provider 本身以 `data:` URL 返回图片，这是输入格式无法改变；sidecar 收到后只解码一次并落盘，此后按文件处理 |
 
-例外：MCP 工具 `read_attachment` 目前对 4MB 以内的文件附带 base64 内容（`local-multica-context.ts:137`）。这是给模型的 MCP 返回值，与 desktop 传输无关；本次改为只返回本地路径，模型用自己的文件工具读取（工具说明已经要求这样做）。MCP 规范中的图片内容块本身是 base64，那部分不在本方案范围内。
+例外：MCP 工具 `read_attachment` 对 4MB 以内的图片返回 MCP 图片内容块（`local-multica-context.ts:137`）。MCP 规范要求图片内容块使用 base64，它是给模型看图用的，只在 sidecar 进程内流转，不经过 desktop 与 daemon 之间的任何通道，因此保留。
 
 `fileStore`、`fileRead`、`imageRead`、`preview*` 的返回值变化随 B-2 一起计入协议 v2。
 

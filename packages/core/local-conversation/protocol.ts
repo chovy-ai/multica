@@ -130,7 +130,7 @@ export interface LocalAccountUsage {
 export interface LocalProviderUsage {
   provider: LocalProviderId; context: LocalContextUsage; account: LocalAccountUsage;
 }
-export const LOCAL_CONVERSATION_PROTOCOL_VERSION = 1;
+export const LOCAL_CONVERSATION_PROTOCOL_VERSION = 2;
 export interface LocalConversationCapabilities { protocolVersion: number; methods: string[] }
 export interface LocalConversationMethods {
   capabilities: { params: Record<string, never>; result: LocalConversationCapabilities };
@@ -165,6 +165,8 @@ export interface LocalConversationMethods {
   models: { params: { provider: LocalProviderId; force?: boolean }; result: LocalConversationModels };
   usage: { params: { provider: LocalProviderId; id?: string; force?: boolean }; result: LocalProviderUsage };
   remoteBegin: { params: { id: string; content: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
+  /** Starts cloud agent turns; the host sends, polls and resumes them. */
+  remoteSend: { params: { id: string; content: string; prompt?: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
   remoteUpdate: { params: { id: string; turnId: string; sessionId?: string; taskId?: string; events?: LocalConversationEvent[]; output?: string; error?: string; status?: LocalConversationTurn["status"] }; result: void };
 }
 export type LocalConversationMethod = keyof LocalConversationMethods;
@@ -207,5 +209,6 @@ export const LOCAL_CONVERSATION_METHODS = {
   models: true,
   usage: true,
   remoteBegin: true,
+  remoteSend: true,
   remoteUpdate: true,
 } satisfies Record<LocalConversationMethod, true>;

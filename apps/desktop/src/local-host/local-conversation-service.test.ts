@@ -451,6 +451,28 @@ describe("local conversation persistence and execution", () => {
     expect(branch.forkMode).toBe("saved-context"); expect(options.fork).not.toHaveBeenCalled();
     expect(branch.messages.at(-1)?.content).toBe("REVIEW_RESULT"); expect(branch.turns[0]?.remote).toEqual({ agentId: "reviewer", agentName: "Reviewer" });
   });
+  it("resumes confirmed cloud agent turns after a restart and fails sends that were never confirmed", async () => {
+    const { service, options } = await setup();
+    const source = await service.request(scope, "create", { provider: "codex" });
+    const sent = await service.request(scope, "remoteBegin", { id: source.id, content: "Review", agents: [{ id: "a", name: "A" }, { id: "b", name: "B" }] });
+    const [confirmed, unconfirmed] = sent.turns;
+    await service.request(scope, "remoteUpdate", { id: source.id, turnId: confirmed!.id, sessionId: "cloud-a", taskId: "task-a" });
+    await service.stop();
+    const cloud = vi.fn(async (_method: string, path: string) => {
+      if (path.startsWith("/api/chat/sessions/cloud-a/messages/page")) return { messages: [{ id: "reply", chat_session_id: "cloud-a", role: "assistant", task_id: "task-a", content: "RESUMED_REPLY" }] };
+      return [];
+    });
+    const reopened = new LocalConversationService({ ...options, queueCloudClient: async () => cloud }); reopened.setCurrentUser(scope.userId);
+    cleanups.unshift(() => reopened.stop());
+    await reopened.request(scope, "list", {});
+    await vi.waitFor(async () => {
+      const entry = await reopened.request(scope, "read", { id: source.id });
+      expect(entry.turns.find((turn) => turn.id === unconfirmed!.id)).toMatchObject({ status: "failed", error: expect.stringContaining("not confirmed") });
+      expect(entry.turns.find((turn) => turn.id === confirmed!.id)?.status).toBe("completed");
+      expect(entry.messages.some((message) => message.content === "RESUMED_REPLY")).toBe(true);
+    });
+    expect(cloud.mock.calls.every(([method]) => method === "GET")).toBe(true);
+  });
   it("forks an earlier settled turn while a later turn keeps running in the source", async () => {
     let finish!: (value: { output: string; sessionId: string }) => void;
     const { service } = await setup(async (input) => input.content === "Later running" ? new Promise((resolve) => { finish = resolve; }) : { output: "Earlier reply", sessionId: "source-native" });

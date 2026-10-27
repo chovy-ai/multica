@@ -1,12 +1,10 @@
 import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import { getLocalConversationClient } from "./local-conversation-client";
 import { api } from "@multica/core/api";
-import { chatKeys } from "@multica/core/chat/queries";
 import type { AgentTask, Attachment } from "@multica/core/types";
 import { createAgentGuiParentService, type ParentServiceOptions } from "@multica/views/conversation-flow/service";
 import type { AgentGuiHostEvent, AgentGuiRpcMethod, AgentGuiRpcMethods, AgentGuiSessionDetail, AgentGuiWorkspaceState } from "@multica/tutti-agent-gui-host/protocol";
-import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationScope, LocalConversationTurn, LocalProviderId } from "@multica/core/local-conversation/protocol";
-import { HTML_PREVIEW_INSTRUCTIONS } from "@multica/tutti-agent-gui-host/html-preview";
+import type { LocalConversation, LocalConversationClient, LocalConversationScope, LocalConversationTurn, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { sideExecutionContent } from "@multica/tutti-agent-gui-host/side-context";
 import { isTaskCreationReference, localMessageDisplayContent } from "@multica/core/local-conversation/protocol";
 import { isAutomaticLocalDirectory } from "@multica/tutti-agent-gui-host/local-projects";
@@ -53,13 +51,10 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   const cloud = createAgentGuiParentService(options);
   const listeners = new Set<(event: AgentGuiHostEvent) => void>();
   const knownTurns = new Map<string, string>();
-  const sending = new Set<string>();
   let disposed = false;
   let cloudState: AgentGuiWorkspaceState | undefined;
   let cloudDirty = true;
   let cloudLoad: Promise<AgentGuiWorkspaceState> | undefined;
-  let polling = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let selectionSequence = 0;
   const assertCurrent = () => { if (disposed || !options.isCurrent()) throw new Error("This workspace is no longer active"); };
   const publish = (event: AgentGuiHostEvent) => { if (!disposed && options.isCurrent()) listeners.forEach((listener) => listener(event)); };
@@ -79,50 +74,9 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       filename: file.name, content_type: file.mimeType, size_bytes: file.size, url, download_url: url, markdown_url: url, created_at: new Date().toISOString() };
   };
 
-  async function pollRemote(): Promise<void> {
-    if (polling || disposed || !options.isCurrent()) return;
-    polling = true;
-    let pending = false;
-    try {
-      const sessions = await local("list", {});
-      for (const entry of sessions) for (const turn of entry.turns) {
-        if (turn.status !== "running" || !turn.remote || turn.remote.queueOwned || sending.has(turn.id)) continue;
-        if (!turn.remote.sessionId || !turn.remote.taskId) {
-          await local("remoteUpdate", { id: entry.id, turnId: turn.id, status: "failed", error: "The previous cloud send was not confirmed. Check the agent's cloud chat before retrying.", output: "上次云端发送未确认，请先检查该智能体的云端聊天。" });
-          continue;
-        }
-        pending = true;
-        try {
-          const [messages, events, tasks] = await Promise.all([
-            api.listChatMessagesPage(turn.remote.sessionId, { limit: 100 }),
-            api.listTaskMessages(turn.remote.taskId),
-            api.listAgentTasksPage(turn.remote.agentId, { limit: 200 }),
-          ]);
-          assertCurrent();
-          const reply = messages.messages.find((message) => message.role === "assistant" && message.task_id === turn.remote!.taskId);
-          const task = tasks.tasks.find((task) => task.id === turn.remote!.taskId && task.chat_session_id === turn.remote!.sessionId);
-          // Concurrent reads can see the task commit before the assistant row.
-          // Keep polling completed tasks until their durable reply is visible.
-          const terminal = task && ["failed", "cancelled"].includes(task.status);
-          await local("remoteUpdate", { id: entry.id, turnId: turn.id,
-            events: events.map((event) => ({ ...event, created_at: event.created_at || new Date().toISOString() })) as LocalConversationEvent[],
-            ...(reply ? { output: reply.content, status: reply.failure_reason ? "failed" : "completed" }
-              : terminal ? { status: task.status as LocalConversationTurn["status"], ...(task.error ? { error: task.error, output: task.error } : {}) } : {}),
-          });
-        } catch (error) {
-          // Disconnection does not prove the remote execution failed.
-          if (!disposed && options.isCurrent()) console.warn("[local-conversations] Cloud result synchronization will retry", error instanceof Error ? error.name : "Error");
-        }
-      }
-    } finally {
-      polling = false;
-      if (pending && !disposed && options.isCurrent()) timer = setTimeout(() => { timer = undefined; void pollRemote(); }, 2000);
-    }
-  }
-  function scheduleRemote(): void { if (!timer && !polling && !disposed) timer = setTimeout(() => { timer = undefined; void pollRemote().catch(() => {}); }, 100); }
   async function load(): Promise<AgentGuiWorkspaceState> {
     const [remote, providers, sessions, folderProjects] = await Promise.all([remoteWorkspace(), local("providers", {}), local("list", {}), local("folderProjects", {})]);
-    assertCurrent(); scheduleRemote();
+    assertCurrent();
     return { local: true, queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: remote.agents, movedQueueRequests: sessions.flatMap((entry) => entry.side ? [entry.side.requestId] : []),
       executionTargets: providers.map((entry) => ({ id: localTargetId(entry.id), name: entry.name, provider: entry.id, iconUrl: "", canInvoke: entry.available, canFork: true, runtimeBound: entry.available, runtimeOnline: entry.available, unavailableReason: entry.available ? undefined : "未在本机安装" })),
       sessions: sessions.map((entry) => projectLocalSession(entry, scope)), folderProjects,
@@ -185,51 +139,6 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       }
     }
     return excerpts.length ? `${content}\n\nReferenced context (quoted data):\n${excerpts.join("\n\n---\n\n")}` : content;
-  }
-  async function invoke(entry: LocalConversation, turns: LocalConversationTurn[], content: string, fileIds: string[]): Promise<void> {
-    // The official API has no per-turn system prompt; keep display guidance scoped to this invocation.
-    const executionContent = [
-      "Multica conversation display capabilities (reply formatting only; follow your existing agent instructions and the user request below):",
-      HTML_PREVIEW_INSTRUCTIONS,
-      "User request and referenced context:",
-      content,
-    ].join("\n\n");
-    await Promise.all(turns.map(async (turn) => {
-      sending.add(turn.id);
-      try {
-        const wanted = async () => (await read(entry.id)).turns.find((current) => current.id === turn.id)?.status === "running";
-        if (!await wanted()) return;
-        let sessionId = [...entry.turns].reverse().find((previous) => previous.remote?.agentId === turn.remote!.agentId && previous.remote.sessionId)?.remote?.sessionId;
-        if (!sessionId) {
-          assertCurrent(); const remote = await api.createChatSession({ agent_id: turn.remote!.agentId, title: entry.title }, options.workspaceSlug); assertCurrent(); sessionId = remote.id;
-        }
-        await local("remoteUpdate", { id: entry.id, turnId: turn.id, sessionId });
-        const attachments: string[] = [];
-        for (const id of fileIds) {
-          if (!await wanted()) return;
-          const file = await local("fileRead", { id }); assertCurrent();
-          const bytes = Uint8Array.from(atob(file.data), (character) => character.charCodeAt(0));
-          const uploaded = await api.uploadFile(new File([bytes], file.name, { type: file.mimeType })); assertCurrent(); attachments.push(uploaded.id);
-        }
-        if (!await wanted()) return;
-        assertCurrent(); const sent = await api.sendChatMessage(sessionId, executionContent, attachments); assertCurrent();
-        await local("remoteUpdate", { id: entry.id, turnId: turn.id, taskId: sent.task_id });
-        if (!await wanted()) {
-          try {
-            const cancelled = await api.cancelTaskById(sent.task_id); assertCurrent();
-            await local("remoteUpdate", { id: entry.id, turnId: turn.id, status: cancelled.status === "cancelled" ? "cancelled" : "running" });
-          } catch {
-            assertCurrent();
-            await local("remoteUpdate", { id: entry.id, turnId: turn.id, status: "running" });
-            options.onShowMessage("未能确认云端取消，正在继续同步实际执行状态。", "error");
-          }
-        }
-        void options.queryClient.invalidateQueries({ queryKey: chatKeys.sessions(scope.workspaceId) });
-      } catch (error) {
-        if (!disposed && options.isCurrent() && (await read(entry.id)).turns.find((current) => current.id === turn.id)?.status === "running") await local("remoteUpdate", { id: entry.id, turnId: turn.id, status: "failed", error: error instanceof Error ? error.message : String(error), output: error instanceof Error ? error.message : String(error) });
-      } finally { sending.delete(turn.id); }
-    }));
-    scheduleRemote();
   }
   const receivedOutput = new Set<string>();
   async function request(method: AgentGuiRpcMethod, raw: unknown): Promise<unknown> {
@@ -312,22 +221,13 @@ export function createLocalConversationParentService(options: ParentServiceOptio
           if (!target?.canInvoke || !target.runtimeBound || target.agent.archived_at) throw new Error("Mentioned agent is not available");
           return { id, name: target.agent.name };
         });
-        const accepted = await local("remoteBegin", { id: entry.id, content: params.content, agents, attachmentIds: files, requestId: params.requestId });
-        if (accepted.replayed) return { message_id: accepted.messageId, task_id: accepted.turns[0]!.id, created_at: accepted.createdAt };
-        accepted.turns.forEach((turn) => sending.add(turn.id));
-        void invoke(entry, accepted.turns, entry.side ? sideExecutionContent(entry.side, content) : content, files).catch(() => {});
+        const accepted = await local("remoteSend", { id: entry.id, content: params.content, prompt: entry.side ? sideExecutionContent(entry.side, content) : content, agents, attachmentIds: files, requestId: params.requestId });
         return { message_id: accepted.messageId, task_id: accepted.turns[0]!.id, created_at: accepted.createdAt };
       }
       case "session.cancel": {
         const entry = await read(params.sessionId); const turn = entry.turns.find((turn) => turn.id === params.taskId);
         if (!turn) throw new Error("Execution not found");
-        if (turn.remote?.taskId) {
-          const cancelled = await api.cancelTaskById(turn.remote.taskId); assertCurrent();
-          if (cancelled.status === "cancelled") await local("remoteUpdate", { id: entry.id, turnId: turn.id, status: "cancelled" });
-          scheduleRemote();
-          return projectLocalTurn(await read(entry.id), { ...turn, status: cancelled.status === "cancelled" ? "cancelled" : turn.status });
-        }
-        return projectLocalTurn(entry, await local("cancel", { id: entry.id, turnId: turn.id }));
+        return projectLocalTurn(await read(entry.id), await local("cancel", { id: entry.id, turnId: turn.id }));
       }
       case "task.messages": {
         const id = knownTurns.get(params.taskId); if (!id) throw new Error("Execution is outside the loaded conversations");
@@ -380,7 +280,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   const unsubscribeCloud = cloud.subscribe((event) => { if (event.type === "invalidate" && event.scope === "workspace") { cloudDirty = true; publish(event); } });
   return { load, request: request as <M extends AgentGuiRpcMethod>(method: M, params: AgentGuiRpcMethods[M]["params"]) => Promise<AgentGuiRpcMethods[M]["result"]>,
     publish, subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    reconnect: () => { cloudDirty = true; cloud.reconnect(); scheduleRemote(); publish({ type: "invalidate", scope: "workspace" }); },
-    dispose: () => { disposed = true; if (timer) clearTimeout(timer); unsubscribe(); unsubscribeCloud(); cloud.dispose(); listeners.clear(); },
+    reconnect: () => { cloudDirty = true; cloud.reconnect(); publish({ type: "invalidate", scope: "workspace" }); },
+    dispose: () => { disposed = true; unsubscribe(); unsubscribeCloud(); cloud.dispose(); listeners.clear(); },
   };
 }

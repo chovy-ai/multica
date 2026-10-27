@@ -26,7 +26,7 @@ beforeEach(() => {
   mock.api.listPendingChatTasks.mockResolvedValue({ tasks: [] });
   mock.api.createChatSession.mockImplementation(async ({ agent_id }) => ({ id: `cloud-${agent_id}`, agent_id, workspace_id: "ws" }));
   mock.api.sendChatMessage.mockImplementation(async (id) => ({ task_id: `task-${id}`, message_id: `message-${id}`, created_at: "2026-01-01" }));
-  mock.api.listChatMessagesPage.mockImplementation(async (id) => ({ messages: [{ id: `result-${id}`, role: "assistant", task_id: `task-${id}`, content: `RESULT_${id}`, created_at: "2026-01-01" }], has_more: false }));
+  mock.api.listChatMessagesPage.mockImplementation(async (id) => ({ messages: [{ id: `result-${id}`, chat_session_id: id, role: "assistant", task_id: `task-${id}`, content: `RESULT_${id}`, created_at: "2026-01-01" }], has_more: false }));
   mock.api.listAgentTasksPage.mockImplementation(async (id) => ({ tasks: [{ id: `task-cloud-${id}`, chat_session_id: `cloud-${id}`, status: "completed" }], nextCursor: null }));
   mock.api.listTaskMessages.mockResolvedValue([]);
 });
@@ -37,7 +37,19 @@ async function setup(getSelectionIntent?: () => string) {
   const run = vi.fn<typeof runLocalProvider>(async () => ({ output: "LOCAL_RESULT", sessionId: "native-thread" }));
   const usage = { read: vi.fn(async () => ({ provider: "claude" as const, context: { usedTokens: 120, limitTokens: 1000, model: null, updatedAt: null }, account: { status: "unavailable" as const, plan: null, windows: [], updatedAt: null } })), reset: vi.fn() };
   const chooseDirectory = vi.fn<() => Promise<string | null>>(async () => null);
-  const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, find: async () => "/test/fake", chooseDirectory, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)) });
+  // The conversation host drives cloud agent turns; route its HTTP calls to the API mocks.
+  const cloud = async (method: string, path: string, body?: Record<string, unknown> | FormData) => {
+    const json = body as Record<string, unknown> | undefined;
+    let match: RegExpExecArray | null;
+    if (method === "POST" && path === "/api/chat/sessions") return mock.api.createChatSession({ agent_id: json!.agent_id, title: json!.title });
+    if (method === "POST" && (match = /^\/api\/chat\/sessions\/([^/]+)\/messages$/.exec(path))) return mock.api.sendChatMessage(decodeURIComponent(match[1]!), json!.content, json!.attachment_ids ?? []);
+    if ((match = /^\/api\/chat\/sessions\/([^/]+)\/messages\/page/.exec(path))) return mock.api.listChatMessagesPage(decodeURIComponent(match[1]!));
+    if ((match = /^\/api\/tasks\/([^/]+)\/messages$/.exec(path))) return mock.api.listTaskMessages(decodeURIComponent(match[1]!));
+    if ((match = /^\/api\/agents\/([^/]+)\/tasks/.exec(path))) return (await mock.api.listAgentTasksPage(decodeURIComponent(match[1]!))).tasks;
+    if (method === "POST" && (match = /^\/api\/tasks\/([^/]+)\/cancel$/.exec(path))) return mock.api.cancelTaskById(decodeURIComponent(match[1]!));
+    throw new Error(`Unexpected cloud request ${method} ${path}`);
+  };
+  const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, find: async () => "/test/fake", chooseDirectory, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)), queueCloudClient: async () => cloud });
   service.setCurrentUser("user");
   const client: LocalConversationClient = { request: (scope, method, params) => service.request(scope, method, params), subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -329,7 +341,7 @@ describe("local providers and official agent invocation routing", () => {
     const sent = await bridge.request("session.send", { sessionId: session.id, content: "Review", references: [{ kind: "agent", id: "design" }] });
     await vi.waitFor(() => expect(mock.api.createChatSession).toHaveBeenCalledOnce());
     await bridge.request("session.cancel", { sessionId: session.id, taskId: sent.task_id });
-    release({ id: "cloud-design" });
+    release({ id: "cloud-design", agent_id: "design", workspace_id: "ws" });
     await vi.waitFor(async () => expect((await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: session.id })).turns[0]?.remote?.sessionId).toBe("cloud-design"));
     expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
   });
@@ -342,7 +354,7 @@ describe("local providers and official agent invocation routing", () => {
     const sent = await bridge.request("session.send", { sessionId: session.id, content: "Review", references: [{ kind: "agent", id: "design" }] });
     await vi.waitFor(() => expect(mock.api.sendChatMessage).toHaveBeenCalledOnce());
     await bridge.request("session.cancel", { sessionId: session.id, taskId: sent.task_id });
-    release({ task_id: "crossed-task" });
+    release({ task_id: "crossed-task", message_id: "crossed-message", created_at: "2026-01-01" });
     await vi.waitFor(() => expect(mock.api.cancelTaskById).toHaveBeenCalledWith("crossed-task"));
     await vi.waitFor(async () => expect((await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: session.id })).turns[0]).toMatchObject({ status: "cancelled", remote: { taskId: "crossed-task" } }));
   });

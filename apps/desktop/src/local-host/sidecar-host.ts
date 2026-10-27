@@ -13,7 +13,9 @@ import { generateLocalConversationTitle } from "./local-conversation-title-gener
 import { LocalMulticaContext } from "./local-multica-context";
 
 /** Methods that start model work; a draining host refuses them so a restart interrupts nothing new. */
-const STARTS_WORK = new Set<string>(["send", "fork", "sideCreate", "importSessions"]);
+const STARTS_WORK = new Set<string>(["send", "remoteSend", "fork", "sideCreate", "importSessions"]);
+/** Cloud agent turns are driven by this host only; Desktop starts them with remoteSend. */
+const HOST_INTERNAL = new Set<string>(["remoteBegin", "remoteUpdate"]);
 
 type Service = Pick<LocalConversationService, "request" | "setCurrentUser" | "setDraining" | "busyCount" | "stop" | "resolveFile" | "adoptFile">;
 
@@ -140,6 +142,7 @@ export function createSidecarHost(peer: () => JsonRpcPeer, options: SidecarHostO
       case "request": {
         const params = sidecarRequestParamsSchema.parse(raw);
         const ready = await requireService();
+        if (HOST_INTERNAL.has(params.method)) throw appError("method_not_allowed", `${params.method} is internal to the local conversation host`);
         if (draining && STARTS_WORK.has(params.method)) throw appError("host_draining", "The local conversation service is updating. Try again in a moment.");
         lastConnection.set(params.scope.userId, params.connectionId);
         const result = await origin.run(params.connectionId, () => ready.request(params.scope as LocalConversationScope, params.method as LocalConversationMethod, params.params as LocalConversationMethods[LocalConversationMethod]["params"]));

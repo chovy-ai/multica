@@ -40,7 +40,7 @@ describe("desktop runtime capability checks", () => {
     expect(request.mock.calls.map(([, method]) => method)).toEqual(["capabilities", "list", "fileInfo", "queueEnqueue"]);
     expect(listener).toHaveBeenCalledOnce(); unsubscribe();
   });
-  it.each([null, {}, { protocolVersion: 1, methods: "send" }, { ...capabilities, protocolVersion: 2 }])("rejects an incompatible or malformed handshake: %j", async (response) => {
+  it.each([null, {}, { protocolVersion: 1, methods: "send" }, { ...capabilities, protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION + 1 }])("rejects an incompatible or malformed handshake: %j", async (response) => {
     const { client, request } = setup(response);
     await expect(client.request(scope, "send", { id: "session", content: "Never submit" })).rejects.toBeInstanceOf(LocalRuntimeUpdateRequired);
     expect(request).toHaveBeenCalledOnce();

@@ -5,7 +5,7 @@ import { access, chmod, mkdir, readFile, realpath, rename, stat, writeFile } fro
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join } from "node:path";
-import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationMethod, LocalConversationMethods, LocalConversationScope, LocalFolderProject, LocalProviderId, LocalUserQuestionResult, LocalQueuedPrompt, LocalPromptBlock } from "@multica/core/local-conversation/protocol";
+import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationTurn, LocalConversationMethod, LocalConversationMethods, LocalConversationScope, LocalFolderProject, LocalProviderId, LocalUserQuestionResult, LocalQueuedPrompt, LocalPromptBlock } from "@multica/core/local-conversation/protocol";
 import { findLocalProvider, localProviderModels, runLocalProvider } from "./local-provider-runner";
 import { LocalProviderUsageReader } from "./local-provider-usage";
 import type { LocalExecutionContext, LocalRunContext } from "./local-multica-context";
@@ -23,7 +23,7 @@ import { LocalClaudeConversation } from "./local-claude-conversation";
 import { LocalCodexPool } from "./local-codex-pool";
 import { discoverCodexOutputImages, inlineOutputImages, type OutputImage } from "./local-output-images";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { runQueuedCloudTurn, type LocalQueueCloudRequest } from "./local-queued-cloud-run";
+import { pollCloudTurn, runQueuedCloudTurn, type LocalQueueCloudRequest } from "./local-queued-cloud-run";
 import { parseWithFallback } from "@multica/core/api/schema";
 import { CancelTaskResponseSchema } from "@multica/core/api/schemas";
 import type { CancelTaskResponse } from "@multica/core/types";
@@ -200,7 +200,9 @@ export class LocalConversationService {
         if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
       }
       const value = new Map(sessions.map((session) => [session.id, session]));
-      this.folderProjects.set(key, folderProjects); this.documents.set(key, value); return value;
+      this.folderProjects.set(key, folderProjects); this.documents.set(key, value);
+      void this.resumeCloudTurns(scope, value.values()).catch(() => console.warn("[local-conversations] Could not resume cloud agent turns"));
+      return value;
     })().finally(() => this.loads.delete(key));
     this.loads.set(key, operation); return operation;
   }
@@ -571,6 +573,14 @@ export class LocalConversationService {
         const entry = session(); const turn = entry.turns.find((item) => item.id === params.turnId);
         if (!turn) throw new Error("Execution not found");
         if (entry.promptQueue) { entry.promptQueue.paused = true; entry.promptQueue.revision++; }
+        if (turn.remote && turn.status === "running") {
+          if (turn.remote.taskId) await this.cancelQueuedTurn(scope, entry, turn.id);
+          else {
+            // The send may already be in flight; its runner cancels any task it creates.
+            turn.status = "cancelled"; turn.completedAt = new Date().toISOString(); await this.save(scope); this.changed(scope, entry);
+          }
+          result = turn; break;
+        }
         if (turn.status !== "running" && turn.backgroundTasks?.some((task) => task.status === "running")) await this.claudeConversations.get(`${this.key(scope)}:${entry.id}`)?.worker.stopBackground();
         if (turn.status === "running") { this.cancelledTurns.add(turn.id); this.runs.get(turn.id)?.controller.abort(); turn.status = "cancelled"; turn.completedAt = new Date().toISOString(); await this.save(scope); this.changed(scope, entry); }
         result = turn; break;
@@ -624,6 +634,18 @@ export class LocalConversationService {
         try { await this.save(scope); }
         catch (error) { entry.messages = entry.messages.filter((message) => message.id !== messageId); const ids = new Set<string>(turns.map((turn) => turn.id)); entry.turns = entry.turns.filter((turn) => !ids.has(turn.id)); throw error; }
         this.changed(scope, entry); this.generateTitle(scope, entry); result = { messageId, turns, createdAt: at }; break;
+      }
+      case "remoteSend": {
+        const entry = session();
+        if (!this.options.queueCloudClient) throw new Error("Agent invocation is unavailable");
+        const controller = new AbortController();
+        const cloud = await this.options.queueCloudClient(scope, controller.signal);
+        const accepted = await this.request(scope, "remoteBegin", { id: entry.id, content: text(params.content, "message"), agents: params.agents as { id: string; name: string }[], attachmentIds: params.attachmentIds as string[] | undefined, requestId: params.requestId as string | undefined });
+        if (!accepted.replayed) {
+          const item = { requestId: accepted.turns[0]!.id, content: text(params.content, "message"), prompt: params.prompt === undefined ? undefined : text(params.prompt, "prompt"), attachmentIds: params.attachmentIds as string[] | undefined } as LocalQueuedPrompt;
+          this.startCloudTurns(scope, entry, accepted.turns, controller, false, (turn) => runQueuedCloudTurn({ scope, entry, item, turn, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
+        }
+        result = accepted; break;
       }
       case "remoteUpdate": {
         const entry = session(); const turn = entry.turns.find((item) => item.id === params.turnId);
@@ -684,6 +706,42 @@ export class LocalConversationService {
       ...(raw.permissionMode ? { permissionMode: raw.permissionMode } : {}),
       ...(attachmentIds.length ? { attachmentIds } : {}), ...(references.length ? { references } : {}), ...(agents?.length ? { agents } : {}),
     };
+  }
+
+  /** Runs cloud agent turns as tracked executions, so cancel, busy and shutdown see them. */
+  private startCloudTurns(scope: LocalConversationScope, entry: LocalConversation, turns: readonly { id: string }[], controller: AbortController, queueOwned: boolean, run: (turn: LocalConversationTurn) => Promise<void>): void {
+    for (const projected of turns) {
+      const turn = entry.turns.find((value) => value.id === projected.id)!;
+      if (turn.status !== "running") continue;
+      if (queueOwned) turn.remote!.queueOwned = true;
+      this.runs.set(turn.id, { scope, controller });
+      const remote = run(turn).finally(() => { this.runs.delete(turn.id); this.executions.delete(remote); this.drainQueue(scope, entry); });
+      this.executions.add(remote); void remote.catch(() => {});
+    }
+  }
+
+  /**
+   * Cloud turns survive host restarts: a confirmed send resumes polling, while
+   * an unconfirmed one fails instead of risking a duplicate send.
+   */
+  private async resumeCloudTurns(scope: LocalConversationScope, entries: Iterable<LocalConversation>): Promise<void> {
+    const pending = [...entries].flatMap((entry) => entry.turns.filter((turn) => turn.status === "running" && turn.remote).map((turn) => ({ entry, turn })));
+    if (!pending.length) return;
+    for (const { entry, turn } of pending) if (!turn.remote!.sessionId || !turn.remote!.taskId) {
+      await this.request(scope, "remoteUpdate", { id: entry.id, turnId: turn.id, status: "failed", error: "The previous cloud send was not confirmed. Check the agent's cloud chat before retrying.", output: "上次云端发送未确认，请先检查该智能体的云端聊天。" });
+    }
+    const resumable = pending.filter(({ turn }) => turn.status === "running");
+    if (!resumable.length || !this.options.queueCloudClient) return;
+    const controller = new AbortController();
+    let cloud: LocalQueueCloudRequest | undefined;
+    // Login may still be restoring; keep trying while the turns remain open.
+    while (!cloud && !this.stopping && scope.userId === this.activeUser && resumable.some(({ turn }) => turn.status === "running")) {
+      try { cloud = await this.options.queueCloudClient(scope, controller.signal); }
+      catch { await new Promise((resolve) => setTimeout(resolve, 10_000)); }
+    }
+    if (!cloud || this.stopping || scope.userId !== this.activeUser) return;
+    const client = cloud;
+    for (const { entry, turn } of resumable) this.startCloudTurns(scope, entry, [turn], controller, false, (current) => pollCloudTurn({ scope, entry, turn: current, signal: controller.signal, cloud: client, local: (scope, method, params) => this.request(scope, method, params) }));
   }
 
   private async cancelQueuedTurn(scope: LocalConversationScope, entry: LocalConversation, turnId: string): Promise<void> {
@@ -769,15 +827,7 @@ export class LocalConversationService {
           const cloud = await this.options.queueCloudClient(scope, controller.signal);
           this.key(scope);
           const accepted = await this.request(scope, "remoteBegin", { id: entry.id, content: item.content, requestId: item.requestId, agents: item.agents, attachmentIds: item.attachmentIds });
-          for (const projected of accepted.turns) {
-            const turn = entry.turns.find((value) => value.id === projected.id)!;
-            if (turn.status !== "running") continue;
-            turn.remote!.queueOwned = true;
-            this.runs.set(turn.id, { scope, controller });
-            const remote = runQueuedCloudTurn({ scope, entry, item: { ...item, prompt }, turn, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) })
-              .finally(() => { this.runs.delete(turn.id); this.executions.delete(remote); this.drainQueue(scope, entry); });
-            this.executions.add(remote); void remote.catch(() => {});
-          }
+          this.startCloudTurns(scope, entry, accepted.turns, controller, true, (turn) => runQueuedCloudTurn({ scope, entry, item: { ...item, prompt }, turn, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
         } else await this.request(scope, "send", { id: entry.id, ...item, prompt });
         queue.items = queue.items.filter((value) => value.requestId !== item.requestId);
       } catch (error) {
