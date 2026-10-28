@@ -20,7 +20,8 @@ import {
   type IssueWindowRequest,
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
-import type { LocalConversationClient, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationClient, LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import type { LocalHostAvailability } from "../shared/local-host-availability";
 import type {
   DaemonStatus,
   LocalRuntimeProbe,
@@ -101,7 +102,42 @@ function subscribeToMainRendererChannel<T>(
   };
 }
 
+/**
+ * File content for local conversations streams over the main process's
+ * multica-local-file protocol. URLs carry a per-launch key only the main
+ * window's preload can obtain, so sandboxed preview frames cannot use them.
+ */
+let localFileKey: string | undefined;
+const localFileUrl = (path: string, scope: LocalConversationScope) => {
+  localFileKey ??= ipcRenderer.sendSync("local-conversation:file-key") as string;
+  return `multica-local-file://local/${path}?${new URLSearchParams({ k: localFileKey, userId: scope.userId, workspaceId: scope.workspaceId })}`;
+};
+async function localFileError(response: Response): Promise<Error> {
+  try { const body = await response.json() as { error?: { message?: string } }; return new Error(body.error?.message ?? `Local file request failed (HTTP ${response.status})`); }
+  catch { return new Error(`Local file request failed (HTTP ${response.status})`); }
+}
+const localFileTransport: LocalConversationClient["files"] = {
+  url: (scope, fileRef) => localFileUrl(`files/${encodeURIComponent(fileRef)}`, scope),
+  read: async (scope, fileRef) => {
+    const response = await fetch(localFileUrl(`files/${encodeURIComponent(fileRef)}`, scope));
+    if (!response.ok) throw await localFileError(response);
+    return response.blob();
+  },
+  upload: async (scope, file) => {
+    const response = await fetch(localFileUrl("upload", scope), { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } });
+    if (!response.ok) throw await localFileError(response);
+    const body = await response.json() as { id?: unknown };
+    if (typeof body.id !== "string") throw new Error("The local file upload was not confirmed");
+    return body.id;
+  },
+};
+
 const desktopAPI = {
+  terminalCli: {
+    status: () => ipcRenderer.invoke("terminal-cli:status"),
+    install: () => ipcRenderer.invoke("terminal-cli:install"),
+    uninstall: () => ipcRenderer.invoke("terminal-cli:uninstall"),
+  } satisfies import("../shared/terminal-cli").TerminalCliClient,
   developerLogs: {
     export: (scope) => ipcRenderer.invoke("developer-logs:export", scope),
   } satisfies import("../shared/developer-logs").DeveloperLogsClient,
@@ -120,7 +156,16 @@ const desktopAPI = {
     cancelChromeProfileImport: (scope, requestId) => ipcRenderer.invoke("resource-preview:cancel-chrome-import", scope, requestId),
     subscribe: (listener) => { const handler = (_event: Electron.IpcRendererEvent, state: import("../shared/resource-preview").WebPreviewState) => listener(state); ipcRenderer.on("resource-preview:changed", handler); return () => ipcRenderer.removeListener("resource-preview:changed", handler); },
   } satisfies import("../shared/resource-preview").ResourcePreviewClient,
+  localHost: {
+    availability: () => ipcRenderer.invoke("local-conversation:availability") as Promise<LocalHostAvailability | null>,
+    subscribe: (listener: (value: LocalHostAvailability) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: LocalHostAvailability) => listener(value);
+      ipcRenderer.on("local-conversation:availability", handler);
+      return () => ipcRenderer.removeListener("local-conversation:availability", handler);
+    },
+  },
   localConversations: {
+    files: localFileTransport,
     request: (scope, method, params) => ipcRenderer.invoke("local-conversation:request", scope, method, params),
     subscribe: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; sessionId: string }) => listener(payload.scope, payload.sessionId);
@@ -168,6 +213,8 @@ const desktopAPI = {
    *  dedicated issue windows that belong to an old account. */
   reportAuthSession: (userId: string | null) =>
     ipcRenderer.send(AUTH_SESSION_STATE_CHANNEL, userId),
+  /** Start browser sign-in in the instance that owns this renderer. */
+  beginBrowserLogin: () => ipcRenderer.invoke("auth:browser-login"),
   /** Listen for auth token delivered via deep link */
   onAuthToken: (callback: (token: string) => void) =>
     subscribeToMainRendererChannel("auth:token", callback),

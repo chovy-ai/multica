@@ -1,9 +1,9 @@
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/core/local-conversation/protocol";
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { LocalConversation, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { LocalSideWorkspace, type SideWorkspaceHandle } from "./local-side-workspace";
 import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 
@@ -29,7 +29,7 @@ beforeEach(() => {
     return undefined;
   });
   preview.request.mockImplementation(async (_scope, command) => command.action === "close" || command.action === "hide" ? null : { id: command.id, url: command.url, title: "Example", loading: false, canGoBack: false, canGoForward: false });
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: (listener: (scope: LocalConversationScope, id: string) => void) => { changes.add(listener); return () => changes.delete(listener); } }, resourcePreview: preview, openExternal: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: (listener: (scope: LocalConversationScope, id: string) => void) => { changes.add(listener); return () => changes.delete(listener); } }, resourcePreview: preview, openExternal: vi.fn() } });
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {

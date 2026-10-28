@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LocalConversationClient, LocalImportCandidate } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationClient, LocalImportCandidate } from "@multica/core/local-conversation/protocol";
 import { LocalConversationImportButton } from "./local-conversation-import";
 
 vi.mock("@multica/views/runtimes/provider-logo", () => ({ ProviderLogo: () => <span /> }));
@@ -13,7 +13,7 @@ const candidate = (id: string, importedId?: string): LocalImportCandidate => ({ 
 function mount(request: ReturnType<typeof vi.fn>) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } }); clients.push(qc);
   const onImported = vi.fn();
-  const client = { request, subscribe: () => () => {} } as LocalConversationClient;
+  const client = { request, subscribe: () => () => {}, files: { upload: vi.fn(), read: vi.fn(), url: vi.fn() } } as unknown as LocalConversationClient;
   render(<QueryClientProvider client={qc}><LocalConversationImportButton scope={scope} client={client} projects={[{ id: "project-a", title: "Project A" }]} chinese onImported={onImported} /></QueryClientProvider>);
   return { onImported };
 }

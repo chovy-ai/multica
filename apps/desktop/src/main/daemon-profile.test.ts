@@ -12,6 +12,7 @@ import {
   profileDir,
   profileLogPath,
   profilePidPath,
+  profilePortPath,
   profileUserIdPath,
 } from "./daemon-profile";
 
@@ -37,6 +38,12 @@ describe("deriveProfileName", () => {
 });
 
 describe("profile paths", () => {
+  it("shares one Desktop runtime directory while keeping credentials in a named profile", () => {
+    expect(profileLogPath("desktop-runtime")).toBe(join(MULTICA_DIR, "desktop-runtime", "daemon.log"));
+    expect(profilePidPath("desktop-runtime")).toBe(join(MULTICA_DIR, "desktop-runtime", "daemon.pid"));
+    expect(profilePortPath("desktop-runtime")).toBe(join(MULTICA_DIR, "desktop-runtime", "runtime.json"));
+    expect(profileConfigPath("desktop-runtime")).toBe(join(MULTICA_DIR, "profiles", "desktop-runtime", "config.json"));
+  });
   it("always resolves under profiles/<name>", () => {
     const dir = join(MULTICA_DIR, "profiles", "desktop-api.multica.ai");
     expect(profileDir("desktop-api.multica.ai")).toBe(dir);

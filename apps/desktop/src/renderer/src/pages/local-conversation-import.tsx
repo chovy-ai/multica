@@ -9,7 +9,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@multica/ui/components/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@multica/ui/components/ui/dropdown-menu";
 import { ProviderLogo } from "@multica/views/runtimes/provider-logo";
-import type { LocalConversationClient, LocalConversationScope, LocalImportResult, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationClient, LocalConversationScope, LocalImportResult, LocalProviderId } from "@multica/core/local-conversation/protocol";
 
 export function LocalConversationImportButton({ scope, client, projects, chinese, onImported }: {
   scope: LocalConversationScope; client: LocalConversationClient; projects: { id: string; title: string }[]; chinese: boolean; onImported(): void;

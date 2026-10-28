@@ -6,6 +6,9 @@ export interface VersionCheckHealth {
   status?: string;
   cli_version?: string;
   active_task_count?: number;
+  /** Local conversation work a restart would interrupt. */
+  local_busy_count?: number;
+  instance_owner_id?: string;
 }
 
 export type VersionAction = "restart" | "defer" | "ok" | "not_running";
@@ -16,7 +19,8 @@ export type VersionAction = "restart" | "defer" | "ok" | "not_running";
  *
  *   not_running: no daemon is up, nothing to do
  *   ok:          versions match, OR either side is unknown (fail safe)
- *   defer:       versions differ but the daemon is busy — wait for drain
+ *   defer:       versions differ but agent tasks or local conversations are
+ *                running — wait for drain
  *   restart:     versions differ and the daemon is idle — safe to restart
  *
  * Pure function: no I/O, no side effects, no module state.
@@ -24,14 +28,15 @@ export type VersionAction = "restart" | "defer" | "ok" | "not_running";
 export function decideVersionAction(
   bundled: string | null,
   running: VersionCheckHealth | null,
+  ownerId?: string,
 ): VersionAction {
   if (!running || running.status !== "running") return "not_running";
 
   const runningVersion = running.cli_version;
   if (!bundled || !runningVersion) return "ok";
-  if (runningVersion === bundled) return "ok";
+  if (runningVersion === bundled && (!ownerId || ownerId === running.instance_owner_id)) return "ok";
 
   const activeTasks = running.active_task_count ?? 0;
-  if (activeTasks > 0) return "defer";
+  if (activeTasks > 0 || (running.local_busy_count ?? 0) > 0) return "defer";
   return "restart";
 }

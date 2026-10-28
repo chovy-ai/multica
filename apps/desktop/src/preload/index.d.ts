@@ -19,9 +19,14 @@ import type {
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 
 interface DesktopAPI {
+  terminalCli: import("../shared/terminal-cli").TerminalCliClient;
   developerLogs: import("../shared/developer-logs").DeveloperLogsClient;
   settingsHost?: import("../shared/settings-host").SettingsHostClient;
-  localConversations: import("@multica/tutti-agent-gui-host/local-protocol").LocalConversationClient;
+  localConversations: import("@multica/core/local-conversation/protocol").LocalConversationClient;
+  localHost: {
+    availability(): Promise<import("../shared/local-host-availability").LocalHostAvailability | null>;
+    subscribe(listener: (value: import("../shared/local-host-availability").LocalHostAvailability) => void): () => void;
+  };
   resourcePreview: import("../shared/resource-preview").ResourcePreviewClient;
   /** App version + normalized OS, captured synchronously at preload time. */
   appInfo: {
@@ -45,6 +50,8 @@ interface DesktopAPI {
   ackFreeze: (ts: number) => void;
   /** Report the resolved account identity so stale issue windows can close. */
   reportAuthSession: (userId: string | null) => void;
+  /** Start instance-bound browser sign-in using main's configured web origin. */
+  beginBrowserLogin: () => Promise<void>;
   /** Listen for auth token delivered via deep link. Returns an unsubscribe function. */
   onAuthToken: (callback: (token: string) => void) => () => void;
   /** Listen for invitation IDs delivered via deep link. Returns an unsubscribe function. */

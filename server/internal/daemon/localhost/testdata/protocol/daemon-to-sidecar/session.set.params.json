@@ -1,0 +1,9 @@
+{
+  "connectionId": "c0ffee0123456789",
+  "userId": "5f0c2a1e-0000-4000-8000-000000000001",
+  "apiUrl": "https://api.multica.ai",
+  "env": {
+    "PATH": "/usr/bin"
+  },
+  "legacyDataDir": "/Users/me/Library/Application Support/Multica/local-conversations"
+}

@@ -1,0 +1,7 @@
+{
+  "connectionId": "c0ffee0123456789",
+  "kind": "pick_directory",
+  "payload": {
+    "title": "Choose a folder"
+  }
+}

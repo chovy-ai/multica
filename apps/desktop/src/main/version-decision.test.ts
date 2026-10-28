@@ -3,6 +3,12 @@ import { describe, it, expect } from "vitest";
 import { decideVersionAction } from "./version-decision";
 
 describe("decideVersionAction", () => {
+  it("replaces a previous Desktop owner even when its CLI version is identical", () => {
+    const running = { status: "running", cli_version: "0.7.0", instance_owner_id: "old", active_task_count: 0 };
+    expect(decideVersionAction("0.7.0", running, "new")).toBe("restart");
+    expect(decideVersionAction("0.7.0", { ...running, local_busy_count: 1 }, "new")).toBe("defer");
+    expect(decideVersionAction("0.7.0", running, "old")).toBe("ok");
+  });
   it("returns not_running when health payload is null", () => {
     expect(decideVersionAction("v1.0.0", null)).toBe("not_running");
   });
@@ -85,5 +91,8 @@ describe("decideVersionAction", () => {
     expect(
       decideVersionAction(bundled, { ...base, active_task_count: 0 }),
     ).toBe("restart");
+  });
+  it("defers while local conversations are running, even with no agent tasks", () => {
+    expect(decideVersionAction("v1.1.0", { status: "running", cli_version: "v1.0.0", active_task_count: 0, local_busy_count: 1 })).toBe("defer");
   });
 });

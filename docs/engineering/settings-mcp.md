@@ -135,13 +135,13 @@ execution it reports that the scoped MCP is unavailable.
 ## Verification
 
 ```sh
-pnpm --filter @multica/desktop exec vitest run src/main/local-settings-tools.test.ts src/main/desktop-settings-host.test.ts src/renderer/src/platform/settings-host-bridge.test.ts
+pnpm --filter @multica/desktop exec vitest run src/local-host/local-settings-tools.test.ts src/main/desktop-settings-host.test.ts src/renderer/src/platform/settings-host-bridge.test.ts
 pnpm --filter @multica/desktop typecheck
 cd server
 go test ./cmd/multica -run '^TestSettingsAdapter' -count=1
 go build -o ../.tmp/settings-mcp-bin/multica ./cmd/multica
 cd ..
-MULTICA_RUN_SETTINGS_CLI_TEST=1 pnpm --filter @multica/desktop exec vitest run src/main/local-settings-tools.test.ts
+MULTICA_RUN_SETTINGS_CLI_TEST=1 pnpm --filter @multica/desktop exec vitest run src/local-host/local-settings-tools.test.ts
 ```
 
 The opt-in integration test executes only the fixed test-built binary in

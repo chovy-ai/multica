@@ -31,11 +31,11 @@ RPC 和 IPC 都新增内部 `usage` 读取能力，未改变官方服务 API。�
 ## 验证
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-provider-usage.test.ts src/main/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-provider-usage.test.ts src/local-host/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/tutti-agent-gui-host test
 pnpm --filter @multica/tutti-agent-gui-host typecheck
 pnpm --filter @multica/desktop typecheck
-pnpm exec eslint --config apps/desktop/eslint.config.mjs packages/tutti-agent-gui-host/src/usage-indicator.tsx e2e/local-provider-gui.spec.ts apps/desktop/src/main/local-provider-usage.ts apps/desktop/src/main/local-provider-usage.test.ts
+pnpm exec eslint --config apps/desktop/eslint.config.mjs packages/tutti-agent-gui-host/src/usage-indicator.tsx e2e/local-provider-gui.spec.ts apps/desktop/src/local-host/local-provider-usage.ts apps/desktop/src/local-host/local-provider-usage.test.ts
 pnpm --filter @multica/tutti-agent-gui-host build
 make env-exec ARGS='-- pnpm exec playwright test e2e/local-provider-gui.spec.ts --trace retain-on-failure'
 git diff --check

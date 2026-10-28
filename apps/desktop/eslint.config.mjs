@@ -10,6 +10,12 @@ export default [
       globals: { ...globals.node },
     },
   },
+  // Shipped CommonJS loader the daemon runs with Electron in Node mode.
+  {
+    files: ["resources/local-conversation-host/*.cjs"],
+    languageOptions: { sourceType: "commonjs", globals: { ...globals.node } },
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
   // Security: every renderer-controlled URL that reaches the OS shell or the
   // native download system must flow through the safe wrappers in
   // src/main/external-url.ts (scheme allowlist). Enforce it statically so
@@ -39,6 +45,22 @@ export default [
     files: ["src/main/external-url.ts"],
     rules: {
       "no-restricted-syntax": "off",
+    },
+  },
+  // The local conversation host runs as a daemon-launched sidecar, so it must
+  // stay free of Electron and of the desktop main process; host capabilities
+  // are injected by whoever constructs it.
+  {
+    files: ["src/local-host/**/*.ts"],
+    ignores: ["src/local-host/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [{ name: "electron", message: "local-host runs outside Electron; inject host capabilities instead." }],
+          patterns: [{ group: ["electron/*", "../main/*", "../renderer/*", "../preload/*"], message: "local-host must not depend on Electron or desktop process code." }],
+        },
+      ],
     },
   },
   // Navigation boundary (MUL-4741): the tab Coordinator must be the only

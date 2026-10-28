@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
-import type { LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
 import type { DeveloperLogQuery, DeveloperLogSaveResult } from "../shared/developer-logs";
-import type { WorkspaceMcpTool } from "./local-workspace-tools";
+import type { WorkspaceMcpTool } from "../local-host/local-workspace-tools";
+import { developerLogTool } from "../local-host/developer-log-tool";
 import { LocalTimingLog } from "./local-timing-log";
 import type { DaemonLogSource, RuntimeLogSource } from "./developer-runtime-logs";
 
@@ -36,20 +37,30 @@ interface Options {
 }
 
 function summarize(records: LocalTimingRecord[]) {
-  const stages = new Map<string, { stage: string; records: number; waits: number; maxDurationMs?: number }>();
+  const stages = new Map<string, { stage: string; background: boolean; records: number; waits: number; durations: number[] }>();
   for (const record of records) {
-    const stage = stages.get(record.stage) ?? { stage: record.stage, records: 0, waits: 0 };
+    const background = record.background === true;
+    const key = `${record.stage}:${background}`;
+    const stage = stages.get(key) ?? { stage: record.stage, background, records: 0, waits: 0, durations: [] };
     stage.records++;
     if (record.event === "wait") stage.waits++;
-    if (record.durationMs !== undefined) stage.maxDurationMs = Math.max(stage.maxDurationMs ?? 0, record.durationMs);
-    stages.set(record.stage, stage);
+    if (record.event === "end" && record.durationMs !== undefined) stage.durations.push(record.durationMs);
+    stages.set(key, stage);
   }
   return {
     recordCount: records.length,
     conversationCount: new Set(records.map((record) => record.conversationId)).size,
     turnCount: new Set(records.flatMap((record) => record.turnId ? [record.turnId] : [])).size,
     failureCount: records.filter((record) => record.failure !== undefined).length,
-    stages: [...stages.values()],
+    stages: [...stages.values()].map(({ durations, ...stage }) => {
+      durations.sort((a, b) => a - b);
+      return { ...stage, ...(durations.length ? {
+        samples: durations.length,
+        p50DurationMs: durations[Math.ceil(durations.length * 0.5) - 1]!,
+        p95DurationMs: durations[Math.ceil(durations.length * 0.95) - 1]!,
+        maxDurationMs: durations.at(-1)!,
+      } : {}) };
+    }),
   };
 }
 
@@ -145,34 +156,5 @@ export class DeveloperLogExporter {
 }
 
 export function createDeveloperLogTool(exporter: DeveloperLogExporter, scope: LocalConversationScope, currentConversationId?: string): WorkspaceMcpTool {
-  const requests = new Map<string, { fingerprint: string; result: Promise<unknown> }>();
-  const inputSchema = {
-    scope: z.enum(["conversation", "workspace"]).default("conversation"),
-    conversation_id: z.string().regex(/^[\w:.-]{1,160}$/).optional(),
-    since_minutes: z.number().int().min(1).max(10080).default(60),
-    request_id: z.string().trim().min(1).max(128),
-  };
-  return {
-    name: "export_developer_logs",
-    description: "Export developer diagnostics together in one private JSON file: scoped conversation stage timings, this account's Web renderer console, runtime versions and the current desktop profile's daemon log tail. Conversation/workspace and since_minutes filter timings; Web logs use the same time range across the account, and daemon logs are a bounded profile-wide tail without a time/conversation filter. Defaults to this conversation and 60 minutes. No cloud login required. Returns the local path, per-source availability/truncation and counts; read with a native file tool. Common credentials, URLs and payload fields are scrubbed, but diagnostic text may contain private details: review before sharing, and never upload without the user's request. Reuse request_id on retries. Auto exports are kept up to 7 days, at most 20 files.",
-    inputSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    async call(raw, signal) {
-      const input = z.object(inputSchema).strict().parse(raw);
-      if (input.scope === "workspace" && input.conversation_id) throw new Error("Omit conversation_id for a workspace export");
-      const conversationId = input.scope === "conversation" ? input.conversation_id ?? currentConversationId : undefined;
-      if (input.scope === "conversation" && !conversationId) throw new Error("Supply a local conversation_id or choose scope=workspace");
-      const query = { sinceMinutes: input.since_minutes, ...(conversationId ? { conversationId } : {}) };
-      const fingerprint = JSON.stringify(query);
-      const previous = requests.get(input.request_id);
-      if (previous) {
-        if (previous.fingerprint !== fingerprint) throw new Error("This request_id already belongs to another log export");
-        return previous.result;
-      }
-      if (requests.size >= 20) throw new Error("Too many log exports in this execution");
-      const result = exporter.export(scope, query, signal);
-      requests.set(input.request_id, { fingerprint, result });
-      return result;
-    },
-  };
+  return developerLogTool((query, signal) => exporter.export(scope, query, signal), currentConversationId);
 }

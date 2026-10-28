@@ -1029,3 +1029,26 @@ func clearDaemonTaskEnv(t *testing.T) {
 		t.Setenv(key, "")
 	}
 }
+
+// TestRequestDaemonShutdownPresentsProfileToken pins that `daemon stop`
+// authenticates with the token the running daemon published for its profile.
+func TestRequestDaemonShutdownPresentsProfileToken(t *testing.T) {
+	redirectTestHome(t, t.TempDir())
+	const profile = "shutdown-token-test"
+	if err := daemon.WriteLocalAPIToken(daemonLocalAPITokenPath(profile), "profile-secret"); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Get("Authorization")
+	}))
+	defer srv.Close()
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+
+	if err := requestDaemonShutdown(profile, port); err != nil {
+		t.Fatalf("requestDaemonShutdown() = %v", err)
+	}
+	if auth := <-got; auth != "Bearer profile-secret" {
+		t.Fatalf("Authorization = %q, want the profile token", auth)
+	}
+}

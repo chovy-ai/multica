@@ -1,22 +1,28 @@
 import { LocalTimingLog } from "./local-timing-log";
 import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
-import { DeveloperLogExporter, createDeveloperLogTool } from "./developer-log-export";
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, screen } from "electron";
+import { DeveloperLogExporter } from "./developer-log-export";
+import { localProviderEnv } from "./local-provider-env";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, protocol, screen } from "electron";
+import { randomBytes } from "node:crypto";
 import { homedir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import fixPath from "fix-path";
-import { setupAutoUpdater } from "./updater";
-import { bundledCliPath, setupDaemonManager, daemonDiagnosticLogPath } from "./daemon-manager";
+import { setupAutoUpdater, updateInstallsOnQuit } from "./updater";
+import { setupDaemonManager, daemonDiagnosticLogPath } from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
-import { LocalConversationService } from "./local-conversation-service";
+import { setupTerminalCli } from "./terminal-cli-ipc";
+import { registerDesktopProtocol, setupBrowserLogin } from "./browser-login-ipc";
+import { LocalHostProxy } from "./local-conversation-proxy";
 import { ResourceWebPreview } from "./resource-web-preview";
 import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
-import { generateLocalConversationTitle } from "./local-conversation-title-generator";
-import { LocalMulticaContext } from "./local-multica-context";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
-import type { LocalConversationMethod, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import { multicaWorkspaceRequest } from "../local-host/multica-api-request";
+import { SettingsOperationError } from "../shared/settings-operation-error";
+import type { LocalConversationMethod, LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import { parseLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
+import { developerLogQuerySchema } from "../shared/developer-logs";
 import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";
@@ -28,8 +34,9 @@ import { createRendererWebPreferences } from "./renderer-web-preferences";
 import { getAppVersion } from "./app-version";
 import { DEVELOPER_LOGS_MCP_NAME, writeDeveloperLogsManifest } from "./developer-logs-mcp-server";
 import { registerCodexStdioMcp } from "./codex-mcp-registration";
-import { findLocalProvider } from "./local-provider-runner";
-import { deriveProfileName, profileLogPath } from "./daemon-profile";
+import { findLocalProvider } from "../local-host/local-provider-runner";
+import { profileLogPath, readDesktopProfileCredentials } from "./daemon-profile";
+import { desktopRuntimeRegistry, desktopRuntimeProfile } from "./desktop-runtime-instance";
 import { loadRuntimeConfig } from "./runtime-config-loader";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import {
@@ -150,7 +157,9 @@ function freezeBreadcrumbPath(): string {
 }
 
 let mainWindow: BrowserWindow | null = null;
-let localConversations: LocalConversationService | null = null;
+let localConversations: LocalHostProxy | null = null;
+let localScopeTracker: ((scope: LocalConversationScope) => void) | undefined;
+let localAvailability: import("../shared/local-host-availability").LocalHostAvailability | null = null;
 let localTimingLog: LocalTimingLog | undefined;
 let developerLogs: DeveloperLogExporter | undefined;
 const issueWindows = new Set<BrowserWindow>();
@@ -590,6 +599,12 @@ const DEV_APP_NAME = process.env.DESKTOP_APP_SUFFIX
   ? `Multica Canary ${process.env.DESKTOP_APP_SUFFIX}`
   : "Multica Canary";
 
+// Local conversation file content streams through this scheme (see the
+// preload's file transport); it must be privileged before the app is ready.
+const LOCAL_FILE_SCHEME = "multica-local-file";
+const LOCAL_FILE_KEY = randomBytes(32).toString("hex");
+protocol.registerSchemesAsPrivileged([{ scheme: LOCAL_FILE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
+
 if (is.dev) {
   app.setName(DEV_APP_NAME);
   app.setPath("userData", join(app.getPath("appData"), DEV_APP_NAME));
@@ -605,14 +620,9 @@ if (is.dev) {
 
 // --- Protocol registration -----------------------------------------------
 
-if (process.defaultApp) {
-  // In dev, register with the path to the electron binary + app path
-  app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [
-    app.getAppPath(),
-  ]);
-} else {
-  app.setAsDefaultProtocolClient(PROTOCOL);
-}
+// Generic dev Electron bundles share a macOS identity and cannot cold-start
+// our entry point through Launch Services. Dev browser auth uses loopback.
+registerDesktopProtocol(is.dev);
 
 // --- Single instance lock ------------------------------------------------
 
@@ -667,47 +677,74 @@ if (!gotTheLock) {
     });
 
     if (runtimeConfigResult.ok) {
-      const queryContext = new LocalMulticaContext({
-        root: join(app.getPath("userData"), "local-conversations", "cli-context"),
-        apiUrl: runtimeConfigResult.config.apiUrl,
-        appUrl: runtimeConfigResult.config.appUrl,
-        workspaceOperations: true,
-        settings: createDesktopSettingsHost(() => mainWindow, () => settingsUserId, () => authSessionGeneration),
-        cliPath: bundledCliPath(),
-        local: (scope) => ({
-          list: () => localConversations!.request(scope, "list", {}),
-          read: (id) => localConversations!.request(scope, "read", { id }),
-          file: (id) => localConversations!.request(scope, "fileRead", { id }),
-        }),
-        localActions: (scope) => ({ request: (method, params) => localConversations!.request(scope, method, params) }),
-        developerLogTool: (scope, conversationId) => createDeveloperLogTool(developerLogs!, scope, conversationId),
+      const localApiUrl = runtimeConfigResult.config.apiUrl;
+      // A missing local component must not prevent login and Settings from opening.
+      await desktopRuntimeRegistry().register(localApiUrl).catch((error: unknown) => {
+        console.error("[runtime-instance] Could not register this Desktop runtime", error);
       });
-      await queryContext.initialize();
+      const settingsHost = createDesktopSettingsHost(() => mainWindow, () => settingsUserId, () => authSessionGeneration, async ({ method, path, body }, signal, scope) => {
+        const credentials = await readDesktopProfileCredentials(desktopRuntimeProfile());
+        if (credentials.userId !== scope.userId || !credentials.token) throw new SettingsOperationError("account_mismatch", "The desktop is signed in to another account");
+        return multicaWorkspaceRequest({ apiUrl: localApiUrl, token: credentials.token, workspaceId: scope.workspaceId }, method, path, body, signal);
+      });
       localTimingLog = new LocalTimingLog(join(app.getPath("userData"), "local-conversations", "diagnostics"));
-      localConversations = new LocalConversationService({
-        timing: localTimingLog.write,
-        root: join(app.getPath("userData"), "local-conversations"),
-        apiUrl: runtimeConfigResult.config.apiUrl,
-        generateTitle: generateLocalConversationTitle,
-        prepareContext: (scope, signal, current) => queryContext.prepare(scope, signal, current),
-        queueCloudClient: (scope, signal) => queryContext.queueClient(scope, signal),
-        notify: (scope, sessionId) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:changed", { scope, sessionId }); },
-        chooseDirectory: async (current) => {
-          if (!mainWindow) return null;
-          const result = await dialog.showOpenDialog(mainWindow, { defaultPath: current, properties: ["openDirectory", "createDirectory"] });
-          return result.canceled ? null : result.filePaths[0] ?? null;
+      const recentScopes = new Map<string, LocalConversationScope>();
+      const notifyRenderer = (scope: LocalConversationScope, sessionId: string) => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:changed", { scope, sessionId });
+      };
+      const pick = async (properties: Electron.OpenDialogOptions["properties"], defaultPath?: string) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return { path: null };
+        const result = await dialog.showOpenDialog(mainWindow, { ...(defaultPath ? { defaultPath } : {}), properties });
+        return { path: result.canceled ? null : result.filePaths[0] ?? null };
+      };
+      localConversations = new LocalHostProxy({
+        apiUrl: localApiUrl,
+        profile: desktopRuntimeProfile(),
+        endpoint: () => desktopRuntimeRegistry().endpoint(localApiUrl),
+        legacyDataDir: join(app.getPath("userData"), "local-conversations"),
+        providerEnv: () => localProviderEnv(),
+        notify: notifyRenderer,
+        // Every open view re-reads its scope; the renderer keys queries by scope.
+        resync: () => { for (const scope of recentScopes.values()) notifyRenderer(scope, ""); },
+        availability: (value) => {
+          localAvailability = value;
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:availability", value);
         },
-        choosePreview: async (kind) => {
-          if (!mainWindow) return null;
-          const result = await dialog.showOpenDialog(mainWindow, { properties: [kind === "directory" ? "openDirectory" : "openFile"] });
-          return result.canceled ? null : result.filePaths[0] ?? null;
+        timing: (record) => { const parsed = parseLocalTiming(record); if (parsed) localTimingLog?.write(parsed); },
+        hostRequest: async (kind, raw) => {
+          const payload = (raw ?? {}) as Record<string, unknown>;
+          const signal = AbortSignal.timeout(90_000);
+          switch (kind) {
+            case "confirmed_operation": {
+              const request = payload.request as Parameters<NonNullable<typeof settingsHost.confirmAndApply>>[0];
+              if (request?.scope?.userId !== settingsUserId) throw new SettingsOperationError("settings_host_unavailable", "Open the main app with the same signed-in account to continue");
+              return settingsHost.confirmAndApply!(request, (payload.apply ?? null) as Parameters<NonNullable<typeof settingsHost.confirmAndApply>>[1], signal);
+            }
+            case "settings_host": return settingsHost.host!(payload.request as Parameters<NonNullable<typeof settingsHost.host>>[0], signal);
+            case "pick_directory": return pick(["openDirectory", "createDirectory"], typeof payload.current === "string" ? payload.current : undefined);
+            case "pick_preview": return pick([payload.kind === "directory" ? "openDirectory" : "openFile"]);
+            case "developer_logs_export": {
+              const scope = payload.scope as LocalConversationScope;
+              if (!developerLogs || scope?.userId !== settingsUserId) throw new SettingsOperationError("settings_host_unavailable", "Open the main app with the same signed-in account to continue");
+              return developerLogs.export(scope, developerLogQuerySchema.parse(payload.query), signal);
+            }
+          }
+          throw new SettingsOperationError("unsupported_host_request", `Desktop cannot handle ${kind}`);
         },
       });
+      const trackScope = (scope: LocalConversationScope) => {
+        recentScopes.delete(`${scope.userId}:${scope.workspaceId}`);
+        recentScopes.set(`${scope.userId}:${scope.workspaceId}`, scope);
+        if (recentScopes.size > 16) recentScopes.delete(recentScopes.keys().next().value!);
+      };
+      localScopeTracker = trackScope;
+      localConversations.setUser(settingsUserId ?? null);
+      localConversations.start();
       developerLogs = new DeveloperLogExporter({
         log: localTimingLog,
         exportsRoot: join(app.getPath("userData"), "local-conversations", "diagnostics", "exports"),
         runtime: { appVersion: getAppVersion(), platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, chromeVersion: process.versions.chrome, nodeVersion: process.versions.node, packaged: app.isPackaged },
-        assertScope: (scope) => localConversations!.assertScope(scope),
+        assertScope: (scope) => { if (scope.userId !== settingsUserId) throw new Error("This account is no longer active"); },
         conversations: async (scope) => (await localConversations!.request(scope, "list", {})).map((conversation) => conversation.id),
         runtimeLogs: async (scope, since, until) => {
           const [web, daemon] = await Promise.all([accountWebLog(scope.userId).snapshot(since, until), snapshotDaemonLog(daemonDiagnosticLogPath())]);
@@ -726,7 +763,7 @@ if (!gotTheLock) {
       publishDeveloperLogsManifest = () => {
         void writeDeveloperLogsManifest(diagnosticsDir, {
           version: 1, apiUrl, userId: settingsUserId ?? null,
-          daemonLogPath: daemonDiagnosticLogPath() ?? profileLogPath(deriveProfileName(apiUrl)),
+          daemonLogPath: daemonDiagnosticLogPath() ?? profileLogPath(desktopRuntimeProfile()),
           runtime: { appVersion: getAppVersion(), platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, chromeVersion: process.versions.chrome, nodeVersion: process.versions.node, packaged: app.isPackaged },
         }).catch((error: unknown) => console.warn("[developer-logs-mcp] Could not publish the diagnostics manifest", error));
       };
@@ -746,7 +783,7 @@ if (!gotTheLock) {
     let resourcePreview: ResourceWebPreview | undefined;
     const previewFor = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Preview requires the active main window");
-      localConversations.assertScope(scope);
+      if (scope.userId !== settingsUserId) throw new Error("This account is no longer active");
       resourcePreview ??= new ResourceWebPreview(mainWindow, { createSource: () => createMacosChromeCookieImportAdapter({ isEnabled: () => true }) });
       return { preview: resourcePreview, owner: JSON.stringify([scope.userId, scope.workspaceId]) };
     };
@@ -765,13 +802,33 @@ if (!gotTheLock) {
     });
     ipcMain.handle("local-conversation:request", (event, scope: LocalConversationScope, method: LocalConversationMethod, params) => {
       if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Local conversations require the active main window");
+      localScopeTracker?.(scope);
       return localConversations.request(scope, method, params);
+    });
+    ipcMain.handle("local-conversation:availability", (event) => event.sender === mainWindow?.webContents ? localAvailability : null);
+    ipcMain.on("local-conversation:file-key", (event) => {
+      event.returnValue = event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame ? LOCAL_FILE_KEY : "";
+    });
+    protocol.handle(LOCAL_FILE_SCHEME, async (request) => {
+      const url = new URL(request.url);
+      const scope = { userId: url.searchParams.get("userId") ?? "", workspaceId: url.searchParams.get("workspaceId") ?? "" };
+      if (!localConversations || url.searchParams.get("k") !== LOCAL_FILE_KEY || !scope.userId || scope.userId !== settingsUserId || !scope.workspaceId) return new Response("Forbidden", { status: 403 });
+      const route = url.pathname.replace(/^\/+/, "");
+      if (request.method === "POST" && route === "upload") return localConversations.file(request, scope, null);
+      if (request.method === "GET" && route.startsWith("files/")) return localConversations.file(request, scope, decodeURIComponent(route.slice("files/".length)));
+      return new Response("Not found", { status: 404 });
     });
     let localShutdown = false;
     app.on("before-quit", (event) => {
-      if (localShutdown || !localConversations) return;
+      if (localShutdown) return;
       event.preventDefault(); localShutdown = true;
-      void localConversations.stop().catch(() => console.warn("[local-conversations] Could not finish saving before exit")).finally(async () => { await localTimingLog?.flush(); await Promise.all([...webDiagnosticLogs.values()].map((log) => log.flush())); app.quit(); });
+      // Local conversations keep running in the daemon; only flush Desktop's own logs.
+      // The sidecar runs this app's executable, so it cannot outlive the app when
+      // quitting installs a downloaded update or the AppImage mount disappears.
+      const proxy = localConversations;
+      const stopped = proxy && (process.env.APPIMAGE || updateInstallsOnQuit()) ? proxy.stopSidecar().catch(() => {}) : Promise.resolve();
+      void stopped.finally(() => proxy?.close());
+      void Promise.all([stopped, localTimingLog?.flush(), ...[...webDiagnosticLogs.values()].map((log) => log.flush())]).finally(() => app.quit());
     });
 
     electronApp.setAppUserModelId(
@@ -797,6 +854,15 @@ if (!gotTheLock) {
     // (the renderer itself runs sandboxed).
     ipcMain.handle("shell:openExternal", (_event, url: string) => {
       return openExternalSafely(url);
+    });
+    setupBrowserLogin({
+      development: is.dev,
+      getWindow: () => mainWindow,
+      getAppUrl: () => {
+        if (!runtimeConfigResult.ok) throw new Error("Desktop runtime config is unavailable");
+        return runtimeConfigResult.config.appUrl;
+      },
+      onToken: (token) => dispatchToMainRenderer("auth:token", token),
     });
 
     // Renderer requests its own window close (e.g. Cmd+W on the last main
@@ -893,7 +959,7 @@ if (!gotTheLock) {
 
       if (sourceWindow === mainWindow) {
         settingsUserId = userId;
-        localConversations?.setCurrentUser(userId);
+        localConversations?.setUser(userId);
         publishDeveloperLogsManifest?.();
         const accountInvalidated = authSessionCoordinator.reportMain(userId);
         if (accountInvalidated) {
@@ -980,9 +1046,36 @@ if (!gotTheLock) {
     desktopInitialized = true;
     createWindow();
 
-    setupAutoUpdater(() => mainWindow);
-    setupDaemonManager(() => mainWindow);
+    setupAutoUpdater(() => mainWindow, {
+      // The sidecar runs this app's executable: stop it before the installer
+      // replaces the app, after asking when that would interrupt a turn.
+      beforeInstall: async () => {
+        if (!localConversations) return true;
+        const busy = await localConversations.drain().catch(() => 0);
+        if (busy > 0 && mainWindow && !mainWindow.isDestroyed()) {
+          const chinese = app.getLocale().startsWith("zh");
+          const choice = await dialog.showMessageBox(mainWindow, {
+            type: "warning", noLink: true, defaultId: 0, cancelId: 0,
+            buttons: chinese ? ["等待完成", "立即更新"] : ["Wait", "Update now"],
+            message: chinese ? "本地对话仍在运行" : "Local conversations are still running",
+            detail: chinese ? "立即更新会中断正在运行的本地对话。" : "Updating now interrupts the local conversations that are running.",
+          });
+          if (choice.response !== 1) { await localConversations.undrain().catch(() => {}); return false; }
+        }
+        await localConversations.stopSidecar().catch(() => {});
+        return true;
+      },
+    });
+    setupDaemonManager(() => mainWindow, {
+      quiesceLocalConversations: async () => {
+        if (!localConversations) return true;
+        const busy = await localConversations.drain().catch(() => 0);
+        if (busy > 0) await localConversations.undrain().catch(() => {});
+        return busy === 0;
+      },
+    });
     setupLocalDirectory(() => mainWindow);
+    setupTerminalCli(() => mainWindow);
 
     app.on("activate", () => {
       const window = ensureMainWindow();

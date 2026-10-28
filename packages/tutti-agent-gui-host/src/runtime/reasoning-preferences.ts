@@ -1,4 +1,4 @@
-import { isLocalReasoningEffort, type LocalReasoningEffort } from "../local-protocol";
+import { isLocalReasoningEffort, type LocalReasoningEffort } from "@multica/core/local-conversation/protocol";
 
 interface Selection { model: string | null; effort: LocalReasoningEffort | null }
 export class ReasoningPreferences {

@@ -40,11 +40,14 @@ type HealthResponse struct {
 	// pre-#6694 daemon that cannot identify itself at all. Callers key off
 	// the field's presence, so collapsing the two would make every default
 	// daemon look unidentifiable.
-	Profile    string `json:"profile"`
-	DaemonID   string `json:"daemon_id"`
-	DeviceName string `json:"device_name"`
-	ServerURL  string `json:"server_url"`
-	CLIVersion string `json:"cli_version"`
+	Profile         string `json:"profile"`
+	InstanceID      string `json:"instance_id,omitempty"`
+	InstanceOwnerID string `json:"instance_owner_id,omitempty"`
+	InstanceRunID   string `json:"instance_run_id,omitempty"`
+	DaemonID        string `json:"daemon_id"`
+	DeviceName      string `json:"device_name"`
+	ServerURL       string `json:"server_url"`
+	CLIVersion      string `json:"cli_version"`
 	// CLICommit belongs to this running process, not an installed replacement.
 	// Empty or unknown values do not attest a revision; never fall back to version.
 	CLICommit string `json:"cli_commit"`
@@ -56,9 +59,15 @@ type HealthResponse struct {
 	// ActiveTaskCount remains the compatibility/safety count of every claimed
 	// handleTask lifecycle. The additive counters split actual provider
 	// execution from local-directory parking for throughput and diagnostics.
-	ActiveTaskCount       int64 `json:"active_task_count"`
-	RunningTaskCount      int64 `json:"running_task_count"`
-	ResourceWaitTaskCount int64 `json:"resource_wait_task_count"`
+	ActiveTaskCount int64 `json:"active_task_count"`
+	// LocalConversations is "supported" when this daemon can host Desktop's
+	// local conversations, "unsupported" otherwise (not the bundled CLI, or a
+	// foreign-OS daemon). LocalBusyCount is the local work a restart would
+	// interrupt; restart decisions treat it like active tasks.
+	LocalConversations    string `json:"local_conversations"`
+	LocalBusyCount        int64  `json:"local_busy_count"`
+	RunningTaskCount      int64  `json:"running_task_count"`
+	ResourceWaitTaskCount int64  `json:"resource_wait_task_count"`
 	// Repo maintenance stays a liveness-safe background activity, so health
 	// remains HTTP 200/running. These additive counters explain degraded repo
 	// checkout capacity to operators without exposing local cache paths.
@@ -350,6 +359,9 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			OS:                    runtime.GOOS,
 			Uptime:                time.Since(startedAt).Truncate(time.Second).String(),
 			Profile:               d.cfg.Profile,
+			InstanceID:            d.cfg.RuntimeInstanceID,
+			InstanceOwnerID:       d.cfg.RuntimeOwnerID,
+			InstanceRunID:         d.cfg.RuntimeRunID,
 			LaunchedBy:            d.cfg.LaunchedBy,
 			DaemonID:              d.cfg.DaemonID,
 			DeviceName:            d.cfg.DeviceName,
@@ -357,6 +369,7 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			CLIVersion:            d.cfg.CLIVersion,
 			CLICommit:             d.cfg.CLICommit,
 			ActiveTaskCount:       d.activeTasks.Load(),
+			LocalConversations:    "unsupported",
 			RunningTaskCount:      d.runningTasks.Load(),
 			ResourceWaitTaskCount: d.resourceWaitTasks.Load(),
 			Agents:                agents,
@@ -364,6 +377,10 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 
 			ReloadPendingReason: d.reloadPending(),
 			Workspaces:          wsList,
+		}
+		if d.local != nil && d.local.Supported() {
+			resp.LocalConversations = "supported"
+			resp.LocalBusyCount = d.local.Busy()
 		}
 		if reporter, ok := d.repoCache.(interface{ Activity() repocache.Activity }); ok {
 			activity := reporter.Activity()
@@ -388,12 +405,16 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 // top-level context. Used by `multica daemon stop` so we don't depend on
 // OS-signal delivery, which is unreliable on Windows once the daemon is
 // spawned with DETACHED_PROCESS (no shared console with the stop caller).
-// The listener is bound to 127.0.0.1 only, so only local processes can hit
-// this endpoint.
+// Loopback binding alone does not stop a web page from POSTing here, so the
+// caller must present the profile's local API token.
 func (d *Daemon) shutdownHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !d.authorizeLocalRequest(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -413,6 +434,9 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
+	if d.local != nil {
+		d.local.Register(mux)
+	}
 
 	srv := &http.Server{Handler: mux}
 

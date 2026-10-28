@@ -1,7 +1,7 @@
 import "./env";
 import { expect, test } from "@playwright/test";
 import type { AgentGuiInitSnapshot } from "../packages/tutti-agent-gui-host/src/protocol";
-import type { LocalBackgroundTask } from "../packages/tutti-agent-gui-host/src/local-protocol";
+import type { LocalBackgroundTask } from "../packages/core/local-conversation/protocol";
 
 for (const theme of ["light", "dark"] as const) test(`background creation adds a durable record in the ${theme} conversation flow without blocking another message`, async ({ page }) => {
   await page.route("**/__test/background-task", (route) => route.fulfill({ contentType: "text/html", body: '<button id="create">Create background task</button><button id="progress">Update background progress</button><button id="finish">Finish background task</button><iframe title="Background task test" style="display:block;width:100%;height:850px;border:0"></iframe>' }));

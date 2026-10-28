@@ -23,7 +23,9 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon"
+	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	logger_pkg "github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/runtimeinstance"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
 )
@@ -189,6 +191,9 @@ func daemonRuntimeProbeFromAgents(agents map[string]daemon.AgentEntry) daemonRun
 // daemonDirForProfile returns the state directory for the given profile.
 // Empty profile → ~/.multica/, named profile → ~/.multica/profiles/<name>/.
 func daemonDirForProfile(profile string) string {
+	if dir, registered := instanceStateDirectory(profile); registered {
+		return dir
+	}
 	dir, err := cli.ProfileDir(profile)
 	if err != nil {
 		return ""
@@ -198,6 +203,10 @@ func daemonDirForProfile(profile string) string {
 
 func daemonPIDPathForProfile(profile string) string {
 	return filepath.Join(daemonDirForProfile(profile), "daemon.pid")
+}
+
+func daemonLocalAPITokenPath(profile string) string {
+	return filepath.Join(daemonDirForProfile(profile), daemon.LocalAPITokenFile)
 }
 
 func daemonLogPathForProfile(profile string) string {
@@ -1124,10 +1133,71 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 	defer healthLn.Close()
 	cfg.HealthPort = actualPort
-	if err := publishDaemonPort(profile, daemonPortRecord{Port: actualPort, PID: os.Getpid()}); err != nil {
-		return fmt.Errorf("publish daemon health port: %w", err)
+	registered, err := registeredInstance(profile)
+	if err != nil {
+		return fmt.Errorf("load Desktop runtime registration: %w", err)
 	}
-	defer removeDaemonPortIfOwned(profile, os.Getpid())
+	if registered == nil {
+		if err := publishDaemonPort(profile, daemonPortRecord{Port: actualPort, PID: os.Getpid()}); err != nil {
+			return fmt.Errorf("publish daemon health port: %w", err)
+		}
+		defer removeDaemonPortIfOwned(profile, os.Getpid())
+	}
+
+	localToken, err := daemon.NewLocalAPIToken()
+	if err != nil {
+		return err
+	}
+	if err := daemon.WriteLocalAPIToken(daemonLocalAPITokenPath(profile), localToken); err != nil {
+		return fmt.Errorf("publish daemon local API token: %w", err)
+	}
+	defer daemon.RemoveLocalAPITokenIfOwned(daemonLocalAPITokenPath(profile), localToken)
+	cfg.LocalAPIToken = localToken
+	cfg.ProfileDir, err = cli.ProfileDir(profile)
+	if err != nil {
+		return err
+	}
+	if exe, err := os.Executable(); err == nil {
+		cfg.LocalHostCLIPath = exe
+		var sidecar localhost.Sidecar
+		if registered != nil {
+			err = registered.launch.ValidateExecutable(exe)
+			if err != nil {
+				return err
+			}
+			if !registered.launch.MatchesVersion(version, buildCommit) {
+				return fmt.Errorf("runtime registration and CLI build differ; rebuild or re-register this Desktop instance")
+			}
+			if normalizeAPIBaseURL(cfg.ServerBaseURL) != normalizeAPIBaseURL(registered.launch.APIURL) {
+				return fmt.Errorf("runtime instance and configured backend disagree")
+			}
+			sidecar = localhost.Sidecar{ProtocolVersion: registered.launch.ProtocolVersion, Electron: registered.launch.ElectronPath, Entry: registered.launch.EntryPath}
+		} else {
+			sidecar, err = localhost.Locate(exe, os.Getenv)
+		}
+		switch {
+		case err == nil:
+			cfg.LocalHost = &sidecar
+		case !errors.Is(err, localhost.ErrNoManifest):
+			logger.Warn("local conversations disabled: invalid sidecar manifest", "error", err)
+		}
+	}
+	if registered != nil {
+		runID, err := runtimeinstance.NewRunID()
+		if err != nil {
+			return err
+		}
+		cfg.LaunchedBy = "desktop"
+		cfg.AutoUpdateEnabled = false
+		cfg.RuntimeInstanceID = registered.launch.InstanceID
+		cfg.RuntimeOwnerID = registered.launch.OwnerID
+		cfg.RuntimeRunID = runID
+		record := runtimeinstance.Runtime{SchemaVersion: 1, InstanceID: cfg.RuntimeInstanceID, OwnerID: cfg.RuntimeOwnerID, RunID: runID, PID: os.Getpid(), Port: actualPort, Profile: profile, APIURL: registered.launch.APIURL, CLIVersion: version, CLICommit: buildCommit, APIVersion: localhost.APIVersion, SidecarProtocolVersion: registered.launch.ProtocolVersion, LocalConversations: cfg.LocalHost != nil, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+		if err := registered.store.PublishRuntime(record); err != nil {
+			return fmt.Errorf("publish runtime: %w", err)
+		}
+		defer registered.store.RemoveRuntimeIfOwned(record.InstanceID, record.RunID, record.PID)
+	}
 
 	ctx, stop := notifyShutdownContext(context.Background())
 	defer stop()
@@ -1313,7 +1383,7 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 		pid, _ := health["pid"].(float64)
 		if pid > 0 {
 			fmt.Fprintf(os.Stderr, "Stopping daemon (pid %d)...\n", int(pid))
-			if err := requestDaemonShutdown(healthPort); err != nil {
+			if err := requestDaemonShutdown(profile, healthPort); err != nil {
 				if p, perr := os.FindProcess(int(pid)); perr == nil {
 					_ = p.Kill()
 				}
@@ -1389,7 +1459,7 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	// GenerateConsoleCtrlEvent can't reach it; HTTP works on both
 	// platforms and triggers the same context-cancel path the daemon
 	// already uses for self-restart.
-	if err := requestDaemonShutdown(healthPort); err != nil {
+	if err := requestDaemonShutdown(profile, healthPort); err != nil {
 		fmt.Fprintf(os.Stderr, "Graceful shutdown request failed: %v — falling back to forced kill.\n", err)
 		if kerr := process.Kill(); kerr != nil {
 			return fmt.Errorf("kill daemon (pid %d): %w", int(pid), kerr)
@@ -1418,11 +1488,15 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 // requestDaemonShutdown POSTs to the daemon's /shutdown endpoint to ask it
 // to exit gracefully. Returns an error if the request could not be delivered
 // (network error, non-2xx status, or the endpoint predates this change).
-func requestDaemonShutdown(healthPort int) error {
+func requestDaemonShutdown(profile string, healthPort int) error {
 	url := fmt.Sprintf("http://127.0.0.1:%d/shutdown", healthPort)
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		return err
+	}
+	// Daemons that predate the token ignore the header; a missing file sends none.
+	if token, _ := daemon.ReadLocalAPIToken(daemonLocalAPITokenPath(profile)); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)

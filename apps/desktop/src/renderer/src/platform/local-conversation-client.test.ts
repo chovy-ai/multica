@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION, type LocalConversationClient } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION, type LocalConversationClient } from "@multica/core/local-conversation/protocol";
 import { getLocalConversationClient, LocalRuntimeUpdateRequired } from "./local-conversation-client";
 
 const scope = { userId: "reader", workspaceId: "workspace" };
 const capabilities = { protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) };
 function setup(response: unknown = capabilities) {
   const request = vi.fn(async (_scope, method) => method === "capabilities" ? response : []);
-  const raw = { request, subscribe: () => () => {} } as LocalConversationClient;
+  const raw = { request, subscribe: () => () => {}, files: { upload: vi.fn(), read: vi.fn(), url: vi.fn() } } as unknown as LocalConversationClient;
   return { raw, request, client: getLocalConversationClient(raw) };
 }
 describe("desktop runtime capability checks", () => {
@@ -40,7 +40,7 @@ describe("desktop runtime capability checks", () => {
     expect(request.mock.calls.map(([, method]) => method)).toEqual(["capabilities", "list", "fileInfo", "queueEnqueue"]);
     expect(listener).toHaveBeenCalledOnce(); unsubscribe();
   });
-  it.each([null, {}, { protocolVersion: 1, methods: "send" }, { ...capabilities, protocolVersion: 2 }])("rejects an incompatible or malformed handshake: %j", async (response) => {
+  it.each([null, {}, { protocolVersion: 1, methods: "send" }, { ...capabilities, protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION + 1 }])("rejects an incompatible or malformed handshake: %j", async (response) => {
     const { client, request } = setup(response);
     await expect(client.request(scope, "send", { id: "session", content: "Never submit" })).rejects.toBeInstanceOf(LocalRuntimeUpdateRequired);
     expect(request).toHaveBeenCalledOnce();

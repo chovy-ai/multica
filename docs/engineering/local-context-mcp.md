@@ -70,7 +70,7 @@ Claude Code CLI 使用私有 `mcp.json` 和 `--strict-mcp-config`；SDK 使用�
 ## 验证
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-context-mcp.test.ts src/main/local-multica-context.test.ts src/main/local-conversation-service.test.ts src/main/local-provider-runner.test.ts src/main/local-provider-fork.test.ts src/main/local-codex-instructions.test.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-context-mcp.test.ts src/local-host/local-multica-context.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-provider-runner.test.ts src/local-host/local-provider-fork.test.ts src/local-host/local-codex-instructions.test.ts src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/desktop build
 PLAYWRIGHT_BASE_URL=http://localhost:16099 pnpm exec playwright test e2e/tutti-mention-panel.spec.ts e2e/agent-html-preview.spec.ts e2e/local-provider-gui.spec.ts

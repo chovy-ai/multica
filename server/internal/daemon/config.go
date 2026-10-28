@@ -17,6 +17,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
@@ -115,6 +116,13 @@ type Config struct {
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
 	KeepEnvAfterTask               bool                  // preserve env after task for debugging
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
+	LocalAPIToken                  string                // bearer token for loopback control endpoints; empty rejects them
+	ProfileDir                     string                // this profile's state directory; holds local conversation data
+	RuntimeOwnerID                 string                // Desktop process that registered this runtime
+	RuntimeInstanceID              string                // stable Desktop installation/worktree identity
+	RuntimeRunID                   string                // identifies this daemon launch, including after PID reuse
+	LocalHost                      *localhost.Sidecar    // Desktop-packaged conversation sidecar; nil disables local conversations
+	LocalHostCLIPath               string                // multica binary the sidecar runs for CLI-backed context tools
 	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
 	GCEnabled                      bool                  // enable periodic workspace garbage collection (default: true)
 	GCInterval                     time.Duration         // how often the GC loop runs (default: 2h)

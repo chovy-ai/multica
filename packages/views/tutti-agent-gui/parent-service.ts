@@ -37,7 +37,7 @@ import { issueKeys } from "@multica/core/issues/queries";
 import { buildIssueStatusCatalog, issueStatusListOptions } from "@multica/core/issue-statuses";
 import { chatAuthoredPrompt, CHAT_CONTEXT_SNAPSHOT_START as CONTEXT_SNAPSHOT_START, CHAT_CONTEXT_SNAPSHOT_END as CONTEXT_SNAPSHOT_END } from "@multica/core/chat/context-snapshot";
 import { agentGuiAvatarUrl } from "./agent-avatar";
-import { isTaskCreationReference } from "@multica/tutti-agent-gui-host/local-protocol";
+import { isTaskCreationReference } from "@multica/core/local-conversation/protocol";
 import { resolveResourceReference } from "@multica/tutti-agent-gui-host/resource-reference";
 
 export class AgentGuiBridgeError extends Error {

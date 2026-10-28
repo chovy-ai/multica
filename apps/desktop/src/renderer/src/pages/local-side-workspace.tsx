@@ -14,7 +14,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle, useDefaultLayout } from "@multica/ui/components/ui/resizable";
 import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
-import type { LocalConversation, LocalConversationScope, LocalPreviewLocation, LocalProviderId } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationScope, LocalPreviewLocation, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { FileLinkPreviewError, fileLinkErrorMessage, resolveConversationFile } from "./local-resource-resolution";
 import { createLocalConversationParentService, localTargetId } from "../platform/local-conversation-service";
 import { LocalFilePreview, PreviewFolder, WebResourcePreview } from "./local-resource-preview";

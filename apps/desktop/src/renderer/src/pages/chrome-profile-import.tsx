@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@multica/ui/components/ui/dialog";
-import type { LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import type { ChromeProfileImportResult } from "../../../shared/resource-preview";
 
 function failureMessage(code: string | undefined, chinese: boolean): string {

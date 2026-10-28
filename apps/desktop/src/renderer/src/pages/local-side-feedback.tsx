@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, CircleAlert, CircleHelp, CircleStop, Loader2, MessagesSquare } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "@multica/views/i18n";
-import type { LocalConversation, LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { getLocalConversationClient } from "../platform/local-conversation-client";
 import { localSideActivity } from "./local-side-activity";
 

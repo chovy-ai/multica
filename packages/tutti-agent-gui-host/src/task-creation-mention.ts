@@ -1,4 +1,4 @@
-import { CREATE_TASK_MENTION_ID } from "./local-protocol";
+import { CREATE_TASK_MENTION_ID } from "@multica/core/local-conversation/protocol";
 import { parseRichTextMentionHref } from "@tutti-os/ui-rich-text/core";
 export { CREATE_TASK_MENTION_ID };
 

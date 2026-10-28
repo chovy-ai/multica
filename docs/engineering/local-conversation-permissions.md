@@ -31,7 +31,7 @@ Codex 的参数放在 `exec` 之前，使新会话和 `exec resume` 都能接受
 默认测试使用伪运行器与 MessagePort 服务，不发现或启动已安装的模型 CLI：
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-provider-runner.test.ts src/main/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-provider-runner.test.ts src/local-host/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/tutti-agent-gui-host test src/runtime/runtime.test.ts
 pnpm --filter @multica/tutti-agent-gui-host typecheck
 pnpm --filter @multica/desktop typecheck

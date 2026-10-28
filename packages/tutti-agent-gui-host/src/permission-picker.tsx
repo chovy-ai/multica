@@ -2,7 +2,7 @@ import { useId, useState, useSyncExternalStore } from "react";
 import { ChevronDown, ShieldCheck } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@multica/ui/components/ui/dropdown-menu";
-import { isLocalPermissionMode, type LocalPermissionMode } from "./local-protocol";
+import { isLocalPermissionMode, type LocalPermissionMode } from "@multica/core/local-conversation/protocol";
 import type { AgentGuiRpcClient } from "./protocol";
 import type { createMulticaAgentGuiRuntime } from "./runtime";
 
