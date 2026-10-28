@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, lazy, useRef, useState } from "react";
+import { Suspense, lazy, useRef, useState, type ReactElement } from "react";
+import { useRender } from "@base-ui/react/use-render";
 import { Bot, Camera, ImagePlus, Loader2, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -66,6 +67,8 @@ interface AvatarUploadControlProps {
   onClear?: () => void;
   className?: string;
   ariaLabel?: string;
+  /** Optional button trigger, reusing the same picker, crop and upload flow. */
+  trigger?: ReactElement;
 }
 
 function initialsOf(name: string): string {
@@ -145,6 +148,7 @@ export function AvatarUploadControl({
   onClear,
   className,
   ariaLabel,
+  trigger,
 }: AvatarUploadControlProps) {
   const { t } = useT("common");
   const { upload } = useFileUpload(api);
@@ -229,59 +233,70 @@ export function AvatarUploadControl({
     }
   };
 
-  const avatarButton = (
-    <button
-      type="button"
+  const avatarButton = useRender({
+    defaultTagName: "button",
+    render: trigger,
+    props: {
+      type: "button",
       // With emoji enabled this button is the popover trigger and Base UI
       // supplies the click handler; without it the click goes straight to the
       // file dialog, which is this control's original single-purpose shape.
-      onClick={emojiEnabled ? undefined : openFileDialog}
-      disabled={disabled || busy}
-      aria-label={changeLabel}
-      className={cn(
-        "group relative h-full w-full overflow-hidden bg-muted text-muted-foreground outline-none",
-        "flex items-center justify-center",
-        "focus-visible:ring-2 focus-visible:ring-ring",
-        "disabled:cursor-not-allowed disabled:opacity-60",
-        "rounded-full",
-        className,
-      )}
-      style={{ width: size, height: size }}
-    >
-      {emoji ? (
-        <span
-          role="img"
-          aria-label={name}
-          className="select-none leading-none"
-          style={{ fontSize: size * 0.58 }}
-        >
-          {emoji}
-        </span>
-      ) : hasImage ? (
-        <img
-          src={resolved ?? undefined}
-          alt={name}
-          className="h-full w-full object-cover"
-          onError={() => setPreviewError(true)}
-        />
-      ) : (
-        <AvatarFallback variant={variant} name={name} size={size} />
-      )}
-
-      {!disabled && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-          {busy ? (
-            <Loader2 className="h-5 w-5 animate-spin text-white" />
+      onClick: emojiEnabled ? undefined : openFileDialog,
+      disabled: disabled || busy,
+      "aria-label": changeLabel,
+      "aria-busy": busy || undefined,
+      className: trigger
+        ? undefined
+        : cn(
+            "group relative h-full w-full overflow-hidden bg-muted text-muted-foreground outline-none",
+            "flex items-center justify-center",
+            "focus-visible:ring-2 focus-visible:ring-ring",
+            "disabled:cursor-not-allowed disabled:opacity-60",
+            "rounded-full",
+            className,
+          ),
+      style: trigger ? undefined : { width: size, height: size },
+      children: trigger ? undefined : (
+        <>
+          {emoji ? (
+            <span
+              role="img"
+              aria-label={name}
+              className="select-none leading-none"
+              style={{ fontSize: size * 0.58 }}
+            >
+              {emoji}
+            </span>
+          ) : hasImage ? (
+            <img
+              src={resolved ?? undefined}
+              alt={name}
+              className="h-full w-full object-cover"
+              onError={() => setPreviewError(true)}
+            />
           ) : (
-            <Camera className="h-5 w-5 text-white" />
+            <AvatarFallback variant={variant} name={name} size={size} />
           )}
-        </div>
-      )}
-    </button>
-  );
+
+          {!disabled && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+              {busy ? (
+                <Loader2 className="h-5 w-5 animate-spin text-white" />
+              ) : (
+                <Camera className="h-5 w-5 text-white" />
+              )}
+            </div>
+          )}
+        </>
+      ),
+    },
+  }) as ReactElement<Record<string, unknown>>;
 
   return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
+    <div
+      className="relative shrink-0"
+      style={trigger ? undefined : { width: size, height: size }}
+    >
       {emojiEnabled ? (
         <Popover open={pickerOpen} onOpenChange={handlePickerOpenChange}>
           <DeferredTooltip

@@ -16,6 +16,12 @@
     "more_emojis": "More emojis…",
     "emoji_loading": "Loading…"
   },
+  "avatar_preview": {
+    "open": "View avatar",
+    "title": "Avatar",
+    "save": "Save avatar",
+    "save_failed": "Could not save avatar"
+  },
   "avatar_crop": {
     "title": "Edit avatar",
     "zoom": "Zoom",

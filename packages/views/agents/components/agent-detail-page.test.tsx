@@ -149,7 +149,7 @@ vi.mock("@multica/core/api", () => {
     }
   }
   return {
-    api: { getAgent: mockGetAgent, updateAgent: mockUpdateAgent },
+    api: { getAgent: mockGetAgent, updateAgent: mockUpdateAgent, getBaseUrl: () => "https://api.test" },
     ApiError,
   };
 });
@@ -218,6 +218,42 @@ beforeEach(() => {
   agentsRef.current = [baseAgent];
   mockGetAgent.mockRejectedValue(new ApiError("not found", 404, "Not Found"));
   mockUpdateAgent.mockResolvedValue({ ...baseAgent, model: "new-model" });
+});
+
+describe("AgentDetailPage avatar", () => {
+  it("keeps preview available but hides editing for a non-owner", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "View avatar" }));
+    expect(await screen.findByRole("dialog", { name: "Avatar" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change avatar" })).not.toBeInTheDocument();
+  });
+
+  it("persists a header avatar change in both list and detail caches", async () => {
+    agentsRef.current = [{ ...baseAgent, owner_id: "user-1" }];
+    const updated = { ...baseAgent, owner_id: "user-1", avatar_url: "emoji:🦊" };
+    mockUpdateAgent.mockImplementation(async () => {
+      agentsRef.current = [updated];
+      return updated;
+    });
+    const { queryClient } = renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "View avatar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Change avatar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "🦊" }));
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledWith("agent-1", { avatar_url: "emoji:🦊" }));
+    await waitFor(() => expect(queryClient.getQueryData<Agent>(["agents", "ws-1", "detail", "agent-1"])?.avatar_url).toBe("emoji:🦊"));
+    expect(queryClient.getQueryData<Agent[]>(["agents", "ws-1"])?.[0]?.avatar_url).toBe("emoji:🦊");
+  });
+
+  it("rolls back an unsuccessful avatar update and reports the API error", async () => {
+    agentsRef.current = [{ ...baseAgent, owner_id: "user-1" }];
+    mockUpdateAgent.mockRejectedValue(new Error("Update denied"));
+    const { queryClient } = renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "View avatar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Change avatar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "🦊" }));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("Update denied"));
+    expect(queryClient.getQueryData<Agent[]>(["agents", "ws-1"])?.[0]?.avatar_url).toBeNull();
+  });
 });
 
 describe("AgentDetailPage direct-detail fallback", () => {

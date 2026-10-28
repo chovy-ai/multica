@@ -16,6 +16,12 @@
     "more_emojis": "他の絵文字…",
     "emoji_loading": "読み込み中…"
   },
+  "avatar_preview": {
+    "open": "アバターを表示",
+    "title": "アバター",
+    "save": "アバターを保存",
+    "save_failed": "アバターを保存できませんでした"
+  },
   "avatar_crop": {
     "title": "アバターを編集",
     "zoom": "ズーム",

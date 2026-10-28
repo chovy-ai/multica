@@ -16,6 +16,12 @@
     "more_emojis": "이모지 더 보기…",
     "emoji_loading": "불러오는 중…"
   },
+  "avatar_preview": {
+    "open": "아바타 보기",
+    "title": "아바타",
+    "save": "아바타 저장",
+    "save_failed": "아바타를 저장할 수 없습니다"
+  },
   "avatar_crop": {
     "title": "아바타 편집",
     "zoom": "확대/축소",
