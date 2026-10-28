@@ -8,6 +8,16 @@ import tailwindcss from "@tailwindcss/vite";
 
 const hostPresentationAdaptations = [
   {
+    path: "/controller/useAgentGUILocalState.ts",
+    original: 'import {\n  useCallback,',
+    replacement: 'import { useComposerDrafts } from "@multica-composer-drafts";\nimport {\n  useCallback,',
+  },
+  {
+    path: "/controller/useAgentGUILocalState.ts",
+    original: 'useState<\n    Record<string, AgentComposerDraft>\n  >({})',
+    replacement: 'useComposerDrafts()',
+  },
+  {
     path: "/composer/useComposerDraftAttachments.ts",
     original: "            const message =\n              error instanceof Error ? error.message : String(error);\n            reportAgentComposerDiagnostic(agentActivityRuntime, {\n              details: {\n                error: message.slice(0, 500),\n                imageId: draftImage.id",
     replacement: "            const message =\n              error instanceof Error ? error.message : String(error);\n            showErrorToast(translate(\"agentHost.agentGui.imageLoadFailed\"));\n            reportAgentComposerDiagnostic(agentActivityRuntime, {\n              details: {\n                error: message.slice(0, 500),\n                imageId: draftImage.id",
@@ -537,6 +547,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      "@multica-composer-drafts": fileURLToPath(new URL("./src/composer-drafts.tsx", import.meta.url)),
       "@multica-message-image-clipboard": fileURLToPath(new URL("./src/message-image-clipboard.ts", import.meta.url)),
       "@multica-composer-file-picker": fileURLToPath(new URL("./src/composer-file-picker.ts", import.meta.url)),
       "@multica-large-text-paste": fileURLToPath(new URL("./src/large-text-paste.ts", import.meta.url)),

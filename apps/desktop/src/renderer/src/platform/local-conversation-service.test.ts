@@ -10,6 +10,7 @@ import type { LocalConversationClient } from "@multica/core/local-conversation/p
 import { CREATE_TASK_MENTION_ID } from "@multica/core/local-conversation/protocol";
 
 const mock = vi.hoisted(() => ({ api: {
+  getBaseUrl: vi.fn(),
   listAgents: vi.fn(), listMembers: vi.fn(), listRuntimes: vi.fn(), listChatSessions: vi.fn(), listPendingChatTasks: vi.fn(),
   createChatSession: vi.fn(), sendChatMessage: vi.fn(), listChatMessagesPage: vi.fn(), listTaskMessages: vi.fn(), listAgentTasksPage: vi.fn(),
   cancelTaskById: vi.fn(), getIssue: vi.fn(),
@@ -19,6 +20,7 @@ const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 beforeEach(() => {
   vi.resetAllMocks();
+  mock.api.getBaseUrl.mockReturnValue("https://example.test");
   mock.api.listAgents.mockResolvedValue(["design", "code"].map((id) => ({ id, workspace_id: "ws", owner_id: "user", name: `${id} reviewer`, description: "Defined workspace agent", runtime_id: "cloud-runtime", runtime_bound: true, runtime_config: {}, visibility: "workspace", archived_at: null, permission_mode: "private", invocation_targets: [] })));
   mock.api.listMembers.mockResolvedValue([{ user_id: "user", role: "owner" }]);
   mock.api.listRuntimes.mockResolvedValue([{ id: "cloud-runtime", provider: "codex" }]);
@@ -289,6 +291,7 @@ describe("local providers and official agent invocation routing", () => {
   it("keeps ordinary provider sessions local and exposes cloud agents only as mention targets", async () => {
     const { bridge, run } = await setup();
     const state = await bridge.load();
+    expect(state.composerDraftScope).toBe(JSON.stringify(["https://example.test", ""]));
     expect(state.executionTargets?.map((target) => target.name)).toEqual(["Codex", "Claude Code"]);
     expect(state.agents.map((target) => target.agent.name)).toEqual(["design reviewer", "code reviewer"]);
     expect(state.sessions).toEqual([]);

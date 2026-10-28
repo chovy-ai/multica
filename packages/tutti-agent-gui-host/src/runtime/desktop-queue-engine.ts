@@ -1,23 +1,34 @@
 import type { AgentSessionEngine, EngineQueuedPrompt, PromptQueueRecord } from "@tutti-os/agent-activity-core";
 import { selectEngineSubmitWouldBeVisibleInQueue } from "@tutti-os/agent-activity-core";
 import type { LocalPromptQueue } from "@multica/core/local-conversation/protocol";
+import type { DesktopPendingStore } from "./desktop-pending-store";
+const MAX_QUEUED_PROMPTS = 100;
 type SubmitInput = Parameters<AgentSessionEngine["submitPrompt"]>[0];
 interface PendingPrompt {
   input: SubmitInput;
   display: EngineQueuedPrompt;
   admission?: Promise<LocalPromptQueue>;
   confirmed?: boolean;
+  restored?: boolean;
 }
 
 /** Presentation adapter only: Electron owns admission, persistence and draining. */
 export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
   enabled(): boolean;
+  locale?(): string;
   enqueue(input: SubmitInput): Promise<LocalPromptQueue>;
   update(id: string, action: "pause" | "stop" | "resume" | "remove" | "sendNow", requestId?: string): Promise<LocalPromptQueue>;
   error(error: unknown): void;
+  pendingStore?: DesktopPendingStore;
 }) {
   const queues = new Map<string, LocalPromptQueue>();
   const pending = new Map<string, PendingPrompt[]>();
+  for (const queue of options.pendingStore?.getState().queues ?? []) {
+    pending.set(queue.agentSessionId, queue.prompts.map((prompt) => ({
+      input: { ...prompt, agentSessionId: queue.agentSessionId, clientSubmitId: prompt.clientSubmitId || prompt.id },
+      display: { ...prompt, visibleInQueue: true }, restored: true,
+    })));
+  }
   const errors = new Map<string, { message: string; promptId?: string; origin: "admission" | "operation" }>();
   const operations = new Map<string, Promise<void>>();
   const listeners = new Set<Parameters<AgentSessionEngine["subscribe"]>[0]>();
@@ -25,6 +36,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
   let cached: ReturnType<AgentSessionEngine["getSnapshot"]> | undefined;
   let lastBase: typeof cached;
   let lastRevision = -1;
+  let disposed = false;
   const snapshot = () => {
     const state = base.getSnapshot();
     if (!options.enabled()) return state;
@@ -47,13 +59,21 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       records[id] = { agentSessionId: id, workspaceId: base.identity.workspaceId, prompts,
         deliveryBarrierTurnId: null, failedPromptId: failureMessage ? error?.promptId ?? prompts[0]?.id ?? null : null,
         failureMessage, inFlight: null, sendNextPromptId: null,
-        suspendReason: queue?.paused || error ? "user_stop" : null, uncertainDelivery: null,
+        suspendReason: queue?.paused || error || pending.get(id)?.some((item) => item.restored) ? "user_stop" : null, uncertainDelivery: null,
       } satisfies PromptQueueRecord;
     }
     lastBase = state; lastRevision = revision;
     return cached = { ...state, promptQueue: { ...state.promptQueue, recordsBySessionId: records }, pendingIntents: { ...state.pendingIntents, submitsByClientSubmitId: submits } };
   };
-  const publish = () => { revision++; for (const listener of listeners) listener(snapshot()); };
+  const publish = () => {
+    if (disposed) return;
+    // Checkpoint before notifying the GUI that it may clear the composer. Even
+    // an in-flight admission must survive destruction of this document.
+    options.pendingStore?.getState().setQueues([...pending].flatMap(([agentSessionId, items]) => items.length
+      ? [{ agentSessionId, prompts: items.map((item) => ({ ...item.display, runtimeContent: item.input.runtimeContent })) }]
+      : []));
+    revision++; for (const listener of listeners) listener(snapshot());
+  };
   const clearError = (id: string, promptId: string | undefined, origin: "admission" | "operation") => {
     const error = errors.get(id);
     if (error && error.promptId === promptId && error.origin === origin) errors.delete(id);
@@ -63,6 +83,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
     publish(); options.error(error);
   };
   const receive = (id: string, queue?: LocalPromptQueue) => {
+    if (disposed) return;
     if (!queue || queues.has(id) && queue.revision < queues.get(id)!.revision) return;
     queues.set(id, queue);
     pending.set(id, (pending.get(id) ?? []).filter((item) => {
@@ -76,12 +97,14 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
   const admit = (id: string, item: PendingPrompt): Promise<LocalPromptQueue> => {
     if (item.admission) return item.admission;
     item.admission = options.enqueue(item.input).then((queue) => {
+      if (disposed) return queue;
       item.confirmed = true;
       pending.set(id, (pending.get(id) ?? []).filter((value) => value !== item));
       clearError(id, item.display.id, "admission");
       receive(id, queue); publish();
       return queues.get(id)!;
     }, (error: unknown) => {
+      if (disposed) throw error;
       // A canonical queue snapshot can confirm admission before its RPC reply.
       if (item.confirmed) return queues.get(id)!;
       item.display = { ...item.display, visibleInQueue: true };
@@ -100,12 +123,23 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       if (action === "sendNow" && item) {
         try { await admit(id, item); } catch { return; }
       }
+      if (action === "remove" && item?.admission) {
+        // Wait for the original admission before removing its canonical item.
+        // A rejected admission can still be discarded explicitly.
+        try { await item.admission; } catch { /* Removal also handles rejection. */ }
+      }
+      if (disposed) return;
       // Re-admission uses the original ID. A missing or dispatching item was
       // already accepted for execution; never interrupt it or send it again.
       const current = queues.get(id);
       if (action === "sendNow" && current && (!current.items.some((value) => value.requestId === requestId) || current.dispatchingRequestId === requestId)) return;
       try {
         const queue = await options.update(id, action, requestId);
+        if (disposed) return;
+        if (action === "remove" && item) {
+          pending.set(id, (pending.get(id) ?? []).filter((value) => value !== item));
+          clearError(id, item.display.id, "admission");
+        }
         clearError(id, promptId, "operation");
         receive(id, queue); publish();
       } catch (error) { fail(id, error, promptId); }
@@ -121,7 +155,16 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       if (!options.enabled()) return base.submitPrompt(input);
       if (!input.content.length || !input.clientSubmitId) return { accepted: false, queued: false };
       const id = input.agentSessionId;
-      const queued = selectEngineSubmitWouldBeVisibleInQueue(snapshot(), id);
+      const state = snapshot();
+      // Include unanswered admissions and dispatching items, which still occupy
+      // canonical capacity. Reject before the GUI clears or checkpoints the draft.
+      if ((state.promptQueue.recordsBySessionId[id]?.prompts.length ?? 0) >= MAX_QUEUED_PROMPTS) {
+        options.error(new Error(options.locale?.() === "zh-CN"
+          ? `每个会话最多排队 ${MAX_QUEUED_PROMPTS} 条消息，请等待或移除部分消息后再发送。`
+          : `Each conversation can queue up to ${MAX_QUEUED_PROMPTS} messages. Wait or remove a queued message before sending.`));
+        return { accepted: false, queued: false };
+      }
+      const queued = selectEngineSubmitWouldBeVisibleInQueue(state, id);
       const saved = structuredClone(input);
       const item: PendingPrompt = { input: saved, display: { ...saved, id: saved.clientSubmitId, createdAtUnixMs: Date.now(), visibleInQueue: queued } };
       pending.set(id, [...(pending.get(id) ?? []), item]); publish();
@@ -144,7 +187,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       // Persist the pause before the cancellation can release the next turn.
       update(input.agentSessionId, "stop");
     },
-    dispose() { unsubscribe(); listeners.clear(); base.dispose(); },
+    dispose() { disposed = true; unsubscribe(); listeners.clear(); base.dispose(); },
   };
   return { engine, receive };
 }

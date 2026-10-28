@@ -41,6 +41,14 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 
 队列回归：`pnpm --filter @multica/desktop exec vitest run src/local-host/local-conversation-queue.test.ts src/renderer/src/platform/local-conversation-service.test.ts`，以及 `pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/runtime/desktop-queue-engine.test.ts src/runtime/runtime.test.ts`。测试使用注入的假运行器和 HTTP 响应，不调用真实模型。
 
+未发送的文字草稿由 GUI 宿主的 Zustand store 管理，每次编辑同步投影到窗口的 `sessionStorage`，新 GUI 文档在首次渲染前恢复。作用域包括 API 地址、账号、工作区、主对话流或对应 Side 面板，再沿用 GUI 的会话和首页草稿键；不同会话互不覆盖，首页切换运行器仍共用原有首页草稿。清空和已有的发送结算回调通过同一个 setter 更新存储，切换 tab 本身不会提交内容。构建适配只替换 GUI 的草稿状态所有者，vendored 源码快照保持不变。
+
+桌面确认接收前，提交内容和原提交编号同步保存在同作用域的窗口会话状态中。GUI 文档重建时只恢复为可操作的排队条目，不自动重发；用户显式重试沿用原编号，主进程按编号去重。收到接收回执或包含该编号的主进程队列快照后清除检查点；明确删除成功也清除，拒收和结果不明时继续保留。
+
+每个本机会话最多排队 100 条消息。GUI 在清空草稿之前同步计入主进程快照中的队列项（包括正在派发但尚未移出的项）及未确认提交，满额时提示用户等待或移除消息，保留原输入，不创建第 101 条恢复项；恢复内容计入容量，其他会话独立计数。主进程继续在串行入队时执行同一上限，约束其他窗口并发提交。GUI 快照可能滞后，因此提交后的拒收或结果不明仍沿用原检查点处理；本限制不改变这些条目的删除契约。
+
+该机制只保存文字及换行，不保存附件上传状态，不保证应用退出后恢复，也不改会话历史文件或消息队列协议。回归见宿主的 `composer-draft-store.test.ts`、`composer-drafts.test.tsx`，以及 `e2e/local-conversation-drafts.spec.ts`；浏览器用例实际移除并重建 iframe，覆盖会话隔离、多次往返、清空和发送结算。
+
 模型菜单的“思考强度”使用本机能力目录：Codex 读取 `models_cache.json` 中每个模型的 `supported_reasoning_levels`；Claude 通过无提示词的 SDK 控制连接读取 `supportedModels()`，不提交模型请求。Claude 目录缓存一分钟，“刷新模型”跳过缓存；目录获取失败时显示重试，不猜测模型支持的档位。原生默认模型未解析时，先显式选择模型再调整强度。
 
 强度选择按运行器草稿和会话分别持久化，并绑定所选模型；切换为不匹配的模型时不沿用旧值。发送前再次核对能力目录。请求和队列保存可空的 `reasoningEffort`，分叉与旁支继承其来源设置。Codex 使用 app-server `turn/start.effort`，一次性 CLI 路径使用 `model_reasoning_effort`；Claude 初次启动使用 SDK `effort`，保留后台任务的会话通过 `applyFlagSettings({ effortLevel })` 更新，选择“默认”时用原生 API 清除覆盖。未选择强度时启动参数不覆盖原生设置，标题生成和被 @ 的智能体不继承当前会话强度。不修改全局配置；旧会话缺失字段按默认处理，无数据库迁移。

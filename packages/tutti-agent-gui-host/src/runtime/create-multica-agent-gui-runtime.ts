@@ -34,6 +34,7 @@ import { isLocalReasoningEffort, localReasoningLevels, isLocalPermissionMode, ty
 import { RuntimeLedger } from "./ledger";
 import { composerOptions, projectDetail, projectPendingSession, projectSession } from "./projection";
 import { createDesktopQueueEngine } from "./desktop-queue-engine";
+import { createDesktopPendingStore } from "./desktop-pending-store";
 import { snapshotPromptQueues } from "./saved-prompt-queues";
 
 const STORAGE_KEY = "runtime-ledger-v1";
@@ -175,7 +176,11 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     commandPort,
   });
   const desktopQueue = createDesktopQueueEngine(baseEngine, {
+    pendingStore: init.local && init.composerDraftScope
+      ? createDesktopPendingStore(window.sessionStorage, JSON.stringify([init.composerDraftScope, init.userId, workspaceId]))
+      : undefined,
     enabled: () => workspace.queueOwner === "desktop",
+    locale: () => init.locale,
     enqueue: enqueueDesktop,
     update: async (id, action, requestId) => client.request("queue.update", { sessionId: await backendSessionId(id), action, requestId }),
     error(error) {

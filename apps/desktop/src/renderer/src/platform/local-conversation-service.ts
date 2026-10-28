@@ -78,7 +78,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   async function load(): Promise<AgentGuiWorkspaceState> {
     const [remote, providers, sessions, folderProjects] = await Promise.all([remoteWorkspace(), local("providers", {}), local("list", {}), local("folderProjects", {})]);
     assertCurrent();
-    return { local: true, queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: remote.agents, movedQueueRequests: sessions.flatMap((entry) => entry.side ? [entry.side.requestId] : []),
+    return { local: true, composerDraftScope: JSON.stringify([api.getBaseUrl(), options.storagePrefix ?? ""]), queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: remote.agents, movedQueueRequests: sessions.flatMap((entry) => entry.side ? [entry.side.requestId] : []),
       executionTargets: providers.map((entry) => ({ id: localTargetId(entry.id), name: entry.name, provider: entry.id, iconUrl: "", canInvoke: entry.available, canFork: true, runtimeBound: entry.available, runtimeOnline: entry.available, unavailableReason: entry.available ? undefined : "未在本机安装" })),
       sessions: sessions.map((entry) => projectLocalSession(entry, scope)), folderProjects,
       pendingTasks: sessions.flatMap((entry) => entry.turns.filter((turn) => turn.status === "running").map((turn) => ({ task_id: turn.id, status: "running", chat_session_id: entry.id }))),

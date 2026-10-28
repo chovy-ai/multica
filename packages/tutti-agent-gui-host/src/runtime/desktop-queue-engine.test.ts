@@ -2,17 +2,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAgentSessionEngine, selectSessionIsSubmitting } from "@tutti-os/agent-activity-core";
 import { createDesktopQueueEngine } from "./desktop-queue-engine";
+import { createDesktopPendingStore, type DesktopPendingStore } from "./desktop-pending-store";
 import type { LocalPromptQueue, LocalQueuedPrompt } from "@multica/core/local-conversation/protocol";
 type SubmitInput = Parameters<ReturnType<typeof createAgentSessionEngine>["submitPrompt"]>[0];
 
-function setup(running = false) {
+function setup(running = false, pendingStore?: DesktopPendingStore) {
   const sendInput = vi.fn();
   const base = createAgentSessionEngine({ identity: { workspaceId: "ws", origin: "multica" },
     clock: { nowUnixMs: () => Date.now() }, scheduler: { schedule: (delay, callback) => { const timer = setTimeout(callback, delay); return { cancel: () => clearTimeout(timer) }; } },
     commandPort: { kind: "typed", effects: { sendInput, activateSession: vi.fn(), cancelTurn: vi.fn(), deleteSessions: vi.fn(), respondToInteraction: vi.fn(), renameSession: vi.fn(), setSessionPinned: vi.fn(), updateSessionSettings: vi.fn() }, execute: vi.fn() } });
   base.dispatch({ type: "session/snapshotReceived", sessions: [{ agentSessionId: "session", workspaceId: "ws", provider: "codex", title: "Conversation", cwd: "/workspace", activeTurnId: running ? "active" : null,
     ...(running ? { activeTurn: { agentSessionId: "session", turnId: "active", origin: "user_prompt", phase: "running", startedAtUnixMs: 1, updatedAtUnixMs: 1 } } : {}), pendingInteractions: [], latestTurnInteractions: [] }] });
-  const options = { enabled: () => true, enqueue: vi.fn(async (_input: SubmitInput): Promise<LocalPromptQueue> => ({ revision: 1, paused: false, items: [] })),
+  const options = { pendingStore, enabled: () => true, enqueue: vi.fn(async (_input: SubmitInput): Promise<LocalPromptQueue> => ({ revision: 1, paused: false, items: [] })),
     update: vi.fn(async () => ({ revision: 2, paused: true, items: [] })), error: vi.fn() };
   const adapter = createDesktopQueueEngine(base, options);
   return { ...adapter, options, sendInput };
@@ -24,6 +25,53 @@ const submit = (engine: ReturnType<typeof setup>["engine"], id: string) => engin
 const sendNow = (engine: ReturnType<typeof setup>["engine"], promptId: string) => engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: "session", promptId, awaitingTurnExpiresAtUnixMs: 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
 const visible = (engine: ReturnType<typeof setup>["engine"]) => engine.getSnapshot().promptQueue.recordsBySessionId.session?.prompts.filter((prompt) => prompt.visibleInQueue !== false).map((prompt) => prompt.id) ?? [];
 describe("desktop queue presentation", () => {
+  it("rejects the 101st prompt before admission or checkpointing and accepts after a slot opens", () => {
+    const store = createDesktopPendingStore();
+    const { engine, receive, options } = setup(true, store);
+    const items = Array.from({ length: 100 }, (_, index) => queued(`saved-${index}`));
+    receive("session", { revision: 1, paused: true, items });
+    try {
+      expect(submit(engine, "overflow")).toEqual({ accepted: false, queued: false });
+      expect(options.enqueue).not.toHaveBeenCalled();
+      expect(options.error).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("100") }));
+      expect(store.getState().queues).toEqual([]);
+      expect(visible(engine)).toHaveLength(100);
+      receive("session", { revision: 2, paused: true, items: items.slice(1) });
+      expect(submit(engine, "overflow").accepted).toBe(true);
+      expect(options.enqueue).toHaveBeenCalledOnce();
+    } finally { engine.dispose(); }
+  });
+  it("reserves capacity synchronously for unanswered submissions, including hidden dispatches", () => {
+    const store = createDesktopPendingStore();
+    const { engine, receive, options } = setup(true, store);
+    const items = Array.from({ length: 99 }, (_, index) => queued(`saved-${index}`));
+    options.enqueue.mockImplementation(() => new Promise(() => {}));
+    receive("session", { revision: 1, paused: false, items, dispatchingRequestId: "saved-0" });
+    try {
+      expect(submit(engine, "last-slot").accepted).toBe(true);
+      expect(submit(engine, "overflow")).toEqual({ accepted: false, queued: false });
+      expect(options.enqueue).toHaveBeenCalledOnce();
+      expect(store.getState().queues[0]?.prompts.map((prompt) => prompt.id)).toEqual(["last-slot"]);
+      // A canonical confirmation transfers ownership without consuming a second slot.
+      receive("session", { revision: 2, paused: true, items: [...items, queued("last-slot")] });
+      expect(store.getState().queues).toEqual([]);
+      expect(submit(engine, "still-full").accepted).toBe(false);
+      receive("session", { revision: 3, paused: true, items });
+      expect(submit(engine, "new-slot").accepted).toBe(true);
+    } finally { engine.dispose(); }
+  });
+  it("counts restored unconfirmed submissions toward the per-conversation limit without replaying them", () => {
+    const store = createDesktopPendingStore();
+    store.getState().setQueues([{ agentSessionId: "session", prompts: [queued("restored").display] }]);
+    const { engine, receive, options } = setup(true, store);
+    receive("session", { revision: 1, paused: true, items: Array.from({ length: 99 }, (_, index) => queued(`saved-${index}`)) });
+    try {
+      expect(submit(engine, "overflow").accepted).toBe(false);
+      expect(options.enqueue).not.toHaveBeenCalled();
+      expect(engine.submitPrompt({ agentSessionId: "other-session", clientSubmitId: "independent", content: [{ type: "text", text: "independent" }] }).accepted).toBe(true);
+      expect(options.enqueue).toHaveBeenCalledOnce();
+    } finally { engine.dispose(); }
+  });
   it("retains send-now errors across snapshots until the operation succeeds", async () => {
     const { engine, receive, options } = setup(true);
     receive("session", { revision: 1, paused: false, items: [queued("next")] });
@@ -203,5 +251,77 @@ describe("desktop queue presentation", () => {
     engine.stopSession({ agentSessionId: "session" });
     expect(options.update.mock.calls).toEqual([["session", "remove", "removed"], ["session", "sendNow", "next"], ["session", "stop", undefined]]);
     await Promise.resolve(); engine.dispose();
+  });
+});
+
+function pendingStorage() {
+  const values = new Map<string, string>();
+  return { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); } };
+}
+
+describe("unconfirmed desktop submissions across document lifetimes", () => {
+  it("checkpoints before returning accepted and restores rejection without replay, retrying the same ID", async () => {
+    const storage = pendingStorage();
+    const restore = () => createDesktopPendingStore(storage, "scope");
+    const first = setup(false, restore());
+    first.options.enqueue.mockRejectedValue(new Error("Admission rejected"));
+    submit(first.engine, "original-id");
+    expect(restore().getState().queues[0]?.prompts[0]?.clientSubmitId).toBe("original-id");
+    await vi.waitFor(() => expect(first.options.error).toHaveBeenCalledOnce());
+    first.engine.dispose();
+    const next = setup(false, restore());
+    try {
+      expect(visible(next.engine)).toEqual(["original-id"]);
+      expect(selectSessionIsSubmitting(next.engine.getSnapshot(), "session")).toBe(false);
+      expect(next.options.enqueue).not.toHaveBeenCalled();
+      sendNow(next.engine, "original-id");
+      await vi.waitFor(() => expect(visible(next.engine)).toEqual([]));
+      expect(next.options.enqueue).toHaveBeenCalledOnce();
+      expect(next.options.enqueue.mock.calls[0]?.[0]).toMatchObject(first.options.enqueue.mock.calls[0]![0]);
+      expect(next.options.update).not.toHaveBeenCalled();
+      expect(restore().getState().queues).toEqual([]);
+    } finally { next.engine.dispose(); }
+  });
+  it("restores in-flight admissions, reconciles canonical ownership, and ignores an old document's late failure", async () => {
+    const storage = pendingStorage();
+    const restore = () => createDesktopPendingStore(storage, "scope");
+    const first = setup(false, restore());
+    let reject!: (error: Error) => void;
+    first.options.enqueue.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
+    submit(first.engine, "in-flight");
+    first.engine.dispose();
+    const next = setup(false, restore());
+    try {
+      expect(visible(next.engine)).toEqual(["in-flight"]);
+      expect(next.options.enqueue).not.toHaveBeenCalled();
+      next.receive("session", { revision: 1, paused: false, items: [queued("in-flight")], dispatchingRequestId: "in-flight" });
+      expect(visible(next.engine)).toEqual([]);
+      expect(restore().getState().queues).toEqual([]);
+      reject(new Error("Lost acknowledgement"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(restore().getState().queues).toEqual([]);
+      expect(first.options.error).not.toHaveBeenCalled();
+    } finally { next.engine.dispose(); }
+  });
+  it("keeps a rejected submission on failed removal and clears it only after confirmed removal", async () => {
+    const storage = pendingStorage();
+    const restore = () => createDesktopPendingStore(storage, "scope");
+    const handle = setup(false, restore());
+    handle.options.enqueue.mockRejectedValue(new Error("Admission rejected"));
+    submit(handle.engine, "discard");
+    await vi.waitFor(() => expect(handle.options.error).toHaveBeenCalledOnce());
+    const remove = () => handle.engine.dispatch({ type: "queue/removed", agentSessionId: "session", promptId: "discard" });
+    try {
+      handle.options.update.mockRejectedValueOnce(new Error("Removal failed"));
+      remove();
+      await vi.waitFor(() => expect(handle.options.error).toHaveBeenCalledTimes(2));
+      expect(restore().getState().queues[0]?.prompts[0]?.id).toBe("discard");
+      remove();
+      await vi.waitFor(() => expect(visible(handle.engine)).toEqual([]));
+      expect(restore().getState().queues).toEqual([]);
+      expect(handle.options.enqueue).toHaveBeenCalledOnce();
+    } finally { handle.engine.dispose(); }
   });
 });
