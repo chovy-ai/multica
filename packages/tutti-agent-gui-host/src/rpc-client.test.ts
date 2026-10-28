@@ -14,6 +14,19 @@ function connection() {
 }
 
 describe("Agent GUI private-port client", () => {
+  it("allows compaction to finish beyond the normal request timeout without replaying it", async () => {
+    vi.useFakeTimers();
+    const port = Object.assign(new EventTarget(), { postMessage: vi.fn(), start() {}, close() {} });
+    const { client, dispose } = createAgentGuiRpcClient(port as unknown as MessagePort);
+    cleanup.push(dispose);
+    let settled = false;
+    const request = client.request("session.compact", { sessionId: "native" }).finally(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(settled).toBe(false);
+    expect(port.postMessage).toHaveBeenCalledOnce();
+    port.dispatchEvent(new MessageEvent("message", { data: { type: "response", id: "1", result: undefined } }));
+    await request;
+  });
   it("connects to its actual parent when a packaged file page sends an opaque origin", async () => {
     vi.useFakeTimers();
     const parent = { postMessage: vi.fn() };

@@ -8,6 +8,8 @@ import { basename, extname, isAbsolute, join } from "node:path";
 import type { LocalConversation, LocalConversationClient, LocalConversationEvent, LocalConversationMethod, LocalConversationMethods, LocalConversationScope, LocalFolderProject, LocalProviderId, LocalUserQuestionResult, LocalQueuedPrompt, LocalPromptBlock } from "@multica/tutti-agent-gui-host/local-protocol";
 import { findLocalProvider, localProviderModels, runLocalProvider } from "./local-provider-runner";
 import { LocalProviderUsageReader } from "./local-provider-usage";
+import { compactClaudeConversation, type LocalCompactionInput } from "./local-claude-compaction";
+import type { CodexInput } from "./local-codex-worker";
 import type { LocalExecutionContext, LocalRunContext } from "./local-multica-context";
 import { ForkBoundaryUnavailable, forkLocalProvider } from "./local-provider-fork";
 import { HTML_PREVIEW_INSTRUCTIONS } from "@multica/tutti-agent-gui-host/html-preview";
@@ -66,6 +68,7 @@ interface Options {
   history?: NativeHistoryReader;
   generateTitle?: ConversationTitleGenerator;
   usage?: Pick<LocalProviderUsageReader, "read" | "reset">;
+  compact?: (input: LocalCompactionInput, signal: AbortSignal) => Promise<void>;
   prepareContext?: (scope: LocalConversationScope, signal: AbortSignal, current: LocalRunContext) => Promise<LocalExecutionContext>;
   queueCloudClient?: (scope: LocalConversationScope, signal: AbortSignal) => Promise<LocalQueueCloudRequest>;
 }
@@ -91,6 +94,7 @@ export class LocalConversationService {
   private codexPool?: Pick<LocalCodexPool, "run" | "stop">;
   private codexClosing: Promise<void> = Promise.resolve();
   private forks = new Map<string, { scope: LocalConversationScope; controller: AbortController }>();
+  private compactions = new Map<string, { scope: LocalConversationScope; controller: AbortController }>();
   private titleRuns = new Map<string, { scope: LocalConversationScope; controller: AbortController }>();
   private stopping = false;
   private imageRecoveries = new Map<string, Promise<void>>();
@@ -113,6 +117,7 @@ export class LocalConversationService {
     this.activeUser = userId;
     for (const run of this.runs.values()) if (run.scope.userId !== userId) run.controller.abort();
     for (const fork of this.forks.values()) if (fork.scope.userId !== userId) fork.controller.abort();
+    for (const operation of this.compactions.values()) if (operation.scope.userId !== userId) operation.controller.abort();
     for (const run of this.titleRuns.values()) if (run.scope.userId !== userId) run.controller.abort();
     for (const session of this.claudeConversations.values()) if (session.scope.userId !== userId) void session.worker.stop().catch(() => console.warn("[local-conversations] Could not close Claude background session"));
   }
@@ -122,6 +127,7 @@ export class LocalConversationService {
     this.usage.reset();
     for (const run of this.runs.values()) run.controller.abort();
     for (const fork of this.forks.values()) fork.controller.abort();
+    for (const operation of this.compactions.values()) operation.controller.abort();
     for (const run of this.titleRuns.values()) run.controller.abort();
     await Promise.allSettled([this.codexClosing, this.codexPool?.stop()]);
     await Promise.allSettled([...this.executions, ...this.imageRecoveries.values(), ...[...this.claudeConversations.values()].map((session) => session.worker.stop()), ...(this.importer ? [this.importer.stop()] : [])]);
@@ -240,6 +246,7 @@ export class LocalConversationService {
       case "capabilities": result = { protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }; break;
       case "queueEnqueue": case "queueUpdate": case "queueSide": {
         const entry = session();
+        this.assertNotCompacting(entry);
         if (method === "queueUpdate" && (params.action === "stop" || params.action === "sendNow")) {
           if (params.action === "sendNow" && !entry.promptQueue?.items.some((item) => item.requestId === params.requestId)) throw new Error("This queued message has already started");
           await this.queueMutation(scope, entry, async () => { (entry.promptQueue ??= { revision: 0, paused: true, items: [] }).paused = true; });
@@ -248,6 +255,7 @@ export class LocalConversationService {
           }
         }
         result = await this.queueMutation(scope, entry, async () => {
+          this.assertNotCompacting(entry);
           const queue = entry.promptQueue ??= { revision: 0, paused: false, items: [] };
           if (method === "queueEnqueue") {
             if (entry.archived) throw new Error("This conversation is archived");
@@ -325,7 +333,35 @@ export class LocalConversationService {
         const choice = provider(params.provider);
         const entry = params.id === undefined ? undefined : session();
         if (entry && entry.provider !== choice) throw new Error("Usage provider does not match this conversation");
-        result = await this.usage.read(choice, entry, params.force === true); break;
+        const usage = await this.usage.read(choice, entry, params.force === true);
+        result = { ...usage, compaction: this.compactionState(scope, entry) }; break;
+      }
+      case "compact": {
+        const entry = session();
+        this.assertNotCompacting(entry);
+        this.writable(entry);
+        const state = this.compactionState(scope, entry);
+        if (state.status !== "ready") throw new Error(state.reason === "empty" ? "Send a message before compacting this conversation" : state.reason === "queued" ? "Remove or finish queued messages before compacting" : "Wait for foreground and background executions to finish before compacting");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(new Error("Context compaction timed out")), 300_000);
+        this.compactions.set(entry.id, { scope, controller });
+        this.options.notify(scope, entry.id);
+        const pending = (async () => {
+          const input: LocalCompactionInput = { provider: entry.provider, sessionId: entry.providerSessionId!, cwd: entry.cwd, model: entry.model };
+          if (this.options.compact) await this.options.compact(input, controller.signal);
+          else if (entry.provider === "claude") {
+            await this.claudeConversations.get(`${this.key(scope)}:${entry.id}`)?.worker.stop();
+            await compactClaudeConversation(input, controller.signal);
+          } else await this.runCodex(scope, { provider: "codex", cwd: entry.cwd, model: entry.model, content: "", resume: entry.providerSessionId, compact: true }, () => {}, controller.signal);
+          controller.signal.throwIfAborted();
+          this.key(scope);
+        })().finally(() => {
+          clearTimeout(timer);
+          this.compactions.delete(entry.id); this.executions.delete(pending);
+          if (scope.userId === this.activeUser) this.options.notify(scope, entry.id);
+        });
+        this.executions.add(pending);
+        await pending; result = undefined; break;
       }
       case "providers": result = await Promise.all((["codex", "claude"] as const).map(async (id) => ({ id, name: id === "codex" ? "Codex" : "Claude Code", available: Boolean(await (this.options.find ?? findLocalProvider)(id)) }))); break;
       case "stopBackgroundTasks": {
@@ -397,6 +433,7 @@ export class LocalConversationService {
       }
       case "sideCreate": {
         const source = session();
+        this.assertNotCompacting(source);
         if (source.archived) throw new Error("Archived conversations are read-only");
         const requestId = text(params.requestId, "side request", 160);
         const queuedPrompt = params.queuedPrompt === undefined ? undefined : this.queueItem(params.queuedPrompt as LocalQueuedPrompt);
@@ -466,6 +503,7 @@ export class LocalConversationService {
       }
       case "fork": {
         const source = session();
+        this.assertNotCompacting(source);
         if (this.forks.has(source.id)) throw new Error("This conversation is already being forked");
         const turnId = params.turnId === undefined ? undefined : text(params.turnId, "turn", 128);
         const requestId = params.requestId === undefined ? undefined : text(params.requestId, "fork request", 128);
@@ -720,6 +758,7 @@ export class LocalConversationService {
 
   private drainQueue(scope: LocalConversationScope, entry: LocalConversation): void {
     if (this.stopping || scope.userId !== this.activeUser) return;
+    if (this.compactions.has(entry.id)) return;
     const key = `${this.key(scope)}:${entry.id}`;
     if (this.queueDrains.has(key) || entry.archived || entry.promptQueue?.paused || !entry.promptQueue?.items.length || this.runsHasSession(entry) || entry.turns.some((turn) => turn.status === "running")) return;
     this.queueDrains.add(key);
@@ -770,6 +809,7 @@ export class LocalConversationService {
     this.executions.add(operation);
   }
   private writable(entry: LocalConversation): void {
+    this.assertNotCompacting(entry);
     if (this.stopping) throw new Error("The application is shutting down");
     if (this.forks.has(entry.id)) throw new Error("Wait for this conversation to finish forking");
     if (entry.archived) throw new Error("Archived conversations are read-only");
@@ -777,6 +817,18 @@ export class LocalConversationService {
   }
   private runsHasSession(entry: LocalConversation): boolean {
     return entry.turns.some((turn) => this.runs.has(turn.id));
+  }
+  private assertNotCompacting(entry: LocalConversation): void {
+    if (this.compactions.has(entry.id)) throw new Error("Wait for context compaction to finish");
+  }
+  private compactionState(scope: LocalConversationScope, entry?: LocalConversation): NonNullable<LocalConversationMethods["usage"]["result"]["compaction"]> {
+    if (!entry?.providerSessionId || !entry.messages.length) return { status: "unavailable", reason: "empty" };
+    if (this.compactions.has(entry.id)) return { status: "running" };
+    if (entry.archived) return { status: "unavailable", reason: "archived" };
+    const key = `${this.key(scope)}:${entry.id}`;
+    if (entry.promptQueue?.items.length || this.queueLocks.has(key) || this.queueDrains.has(key)) return { status: "unavailable", reason: "queued" };
+    if (this.stopping || this.forks.has(entry.id) || this.runsHasSession(entry) || entry.turns.some((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running"))) return { status: "unavailable", reason: "busy" };
+    return { status: "ready" };
   }
   private async forkConversation(scope: LocalConversationScope, rows: Map<string, LocalConversation>, entry: LocalConversation, signal: AbortSignal, turnId?: string): Promise<LocalConversation> {
     delete entry.promptQueue;
@@ -939,7 +991,7 @@ export class LocalConversationService {
     }
   }
 
-  private async runCodex(scope: LocalConversationScope, input: Parameters<typeof runLocalProvider>[0], emit: Parameters<typeof runLocalProvider>[1], signal: AbortSignal) {
+  private async runCodex(scope: LocalConversationScope, input: CodexInput, emit: Parameters<typeof runLocalProvider>[1], signal: AbortSignal) {
     await this.codexClosing;
     signal.throwIfAborted();
     const key = this.key(scope);

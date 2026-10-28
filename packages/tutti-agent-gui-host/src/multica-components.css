@@ -425,6 +425,10 @@ html.multica-agent-gui .multica-usage-popover { width: min(320px, calc(100vw - 2
 html.multica-agent-gui .multica-usage-heading,
 html.multica-agent-gui .multica-usage-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 html.multica-agent-gui .multica-usage-heading { font-size: var(--text-body); }
+html.multica-agent-gui .multica-usage-actions { display: flex; align-items: center; gap: 4px; }
+html.multica-agent-gui .multica-usage-spinner { animation: multica-usage-spin 1s linear infinite; }
+@keyframes multica-usage-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { html.multica-agent-gui .multica-usage-spinner { animation: none; } }
 html.multica-agent-gui .multica-usage-section { display: flex; flex-direction: column; gap: 8px; font-size: var(--text-caption); }
 html.multica-agent-gui .multica-usage-section + .multica-usage-section { border-top: 1px solid var(--border); padding-top: 12px; }
 html.multica-agent-gui .multica-usage-detail { margin: 0; color: var(--muted-foreground); font-size: var(--text-caption); line-height: 1.5; }

@@ -37,7 +37,8 @@ async function setup(getSelectionIntent?: () => string) {
   const run = vi.fn<typeof runLocalProvider>(async () => ({ output: "LOCAL_RESULT", sessionId: "native-thread" }));
   const usage = { read: vi.fn(async () => ({ provider: "claude" as const, context: { usedTokens: 120, limitTokens: 1000, model: null, updatedAt: null }, account: { status: "unavailable" as const, plan: null, windows: [], updatedAt: null } })), reset: vi.fn() };
   const chooseDirectory = vi.fn<() => Promise<string | null>>(async () => null);
-  const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, find: async () => "/test/fake", chooseDirectory, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)) });
+  const compact = vi.fn(async () => {});
+  const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, compact, find: async () => "/test/fake", chooseDirectory, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)) });
   service.setCurrentUser("user");
   const client: LocalConversationClient = { request: (scope, method, params) => service.request(scope, method, params), subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -51,7 +52,7 @@ async function setup(getSelectionIntent?: () => string) {
     storage: { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: (key) => { values.delete(key); } },
   }, client);
   cleanups.push(async () => { bridge.dispose(); qc.clear(); await service.stop(); await rm(base, { recursive: true, force: true }); });
-  return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage, base, chooseDirectory };
+  return { bridge, run, service, usage, client, compact, onLocalSelect, onOpenSide, onOpenResource, onShowMessage, base, chooseDirectory };
 }
 describe("local providers and official agent invocation routing", () => {
   it.each(["codex", "claude"] as const)("keeps the project directory through %s creation, execution and history reload", async (provider) => {
@@ -262,6 +263,16 @@ describe("local providers and official agent invocation routing", () => {
     expect(await bridge.request("usage.read", { agentId: "local:claude", sessionId: session.id, force: true })).toMatchObject({ context: { usedTokens: 120 } });
     expect(usage.read).toHaveBeenCalledWith("claude", expect.objectContaining({ id: session.id }), true);
     expect(run).not.toHaveBeenCalled(); expect(mock.api.createChatSession).not.toHaveBeenCalled(); expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
+  });
+  it("routes explicit compaction to the current local session without creating a chat message", async () => {
+    const { bridge, compact } = await setup();
+    const session = await bridge.request("session.create", { agentId: "local:claude" });
+    await bridge.request("session.send", { sessionId: session.id, content: "Hello" });
+    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: session.id })).pending.task_id).toBeUndefined());
+    await bridge.request("session.compact", { sessionId: session.id });
+    expect(compact).toHaveBeenCalledWith(expect.objectContaining({ provider: "claude", sessionId: "native-thread" }), expect.any(AbortSignal));
+    expect((await bridge.request("session.load", { sessionId: session.id })).messages).toHaveLength(2);
+    expect(mock.api.createChatSession).not.toHaveBeenCalled(); expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
   });
   it("keeps ordinary provider sessions local and exposes cloud agents only as mention targets", async () => {
     const { bridge, run } = await setup();

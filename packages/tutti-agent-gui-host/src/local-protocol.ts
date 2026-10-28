@@ -129,6 +129,7 @@ export interface LocalAccountUsage {
 }
 export interface LocalProviderUsage {
   provider: LocalProviderId; context: LocalContextUsage; account: LocalAccountUsage;
+  compaction?: { status: "ready" | "running" | "unavailable"; reason?: "empty" | "busy" | "queued" | "archived" };
 }
 export const LOCAL_CONVERSATION_PROTOCOL_VERSION = 1;
 export interface LocalConversationCapabilities { protocolVersion: number; methods: string[] }
@@ -164,6 +165,7 @@ export interface LocalConversationMethods {
   answerQuestion: { params: { id: string; turnId: string; requestId: string; answers: Record<string, string | string[]> }; result: void };
   models: { params: { provider: LocalProviderId; force?: boolean }; result: LocalConversationModels };
   usage: { params: { provider: LocalProviderId; id?: string; force?: boolean }; result: LocalProviderUsage };
+  compact: { params: { id: string }; result: void };
   remoteBegin: { params: { id: string; content: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
   remoteUpdate: { params: { id: string; turnId: string; sessionId?: string; taskId?: string; events?: LocalConversationEvent[]; output?: string; error?: string; status?: LocalConversationTurn["status"] }; result: void };
 }
@@ -206,6 +208,7 @@ export const LOCAL_CONVERSATION_METHODS = {
   answerQuestion: true,
   models: true,
   usage: true,
+  compact: true,
   remoteBegin: true,
   remoteUpdate: true,
 } satisfies Record<LocalConversationMethod, true>;

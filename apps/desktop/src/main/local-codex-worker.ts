@@ -6,7 +6,7 @@ import type { CodexContextBridge } from "./local-codex-context-bridge";
 import type { runLocalProvider } from "./local-provider-runner";
 import { localTimingFailure, type LocalTimingStage } from "@multica/tutti-agent-gui-host/local-timing";
 
-export type CodexInput = Parameters<typeof runLocalProvider>[0];
+export type CodexInput = Parameters<typeof runLocalProvider>[0] & { compact?: boolean };
 type Emit = Parameters<typeof runLocalProvider>[1];
 
 export class LocalCodexWorker {
@@ -29,6 +29,7 @@ export class LocalCodexWorker {
   stop(): Promise<void> { return this.rpc.stop(); }
 
   async run(input: CodexInput, native: CodexObject, emit: Emit, signal: AbortSignal): Promise<{ output: string; sessionId: string }> {
+    if (input.compact && !input.resume) throw new Error("Context compaction requires an existing Codex thread");
     const timed = <T>(stage: LocalTimingStage, action: () => Promise<T>) => input.timing ? input.timing.measure(stage, action) : action();
     if (input.resume) await timed("provider.thread_wait", async () => this.unloading.get(input.resume!));
     signal.throwIfAborted();
@@ -73,7 +74,7 @@ export class LocalCodexWorker {
       input.onSessionId?.(threadId);
       signal.throwIfAborted();
       const stream = new CodexTurnStream(emit);
-      let turnId: string | undefined; let interrupting = false;
+      let turnId: string | undefined; let interrupting = false; let compacted = false;
       let resolveTurn!: () => void; let rejectTurn!: (error: Error) => void;
       const done = new Promise<void>((resolve, reject) => { resolveTurn = resolve; rejectTurn = reject; });
       void done.catch(() => {});
@@ -83,15 +84,25 @@ export class LocalCodexWorker {
         void this.rpc.request("turn/interrupt", { threadId, turnId }, 10_000).catch(rejectTurn);
         interruptTimer = setTimeout(() => { rejectTurn(new Error("Codex did not confirm interruption")); void this.rpc.stop(); }, 15_000);
       };
-      abort = () => interrupt();
+      abort = () => {
+        if (input.compact && !turnId) {
+          this.retiring = true;
+          rejectTurn(new Error("Codex compaction cancelled before its turn was confirmed"));
+        } else interrupt();
+      };
       signal.addEventListener("abort", abort, { once: true });
       const buffered: CodexObject[] = [];
       const receive = (message: CodexObject) => {
         if (message.method === "transport/closed") { rejectTurn(message.error); return; }
         const event = message.params;
         if (!event || event.threadId !== threadId) return;
-        // Resume can replay old notifications. Only the turn/start response establishes the new turn.
-        if (!turnId) { buffered.push(message); return; }
+        // Manual compaction returns no turn ID; its new turn/started notification owns the operation.
+        if (input.compact && !turnId && message.method === "turn/started" && typeof event.turn?.id === "string") {
+          turnId = event.turn.id;
+          if (signal.aborted) interrupt();
+        }
+        // Resume can replay old notifications. Ordinary turns bind to the turn/start response.
+        if (!turnId) { if (!input.compact) buffered.push(message); return; }
         if ((event.turnId && event.turnId !== turnId) || (event.turn?.id && event.turn.id !== turnId)) return;
         input.timing?.activity(); input.timing?.once("provider.first_event");
         if (message.method === "error" && event.willRetry) input.timing?.mark("provider.retry", { failure: localTimingFailure(event.error?.message) });
@@ -105,19 +116,26 @@ export class LocalCodexWorker {
           return;
         }
         stream.accept(message.method, event);
+        if (message.method === "item/completed" && event.item?.type === "contextCompaction") compacted = true;
         if (message.method === "error" && !event.willRetry) emit({ type: "status", content: "Codex reported an execution error" });
         if (message.method === "turn/completed") {
           input.timing?.mark("provider.result", { outcome: event.turn.status === "completed" ? "completed" : event.turn.status === "interrupted" ? "cancelled" : "failed" });
-          if (event.turn.status === "completed") resolveTurn();
+          if (event.turn.status === "completed" && input.compact && !compacted) rejectTurn(new Error("Codex did not confirm context compaction"));
+          else if (event.turn.status === "completed") resolveTurn();
           else rejectTurn(new Error(event.turn.status === "interrupted" ? "Execution cancelled" : "Codex turn failed"));
         }
       };
       unsubscribe = this.rpc.subscribe(receive);
-      const started = await timed("provider.turn_start", () => this.rpc.request("turn/start", { threadId, effort: input.reasoningEffort ?? native.model_reasoning_effort ?? null, input: [{ type: "text", text: input.content, text_elements: [] }] }));
-      if (typeof started.turn?.id === "string") turnId = started.turn.id;
-      if (!turnId) throw new Error("Codex returned no turn ID");
+      if (input.compact) {
+        try { await this.rpc.request("thread/compact/start", { threadId }); }
+        catch (error) { throw new Error("Codex could not start context compaction. Check the connection and update Codex if this version does not support it.", { cause: error }); }
+      } else {
+        const started = await timed("provider.turn_start", () => this.rpc.request("turn/start", { threadId, effort: input.reasoningEffort ?? native.model_reasoning_effort ?? null, input: [{ type: "text", text: input.content, text_elements: [] }] }));
+        if (typeof started.turn?.id === "string") turnId = started.turn.id;
+        if (!turnId) throw new Error("Codex returned no turn ID");
+      }
       for (const message of buffered) receive(message); buffered.length = 0;
-      if (signal.aborted) interrupt();
+      if (signal.aborted) abort();
       await done;
       signal.throwIfAborted();
       return { output: stream.parser.output, sessionId: threadId };

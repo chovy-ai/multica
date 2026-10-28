@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Popover, PopoverContent, PopoverTrigger } from "@tutti-os/ui-system/components";
 import { RefreshIcon } from "@tutti-os/ui-system/icons";
+import { Minimize2, LoaderCircle } from "lucide-react";
 import type { AgentGuiRpcClient } from "./protocol";
 import type { LocalProviderUsage, LocalUsageWindow } from "./local-protocol";
 
@@ -26,10 +27,18 @@ function UsageRing({ value }: { value: number | null }) {
 }
 interface Props { client: AgentGuiRpcClient; agentId: string; sessionId: string | null; chinese: boolean; busy: boolean; active: boolean }
 export function UsageIndicator({ client, agentId, sessionId, chinese, busy, active }: Props) {
+  return <UsageIndicatorContent key={`${agentId}:${sessionId ?? ""}`} client={client} agentId={agentId} sessionId={sessionId} chinese={chinese} busy={busy} active={active} />;
+}
+function UsageIndicatorContent({ client, agentId, sessionId, chinese, busy, active }: Props) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<LocalProviderUsage | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [compacting, setCompacting] = useState(false);
+  const [compactResult, setCompactResult] = useState<{ error?: string } | null>(null);
+  const compactPending = useRef(false);
+  const actionSequence = useRef(0);
+  const invalidateActions = useCallback(() => { actionSequence.current++; }, []);
   const sequence = useRef(0);
   const hostDismissed = useRef(false);
   const invalidatePending = useCallback(() => { sequence.current++; }, []);
@@ -38,11 +47,15 @@ export function UsageIndicator({ client, agentId, sessionId, chinese, busy, acti
     contextEmpty: "暂无上下文数据", limitUnknown: "上限未提供", accountEmpty: "当前运行器未提供账号额度", error: "无法更新用量，请重试",
     stale: "更新失败，显示上次数据", expired: "等待刷新", resets: "重置", updated: "更新于", shared: "账号额度由本机 CLI 的所有会话共享。",
     fiveHour: "5 小时窗口", weekly: "每周窗口", contextChip: "上下文", left: "剩余",
+    compact: "压缩上下文", compacting: "正在压缩上下文…", compactDone: "压缩已完成；用量可能在下一轮回复后更新。",
+    compactFailed: "上下文压缩失败：", empty: "发送消息后可压缩上下文", busy: "请等待当前执行及后台任务结束", queued: "请先发送或移除排队消息", archived: "归档会话无法压缩", unsupported: "当前桌面运行时未提供压缩能力，请完整重启或更新应用",
   } : {
     usage: "Usage", context: "Conversation context", account: "Account remaining", refresh: "Refresh usage", loading: "Loading usage…",
     contextEmpty: "No context data yet", limitUnknown: "Limit not reported", accountEmpty: "This provider does not report account limits", error: "Could not update usage. Try again.",
     stale: "Update failed; showing previous data", expired: "Awaiting refresh", resets: "Resets", updated: "Updated", shared: "Account limits are shared across this CLI account's conversations.",
     fiveHour: "5-hour window", weekly: "Weekly window", contextChip: "Context", left: "left",
+    compact: "Compact context", compacting: "Compacting context…", compactDone: "Context compacted. Usage may update after the next reply.",
+    compactFailed: "Context compaction failed: ", empty: "Send a message before compacting", busy: "Wait for foreground and background tasks to finish", queued: "Send or remove queued messages first", archived: "Archived conversations cannot be compacted", unsupported: "This desktop runtime does not expose compaction. Fully restart or update the app.",
   };
   const load = useCallback(async (force = false) => {
     const current = ++sequence.current;
@@ -53,10 +66,26 @@ export function UsageIndicator({ client, agentId, sessionId, chinese, busy, acti
     } catch { if (current === sequence.current) setFailed(true); }
     finally { if (current === sequence.current) setLoading(false); }
   }, [client, agentId, sessionId]);
+  const compact = async () => {
+    if (!sessionId || busy || compactPending.current || data?.compaction?.status !== "ready") return;
+    compactPending.current = true;
+    const current = ++actionSequence.current;
+    setCompacting(true); setCompactResult(null);
+    try {
+      await client.request("session.compact", { sessionId });
+      if (current !== actionSequence.current) return;
+      setCompactResult({});
+      await load(true);
+    } catch (error) {
+      if (current === actionSequence.current) setCompactResult({ error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (current === actionSequence.current) { compactPending.current = false; setCompacting(false); }
+    }
+  };
   useEffect(() => {
     setData(null);
-    return invalidatePending;
-  }, [load, invalidatePending]);
+    return () => { invalidatePending(); invalidateActions(); };
+  }, [load, invalidatePending, invalidateActions]);
   const wasBusy = useRef(busy);
   useEffect(() => {
     if (wasBusy.current && !busy && active) void load();
@@ -68,6 +97,11 @@ export function UsageIndicator({ client, agentId, sessionId, chinese, busy, acti
     const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 60_000);
     return () => clearInterval(timer);
   }, [active, load]);
+  useEffect(() => {
+    if (!active || data?.compaction?.status !== "running") return;
+    const timer = setInterval(() => { void load(); }, 2_000);
+    return () => clearInterval(timer);
+  }, [active, data?.compaction?.status, load]);
   useEffect(() => {
     if (!open) return;
     const dismiss = () => { hostDismissed.current = true; setOpen(false); };
@@ -87,6 +121,8 @@ export function UsageIndicator({ client, agentId, sessionId, chinese, busy, acti
   const formatTime = (value: string) => new Intl.DateTimeFormat(chinese ? "zh-CN" : "en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
   const chip = percent !== null ? `${labels.contextChip} ${Math.round(percent)}%`
     : data?.context.usedTokens != null ? `${labels.contextChip} ${format(data.context.usedTokens)}` : labels.usage;
+  const running = compacting || data?.compaction?.status === "running";
+  const compactReason = !sessionId ? labels.empty : busy ? labels.busy : data?.compaction?.reason ? labels[data.compaction.reason] : !data?.compaction ? labels.unsupported : labels.compact;
   return <Popover open={open} onOpenChange={(value) => { hostDismissed.current = false; setOpen(value); if (value) void load(); }}>
     <PopoverTrigger asChild>
       <Button variant="ghost" size="sm" className="multica-usage-trigger" aria-label={labels.usage} data-testid="multica-usage-trigger" aria-busy={loading || undefined}>
@@ -97,7 +133,13 @@ export function UsageIndicator({ client, agentId, sessionId, chinese, busy, acti
     </PopoverTrigger>
     <PopoverContent className="multica-usage-popover nodrag" align="end" side="top" aria-label={labels.usage}
       onCloseAutoFocus={(event) => { if (hostDismissed.current) { event.preventDefault(); hostDismissed.current = false; } }}>
-      <div className="multica-usage-heading"><strong>{labels.usage}</strong><Button variant="ghost" size="icon-sm" aria-label={labels.refresh} disabled={loading} onClick={() => { void load(true); }}><RefreshIcon aria-hidden="true" /></Button></div>
+      <div className="multica-usage-heading"><strong>{labels.usage}</strong><div className="multica-usage-actions">
+        <Button variant="ghost" size="icon-sm" aria-label={labels.compact} title={running ? labels.compacting : compactReason} disabled={busy || running || data?.compaction?.status !== "ready" || !sessionId} aria-busy={running || undefined} onClick={() => { void compact(); }}>
+          {running ? <LoaderCircle className="multica-usage-spinner" aria-hidden="true" /> : <Minimize2 aria-hidden="true" />}
+        </Button>
+        <Button variant="ghost" size="icon-sm" aria-label={labels.refresh} disabled={loading || running} onClick={() => { void load(true); }}><RefreshIcon aria-hidden="true" /></Button>
+      </div></div>
+      {running ? <p className="multica-usage-detail" role="status">{labels.compacting}</p> : compactResult ? <p className="multica-usage-detail" role={compactResult.error ? "alert" : "status"}>{compactResult.error ? labels.compactFailed + compactResult.error : labels.compactDone}</p> : null}
       <section className="multica-usage-section" aria-label={labels.context}>
         <div className="multica-usage-row"><span>{labels.context}</span>{percent !== null && <strong>{percent.toFixed(1)}%</strong>}</div>
         {data?.context.usedTokens != null ? <>
