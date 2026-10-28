@@ -46,6 +46,7 @@ export class LocalClaudeConversation {
   private runs: Run[] = [];
   private active?: Run;
   private frameOwner?: Run;
+  private deliveryFrameOwner?: Run;
   private deliveries = new Map<Run, { ids: Set<string>; parser?: ProviderStream; replyIds?: string[] }>();
   private tasks = new Map<string, { value: LocalBackgroundTask; owner: Run; background: boolean }>();
   private outputPaths = new Map<string, string>();
@@ -85,6 +86,7 @@ export class LocalClaudeConversation {
     if (!this.active && !this.hasBackgroundTasks() && !this.deliveries.size) {
       this.closeRequested = true; this.query?.close();
     }
+    if (this.deliveryFrameOwner && !this.deliveries.has(this.deliveryFrameOwner)) this.deliveryFrameOwner = undefined;
   }
   private dispose(): Promise<void> { return this.disposal ??= (async () => { this.closed = true; await this.onClose(); })(); }
   async stop(): Promise<void> {
@@ -215,6 +217,7 @@ export class LocalClaudeConversation {
     for (const id of ids) delivery.ids.delete(id);
     delivery.parser = undefined; delivery.replyIds = undefined;
     if (!delivery.ids.size) this.deliveries.delete(owner);
+    if (this.deliveryFrameOwner === owner) this.deliveryFrameOwner = undefined;
     // The observer persists the message and its task receipt together.
     owner.observer.reply(content, ids);
     this.publishTasks();
@@ -311,9 +314,16 @@ export class LocalClaudeConversation {
         }
         const uuid = event.user_message_uuid ?? event.user_message_uuids?.at(-1);
         const bound = typeof uuid === "string" ? this.runs.find((run) => run.id === uuid) : undefined;
+        const replyFrame = event.type === "stream_event" || event.type === "assistant";
+        if (typeof uuid === "string" && !bound) {
+          if (replyFrame) this.deliveryFrameOwner = undefined;
+          continue;
+        }
+        if (bound && replyFrame && bound !== this.deliveryFrameOwner) this.deliveryFrameOwner = undefined;
         if (bound) this.frameOwner = bound;
         const soleDeliveryOwner = !this.active && this.deliveries.size === 1 ? this.deliveries.keys().next().value : undefined;
-        const owner = bound ?? (event.type === "result" ? this.runs.find((run) => !run.resultSeen) ?? soleDeliveryOwner : this.active ?? this.frameOwner);
+        const pinnedDeliveryOwner = this.deliveryFrameOwner && this.deliveries.has(this.deliveryFrameOwner) ? this.deliveryFrameOwner : undefined;
+        const owner = bound ?? (event.type === "result" ? pinnedDeliveryOwner ?? this.runs.find((run) => !run.resultSeen) ?? soleDeliveryOwner : this.active ?? this.frameOwner);
         if (owner && !owner.settled) { owner.timing?.activity(); owner.timing?.once("provider.first_event"); }
         if (event.type === "result") {
           if (!owner) continue;
@@ -326,19 +336,23 @@ export class LocalClaudeConversation {
             const remaining = this.deliveries.get(owner);
             if (remaining) { remaining.parser = undefined; remaining.replyIds = undefined; }
           }
+          if (this.deliveryFrameOwner === owner) this.deliveryFrameOwner = undefined;
           for (const run of this.runs) run.observer.ready?.();
           if (!this.active && !this.hasBackgroundTasks() && !this.deliveries.size) { this.closeRequested = true; this.query!.close(); break; }
           continue;
         }
         const candidates = [...this.deliveries.keys()];
         const deliveryOwner = bound ? (this.deliveries.has(bound) ? bound : undefined)
-          : !this.active && candidates.length === 1 ? candidates[0] : undefined;
-        if (deliveryOwner && (event.type === "stream_event" || event.type === "assistant")) {
+          : pinnedDeliveryOwner ?? (!this.active && candidates.length === 1 ? candidates[0] : undefined);
+        if (deliveryOwner && replyFrame) {
+          // The SDK only labels the first frame/block. Preserve that binding
+          // across unlabeled text and end frames until the reply boundary.
+          this.deliveryFrameOwner = deliveryOwner;
           const delivery = this.deliveries.get(deliveryOwner)!;
           delivery.replyIds ??= [...delivery.ids];
           delivery.parser ??= new ProviderStream("claude", () => {});
           delivery.parser.accept(JSON.stringify(event));
-          if (replyEnded(event)) this.deliver(deliveryOwner);
+          if (replyEnded(event)) { this.deliver(deliveryOwner); this.deliveryFrameOwner = undefined; }
         } else if (owner && !owner.settled) {
           owner.parser.accept(JSON.stringify(event));
           if (replyEnded(event)) {
@@ -349,6 +363,7 @@ export class LocalClaudeConversation {
       }
     } catch (error) { failure = error instanceof Error ? error : new Error(String(error)); }
     finally {
+      this.deliveryFrameOwner = undefined;
       this.closeRequested = true; this.controller.abort(); this.wake?.(); this.query?.close();
       for (const run of this.runs) this.finish(run, failure ?? new Error("Claude conversation stopped before finishing this message"));
       for (const task of this.tasks.values()) if (task.value.status === "running") {

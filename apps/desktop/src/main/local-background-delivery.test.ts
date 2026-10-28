@@ -166,6 +166,58 @@ describe("background results without a new user message", () => {
     expect(f.received).toHaveLength(2);
   });
 
+  it.each([
+    { multipleSources: false, streamed: true },
+    { multipleSources: true, streamed: true },
+    { multipleSources: false, streamed: false },
+    { multipleSources: true, streamed: false },
+  ].flatMap((scenario) => [true, false].map((endTurn) => ({ ...scenario, endTurn }))))("retains every reply block with sparse UUIDs: %j", async ({ multipleSources, streamed, endTurn }) => {
+    const f = await setup();
+    let secondTurnId: string | undefined;
+    if (multipleSources) {
+      secondTurnId = (await f.service.request(scope, "send", { id: f.entry.id, content: "Start another review" })).turnId;
+      await vi.waitFor(() => expect(f.received).toHaveLength(2));
+      f.messages.push({ type: "system", subtype: "task_started", task_id: "other-review", description: "Other review", is_backgrounded: true });
+      f.messages.push(reply(f.received[1]!.uuid, "Other review running."));
+      f.messages.push(result(f.received[1]!.uuid, "Other review running."));
+      await vi.waitFor(async () => expect((await f.read()).turns[1]?.status).toBe("completed"));
+    }
+    f.complete();
+    if (multipleSources) f.messages.push({ type: "system", subtype: "task_notification", task_id: "other-review", status: "completed", summary: "Other review done" });
+    const firstText = "Review result. ";
+    const decision = "Decision required: choose topology A or B.";
+    // The SDK stamps the source UUID on the first stream frame and first
+    // assembled assistant block; subsequent blocks and end frames omit it.
+    if (streamed) {
+      f.messages.push({ type: "stream_event", user_message_uuid: f.received[0]!.uuid, event: { type: "message_start", message: { id: "review-reply" } } });
+      f.messages.push({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: firstText } } });
+    }
+    f.messages.push({ type: "assistant", user_message_uuid: f.received[0]!.uuid, message: { id: "review-reply", stop_reason: null, content: [{ type: "text", text: firstText }] } });
+    if (streamed) f.messages.push({ type: "stream_event", event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: decision } } });
+    f.messages.push({ type: "assistant", message: { id: "review-reply", stop_reason: null, content: [{ type: "text", text: decision }] } });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect((await f.read()).turns[0]?.backgroundTasks?.[0]?.delivery?.status).toBe("pending");
+    if (endTurn) f.messages.push({ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "end_turn" } } });
+    else f.messages.push(result(undefined, firstText + decision));
+    await vi.waitFor(async () => expect((await f.read()).turns[0]?.backgroundTasks?.[0]?.delivery?.status).toBe("delivered"));
+    const saved = await f.read();
+    expect(saved.messages.filter((message) => message.turnId === f.first.turnId && message.content.startsWith(firstText)).map((message) => message.content)).toEqual([firstText + decision]);
+    if (multipleSources) {
+      // The completed stream must not claim unbound frames from the next reply.
+      f.messages.push(reply("00000000-0000-4000-8000-000000000000", "Reply for an unrecognized send"));
+      f.messages.push({ type: "system", subtype: "task_started", task_id: "third-review", description: "A later review", is_backgrounded: true });
+      f.messages.push({ type: "system", subtype: "task_notification", task_id: "third-review", status: "completed", summary: "Later review done" });
+      f.messages.push(reply(undefined, "Unbound text after the reply boundary"));
+      f.messages.push(reply(f.received[1]!.uuid, "Other review result"));
+      f.messages.push(result(f.received[1]!.uuid, "Other review result"));
+      await vi.waitFor(async () => expect((await f.read()).messages.at(-1)?.content).toBe("Other review result"));
+      expect((await f.read()).messages.at(-1)?.turnId).toBe(secondTurnId);
+      expect((await f.read()).messages.some((message) => message.content === "Unbound text after the reply boundary")).toBe(false);
+      expect((await f.read()).messages.some((message) => message.content === "Reply for an unrecognized send")).toBe(false);
+    }
+    expect(f.received).toHaveLength(multipleSources ? 2 : 1);
+  });
+
   it("summarizes two completed tasks from one source in one internal execution", async () => {
     const f = await setup();
     f.messages.push({ type: "system", subtype: "task_started", task_id: "second-review", description: "Second reviewer", is_backgrounded: true });
