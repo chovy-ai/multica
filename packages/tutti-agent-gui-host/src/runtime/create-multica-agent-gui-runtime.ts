@@ -20,6 +20,7 @@ import type {
   AgentGuiContextReference,
   AgentGuiInitSnapshot,
   AgentGuiRpcClient,
+  AgentGuiRpcMethods,
   AgentGuiSessionDetail,
   AgentGuiSession,
   AgentGuiWorkspaceState,
@@ -177,7 +178,12 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     enabled: () => workspace.queueOwner === "desktop",
     enqueue: enqueueDesktop,
     update: async (id, action, requestId) => client.request("queue.update", { sessionId: await backendSessionId(id), action, requestId }),
-    error: reportError,
+    error(error) {
+      reportError(error);
+      if (!disposed) void client.request("host.showMessage", {
+        message: error instanceof Error ? error.message : String(error), tone: "error",
+      }).catch(reportError);
+    },
   });
   const engine = desktopQueue.engine;
   const projectSnapshot = createAgentActivitySnapshotProjector(workspaceId);
@@ -671,7 +677,14 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     return { activation: { mode: "new" as const, status: "attached" as const }, session };
   }
 
+  const desktopAdmissions = new WeakMap<Parameters<typeof baseEngine.submitPrompt>[0], AgentGuiRpcMethods["queue.enqueue"]["params"]>();
   async function enqueueDesktop(input: Parameters<typeof baseEngine.submitPrompt>[0], paused = false) {
+    const previous = desktopAdmissions.get(input);
+    if (previous) {
+      const result = await client.request("queue.enqueue", previous);
+      desktopQueue.receive(input.agentSessionId, result);
+      return result;
+    }
     const sessionId = await backendSessionId(input.agentSessionId);
     const session = details.get(input.agentSessionId)?.session ?? workspace.sessions.find((item) => item.id === sessionId);
     if (!session) throw new Error("Conversation is not loaded");
@@ -683,10 +696,14 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     } }, [...attachments.values()])[0]!.prompts[0]!;
     const timing = init.local ? createLocalTiming({ source: "gui", conversationId: sessionId, requestId: input.clientSubmitId }) : undefined;
     const reasoningEffort = await reasoningForSend(session.agent_id, input.agentSessionId);
-    const enqueue = () => client.request("queue.enqueue", { sessionId, paused, queued: true, item: { ...encoded, requestId: input.clientSubmitId, display,
+    const params: AgentGuiRpcMethods["queue.enqueue"]["params"] = { sessionId, paused, queued: true, item: { ...encoded, requestId: input.clientSubmitId, display,
       ...(selectedModel(session.agent_id, input.agentSessionId) ? { model: selectedModel(session.agent_id, input.agentSessionId)! } : {}),
       reasoningEffort, permissionMode: selectedPermission(session.agent_id, input.agentSessionId),
-    } });
+    } };
+    // Keep the admitted payload stable even if preferences change before an
+    // explicit retry of a failed or lost acknowledgement.
+    desktopAdmissions.set(input, params);
+    const enqueue = () => client.request("queue.enqueue", params);
     const result = await (timing ? timing.measure("gui.submit", enqueue) : enqueue());
     desktopQueue.receive(input.agentSessionId, result);
     return result;
