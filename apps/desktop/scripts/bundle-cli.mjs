@@ -10,10 +10,12 @@
 // version / commit / date.
 //
 // Graceful: if `go` is not installed (e.g. frontend-only contributor), we
-// skip the build and fall through to auto-install at runtime. A genuine
-// Go compile error is fatal — you want that to block dev, not hide.
+// skip the build for frontend-only builds and fall through to auto-install.
+// Dev and packaging pass --require-build to bind Electron to a fresh local CLI.
+// A genuine Go compile error is fatal in every mode.
 
-import { access, chmod, copyFile, mkdir, rm } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
@@ -135,6 +137,9 @@ if (hasGo()) {
     },
   );
 } else {
+  if (process.argv.includes("--require-build")) {
+    throw new Error("[bundle-cli] Desktop dev and packaging require Go to build the CLI from the current source.");
+  }
   console.warn(
     "[bundle-cli] `go` not found in PATH — skipping CLI build. " +
       "Desktop will use whatever is already in resources/bin/, or fall back " +
@@ -151,21 +156,26 @@ if (!(await exists(srcBinary))) {
   process.exit(0);
 }
 
-await rm(destDir, { recursive: true, force: true });
 await mkdir(destDir, { recursive: true });
-await copyFile(srcBinary, destBinary);
-await chmod(destBinary, 0o755);
+const temporaryBinary = join(destDir, `.${binName}.${randomUUID()}.tmp`);
+try {
+  await copyFile(srcBinary, temporaryBinary);
+  await chmod(temporaryBinary, 0o755);
 
-// macOS: ad-hoc sign so Gatekeeper doesn't complain when the parent app
-// (which itself may be unsigned in dev) spawns the child.
-if (process.platform === "darwin") {
-  try {
-    execSync(`codesign -s - --force ${JSON.stringify(destBinary)}`, {
-      stdio: "pipe",
-    });
-  } catch {
-    // Non-fatal. Unsigned binaries still run when the parent app is trusted.
+  // macOS: ad-hoc sign so Gatekeeper doesn't complain when the parent app
+  // (which itself may be unsigned in dev) spawns the child.
+  if (process.platform === "darwin") {
+    try {
+      execFileSync("codesign", ["-s", "-", "--force", temporaryBinary], { stdio: "pipe" });
+    } catch {
+      // Non-fatal. Unsigned binaries still run when the parent app is trusted.
+    }
   }
+  // Keep the previous executable usable until its complete replacement is ready.
+  await rename(temporaryBinary, destBinary);
+} finally {
+  await rm(temporaryBinary, { force: true });
 }
+await rm(join(destDir, targetPlatform === "win32" ? "multica" : "multica.exe"), { force: true });
 
 console.log(`[bundle-cli] bundled ${srcBinary} → ${destBinary}`);

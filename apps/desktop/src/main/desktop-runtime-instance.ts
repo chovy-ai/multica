@@ -1,0 +1,22 @@
+import { app } from "electron";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { bundledCliPath } from "./bundled-cli";
+import { DESKTOP_RUNTIME_PROFILE, RuntimeInstanceRegistry } from "./runtime-instance";
+
+let registry: RuntimeInstanceRegistry | undefined;
+
+export function desktopRuntimeRegistry(): RuntimeInstanceRegistry {
+  if (registry) return registry;
+  const appPath = app.getAppPath();
+  registry = new RuntimeInstanceRegistry(homedir(), {
+    kind: app.isPackaged ? "packaged" : "development", appPath,
+    cliPath: bundledCliPath(), electronPath: process.execPath,
+    entryPath: app.isPackaged
+      ? join(appPath.replace("app.asar", "app.asar.unpacked"), "resources/local-conversation-host/index.cjs")
+      : join(appPath, "out/main/local-conversation-host.js"),
+  });
+  return registry;
+}
+
+export function desktopRuntimeProfile(): string { return DESKTOP_RUNTIME_PROFILE; }

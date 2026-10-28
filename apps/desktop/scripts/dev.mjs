@@ -22,6 +22,7 @@ import {
 } from "./worktree-dev-env.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const desktopRoot = dirname(here);
 const args = process.argv.slice(2);
 const cloud = args.includes("--cloud");
 const claudeLogin = args.includes("--claude-login");
@@ -47,6 +48,7 @@ function run(command, args, { shell = false, env = devEnv } = {}) {
     stdio: "inherit",
     env,
     shell,
+    cwd: desktopRoot,
   });
   if (result.error) {
     console.error(`[dev:desktop] failed to run ${command}: ${result.error.message}`);
@@ -56,7 +58,7 @@ function run(command, args, { shell = false, env = devEnv } = {}) {
 }
 
 const node = process.execPath;
-run(node, [join(here, "bundle-cli.mjs")]);
+run(node, [join(here, "bundle-cli.mjs"), "--require-build"]);
 run(node, [join(here, "brand-dev-electron.mjs")]);
 
 const isWin = process.platform === "win32";

@@ -21,6 +21,12 @@ func daemonPortPathForProfile(profile string) string {
 }
 
 func readDaemonPortRecord(profile string) (daemonPortRecord, bool) {
+	if selected, err := registeredInstance(profile); err != nil {
+		return daemonPortRecord{}, false
+	} else if selected != nil {
+		r, _, err := verifiedRuntimeHealth(context.Background(), selected.store, selected.launch.InstanceID)
+		return daemonPortRecord{Port: r.Port, PID: r.PID}, err == nil
+	}
 	if daemonDirForProfile(profile) == "" {
 		return daemonPortRecord{}, false
 	}

@@ -133,6 +133,11 @@ const localFileTransport: LocalConversationClient["files"] = {
 };
 
 const desktopAPI = {
+  terminalCli: {
+    status: () => ipcRenderer.invoke("terminal-cli:status"),
+    install: () => ipcRenderer.invoke("terminal-cli:install"),
+    uninstall: () => ipcRenderer.invoke("terminal-cli:uninstall"),
+  } satisfies import("../shared/terminal-cli").TerminalCliClient,
   developerLogs: {
     export: (scope) => ipcRenderer.invoke("developer-logs:export", scope),
   } satisfies import("../shared/developer-logs").DeveloperLogsClient,
@@ -208,6 +213,8 @@ const desktopAPI = {
    *  dedicated issue windows that belong to an old account. */
   reportAuthSession: (userId: string | null) =>
     ipcRenderer.send(AUTH_SESSION_STATE_CHANNEL, userId),
+  /** Start browser sign-in in the instance that owns this renderer. */
+  beginBrowserLogin: () => ipcRenderer.invoke("auth:browser-login"),
   /** Listen for auth token delivered via deep link */
   onAuthToken: (callback: (token: string) => void) =>
     subscribeToMainRendererChannel("auth:token", callback),

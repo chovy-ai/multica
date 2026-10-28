@@ -62,6 +62,13 @@ const handler = (method: string) => {
 };
 
 describe("local host proxy", () => {
+  it("rejects an incompatible sidecar protocol before opening a socket", async () => {
+    const daemon = await fakeDaemon(handler); cleanups.push(() => daemon.close());
+    daemon.hello.sidecarProtocolVersion = 99;
+    const { proxy } = proxyFor(daemon); proxy.setUser("user");
+    await expect(proxy.request(scope, "list", {})).rejects.toMatchObject({ data: { code: "incompatible" } });
+    expect(daemon.sockets).toHaveLength(0);
+  });
   it("opens a session for the signed-in account and routes requests with the API scope", async () => {
     const daemon = await fakeDaemon(handler); cleanups.push(() => daemon.close());
     const { proxy, options } = proxyFor(daemon);

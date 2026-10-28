@@ -40,11 +40,14 @@ type HealthResponse struct {
 	// pre-#6694 daemon that cannot identify itself at all. Callers key off
 	// the field's presence, so collapsing the two would make every default
 	// daemon look unidentifiable.
-	Profile    string `json:"profile"`
-	DaemonID   string `json:"daemon_id"`
-	DeviceName string `json:"device_name"`
-	ServerURL  string `json:"server_url"`
-	CLIVersion string `json:"cli_version"`
+	Profile         string `json:"profile"`
+	InstanceID      string `json:"instance_id,omitempty"`
+	InstanceOwnerID string `json:"instance_owner_id,omitempty"`
+	InstanceRunID   string `json:"instance_run_id,omitempty"`
+	DaemonID        string `json:"daemon_id"`
+	DeviceName      string `json:"device_name"`
+	ServerURL       string `json:"server_url"`
+	CLIVersion      string `json:"cli_version"`
 	// CLICommit belongs to this running process, not an installed replacement.
 	// Empty or unknown values do not attest a revision; never fall back to version.
 	CLICommit string `json:"cli_commit"`
@@ -356,6 +359,9 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			OS:                    runtime.GOOS,
 			Uptime:                time.Since(startedAt).Truncate(time.Second).String(),
 			Profile:               d.cfg.Profile,
+			InstanceID:            d.cfg.RuntimeInstanceID,
+			InstanceOwnerID:       d.cfg.RuntimeOwnerID,
+			InstanceRunID:         d.cfg.RuntimeRunID,
 			LaunchedBy:            d.cfg.LaunchedBy,
 			DaemonID:              d.cfg.DaemonID,
 			DeviceName:            d.cfg.DeviceName,

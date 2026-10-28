@@ -19,6 +19,7 @@ import type {
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 
 interface DesktopAPI {
+  terminalCli: import("../shared/terminal-cli").TerminalCliClient;
   developerLogs: import("../shared/developer-logs").DeveloperLogsClient;
   settingsHost?: import("../shared/settings-host").SettingsHostClient;
   localConversations: import("@multica/core/local-conversation/protocol").LocalConversationClient;
@@ -49,6 +50,8 @@ interface DesktopAPI {
   ackFreeze: (ts: number) => void;
   /** Report the resolved account identity so stale issue windows can close. */
   reportAuthSession: (userId: string | null) => void;
+  /** Start instance-bound browser sign-in using main's configured web origin. */
+  beginBrowserLogin: () => Promise<void>;
   /** Listen for auth token delivered via deep link. Returns an unsubscribe function. */
   onAuthToken: (callback: (token: string) => void) => () => void;
   /** Listen for invitation IDs delivered via deep link. Returns an unsubscribe function. */

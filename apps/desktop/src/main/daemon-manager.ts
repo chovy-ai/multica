@@ -22,10 +22,10 @@ import type {
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
 import { daemonStatusAlive } from "../shared/daemon-types";
-import { ensureManagedCli, managedCliPath } from "./cli-bootstrap";
+import { bundledCliPath } from "./bundled-cli";
+import { desktopRuntimeRegistry, desktopRuntimeProfile } from "./desktop-runtime-instance";
 import { decideVersionAction } from "./version-decision";
 import {
-  deriveProfileName,
   profileArgs,
   profileConfigPath,
   profileDir,
@@ -181,6 +181,8 @@ interface HealthPayload {
   device_name?: string;
   server_url?: string;
   cli_version?: string;
+  instance_owner_id?: string;
+  local_busy_count?: number;
   active_task_count?: number;
   agents?: string[];
   workspaces?: unknown[];
@@ -209,6 +211,9 @@ async function fetchProfileHealth(
   active: ActiveProfile,
   timeoutMs = HEALTH_PROBE_TIMEOUT_MS,
 ): Promise<HealthPayload | null> {
+  if (active.name === "desktop-runtime" && targetApiBaseUrl) {
+    return desktopRuntimeRegistry().health(targetApiBaseUrl, fetch, timeoutMs);
+  }
   return probeProfileHealth(active.name, (port) =>
     fetchHealthAtPort(port, timeoutMs),
   );
@@ -261,6 +266,7 @@ async function writeProfileConfig(
   cfg: Record<string, unknown>,
 ): Promise<void> {
   const op = async () => {
+    if (profile === "desktop-runtime") await desktopRuntimeRegistry().assertOwner(targetApiBaseUrl ?? undefined);
     await mkdir(profileDir(profile), { recursive: true });
     await writeFile(
       profileConfigPath(profile),
@@ -286,10 +292,13 @@ async function resolveActiveProfile(): Promise<ActiveProfile | null> {
   const target = targetApiBaseUrl;
   if (!target) return null;
 
-  const name = deriveProfileName(target);
+  const { profile: name } = await desktopRuntimeRegistry().assertOwner(target);
   const cfg = await readProfileConfig(name);
 
   if (cfg.server_url !== target) {
+    // A PAT is scoped to one backend even when that backend uses the same user ID.
+    delete cfg.token;
+    await rm(profileUserIdPath(name), { force: true });
     cfg.server_url = target;
     await writeProfileConfig(name, cfg);
     console.log(`[daemon] initialized profile "${name}" → ${target}`);
@@ -299,7 +308,10 @@ async function resolveActiveProfile(): Promise<ActiveProfile | null> {
 }
 
 async function ensureActiveProfile(): Promise<ActiveProfile | null> {
-  if (activeProfile) return activeProfile;
+  if (activeProfile) {
+    if (targetApiBaseUrl) await desktopRuntimeRegistry().assertOwner(targetApiBaseUrl);
+    return activeProfile;
+  }
   // Only a resolved profile is cached; the target URL arrives over IPC shortly
   // after startup, and caching "unresolved" would persist until something
   // happened to invalidate it.
@@ -328,11 +340,17 @@ function observeDaemonBoundary(status: DaemonStatus): void {
 }
 
 async function fetchHealth(): Promise<DaemonStatus> {
-  // While the CLI is being downloaded or has permanently failed, short-circuit
+  // While the bundled CLI is being checked or is unavailable, short-circuit
   // polling — there's nothing to probe yet and /health calls would just return
   // "stopped", which would overwrite the correct setup state in the UI.
   if (currentState === "installing_cli" || currentState === "cli_not_found") {
     return { state: currentState };
+  }
+
+  if (targetApiBaseUrl && !await desktopRuntimeRegistry().owns(targetApiBaseUrl)) {
+    setDesiredDaemonRunning(false);
+    pendingVersionRestart = false;
+    return { state: "stopped" };
   }
 
   const active = await ensureActiveProfile();
@@ -429,23 +447,6 @@ async function fetchHealth(): Promise<DaemonStatus> {
   };
 }
 
-function findCliOnPath(): string | null {
-  const candidates = process.platform === "win32" ? ["multica.exe"] : ["multica"];
-  const paths = (process.env["PATH"] ?? "").split(
-    process.platform === "win32" ? ";" : ":",
-  );
-  if (process.platform === "darwin") {
-    paths.push("/opt/homebrew/bin", "/usr/local/bin");
-  }
-  for (const name of candidates) {
-    for (const dir of paths) {
-      const full = join(dir, name);
-      if (existsSync(full)) return full;
-    }
-  }
-  return null;
-}
-
 /**
  * Returns the path to the CLI binary bundled inside the Desktop app.
  *
@@ -456,13 +457,7 @@ function findCliOnPath(): string | null {
  *   electron-builder's `asarUnpack: resources/**` extracts the binary to
  *   `app.asar.unpacked/`, so we swap the path segment to execute it.
  */
-export function bundledCliPath(): string {
-  const binName = process.platform === "win32" ? "multica.exe" : "multica";
-  return join(app.getAppPath(), "resources", "bin", binName).replace(
-    "app.asar",
-    "app.asar.unpacked",
-  );
-}
+export { bundledCliPath } from "./bundled-cli";
 
 async function probeCliBinary(
   bin: string,
@@ -494,24 +489,9 @@ async function probeCliBinary(
   }
 }
 
-/**
- * Returns a usable `multica` binary path. Priority:
- *   1. Cached result from a previous successful resolve.
- *   2. Bundled binary shipped with the Desktop app (`bundle-cli.mjs`).
- *   3. Managed binary already installed in userData (`managedCliPath`).
- *   4. Download + install latest release into userData.
- *   5. `multica` on PATH (dev convenience / user-installed via brew).
- * Returns `null` only when all of the above fail.
- *
- * Bundled is preferred so Desktop iterates in lockstep with Go changes in
- * the same repo — avoids the 404 / stale-API problem when the Desktop's
- * TS side is ahead of the last published CLI release.
- *
- * This function is idempotent and safe to call concurrently — in-flight
- * installs are de-duplicated via `cliResolvePromise`.
- */
-async function resolveCliBinary(): Promise<string | null> {
-  if (cachedCliBinary !== undefined) return cachedCliBinary;
+/** Resolve only this Desktop's bundled CLI, in development and packaged builds. */
+export async function resolveCliBinary(): Promise<string | null> {
+  if (cachedCliBinary !== undefined && (app.isPackaged || cachedCliBinary !== null)) return cachedCliBinary;
   if (cliResolvePromise) return cliResolvePromise;
 
   cliResolvePromise = (async () => {
@@ -526,43 +506,7 @@ async function resolveCliBinary(): Promise<string | null> {
       }
     }
 
-    const managed = managedCliPath();
-    if (existsSync(managed)) {
-      const version = await probeCliBinary(managed, "managed");
-      if (version) {
-        cachedCliBinary = managed;
-        cachedCliBinaryVersion = version;
-        return managed;
-      }
-    }
-
-    try {
-      const installed = await ensureManagedCli({
-        forceInstall: existsSync(managed),
-      });
-      const version = await probeCliBinary(installed, "managed");
-      if (version) {
-        cachedCliBinary = installed;
-        cachedCliBinaryVersion = version;
-        return installed;
-      }
-      console.warn(
-        `[daemon] managed CLI at ${installed} failed validation after install`,
-      );
-    } catch (err) {
-      console.warn("[daemon] CLI auto-install failed, falling back to PATH:", err);
-    }
-
-    const onPath = findCliOnPath();
-    if (onPath) {
-      const version = await probeCliBinary(onPath, "path");
-      if (version) {
-        cachedCliBinary = onPath;
-        cachedCliBinaryVersion = version;
-        return onPath;
-      }
-    }
-
+    console.warn("[daemon] The bundled CLI is unavailable; rebuild development Desktop or reinstall the application.");
     cachedCliBinary = null;
     cachedCliBinaryVersion = null;
     return null;
@@ -576,12 +520,16 @@ async function resolveCliBinary(): Promise<string | null> {
 }
 
 /**
- * Reads the version of the currently resolved CLI binary. Cached for the
- * process lifetime — the bundled binary doesn't change after bundle time.
+ * Reads the version of the currently resolved CLI binary. Packaged builds cache
+ * it; dev probes again because bundle-cli can replace the worktree binary.
  * Returns null on any failure (unknown `go` at bundle time, broken binary,
  * wrong-arch bundled binary, etc.) so callers can fail open.
  */
-async function getCliBinaryVersion(): Promise<string | null> {
+export async function getCliBinaryVersion(): Promise<string | null> {
+  if (!app.isPackaged) {
+    cachedCliBinaryVersion = await probeCliBinary(bundledCliPath(), "bundled");
+    return cachedCliBinaryVersion;
+  }
   if (cachedCliBinaryVersion !== undefined) return cachedCliBinaryVersion;
   const bin = await resolveCliBinary();
   if (!bin) {
@@ -623,7 +571,7 @@ async function ensureRunningDaemonVersionMatches(): Promise<
   }
 
   const bundled = await getCliBinaryVersion();
-  const action = decideVersionAction(bundled, running);
+  const action = decideVersionAction(bundled, running, desktopRuntimeRegistry().ownerId);
 
   switch (action) {
     case "not_running":
@@ -723,6 +671,7 @@ async function syncToken(
   const previousUserId = await readProfileUserId(active.name);
   const userChanged = Boolean(previousUserId) && previousUserId !== userId;
   const sameUserWithCachedPat =
+    config.server_url === targetApiBaseUrl &&
     !userChanged &&
     previousUserId === userId &&
     typeof config.token === "string" &&
@@ -949,7 +898,7 @@ async function probeLocalRuntimes(): Promise<LocalRuntimeProbe> {
 // applied by fix-path in main/index.ts — as a top-level const it would
 // snapshot process.env at import time, before that block runs.
 function desktopSpawnEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, MULTICA_LAUNCHED_BY: "desktop" };
+  return { ...process.env, MULTICA_LAUNCHED_BY: "desktop", MULTICA_DESKTOP_OWNER_ID: desktopRuntimeRegistry().ownerId };
 }
 
 function scheduleStatusRefresh(): void {
@@ -978,6 +927,13 @@ async function startDaemon(
     return { success: false, error: "Daemon recovery was superseded" };
   }
   const existing = await fetchProfileHealth(active);
+  if (daemonStatusAlive(existing?.status) && existing?.instance_owner_id !== desktopRuntimeRegistry().ownerId) {
+    if ((existing?.active_task_count ?? 0) > 0 || (existing?.local_busy_count ?? 0) > 0) {
+      pendingVersionRestart = true;
+      return { success: false, error: "The previous Desktop runtime is still finishing work. Retry when idle." };
+    }
+    return restartDaemon();
+  }
   if (daemonStatusAlive(existing?.status)) {
     // A daemon is already up ("running") or booting ("starting") on this port —
     // don't spawn a second one (the CLI rejects that as "already running").
@@ -1009,6 +965,7 @@ async function startDaemon(
   authExpired = false;
   sendStatus({ state: "starting" });
 
+  if (targetApiBaseUrl) await desktopRuntimeRegistry().refresh(targetApiBaseUrl);
   const args = ["daemon", "start", ...profileArgs(active.name)];
 
   return new Promise((resolve) => {
@@ -1074,7 +1031,7 @@ async function stopDaemon(): Promise<{ success: boolean; error?: string }> {
   const args = ["daemon", "stop", ...profileArgs(active.name)];
 
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: 15_000 }, (err) => {
+    execFile(bin, args, { timeout: 15_000, env: desktopSpawnEnv() }, (err) => {
       if (err) {
         resolve({ success: false, error: err.message });
       } else {
@@ -1354,7 +1311,7 @@ function startLogTail(win: BrowserWindow, retryCount = 0): void {
 
 /** Read-only diagnostic source; never resolves to the terminal CLI's default profile. */
 export function daemonDiagnosticLogPath(): string | null {
-  return targetApiBaseUrl ? profileLogPath(deriveProfileName(targetApiBaseUrl)) : null;
+  return targetApiBaseUrl ? profileLogPath(desktopRuntimeProfile()) : null;
 }
 
 function stopLogTail(): void {

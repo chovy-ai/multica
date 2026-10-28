@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "instanceId": "desktop",
+  "ownerId": "11111111111111111111111111111111",
+  "runId": "22222222222222222222222222222222",
+  "pid": 1234,
+  "port": 19681,
+  "profile": "desktop-runtime",
+  "apiUrl": "https://api.example.test",
+  "cliVersion": "0.7.0",
+  "cliCommit": "bcdfa010e9a7ed312247eb0ac5dcbf31b23f8ca9",
+  "apiVersion": 1,
+  "sidecarProtocolVersion": 2,
+  "localConversations": true,
+  "startedAt": "2026-10-28T10:00:00Z"
+}
