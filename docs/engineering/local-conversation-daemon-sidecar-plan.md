@@ -99,19 +99,14 @@ P0 和 P1-A 可以并行：P0 只改 TS，P1-A 只改 Go。
 | B-2 @智能体合并与续接 | 完成 | 1e6d64ab6 |
 | B-3 数据迁移 | 完成 | 7806670b0 |
 | B-4 desktop 代理与文件协议 | 完成 | 3f6c5e40d |
-| B-5 生命周期 | 完成 | 5475c83fb |
-| B-6 不可用提示 | 完成 | 6fd48ca6e、f18a2bdff |
+| B-5 生命周期 | 完成 | 5475c83fb、d1d391864 |
+| B-6 不可用提示 | 完成 | 9d78ef60a |
 | B-7 真机验证 | 未执行，见下方清单 | — |
 | S1b / S2 / S3 | 未执行，需要签名包、Windows 机器、打包产物 | — |
 
-### 与计划不同的实现决定
+### 实现决定
 
-- **确认后执行**：设置工具的确认改为 `confirmAndApply`，由弹出原生对话框的一方执行写入；token 的密钥由该方展示并从结果中去除。进程内与 sidecar 两种运行方式共用这一实现。
-- **文件授权**：预览和生成图片不再在 RPC 中返回内容，而是返回 10 分钟有效、绑定账号与工作区的 `fileRef`；`fileRead`、`fileStore` 只在 sidecar 内部使用，desktop 调用会被拒绝。
-- **文件传输**：`LocalConversationClient` 新增必需的 `files`（`upload`、`read`、`url`），preload 通过 `multica-local-file://` 实现，URL 携带每次启动生成、只有主窗口能取得的密钥。renderer 交给 agent GUI iframe 的接口仍是 base64，这是 iframe 既有约定，不经过 daemon。
-- **@智能体**：新增 `remoteSend`；`remoteBegin`、`remoteUpdate` 保留为 sidecar 内部方法，desktop 调用会被拒绝。取消与已受理的发送交叉时，会同时取消云端任务。
-- **开发日志工具**：`export_developer_logs` 在 sidecar 中通过 host_request `developer_logs_export` 交给 desktop 执行。
-- **manifest**：Electron 可执行文件路径按操作系统分别列出，manifest 和加载器是提交到仓库的静态文件。
+实现中细化的设计（确认后由弹窗方执行写入、文件授权与 `multica-local-file` 协议、`remoteSend`、开发日志工具、按系统列出的 manifest、退出即安装时停止 sidecar）已合入[方案文档](./local-conversation-daemon-sidecar.md) §4.1、§4.2、§5.3、§6、§8、§9、§11。
 
 ### 真机验证清单
 
@@ -124,4 +119,4 @@ P0 和 P1-A 可以并行：P0 只改 TS，P1-A 只改 Go。
 7. 设置类工具触发确认：拒绝时无写入；同意后写入成功；创建 token 时密钥只出现在原生对话框中。
 8. 停止 daemon、退出登录、使用外部 CLI 拉起的 daemon，分别看到对应的不可用提示。
 9. 正式签名包：daemon 由登录项拉起后访问"文稿"目录，记录权限弹窗归属（S1b）。
-10. Windows：本地对话运行中触发更新，确认先询问、再停止 sidecar，安装成功（S2）。
+10. 下载更新后直接退出（不点"立即安装"）：sidecar 先停止，更新安装成功，重新打开后本地对话可用。

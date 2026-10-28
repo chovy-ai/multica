@@ -1,6 +1,6 @@
 # 本地对话流迁入 daemon（Node sidecar）技术方案
 
-状态：第二版草案。已合入逻辑评审和架构评审的结论。日期：2026-10-27。
+状态：已实现（分支 `feat/local-conversation-sidecar`），文档与实现一致。已合入逻辑评审和架构评审的结论。日期：2026-10-27。
 
 ## 1. 背景
 
@@ -67,14 +67,16 @@ Renderer ─IPC─> Desktop Main ─HTTP + WebSocket (loopback)─> daemon (Go) 
 
 改为由 daemon 从自身可执行文件的位置推导 sidecar：
 
-- desktop 打包时在 CLI 同级目录写入 `resources/local-conversation-host/manifest.json`，内容为 `{ "protocolVersion", "entry": "index.mjs", "electron": "<相对 CLI 的 Electron 可执行文件路径>" }`。
-- daemon 启动时按 `os.Executable()` 定位 `../local-conversation-host/manifest.json`，校验文件存在、路径解析后仍位于同一安装目录。找到就启用本地对话能力，找不到就在 `/health` 中报告 `local_conversations: "unsupported"`。
+- `apps/desktop/resources/local-conversation-host/` 下提交两个静态文件，随 `resources/**` 一起解包到 `app.asar.unpacked/resources/`，与 `bin/multica` 同级：
+  - `manifest.json`：`{ "protocolVersion": 2, "entry": "index.cjs", "electron": { "darwin": …, "windows": …, "linux": … } }`，Electron 可执行文件按操作系统分别给出相对路径。
+  - `index.cjs`：加载 `app.asar/out/main/local-conversation-host.js`。sidecar 代码和依赖留在 asar 内，Electron 的 Node 模式可以直接读取。
+- daemon 启动时按 `os.Executable()` 定位 `../local-conversation-host/manifest.json`（开发时可由启动方通过环境变量 `MULTICA_LOCAL_HOST_MANIFEST` 指定），校验文件存在、路径解析后仍位于同一安装目录。找到就启用本地对话能力，找不到就在 `/health` 中报告 `local_conversations: "unsupported"`。
 - 因此本地对话要求 daemon 必须是 desktop 打包的 CLI。brew、PATH 或独立安装的 CLI 拉起的 daemon 不提供本地对话，desktop 会提示"本地对话需要使用 Multica 自带的 daemon"。
 - 带来的好处：sidecar 的代码与 daemon 来自同一个安装包，版本天然一致。desktop 现有的版本对齐重启（`daemon-manager.ts:607`）会保证 daemon 与当前 desktop 一致，于是 desktop、daemon、sidecar 三方版本一致。
 
 ### 4.2 打包位置
 
-- sidecar 代码作为 desktop 的一个独立构建入口，放在 `apps/desktop/src/local-host/`，由 electron-vite 输出到 `resources/local-conversation-host/index.mjs`，打包方式参照现有的 `developer-logs-mcp.ts`。它只有 desktop 一个使用方，本质是应用产物，所以不新建 `packages/*` 包，以免与"共享包导出源码 TS"的规则冲突。
+- sidecar 代码作为 desktop 的一个独立构建入口，放在 `apps/desktop/src/local-host/`（入口 `entry.ts`），由 electron-vite 输出到 `out/main/local-conversation-host.js`，打包方式参照现有的 `developer-logs-mcp.ts`；与 `index.js` 共用的代码放在独立 chunk，sidecar 不会加载 desktop 主进程代码。lint 规则禁止该目录引用 `electron` 和 `main`/`renderer`/`preload`。它只有 desktop 一个使用方，本质是应用产物，所以不新建 `packages/*` 包，以免与"共享包导出源码 TS"的规则冲突。
 - 协议类型从 `packages/tutti-agent-gui-host/src/local-protocol.ts`（这是一个 UI 包）移到无 UI 依赖的 `packages/core/local-conversation/`，由 GUI host 和 sidecar 共同引用。sidecar 不依赖任何 UI 包。
 
 ### 4.3 运行环境
@@ -181,16 +183,18 @@ daemon → desktop（通知）：`event`、`hostRequest`、`hostRequestResolved`
 
 | 环节 | 做法 |
 | --- | --- |
-| WebSocket / stdio JSON-RPC | 只传元数据（fileRef、名称、类型、大小），不传文件内容。协议 zod schema 中删除 `data` 字段 |
-| renderer 读文件（图片、附件、预览） | 一律 HTTP `GET`。renderer 请求 `multica-local-file://<scope>/<fileRef>`，main 的 `protocol.handle` 只负责补上 token，把请求原样转成 daemon 的 `GET /local/v1/files/...`，响应流原样返回（含 `Range`）。renderer 不接触 token |
-| renderer 写文件（上传附件，包括选择、粘贴、拖入） | 一律 HTTP `POST`。renderer 对 `multica-local-file://<scope>/upload` 发 `fetch(..., {method: "POST", body: file})`，main 同样只补 token，把请求体流原样转给 daemon 的 `POST /local/v1/files/{scope}`。不走 IPC，不区分有无本地路径 |
+| WebSocket / stdio JSON-RPC | 只传元数据，不传文件内容。`previewRead`、`imageRead` 返回 `fileRef`：一个 10 分钟有效、绑定账号与工作区的随机授权 id；附件直接用附件 id。`fileStore`、`fileRead` 只供 sidecar 内部使用，desktop 调用会被拒绝 |
+| renderer 读文件（图片、附件、预览） | 一律 HTTP `GET`。`LocalConversationClient.files`（`upload`、`read`、`url`）由 preload 实现：请求 `multica-local-file://local/files/<fileRef>?userId&workspaceId&k=<密钥>`，`k` 是每次启动生成、只有主窗口能通过同步 IPC 取得的密钥，预览用的沙箱 iframe 拿不到。main 的 `protocol.handle` 校验密钥和当前账号后只补上 token，把请求原样转成 daemon 的 `GET /local/v1/files/...`，响应流原样返回（含 `Range`）。renderer 不接触 token |
+| renderer 写文件（上传附件，包括选择、粘贴、拖入） | 一律 HTTP `POST`。renderer 对 `multica-local-file://local/upload?…` 发 `fetch(..., {method: "POST", body: file})`，main 同样只补 token，把请求体流原样转给 daemon 的 `POST /local/v1/files/{scope}`。不走 IPC，不区分有无本地路径 |
 | daemon ↔ 文件 | daemon 向 sidecar 发 `file.resolve {scope, fileRef}` 拿到已校验的绝对路径（沿用 `local-resource-reader.ts` 的 cwd 和已批准根目录检查），然后 daemon 自己用 `http.ServeContent` 读文件；上传时 daemon 写入临时文件，再调 sidecar `file.commit` 登记元数据。文件内容不经过 stdio |
 | @智能体上传附件到云端 | sidecar 从磁盘读文件流，`multipart/form-data` 直接上传 `POST /api/upload-file`，不经过 base64 |
 | Codex 输出图片 | provider 本身以 `data:` URL 返回图片，这是输入格式无法改变；sidecar 收到后只解码一次并落盘，此后按文件处理 |
 
 例外：MCP 工具 `read_attachment` 对 4MB 以内的图片返回 MCP 图片内容块（`local-multica-context.ts:137`）。MCP 规范要求图片内容块使用 base64，它是给模型看图用的，只在 sidecar 进程内流转，不经过 desktop 与 daemon 之间的任何通道，因此保留。
 
-`fileStore`、`fileRead`、`imageRead`、`preview*` 的返回值变化随 B-2 一起计入协议 v2。
+另一处保留：renderer 交给 agent GUI iframe 的 `attachment.read`、`image.read` 结果仍是 base64，这是 iframe 的既有接口；数据先经 HTTP 取到 renderer，再在 renderer 内编码，不经过 daemon 或 sidecar。
+
+`imageRead`、`preview*` 的返回值变化与 `remoteSend` 一起计入协议 v2。
 
 ### 5.4 事件流
 
@@ -205,9 +209,9 @@ daemon → desktop（通知）：`event`、`hostRequest`、`hostRequestResolved`
 
 由于 Local API token 无法区分人和 agent（§5.1），确认结果不能从 Local API "回复"给 sidecar 后由 sidecar 执行，否则 agent 可以伪造批准。本版改为：
 
-- **需要确认的写操作由 desktop 执行。** sidecar 发出 `hostRequest{kind: "confirmed_operation", operation, input}`。desktop main 先弹出原生对话框；用户确认后，desktop 用自己的登录态执行该操作，再把结果回复给 sidecar。
+- **需要确认的写操作由 desktop 执行。** settings 工具不再自己执行需确认的写入，而是把准备好的请求交给 `confirmAndApply(request, apply)`。在 sidecar 中，它发出 `hostRequest{kind: "confirmed_operation", payload: {request, apply}}`；desktop main 先弹出原生对话框，用户确认后用自己的登录态执行 `apply`，再把结果回复给 sidecar。desktop 内用同一个 `confirmThenApply` 组合实现，两种运行方式共用。
 - agent 伪造回复最多只能让工具调用方收到一个假的"已完成"，不会产生任何真实写入。在这个前提下，确认关卡仍然只由 desktop 的原生弹窗决定，与现状等价。
-- `settings_create_token` 的密钥由 desktop 生成和展示，不经过 sidecar，不进入事件流，也不写入日志。
+- `settings_create_token` 由 desktop 执行，密钥只在 desktop 的原生对话框中展示，回复给 sidecar 的结果里已去掉密钥，不进入事件流，也不写入日志。
 
 ### 6.2 类型
 
@@ -216,7 +220,7 @@ daemon → desktop（通知）：`event`、`hostRequest`、`hostRequestResolved`
 | `ask_user` | `service.askUser`，问题保存在 turn 上，renderer 通过 `answerQuestion` 回答 | **保持不变**，不改成 host_request |
 | `confirmed_operation` | `desktop-settings-host.ts:49` 的 `dialog.showMessageBox`，确认后由 main 执行 | desktop 弹窗并执行，执行结果回复给 sidecar |
 | `settings_host` | `settings-host:request` 交给 renderer 处理（`settings_open`、设备操作） | 由 desktop 转给 renderer，行为不变 |
-| `pick_directory` | `index.ts:695` 的 `dialog.showOpenDialog`（会话目录、`folderProjectAdd`、`previewChoose`） | 只发给发起请求的那个 `connectionId` |
+| `pick_directory` / `pick_preview` | `index.ts:695` 的 `dialog.showOpenDialog`（会话目录、`folderProjectAdd`；`previewChoose`） | 只发给发起请求的那个 `connectionId`；没有发起连接时，发给该账号最近一次连接 |
 | `developer_logs_export` | `index.ts:706` 的 `DeveloperLogExporter` | desktop 执行导出并返回文件路径（§9） |
 
 ### 6.3 语义（与现状对齐）
@@ -239,13 +243,15 @@ daemon → desktop（通知）：`event`、`hostRequest`、`hostRequestResolved`
 
 - 现有两条实现，main 的 `local-queued-cloud-run.ts` 和 renderer 直接调用 core `api` 的那条，合并为 sidecar 里的一条，统一使用 PAT。链路不变：`POST /api/chat/sessions`，上传附件，发送消息，每 2 秒轮询 `/api/chat/sessions/{id}/messages`、`/api/tasks/{id}/messages`、`/api/agents/{id}/tasks`；取消时调用 `POST /api/tasks/{id}/cancel`。
 - **重启后续接轮询。** 加载 scope 时（`local-conversation-service.ts:161`），`turn.remote` 已经存在且状态为 running 的轮次，由 sidecar 继续轮询。这接替了 renderer 中 `pollRemote` 现在承担的接管职责（`renderer/src/platform/local-conversation-service.ts:78-115`）。如果消息发送未确认就中断了，则标记为失败，与现有分支一致。
-- **协议版本升到 2。** 从 `LOCAL_CONVERSATION_METHODS` 中删除 `remoteBegin`、`remoteUpdate`，renderer 删除对应代码；同时按 §5.3 去掉文件方法中的 base64 `data` 字段。
+- **直接 @智能体走 `remoteSend`。** renderer 调用新增的 `remoteSend`，与排队路径共用同一个发送加轮询的实现，并作为 sidecar 跟踪的执行运行，所以取消、忙碌计数、关闭都能看到它。`remoteBegin`、`remoteUpdate` 保留为 sidecar 内部方法，desktop 调用会被拒绝。
+- **取消。** 本地对话的 `cancel` 对远程轮次调用 `POST /api/tasks/{id}/cancel`。取消发生在发送已被受理、但 task id 还未回写时，发送方拿到 task id 后会补发取消；无法确认时继续同步实际状态。
+- **协议版本升到 2。** 新增 `remoteSend`；`imageRead`、`preview*` 按 §5.3 改为返回 `fileRef`。renderer 删除自己的云端发送和轮询代码。
 
 ## 9. 诊断与开发日志
 
 - `diagnostics/` 目录留在 desktop 的 `userData` 中，不迁移。`WebDiagnosticLog`、developer-logs stdio MCP（`index.ts:173,724-739`）、`DeveloperLogExporter` 的数据源都保持不变。
 - sidecar 的 `LocalTimingLog` 改为发送 `timing` 通知，经 daemon 和事件流转给 desktop，由 desktop 写入原来的 `turn-timing.jsonl`。desktop 未连接期间的计时数据会丢失，这是已知限制。
-- 导出工具 `export_developer_logs` 走 host_request `developer_logs_export`，由 desktop 执行导出。导出内容新增 sidecar 状态（来自 `hello`）。
+- 导出工具 `export_developer_logs` 的定义抽到 `local-host/developer-log-tool.ts`，执行函数由宿主注入：sidecar 里走 host_request `developer_logs_export`，由 desktop 校验查询参数后执行导出。导出内容新增 sidecar 状态（来自 `hello`）。
 
 ## 10. daemon 改动
 
@@ -260,8 +266,8 @@ daemon → desktop（通知）：`event`、`hostRequest`、`hostRequestResolved`
 - **新增 `local-conversation-proxy.ts`**：读取 port 和 token 文件，用 `ws` 建立 WebSocket 连接并订阅事件，转发 `local-conversation:request` IPC，处理 host_request，把 `timing` 写入日志。
 - **`ensureRunningDaemonVersionMatches`**：`decideVersionAction` 把 `local_busy_count` 算作忙碌，有本地轮次在跑时推迟版本对齐重启。
 - **其余主动重启或停止 daemon 的路径**（切换用户 `:748`、重新认证 `:840`、登出时的 `stopDaemon`、退出时的 `autoStop` `:1499`）会中断本地轮次，这是已定约束。其中 `autoStop` 打开时，"关闭 desktop 后继续运行"不成立；设置项旁边需要说明"退出时也会停止本地对话"。
-- **退出流程**：未开启 `autoStop` 时，desktop 只断开连接，不停止 sidecar。AppImage 例外，按 §4.4 处理。
-- **自动更新**：按 §4.4 先 drain 再 stop。
+- **退出流程**：未开启 `autoStop` 时，desktop 只断开连接，不停止 sidecar。两种例外会先停止 sidecar：AppImage（§4.4），以及已下载更新、退出即安装（`autoInstallOnAppQuit`）时，因为安装会替换 sidecar 正在运行的可执行文件。
+- **自动更新**：手动"立即安装"时按 §4.4 先 drain，有运行中的轮次时询问"等待完成 / 立即更新"，再 stop。
 - **renderer**：删除 `remoteBegin` / `remoteUpdate` 路径；文件读写改用 `multica-local-file://`（§5.3）；根据 `hello` 和 `/health` 增加几种不可用状态的提示，分别是未登录、daemon 未运行、`unsupported`（WSL 或非自带 CLI）、账号不一致、sidecar 崩溃中。
 
 ## 12. 代码迁移清单
