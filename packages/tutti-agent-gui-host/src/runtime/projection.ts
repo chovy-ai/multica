@@ -117,7 +117,7 @@ export function projectDetail(
     const createdAt = millis(message.created_at);
     const clientSubmitId = ledger.clientSubmitId(message.id);
     const accepted = clientSubmitId ? ledger.submission(clientSubmitId)?.response : undefined;
-    const authored = message.role === "user" ? chatAuthoredPrompt(message.content) : invocationText(owner, message.content);
+    const authored = message.role === "user" ? chatAuthoredPrompt(message.content) : message.content;
     const content = detail.session.agent_id.startsWith("local:")
       ? localMessageDisplayContent({ role: message.role, content: authored, attachmentIds: message.attachments?.filter((attachment) => attachment.content_type.startsWith("image/")).map((attachment) => attachment.id) })
       : authored;
@@ -126,6 +126,7 @@ export function projectDetail(
       messageId: message.id, turnId: message.task_id ?? accepted?.task_id ?? null, role: message.role,
       kind: message.failure_reason ? "error" : "text",
       payload: {
+        ...(message.role === "assistant" ? invocationIdentity(owner) : {}),
         text: content,
         content,
         ...(clientSubmitId ? { clientSubmitId } : {}),
@@ -214,7 +215,7 @@ export function projectDetail(
           fragment.payload.content = `${fragment.payload.content ?? ""}${event.content ?? ""}`;
         } else {
           fragmentIndex = raw.length;
-          raw.push({ ...base, messageId: `run:${taskId}:${event.seq}`, kind, payload: { content: event.type === "text" ? invocationText(task, event.content ?? "") : event.content ?? "" } });
+          raw.push({ ...base, messageId: `run:${taskId}:${event.seq}`, kind, payload: { content: event.content ?? "", ...(event.type === "text" ? invocationIdentity(task) : {}) } });
         }
       }
     }
@@ -292,7 +293,7 @@ function millis(value: string): number {
   return Number.isFinite(result) ? result : 0;
 }
 
-function invocationText(task: AgentTask | undefined, content: string): string {
+function invocationIdentity(task: AgentTask | undefined) {
   const name = task?.chat_invoked_agent_name;
-  return name ? `**${name.replace(/[\\`*_[\]<>]/g, "\\$&")}**\n\n${content}` : content;
+  return name ? { invokedAgent: { id: task.agent_id, name } } : {};
 }

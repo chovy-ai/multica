@@ -1130,7 +1130,22 @@ it("projects a single authored input and both named agent results from durable i
   const detail={session,pending:{},tasks,messages:tasks.flatMap((task)=>[{id:`input-${task.id}`,chat_session_id:session.id,role:"user",content:"Review this change",task_id:task.id,created_at:time},{id:`reply-${task.id}`,chat_session_id:session.id,role:"assistant",content:`Result ${task.agent_id}`,task_id:task.id,created_at:time}]) as ChatMessage[]};
   const result=projectDetail(detail,executionTargets(init)[0],new Map(),new RuntimeLedger());
   expect(result.messages.filter((item)=>item.role==="user")).toHaveLength(1);
-  expect(result.messages.filter((item)=>item.role==="assistant").map((item)=>item.payload.content)).toEqual(["**设计评审师**\n\nResult design","**代码审查师**\n\nResult code"]);
+  expect(result.messages.filter((item)=>item.role==="assistant").map((item)=>item.payload)).toEqual([
+    { text: "Result design", content: "Result design", invokedAgent: { id: "design", name: "设计评审师" } },
+    { text: "Result code", content: "Result code", invokedAgent: { id: "code", name: "代码审查师" } },
+  ]);
+  const transcript = new Map<string, AgentGuiTaskMessagePayload[]>([["run-code", [
+    { issue_id: "", task_id: "run-code", seq: 1, type: "text", content: "Result " },
+    { issue_id: "", task_id: "run-code", seq: 2, type: "text", content: "code" },
+  ]]]);
+  const streaming = projectDetail({ ...detail, messages: detail.messages.filter((item) => item.task_id !== "run-code") }, executionTargets(init)[0], transcript, new RuntimeLedger());
+  expect(streaming.messages.filter((item) => item.role === "assistant").map((item) => item.payload)).toEqual([
+    result.messages.find((item) => item.messageId === "reply-run-design")!.payload,
+    { content: "Result code", invokedAgent: { id: "code", name: "代码审查师" } },
+  ]);
+  const restored = projectDetail(detail, executionTargets(init)[0], transcript, new RuntimeLedger());
+  expect(restored.messages.filter((item) => item.role === "assistant")).toHaveLength(2);
+  expect(restored.messages.find((item) => item.messageId === "reply-run-code")!.payload).toEqual(result.messages.find((item) => item.messageId === "reply-run-code")!.payload);
   expect(result.turns).toHaveLength(2);
 });
 

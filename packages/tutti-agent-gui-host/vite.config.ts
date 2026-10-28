@@ -8,6 +8,16 @@ import tailwindcss from "@tailwindcss/vite";
 
 const hostPresentationAdaptations = [
   {
+    path: "/agentConversation/components/AgentMessageBlock.tsx",
+    original: 'import { AgentSystemNoticeMessage } from "./AgentSystemNoticeMessage";',
+    replacement: 'import { AgentSystemNoticeMessage } from "./AgentSystemNoticeMessage";\nimport { InvokedAgentReply } from "@multica-invoked-agent-reply";',
+  },
+  {
+    path: "/agentConversation/components/AgentMessageBlock.tsx",
+    original: '        renderedContent\n      );',
+    replacement: '        isUser ? renderedContent : <InvokedAgentReply message={message}>{renderedContent}</InvokedAgentReply>\n      );',
+  },
+  {
     path: "/controller/useAgentGUILocalState.ts",
     original: 'import {\n  useCallback,',
     replacement: 'import { useComposerDrafts } from "@multica-composer-drafts";\nimport {\n  useCallback,',
@@ -547,6 +557,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      "@multica-invoked-agent-reply": fileURLToPath(new URL("./src/invoked-agent-reply.tsx", import.meta.url)),
       "@multica-composer-drafts": fileURLToPath(new URL("./src/composer-drafts.tsx", import.meta.url)),
       "@multica-message-image-clipboard": fileURLToPath(new URL("./src/message-image-clipboard.ts", import.meta.url)),
       "@multica-composer-file-picker": fileURLToPath(new URL("./src/composer-file-picker.ts", import.meta.url)),
