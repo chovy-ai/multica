@@ -81,15 +81,32 @@ export function SideEntryProvider({ children, ...entry }: Entry & { children: Re
     return () => { cancelled = true; release(); };
   }, [entry.client]);
   useEffect(() => { setSelection(null); }, [entry.sessionId]);
+  const dismissSelection = () => {
+    setSelection(null);
+    window.getSelection()?.removeAllRanges();
+  };
+  const copy = async () => {
+    if (!selection) return;
+    const { text } = selection;
+    dismissSelection();
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      await entry.client.request("host.showMessage", { message: entry.chinese ? "无法复制文字，请重试" : "Could not copy text. Try again.", tone: "error" });
+      return;
+    }
+    await entry.client.request("host.showMessage", { message: entry.chinese ? "复制成功" : "Copied successfully", tone: "info" });
+  };
   const start = async () => {
     if (!selection || !entry.sessionId || pending) return;
+    const { text, turnId } = selection;
+    dismissSelection();
     setPending(true);
-    try { await entry.client.request("host.openSide", { sessionId: entry.sessionId, turnId: selection.turnId, quote: selection.text, requestId: crypto.randomUUID() }); setSelection(null); window.getSelection()?.removeAllRanges(); }
+    try { await entry.client.request("host.openSide", { sessionId: entry.sessionId, turnId, quote: text, requestId: crypto.randomUUID() }); }
     catch (error) { await entry.client.request("host.showMessage", { message: error instanceof Error ? error.message : String(error), tone: "error" }); }
     finally { setPending(false); }
   };
   return <SideEntryContext.Provider value={entry}>{children}{selection && <div ref={toolbar} role="toolbar" aria-label={entry.chinese ? "选中文字操作" : "Selected text actions"} className="multica-selection-toolbar nodrag fixed z-[100]" style={{ left: selection.left, top: selection.top }} onPointerDown={(event) => event.preventDefault()}>
-    <Button size="xs" variant="ghost" onClick={() => { void navigator.clipboard.writeText(selection.text); }}><Copy className="size-3.5" />{entry.chinese ? "复制" : "Copy"}</Button>
+    <Button size="xs" variant="ghost" onClick={() => { void copy(); }}><Copy className="size-3.5" />{entry.chinese ? "复制" : "Copy"}</Button>
     <Button size="xs" variant="ghost" disabled={pending} aria-busy={pending} onClick={() => { void start(); }}><MessagesSquare className="size-3.5" />{entry.chinese ? "在旁支中询问" : "Ask in side"}</Button>
   </div>}</SideEntryContext.Provider>;
 }
