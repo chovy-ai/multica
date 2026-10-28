@@ -254,10 +254,16 @@ func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 		d.logger.Info("auto-update: deferring — task or claim in flight at barrier check")
 		return
 	}
+	if !d.quiesceLocalForRestart(ctx) {
+		d.releaseClaimBarrier()
+		d.logger.Info("auto-update: deferring — local conversation work in flight")
+		return
+	}
 	barrierReleased := false
 	defer func() {
 		if !barrierReleased {
 			d.releaseClaimBarrier()
+			d.resumeLocalAfterAbortedRestart(ctx)
 		}
 	}()
 
@@ -391,10 +397,16 @@ func (d *Daemon) trySelfReload(ctx context.Context) {
 		d.logger.Info("auto-reload: deferring — task or claim in flight at barrier check", "reason", reason)
 		return
 	}
+	if !d.quiesceLocalForRestart(ctx) {
+		d.releaseClaimBarrier()
+		d.logger.Info("auto-reload: deferring — local conversation work in flight", "reason", reason)
+		return
+	}
 	barrierReleased := false
 	defer func() {
 		if !barrierReleased {
 			d.releaseClaimBarrier()
+			d.resumeLocalAfterAbortedRestart(ctx)
 		}
 	}()
 

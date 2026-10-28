@@ -1,4 +1,4 @@
-import type { LocalConversation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 
 export type SideActivityState = "idle" | "running" | "waiting" | "completed" | "failed" | "cancelled";
 

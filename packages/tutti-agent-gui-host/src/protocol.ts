@@ -11,7 +11,7 @@ import type {
   SendChatMessageResponse,
   TaskMessagePayload,
 } from "@multica/core/types";
-import type { LocalBackgroundTask, LocalPermissionMode, LocalProviderUsage, LocalSidePrompt, LocalUserQuestion } from "./local-protocol";
+import type { LocalBackgroundTask, LocalPermissionMode, LocalProviderUsage, LocalSidePrompt, LocalUserQuestion } from "@multica/core/local-conversation/protocol";
 
 export interface AgentGuiAgentDescriptor {
   agent: Agent;
@@ -51,7 +51,7 @@ export interface AgentGuiWorkspaceState {
   executionTargets?: AgentGuiExecutionTarget[];
   local?: boolean;
   sessions: AgentGuiSession[];
-  folderProjects?: import("./local-protocol").LocalFolderProject[];
+  folderProjects?: import("@multica/core/local-conversation/protocol").LocalFolderProject[];
   pendingTasks?: PendingChatTaskItem[];
 }
 
@@ -74,13 +74,13 @@ export interface AgentGuiInitSnapshot extends AgentGuiWorkspaceState {
 }
 
 export interface AgentGuiSessionDetail {
-  promptQueue?: import("./local-protocol").LocalPromptQueue;
+  promptQueue?: import("@multica/core/local-conversation/protocol").LocalPromptQueue;
   backgroundTasks?: { turnId: string; task: LocalBackgroundTask }[];
   questions?: { turnId: string; question: LocalUserQuestion }[];
   session: AgentGuiSession;
   /** Saved native model used when no GUI preference exists (for example, a new fork). */
   model?: string | null;
-  reasoningEffort?: import("./local-protocol").LocalReasoningEffort | null;
+  reasoningEffort?: import("@multica/core/local-conversation/protocol").LocalReasoningEffort | null;
   permissionMode?: LocalPermissionMode;
   messages: ChatMessage[];
   pending: ChatPendingTask;
@@ -114,8 +114,8 @@ export type AgentGuiTaskMessagePayload = Omit<TaskMessagePayload, "type"> & {
 
 /** IDs belong to the selected transport; local IDs are never sent to cloud APIs. */
 export interface AgentGuiRpcMethods {
-  "queue.enqueue": { params: { sessionId: string; item: import("./local-protocol").LocalQueuedPrompt; paused?: boolean; queued: true }; result: import("./local-protocol").LocalPromptQueue };
-  "queue.update": { params: { sessionId: string; action: "pause" | "stop" | "resume" | "remove" | "sendNow"; requestId?: string }; result: import("./local-protocol").LocalPromptQueue };
+  "queue.enqueue": { params: { sessionId: string; item: import("@multica/core/local-conversation/protocol").LocalQueuedPrompt; paused?: boolean; queued: true }; result: import("@multica/core/local-conversation/protocol").LocalPromptQueue };
+  "queue.update": { params: { sessionId: string; action: "pause" | "stop" | "resume" | "remove" | "sendNow"; requestId?: string }; result: import("@multica/core/local-conversation/protocol").LocalPromptQueue };
   "interaction.respond": { params: { sessionId: string; turnId: string; requestId: string; answers: Record<string, string | string[]> }; result: void };
   "workspace.load": { params: Record<string, never>; result: AgentGuiWorkspaceState };
   "session.load": { params: { sessionId: string }; result: AgentGuiSessionDetail };
@@ -124,7 +124,7 @@ export interface AgentGuiRpcMethods {
     result: AgentGuiSession;
   };
   "session.send": {
-    params: { sessionId: string; content: string; attachmentIds?: string[]; references?: AgentGuiContextReference[]; model?: string; reasoningEffort?: import("./local-protocol").LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; queued?: true; requestId?: string };
+    params: { sessionId: string; content: string; attachmentIds?: string[]; references?: AgentGuiContextReference[]; model?: string; reasoningEffort?: import("@multica/core/local-conversation/protocol").LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; queued?: true; requestId?: string };
     result: SendChatMessageResponse;
   };
   "session.rename": { params: { sessionId: string; title: string }; result: AgentGuiSession };

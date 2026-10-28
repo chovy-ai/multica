@@ -23,6 +23,8 @@ export default defineConfig({
           index: resolve("src/main/index.ts"),
           // Standalone stdio MCP that Codex runs with ELECTRON_RUN_AS_NODE=1.
           "developer-logs-mcp": resolve("src/main/developer-logs-mcp.ts"),
+          // Local conversation host the daemon runs with ELECTRON_RUN_AS_NODE=1.
+          "local-conversation-host": resolve("src/local-host/entry.ts"),
         },
       },
       rolldownOptions: {
@@ -30,7 +32,13 @@ export default defineConfig({
         output: {
           // Keep everything both entries share out of index.js: the standalone
           // MCP must never load (and so boot) the desktop app.
-          advancedChunks: { groups: [{ name: "developer-logs", test: /src\/main\/(developer-log-export|developer-runtime-logs|developer-logs-mcp-server|local-timing-log)\.ts$|tutti-agent-gui-host\/src\/local-timing\.ts$/ }] },
+          // The conversation host shares code with index.js; keep it in its own chunk so the
+          // sidecar never loads (and so boots) the desktop app either.
+          advancedChunks: { groups: [
+            { name: "developer-logs", test: /src\/main\/(developer-log-export|developer-runtime-logs|developer-logs-mcp-server|local-timing-log)\.ts$|tutti-agent-gui-host\/src\/local-timing\.ts$/ },
+            // The entry itself stays out: grouping it would merge this chunk into the entry chunk.
+            { name: "local-host", test: (id: string) => /src\/(local-host|shared)\/|packages\/core\//.test(id) && !/src\/local-host\/entry\.ts$/.test(id) },
+          ] },
         },
       },
     },

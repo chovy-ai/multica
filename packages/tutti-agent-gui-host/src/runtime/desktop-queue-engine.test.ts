@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAgentSessionEngine, selectSessionIsSubmitting } from "@tutti-os/agent-activity-core";
 import { createDesktopQueueEngine } from "./desktop-queue-engine";
-import type { LocalPromptQueue, LocalQueuedPrompt } from "../local-protocol";
+import type { LocalPromptQueue, LocalQueuedPrompt } from "@multica/core/local-conversation/protocol";
 type SubmitInput = Parameters<ReturnType<typeof createAgentSessionEngine>["submitPrompt"]>[0];
 
 function setup(running = false) {

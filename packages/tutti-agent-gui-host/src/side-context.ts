@@ -1,4 +1,4 @@
-import type { LocalConversation } from "./local-protocol";
+import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 
 export function sideExecutionContent(side: NonNullable<LocalConversation["side"]>, content: string): string {
   const messages = side.context.slice(-20).map((message) => ({ role: message.role, content: message.content.slice(-8000), content_truncated: message.content.length > 8000 }));

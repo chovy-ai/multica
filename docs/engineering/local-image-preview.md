@@ -17,7 +17,7 @@ GUI 通过 `image.read` 调用桌面 `imageRead`。附件引用必须出现在�
 验证：
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-output-images.test.ts src/main/local-output-images.integration.test.ts src/main/local-provider-runner.test.ts src/main/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-output-images.test.ts src/local-host/local-output-images.integration.test.ts src/local-host/local-provider-runner.test.ts src/local-host/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/tutti-agent-gui-host test src/runtime/runtime.test.ts src/local-protocol.test.ts
 pnpm --filter @multica/views test tutti-agent-gui-panel
 pnpm --filter @multica/desktop test src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx

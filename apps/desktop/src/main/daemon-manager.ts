@@ -94,6 +94,9 @@ let cachedCliBinaryVersion: string | null | undefined = undefined;
 // busy executing tasks. The poll loop retries the check on each tick and
 // fires the restart once active_task_count drops to 0.
 let pendingVersionRestart = false;
+// Drains local conversations before a version restart; false means work is
+// still running and the restart must wait.
+let quiesceLocalConversations: () => Promise<boolean> = async () => true;
 let targetApiBaseUrl: string | null = null;
 let activeProfile: ActiveProfile | null = null;
 // Recovery is intentionally process-local: it keeps a daemon alive while the
@@ -640,6 +643,11 @@ async function ensureRunningDaemonVersionMatches(): Promise<
       return "deferred";
     }
     case "restart":
+      // /health was idle, but a local turn may have started since: drain first.
+      if (!(await quiesceLocalConversations())) {
+        pendingVersionRestart = true;
+        return "deferred";
+      }
       console.log(
         `[daemon] CLI version mismatch (bundled=${bundled} running=${running?.cli_version}) — restarting daemon`,
       );
@@ -1358,8 +1366,10 @@ function stopLogTail(): void {
 
 export function setupDaemonManager(
   windowGetter: () => BrowserWindow | null,
+  options: { quiesceLocalConversations?: () => Promise<boolean> } = {},
 ): void {
   getMainWindow = windowGetter;
+  if (options.quiesceLocalConversations) quiesceLocalConversations = options.quiesceLocalConversations;
 
   ipcMain.handle("daemon:set-target-api-url", async (_e, url: string) => {
     const normalized = url || null;

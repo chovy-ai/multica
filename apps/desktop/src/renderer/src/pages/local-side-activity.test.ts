@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import type { LocalConversation, LocalConversationEvent, LocalConversationTurn } from '@multica/tutti-agent-gui-host/local-protocol';
+import type { LocalConversation, LocalConversationEvent, LocalConversationTurn } from '@multica/core/local-conversation/protocol';
 import { localSideActivity } from './local-side-activity';
 const at = '2026-10-27T09:00:00Z';
 function conversation(status: LocalConversationTurn['status'], events: LocalConversationEvent[] = []): LocalConversation {

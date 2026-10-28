@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -84,4 +85,12 @@ export function profileUserIdPath(profile: string): string {
 export function profileArgs(profile: string): string[] {
   assertResolvedProfile(profile);
   return ["--profile", profile];
+}
+
+/** Credentials desktop synced into its profile for `apiUrl`; throws when absent. */
+export async function readDesktopProfileCredentials(apiUrl: string): Promise<{ userId: string; token: string; serverUrl: string }> {
+  const profile = deriveProfileName(apiUrl);
+  const userId = (await readFile(profileUserIdPath(profile), "utf8")).trim();
+  const config = JSON.parse(await readFile(profileConfigPath(profile), "utf8"));
+  return { userId, token: config.token, serverUrl: config.server_url };
 }

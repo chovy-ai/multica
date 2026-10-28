@@ -30,7 +30,7 @@ import { executionTargets } from "../protocol";
 import { ReasoningPreferences } from "./reasoning-preferences";
 import { ModelPreferences } from "./model-preferences";
 import { PermissionPreferences } from "./permission-preferences";
-import { isLocalReasoningEffort, localReasoningLevels, isLocalPermissionMode, type LocalReasoningEffort, type LocalPermissionMode } from "../local-protocol";
+import { isLocalReasoningEffort, localReasoningLevels, isLocalPermissionMode, type LocalReasoningEffort, type LocalPermissionMode } from "@multica/core/local-conversation/protocol";
 import { RuntimeLedger } from "./ledger";
 import { composerOptions, projectDetail, projectPendingSession, projectSession } from "./projection";
 import { createDesktopQueueEngine } from "./desktop-queue-engine";

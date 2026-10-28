@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { parseWithFallback } from "@multica/core/api/schema";
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION, type LocalConversationCapabilities, type LocalConversationClient, type LocalConversationScope } from "@multica/tutti-agent-gui-host/local-protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION, type LocalConversationCapabilities, type LocalConversationClient, type LocalConversationScope } from "@multica/core/local-conversation/protocol";
 
 export function localRuntimeRestartMessage(chinese: boolean): string {
   return chinese ? "桌面后台需要更新，请在运行中的任务结束后完全退出并重新打开 Multica。刷新页面无法完成更新。" : "The desktop runtime needs updating. After running tasks finish, fully quit and reopen Multica. Reloading the page does not update it.";
@@ -41,6 +41,7 @@ export function getLocalConversationClient(raw: LocalConversationClient): Compat
     listeners.forEach((listener) => listener());
   };
   const client: CompatibleClient = {
+    files: raw.files,
     check(scope) {
       const id = key(scope);
       let pending = checks.get(id);

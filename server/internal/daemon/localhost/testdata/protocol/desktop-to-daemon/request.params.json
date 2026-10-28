@@ -1,0 +1,11 @@
+{
+  "scope": {
+    "apiUrl": "https://api.multica.ai",
+    "userId": "5f0c2a1e-0000-4000-8000-000000000001",
+    "workspaceId": "5f0c2a1e-0000-4000-8000-000000000002"
+  },
+  "method": "read",
+  "params": {
+    "id": "conv-1"
+  }
+}

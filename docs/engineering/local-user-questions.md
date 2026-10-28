@@ -46,7 +46,7 @@ After a provider timeout the pending card is canceled when that execution ends.
 Validation:
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-user-question.test.ts src/main/local-context-mcp.test.ts src/main/local-conversation-service.test.ts src/main/local-provider-runner.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-user-question.test.ts src/local-host/local-context-mcp.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-provider-runner.test.ts
 pnpm --filter @multica/tutti-agent-gui-host test src/runtime/runtime.test.ts
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/tutti-agent-gui-host typecheck

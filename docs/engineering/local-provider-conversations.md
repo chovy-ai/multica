@@ -39,7 +39,7 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 
 手动停止先保存暂停状态，再取消执行；执行失败保留后续消息并暂停。应用重启恢复未发送消息时保持暂停，避免无提示重放。旧版浏览器保存的队列只在确认主进程已接收后清除；发送结果不明的旧记录不自动重发。队列转为 Side 时，来源移除和 Side 队列使用同一份会话文件保存，Side 执行不依赖面板保持打开。
 
-队列回归：`pnpm --filter @multica/desktop exec vitest run src/main/local-conversation-queue.test.ts src/renderer/src/platform/local-conversation-service.test.ts`，以及 `pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/runtime/desktop-queue-engine.test.ts src/runtime/runtime.test.ts`。测试使用注入的假运行器和 HTTP 响应，不调用真实模型。
+队列回归：`pnpm --filter @multica/desktop exec vitest run src/local-host/local-conversation-queue.test.ts src/renderer/src/platform/local-conversation-service.test.ts`，以及 `pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/runtime/desktop-queue-engine.test.ts src/runtime/runtime.test.ts`。测试使用注入的假运行器和 HTTP 响应，不调用真实模型。
 
 模型菜单的“思考强度”使用本机能力目录：Codex 读取 `models_cache.json` 中每个模型的 `supported_reasoning_levels`；Claude 通过无提示词的 SDK 控制连接读取 `supportedModels()`，不提交模型请求。Claude 目录缓存一分钟，“刷新模型”跳过缓存；目录获取失败时显示重试，不猜测模型支持的档位。原生默认模型未解析时，先显式选择模型再调整强度。
 
@@ -50,11 +50,11 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 Codex 的独立助手消息聚合到同一轮正文时，补齐上一条消息末尾的两个换行以保留 Markdown 段落边界；消息内部的增量、列表和代码块原样保留。一次性 CLI 与普通会话的 app-server 路径使用同一分隔规则，实时 text 事件拼接结果与最终保存正文一致。空消息不新增分隔，重复完成事件不重复输出。该规则只影响新执行，不改写已保存的历史，也不改变 IPC 或持久化格式。回归见 `local-provider-runner.test.ts`、`local-codex-stream.test.ts` 和 `local-conversation-service.test.ts`，覆盖流式输出、完成与重开会话。
 
 - `packages/tutti-agent-gui-host/src/protocol.ts`：执行目标与云端智能体分离，未改 vendored Tutti 源码。
-- `packages/tutti-agent-gui-host/src/local-protocol.ts`：仅桌面的本机会话 IPC 协议。
-- `apps/desktop/src/main/local-provider-runner.ts`：发现已安装 CLI、解析一次性执行输出；继续服务标题生成等调用。
-- `apps/desktop/src/main/local-codex-pool.ts`：仅供对话流 Codex 普通轮次使用的双 app-server 实例池。
-- `apps/desktop/src/main/local-provider-fork.ts`：创建独立的原生会话分支，不向模型提交消息。
-- `apps/desktop/src/main/local-conversation-service.ts`：本机持久化、附件、工作目录、执行生命周期。
+- `packages/core/local-conversation/protocol.ts`：仅桌面的本机会话 IPC 协议。
+- `apps/desktop/src/local-host/local-provider-runner.ts`：发现已安装 CLI、解析一次性执行输出；继续服务标题生成等调用。
+- `apps/desktop/src/local-host/local-codex-pool.ts`：仅供对话流 Codex 普通轮次使用的双 app-server 实例池。
+- `apps/desktop/src/local-host/local-provider-fork.ts`：创建独立的原生会话分支，不向模型提交消息。
+- `apps/desktop/src/local-host/local-conversation-service.ts`：本机持久化、附件、工作目录、执行生命周期。
 - `apps/desktop/src/renderer/src/platform/local-conversation-service.ts`：本机协议和 GUI DTO 适配，官方 @ 请求与结果同步。
 - `apps/desktop/src/renderer/src/pages/local-conversation-flow.tsx`：本机会话列表、归档、置顶和工作目录入口。
 - `packages/views/tutti-agent-gui/tutti-agent-gui-panel.tsx`：注入桌面服务；网页默认服务保留。
@@ -84,9 +84,9 @@ Codex 的独立助手消息聚合到同一轮正文时，补齐上一条消息�
 验证命令（全部使用测试创建的假 Codex，不调用真实模型）：
 
 ```sh
-pnpm --filter @multica/desktop exec vitest run src/main/local-codex-pool.test.ts src/main/local-conversation-service.test.ts src/main/local-conversation-queue.test.ts src/main/local-provider-runner.test.ts
+pnpm --filter @multica/desktop exec vitest run src/local-host/local-codex-pool.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-conversation-queue.test.ts src/local-host/local-provider-runner.test.ts
 pnpm --filter @multica/desktop typecheck
-pnpm --filter @multica/desktop exec eslint src/main/local-codex-*.ts src/main/local-conversation-service.ts src/main/local-conversation-service.test.ts
+pnpm --filter @multica/desktop exec eslint src/main/local-codex-*.ts src/local-host/local-conversation-service.ts src/local-host/local-conversation-service.test.ts
 git diff --check
 ```
 
@@ -109,7 +109,7 @@ Claude 普通会话通过官方 Agent SDK 的双向输入连接本机已安装�
 验证使用临时目录中的假 CLI，通过真实 SDK 的初始化与双向协议完成两轮消息和后台通知，不调用用户安装的模型服务。组件回归覆盖后台图标和停止菜单；服务回归覆盖落盘、续聊、回传及重启恢复。主进程修改需重启桌面应用才能启用；旧的只读 stdin 进程不能原地升级为双向会话。
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-claude-conversation.test.ts src/main/local-conversation-service.test.ts src/main/local-provider-runner.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx
+pnpm --filter @multica/desktop test src/local-host/local-claude-conversation.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-provider-runner.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx
 pnpm --filter @multica/desktop typecheck
 ```
 
@@ -137,7 +137,7 @@ Codex 使用无提示词的 `codex exec fork <native-session-id> --json --skip-g
 相关验证：
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-provider-fork.test.ts src/main/local-conversation-service.test.ts src/main/local-provider-runner.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx
+pnpm --filter @multica/desktop test src/local-host/local-provider-fork.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-provider-runner.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx
 pnpm --filter @multica/tutti-agent-gui-host test src/runtime/runtime.test.ts
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/tutti-agent-gui-host typecheck
@@ -163,7 +163,7 @@ CLI 子进程保留桌面进程的模型服务环境配置；Multica 业务身�
 ## 验证
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-provider-runner.test.ts src/main/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-provider-runner.test.ts src/local-host/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/tutti-agent-gui-host test
 pnpm --filter @multica/tutti-agent-gui-host typecheck
 pnpm --filter @multica/views test tutti-agent-gui
@@ -231,7 +231,7 @@ make env-exec ARGS='-- pnpm exec playwright test e2e/local-provider-gui.spec.ts 
 用户在桌面发送的 `222` 已实际完成，耗时约 4.4 秒；本机会话保存了用户消息和助手回复，执行状态为 `completed`，无错误。对应原生助手记录的实际模型是 `claude-opus-5-5`。本轮复核使用这条已完成的请求，没有额外发送模型消息。用新入口完整重启后，实窗恢复同一会话和回复。
 
 ```sh
-pnpm --filter @multica/desktop test scripts/claude-login-env.test.mjs scripts/worktree-dev-env.test.mjs src/main/local-provider-runner.test.ts src/main/local-conversation-service.test.ts
+pnpm --filter @multica/desktop test scripts/claude-login-env.test.mjs scripts/worktree-dev-env.test.mjs src/local-host/local-provider-runner.test.ts src/local-host/local-conversation-service.test.ts
 pnpm --filter @multica/desktop exec eslint scripts/claude-login-env.mjs scripts/claude-login-env.test.mjs scripts/dev.mjs
 pnpm --filter @multica/desktop typecheck
 git diff --check
@@ -256,12 +256,12 @@ git diff --check
 验证命令：
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-folder-projects.test.ts src/main/local-conversation-service.test.ts src/main/local-conversation-import.test.ts src/renderer/src/platform/local-conversation-projects.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/stores/local-conversation-project-visibility.test.ts
+pnpm --filter @multica/desktop test src/local-host/local-folder-projects.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-conversation-import.test.ts src/renderer/src/platform/local-conversation-projects.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/stores/local-conversation-project-visibility.test.ts
 pnpm --filter @multica/desktop exec vitest run src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/runtime/runtime.test.ts
 pnpm exec playwright test e2e/local-project-context.spec.ts e2e/local-provider-gui.spec.ts --project=chromium
 pnpm --filter @multica/desktop typecheck
-pnpm --filter @multica/desktop exec eslint src/main/local-conversation-service.ts src/main/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.tsx src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/platform/local-conversation-projects.ts src/renderer/src/platform/local-conversation-projects.test.ts src/renderer/src/platform/local-conversation-service.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop exec eslint src/local-host/local-conversation-service.ts src/local-host/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.tsx src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/platform/local-conversation-projects.ts src/renderer/src/platform/local-conversation-projects.test.ts src/renderer/src/platform/local-conversation-service.ts src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/desktop build
 git diff --check
 ```
@@ -302,7 +302,7 @@ standalone build as evidence that the running main process has updated.
 Relevant regression checks:
 
 ```sh
-pnpm --filter @multica/desktop exec vitest run src/renderer/src/platform/local-conversation-client.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-runtime-notice.test.tsx src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/pages/local-side-workspace.test.tsx src/main/local-conversation-service.test.ts
+pnpm --filter @multica/desktop exec vitest run src/renderer/src/platform/local-conversation-client.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-runtime-notice.test.tsx src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/pages/local-side-workspace.test.tsx src/local-host/local-conversation-service.test.ts
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/desktop build
 ```

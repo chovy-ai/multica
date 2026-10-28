@@ -13,7 +13,7 @@ The local branch stores only messages through the selected boundary, fresh local
 Validation:
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-conversation-service.test.ts src/main/local-provider-fork.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx
+pnpm --filter @multica/desktop test src/local-host/local-conversation-service.test.ts src/local-host/local-provider-fork.test.ts src/renderer/src/platform/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/tutti-agent-gui-host test
 pnpm --filter @multica/tutti-agent-gui-host typecheck

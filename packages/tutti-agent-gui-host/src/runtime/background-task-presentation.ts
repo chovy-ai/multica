@@ -1,4 +1,4 @@
-import type { LocalBackgroundTask } from "../local-protocol";
+import type { LocalBackgroundTask } from "@multica/core/local-conversation/protocol";
 import type { AgentGuiTaskMessagePayload } from "../protocol";
 
 export function backgroundTaskPresentation(task: LocalBackgroundTask, events: readonly AgentGuiTaskMessagePayload[], locale: "en" | "zh-CN") {

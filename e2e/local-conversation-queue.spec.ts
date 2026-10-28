@@ -2,7 +2,7 @@ import "./env";
 import { expect, test, type Page } from "@playwright/test";
 import type { AgentGuiInitSnapshot } from "../packages/tutti-agent-gui-host/src/protocol";
 import type { AgentTask, ChatMessage, ChatSession } from "../packages/core/types";
-import type { LocalPromptQueue } from "../packages/tutti-agent-gui-host/src/local-protocol";
+import type { LocalPromptQueue } from "../packages/core/local-conversation/protocol";
 
 async function mountQueueHarness(page: Page, snapshot: AgentGuiInitSnapshot, session: ChatSession, provider: "codex" | "claude") {
   await page.route("**/__test/local-conversation-queue", (route) => route.fulfill({ contentType: "text/html", body: '<button id="complete">Complete next execution away from composer</button><iframe title="Queue test" style="display:block;width:100%;height:850px;border:0"></iframe>' }));

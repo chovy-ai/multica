@@ -1267,7 +1267,7 @@
       "auto_start_title": "Démarrage automatique à l'ouverture",
       "auto_start_description": "Démarrer automatiquement à la connexion.",
       "auto_stop_title": "Arrêt automatique à la fermeture",
-      "auto_stop_description": "Arrêter le daemon à la fermeture de Desktop.",
+      "auto_stop_description": "Arrêter le daemon et les conversations locales à la fermeture de Desktop.",
       "cli_status": "État du CLI",
       "cli_checking": "Vérification…",
       "cli_installed": "Le CLI multica est installé et disponible dans PATH.",

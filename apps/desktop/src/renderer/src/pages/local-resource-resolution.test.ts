@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
-import type { LocalConversation, LocalPreviewFile, LocalPreviewLocation } from "@multica/tutti-agent-gui-host/local-protocol";
+import type { LocalConversation, LocalPreviewFile, LocalPreviewLocation } from "@multica/core/local-conversation/protocol";
 import { FileLinkPreviewError, fileLinkErrorMessage, resolveConversationFile } from "./local-resource-resolution";
 
 function fixture(contents = "See `output/batch/walkthrough.md`.") {

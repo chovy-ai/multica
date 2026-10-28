@@ -5,7 +5,7 @@ import { ApiError } from "@multica/core/api";
 import type { AgentGuiHostEvent } from "@multica/tutti-agent-gui-host/protocol";
 import type { Agent, ChatSession, StorageAdapter } from "@multica/core/types";
 import { createAgentGuiParentService } from "./parent-service";
-import { CREATE_TASK_MENTION_ID } from "@multica/tutti-agent-gui-host/local-protocol";
+import { CREATE_TASK_MENTION_ID } from "@multica/core/local-conversation/protocol";
 
 const mocked = vi.hoisted(() => ({ enqueueRestore: vi.fn(), api: {
   listAgents: vi.fn(), listMembers: vi.fn(), listRuntimes: vi.fn(),

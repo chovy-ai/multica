@@ -1261,7 +1261,7 @@
       "auto_start_title": "起動時に自動開始",
       "auto_start_description": "ログイン時に自動起動します。",
       "auto_stop_title": "終了時に自動停止",
-      "auto_stop_description": "デスクトップ版を閉じるとデーモンを停止します。",
+      "auto_stop_description": "デスクトップ版を閉じるとデーモンとローカル会話を停止します。",
       "cli_status": "CLI の状態",
       "cli_checking": "確認中…",
       "cli_installed": "multica CLI はインストール済みで PATH から利用できます。",

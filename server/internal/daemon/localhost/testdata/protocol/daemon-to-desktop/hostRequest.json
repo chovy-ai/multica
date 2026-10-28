@@ -1,0 +1,10 @@
+{
+  "id": "0f1e2d3c4b5a6978",
+  "kind": "confirmed_operation",
+  "payload": {
+    "operation": "settings_update_workspace",
+    "input": {
+      "name": "Acme"
+    }
+  }
+}

@@ -12,7 +12,7 @@ import type { AgentGuiSession, AgentGuiExecutionTarget, AgentGuiSessionDetail, A
 import { localProjectSectionKey } from "../local-projects";
 import { RuntimeLedger } from "./ledger";
 import { chatAuthoredPrompt } from "@multica/core/chat/context-snapshot";
-import { localMessageDisplayContent } from "../local-protocol";
+import { localMessageDisplayContent } from "@multica/core/local-conversation/protocol";
 import { backgroundTaskPresentation } from "./background-task-presentation";
 
 export const MULTICA_GUI_CAPABILITIES: AgentActivitySessionCapabilities = {

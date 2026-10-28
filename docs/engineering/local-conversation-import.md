@@ -31,7 +31,7 @@ Claude Code 使用已安装的 Agent SDK：`listSessions`、`getSessionInfo`、`
 默认测试使用专门创建的模拟 Codex 可执行文件和隔离 Claude 配置目录。验证分页、只读 RPC、原始文件不变、独立分支续聊、重启去重、部分失败、并发保护、账号切换、取消、持久化失败及导入窗口交互。
 
 ```sh
-pnpm --filter @multica/desktop test src/main/local-native-history.test.ts src/main/local-conversation-import.test.ts src/main/local-conversation-service.test.ts src/main/local-provider-fork.test.ts src/renderer/src/pages/local-conversation-import.test.tsx src/renderer/src/pages/local-conversation-flow.test.tsx
+pnpm --filter @multica/desktop test src/local-host/local-native-history.test.ts src/local-host/local-conversation-import.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-provider-fork.test.ts src/renderer/src/pages/local-conversation-import.test.tsx src/renderer/src/pages/local-conversation-flow.test.tsx
 pnpm --filter @multica/desktop typecheck
 git diff --check
 ```

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Popover, PopoverContent, PopoverTrigger } from "@tutti-os/ui-system/components";
 import { RefreshIcon } from "@tutti-os/ui-system/icons";
 import type { AgentGuiRpcClient } from "./protocol";
-import type { LocalProviderUsage, LocalUsageWindow } from "./local-protocol";
+import type { LocalProviderUsage, LocalUsageWindow } from "@multica/core/local-conversation/protocol";
 
 export function remainingPercent(window: LocalUsageWindow, now = Date.now()): number | null {
   if (window.resetsAt && Date.parse(window.resetsAt) <= now) return null;
