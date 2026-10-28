@@ -13,7 +13,8 @@ type Emit = (event: Omit<LocalConversationEvent, "seq" | "created_at">) => void;
 type Result = { output: string; sessionId?: string };
 export interface ClaudeRunObserver {
   tasks(tasks: LocalBackgroundTask[]): void;
-  reply(content: string): void;
+  reply(content: string, taskIds?: string[]): void;
+  ready?(): void;
 }
 interface Run {
   id: ReturnType<typeof randomUUID>; parser: ProviderStream; observer: ClaudeRunObserver;
@@ -45,8 +46,7 @@ export class LocalClaudeConversation {
   private runs: Run[] = [];
   private active?: Run;
   private frameOwner?: Run;
-  private notificationOwner?: Run;
-  private delivery?: ProviderStream;
+  private deliveries = new Map<Run, { ids: Set<string>; parser?: ProviderStream; replyIds?: string[] }>();
   private tasks = new Map<string, { value: LocalBackgroundTask; owner: Run; background: boolean }>();
   private outputPaths = new Map<string, string>();
   private outputTimer?: ReturnType<typeof setInterval>;
@@ -62,6 +62,30 @@ export class LocalClaudeConversation {
   constructor(private onClose: () => Promise<void>, private deps: Dependencies = dependencies) {}
   get available(): boolean { return !this.closeRequested && !this.closed; }
   get signal(): AbortSignal { return this.controller.signal; }
+  claimDelivery(ids: string[], turnId: string): boolean {
+    if (!this.available || this.active || [...this.deliveries.values()].some((delivery) => delivery.parser)) return false;
+    if (!ids.length || ids.some((id) => this.tasks.get(id)?.value.delivery?.status !== "pending")) return false;
+    for (const id of ids) {
+      const task = this.tasks.get(id)!;
+      task.value.delivery = { status: "requested", turnId };
+      this.deliveries.get(task.owner)?.ids.delete(id);
+      if (!this.deliveries.get(task.owner)?.ids.size) this.deliveries.delete(task.owner);
+    }
+    return true;
+  }
+  finishDelivery(ids: string[], status: "delivered" | "interrupted"): void {
+    for (const id of ids) {
+      const task = this.tasks.get(id);
+      if (task?.value.delivery && ["pending", "requested"].includes(task.value.delivery.status)) {
+        task.value.delivery = { ...task.value.delivery, status };
+        this.deliveries.get(task.owner)?.ids.delete(id);
+        if (!this.deliveries.get(task.owner)?.ids.size) this.deliveries.delete(task.owner);
+      }
+    }
+    if (!this.active && !this.hasBackgroundTasks() && !this.deliveries.size) {
+      this.closeRequested = true; this.query?.close();
+    }
+  }
   private dispose(): Promise<void> { return this.disposal ??= (async () => { this.closed = true; await this.onClose(); })(); }
   async stop(): Promise<void> {
     this.closeRequested = true; this.controller.abort(); this.wake?.(); this.query?.close();
@@ -70,8 +94,12 @@ export class LocalClaudeConversation {
   }
   async stopBackground(): Promise<void> {
     for (const task of this.tasks.values()) if (task.background && task.value.status === "running") {
+      task.value = { ...task.value, completionSource: "stop" };
       await this.query?.stopTask(task.value.id);
-      if (task.value.status === "running") task.value = { ...task.value, status: "cancelled" };
+      if (task.value.status === "running") {
+        task.value = { ...task.value, status: "cancelled", completionSource: "stop" };
+        this.pendingDelivery(task);
+      }
     }
     this.publishTasks();
   }
@@ -167,11 +195,30 @@ export class LocalClaudeConversation {
     } else if ((!readableTasks || this.controller.signal.aborted) && this.outputTimer) {
       clearInterval(this.outputTimer); this.outputTimer = undefined;
     }
-    for (const owner of this.runs) owner.observer.tasks([...this.tasks.values()].filter((task) => task.background && task.owner === owner).map((task) => task.value));
+    for (const owner of this.runs) owner.observer.tasks(structuredClone([...this.tasks.values()].filter((task) => task.background && task.owner === owner).map((task) => task.value)));
     // A foreground reply may precede the background membership snapshot.
     if (this.active?.finalReply && this.hasBackgroundTasks()) this.finish(this.active);
   }
   private hasBackgroundTasks(): boolean { return [...this.tasks.values()].some((task) => task.background && task.value.status === "running"); }
+  private pendingDelivery(task: { value: LocalBackgroundTask; owner: Run; background: boolean }): void {
+    if (!task.background || !task.owner.settled || task.value.ambient || task.value.delivery) return;
+    task.value.delivery = { status: "pending" };
+    const delivery = this.deliveries.get(task.owner) ?? { ids: new Set<string>() };
+    delivery.ids.add(task.value.id); this.deliveries.set(task.owner, delivery);
+  }
+  private deliver(owner: Run): void {
+    const delivery = this.deliveries.get(owner);
+    if (!delivery?.parser?.output.trim()) return;
+    const ids = delivery.replyIds ?? [...delivery.ids];
+    const content = delivery.parser.output;
+    for (const id of ids) this.tasks.get(id)!.value.delivery = { status: "delivered" };
+    for (const id of ids) delivery.ids.delete(id);
+    delivery.parser = undefined; delivery.replyIds = undefined;
+    if (!delivery.ids.size) this.deliveries.delete(owner);
+    // The observer persists the message and its task receipt together.
+    owner.observer.reply(content, ids);
+    this.publishTasks();
+  }
   private refreshTaskOutputs(): Promise<void> {
     return this.outputRead ??= (async () => {
       let changed = false;
@@ -213,18 +260,18 @@ export class LocalClaudeConversation {
           if (event.subtype === "task_notification") {
             const task = this.tasks.get(event.task_id);
             if (task) {
-              task.value = { ...task.value, status: event.status === "stopped" ? "cancelled" : event.status, summary: event.summary, updatedAt: now, completedAt: now, ...taskUsage(event.usage) };
+              if (!["completed", "failed", "stopped"].includes(event.status)) continue;
+              task.value = { ...task.value, status: event.status === "stopped" ? "cancelled" : event.status, summary: event.summary, updatedAt: now, completedAt: now, completionSource: task.value.completionSource === "stop" ? "stop" : "notification", ...taskUsage(event.usage) };
               if (task.background) {
-                this.notificationOwner = task.owner;
-                this.publishTasks();
                 if (task.value.taskType === "local_bash" && typeof event.output_file === "string" && event.output_file) {
                   Object.assign(task.value, await readBackgroundTaskOutput(event.output_file));
                 }
+                this.pendingDelivery(task);
               }
             }
           } else if (event.subtype === "task_progress" || event.subtype === "task_updated") {
             const task = this.tasks.get(event.task_id);
-            if (task && task.value.status === "running") {
+            if (task && (task.value.status === "running" || (task.value.completionSource === "snapshot" && event.subtype === "task_updated" && ["completed", "failed", "killed"].includes(event.patch?.status)))) {
               const patch = event.subtype === "task_updated" ? event.patch ?? {} : event;
               if (typeof patch.is_backgrounded === "boolean") task.background = patch.is_backgrounded;
               task.value = { ...task.value, updatedAt: now, ...taskUsage(event.usage),
@@ -233,17 +280,24 @@ export class LocalClaudeConversation {
                 ...(typeof event.last_tool_name === "string" ? { lastToolName: event.last_tool_name } : {}),
               };
               const status = { completed: "completed", failed: "failed", killed: "cancelled" }[patch.status as string];
-              if (status) task.value = { ...task.value, status: status as LocalBackgroundTask["status"], completedAt: now, ...(typeof patch.error === "string" ? { summary: patch.error } : {}) };
+              if (status) {
+                task.value = { ...task.value, status: status as LocalBackgroundTask["status"], completedAt: now, completionSource: task.value.completionSource === "stop" ? "stop" : "update", ...(typeof patch.error === "string" ? { summary: patch.error } : {}) };
+                this.pendingDelivery(task);
+              }
             }
           } else {
             const values = event.subtype === "task_started" ? [event] : Array.isArray(event.tasks) ? event.tasks : [];
             if (event.subtype === "background_tasks_changed") {
               const live = new Set(values.map((task: Record<string, unknown>) => task.task_id));
-              for (const [id, task] of this.tasks) if (task.background && task.value.status === "running" && !live.has(id)) task.value = { ...task.value, status: "completed", completedAt: now, updatedAt: now };
+              for (const [id, task] of this.tasks) if (task.background && task.value.status === "running" && !live.has(id)) {
+                task.value = { ...task.value, status: "completed", completedAt: now, updatedAt: now, completionSource: task.value.completionSource === "stop" ? "stop" : "snapshot" };
+                this.pendingDelivery(task);
+              }
             }
             for (const task of values) {
               if (typeof task.task_id !== "string") continue;
               const previous = this.tasks.get(task.task_id);
+              if (previous && previous.value.status !== "running") continue;
               const owner = previous?.owner ?? this.active ?? this.frameOwner;
               if (owner) this.tasks.set(task.task_id, { owner,
                 background: event.subtype === "background_tasks_changed" || task.is_backgrounded !== false,
@@ -258,27 +312,38 @@ export class LocalClaudeConversation {
         const uuid = event.user_message_uuid ?? event.user_message_uuids?.at(-1);
         const bound = typeof uuid === "string" ? this.runs.find((run) => run.id === uuid) : undefined;
         if (bound) this.frameOwner = bound;
-        const owner = bound ?? (event.type === "result" ? this.runs.find((run) => !run.resultSeen) : this.frameOwner ?? this.active);
+        const soleDeliveryOwner = !this.active && this.deliveries.size === 1 ? this.deliveries.keys().next().value : undefined;
+        const owner = bound ?? (event.type === "result" ? this.runs.find((run) => !run.resultSeen) ?? soleDeliveryOwner : this.active ?? this.frameOwner);
         if (owner && !owner.settled) { owner.timing?.activity(); owner.timing?.once("provider.first_event"); }
         if (event.type === "result") {
           if (!owner) continue;
           owner.resultSeen = true;
           if (!owner.settled) { owner.parser.accept(JSON.stringify(event)); this.finish(owner, owner.parser.error ? new Error(owner.parser.error) : undefined); }
-          if (!this.active && !this.hasBackgroundTasks()) { this.closeRequested = true; this.query!.close(); break; }
+          // Only an observed assistant frame can make a result a background reply;
+          // a delayed foreground result is not evidence of a new delivery.
+          if (this.deliveries.get(owner)?.parser) {
+            if (!event.is_error) this.deliver(owner);
+            const remaining = this.deliveries.get(owner);
+            if (remaining) { remaining.parser = undefined; remaining.replyIds = undefined; }
+          }
+          for (const run of this.runs) run.observer.ready?.();
+          if (!this.active && !this.hasBackgroundTasks() && !this.deliveries.size) { this.closeRequested = true; this.query!.close(); break; }
           continue;
         }
-        if (owner && !owner.settled) {
+        const candidates = [...this.deliveries.keys()];
+        const deliveryOwner = bound ? (this.deliveries.has(bound) ? bound : undefined)
+          : !this.active && candidates.length === 1 ? candidates[0] : undefined;
+        if (deliveryOwner && (event.type === "stream_event" || event.type === "assistant")) {
+          const delivery = this.deliveries.get(deliveryOwner)!;
+          delivery.replyIds ??= [...delivery.ids];
+          delivery.parser ??= new ProviderStream("claude", () => {});
+          delivery.parser.accept(JSON.stringify(event));
+          if (replyEnded(event)) this.deliver(deliveryOwner);
+        } else if (owner && !owner.settled) {
           owner.parser.accept(JSON.stringify(event));
           if (replyEnded(event)) {
             owner.finalReply = true;
             if (this.hasBackgroundTasks()) this.finish(owner);
-          }
-        } else if (this.notificationOwner && (!bound || bound === this.notificationOwner) && (event.type === "stream_event" || event.type === "assistant")) {
-          this.delivery ??= new ProviderStream("claude", () => {});
-          this.delivery.accept(JSON.stringify(event));
-          if (replyEnded(event)) {
-            if (this.delivery.output.trim()) this.notificationOwner.observer.reply(this.delivery.output);
-            this.delivery = undefined; this.notificationOwner = undefined;
           }
         }
       }
@@ -286,7 +351,10 @@ export class LocalClaudeConversation {
     finally {
       this.closeRequested = true; this.controller.abort(); this.wake?.(); this.query?.close();
       for (const run of this.runs) this.finish(run, failure ?? new Error("Claude conversation stopped before finishing this message"));
-      for (const task of this.tasks.values()) if (task.value.status === "running") task.value = { ...task.value, status: failure ? "failed" : "cancelled" };
+      for (const task of this.tasks.values()) if (task.value.status === "running") {
+        task.value = { ...task.value, status: failure ? "failed" : "cancelled", ...(failure ? { summary: failure.message } : {}) };
+        this.pendingDelivery(task);
+      }
       this.publishTasks();
     }
   }

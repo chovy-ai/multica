@@ -31,8 +31,11 @@ export interface LocalBackgroundTask {
   toolUseId?: string; taskType?: string; progressSummary?: string; lastToolName?: string;
   usage?: { totalTokens: number; toolUses: number; durationMs: number };
   output?: string; outputTruncated?: boolean; updatedAt?: string; completedAt?: string;
+  completionSource?: "notification" | "update" | "snapshot" | "stop";
+  delivery?: { status: "pending" | "requested" | "delivered" | "interrupted"; turnId?: string };
 }
 export interface LocalConversationTurn {
+  backgroundDelivery?: { sourceTurnId: string; taskIds: string[] };
   backgroundTasks?: LocalBackgroundTask[];
   questions?: LocalUserQuestion[];
   requestId?: string;

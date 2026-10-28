@@ -176,6 +176,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
       emit({type:'assistant',user_message_uuid:input.uuid,message:{role:'assistant',stop_reason:'end_turn',content:[{type:'text',text:'Second reply in the same process.'}]}});
       emit({type:'system',subtype:'task_notification',task_id:'monitor',status:'completed',summary:'Test watcher finished'});
       emit({type:'system',subtype:'background_tasks_changed',tasks:[]});
+      emit({type:'assistant',user_message_uuid:first,message:{role:'assistant',stop_reason:'end_turn',content:[{type:'text',text:'Watcher finished.'}]}});
       emit({type:'result',subtype:'success',is_error:false,user_message_uuid:input.uuid,result:'Second reply in the same process.'});
     }
   }
@@ -190,6 +191,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     expect(worker.available).toBe(true);
     expect(await worker.run({ ...input, content: "Fake second message" }, vi.fn(), new AbortController().signal, observer)).toMatchObject({ output: "Second reply in the same process." });
     await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    expect(observer.reply).toHaveBeenCalledExactlyOnceWith("Watcher finished.", ["monitor"]);
   });
   it("finishes the reply while a background monitor keeps the CLI alive, then accepts another message in that same process", async () => {
     const f = await setup(); const first = await f.begin();
@@ -223,7 +225,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     f.push({ type: "system", subtype: "background_tasks_changed", tasks: [] });
     f.push(reply(first.uuid, "The PR is now merged."));
     f.push(result(first.uuid, "The PR is now merged."));
-    await vi.waitFor(() => expect(f.observer.reply).toHaveBeenCalledExactlyOnceWith("The PR is now merged."));
+    await vi.waitFor(() => expect(f.observer.reply).toHaveBeenCalledExactlyOnceWith("The PR is now merged.", ["monitor"]));
     expect(f.observer.tasks).toHaveBeenLastCalledWith([expect.objectContaining({ status: "completed", summary: "PR merged" })]);
     await vi.waitFor(() => expect(f.dispose).toHaveBeenCalledOnce());
   });
@@ -238,7 +240,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     f.push({ type: "system", subtype: "task_notification", task_id: "monitor", status: "completed", summary: "Done" });
     f.push({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Background result delivered." } } });
     f.push({ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "end_turn" } } });
-    await vi.waitFor(() => expect(f.observer.reply).toHaveBeenCalledExactlyOnceWith("Background result delivered."));
+    await vi.waitFor(() => expect(f.observer.reply).toHaveBeenCalledExactlyOnceWith("Background result delivered.", ["monitor"]));
   });
   it("settles missed task notifications from the authoritative membership snapshot", async () => {
     const f = await setup(); const first = await f.begin();
@@ -247,7 +249,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     f.push({ type: "system", subtype: "background_tasks_changed", tasks: [] });
     f.push(result(first.uuid, "Monitoring."));
     await vi.waitFor(() => expect(f.observer.tasks).toHaveBeenLastCalledWith([expect.objectContaining({ status: "completed" })]));
-    expect(f.transport.close).toHaveBeenCalled();
+    expect(f.transport.close).not.toHaveBeenCalled();
+    expect(f.worker.claimDelivery(["monitor"], "followup")).toBe(true);
   });
   it("does not resurrect a finished monitor from a late task-start bookend", async () => {
     const f = await setup(); const first = await f.begin();
@@ -257,7 +260,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     f.push({ type: "system", subtype: "task_started", task_id: "monitor", description: "Late start" });
     f.push(result(first.uuid, "Watching."));
     await vi.waitFor(() => expect(f.observer.tasks).toHaveBeenLastCalledWith([expect.objectContaining({ status: "completed" })]));
-    expect(f.transport.close).toHaveBeenCalled();
+    expect(f.transport.close).not.toHaveBeenCalled();
+    expect(f.worker.claimDelivery(["monitor"], "followup")).toBe(true);
   });
   it("stops the monitor without cancelling an unrelated foreground reply", async () => {
     const f = await setup(); const first = await f.begin();
