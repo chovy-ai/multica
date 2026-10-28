@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Delegated reply regression fixture</title>
+<style>html,body,iframe{margin:0;width:100%;height:100%;border:0;display:block}body{overflow:hidden}</style>
+<iframe title="Conversation"></iframe>
+<script>
+const params = new URLSearchParams(location.search);
+const theme = params.get("theme") || "light";
+const at = "2026-10-28T15:00:00Z";
+const session = { id: "delegated-session", workspace_id: "fixture-workspace", agent_id: params.get("local") === "false" ? "cloud-codex" : "local:codex", creator_id: "fixture-user", title: "任务统一归属测试用例平台项目", status: "active", created_at: at, updated_at: at };
+const assets = "/vendor/tutti/packages/agent/gui/app/renderer/assets/icons/agents/";
+const names = ["团团用例平台队长", "锤锤审查发布官"];
+const agents = names.map((name, index) => ({ agent: { id: `agent-${index}`, name, model: null, archived_at: null }, provider: "codex", iconUrl: assets + (index ? "gemini-rounded.png" : "claude-rounded.png"), canInvoke: true, runtimeBound: true, runtimeOnline: true }));
+const snapshot = { workspaceId: session.workspace_id, workspaceSlug: "fixture", userId: session.creator_id, locale: "zh-CN", theme, local: params.get("local") !== "false", hostActive: true, hostVisible: true, agents, sessions: [session], activeSessionId: session.id, selectedAgentId: session.agent_id,
+  executionTargets: [{ id: session.agent_id, name: "Codex", provider: "codex", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true }] };
+let finished = !params.has("streaming") || sessionStorage.getItem("invocation-finished") === "true";
+const tasks = agents.map(({agent}, index) => ({ id: `run-${index}`, agent_id: agent.id, chat_session_id: session.id, chat_invocation_group_id: "invocation-group", chat_invoked_agent_name: agent.name, status: "completed", created_at: at, started_at: at, completed_at: at }));
+const replies = ["收到，后续创建任务时，一律归入 **测试用例平台** 项目。", "收到，后续创建任务一律归入测试用例平台项目。`review` 已完成。"];
+let port;
+window.finishInvocation = () => { finished = true; sessionStorage.setItem("invocation-finished", "true"); port.postMessage({ type: "event", event: { type: "invalidate", scope: "session", sessionId: session.id } }); };
+window.removeAvatar = () => { snapshot.agents[1].iconUrl = ""; port.postMessage({ type: "event", event: { type: "init", snapshot } }); };
+window.breakAvatar = () => { snapshot.agents[1].iconUrl = "data:image/png;base64,invalid"; port.postMessage({ type: "event", event: { type: "init", snapshot } }); };
+window.removeAgent = () => { snapshot.agents = snapshot.agents.slice(0, 1); port.postMessage({ type: "event", event: { type: "init", snapshot } }); };
+const frame = document.querySelector("iframe");
+window.addEventListener("message", (event) => {
+  if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== "multica:agent-gui:ready") return;
+  const channel = new MessageChannel(); port = channel.port1;
+  port.onmessage = ({data: request}) => {
+    if (request.type !== "request") return;
+    let result;
+    switch (request.method) {
+      case "workspace.load": result = snapshot; break;
+      case "session.load": result = { session, tasks: tasks.map((task, i) => !finished && i === 1 ? {...task, status: "running", completed_at: null} : task), pending: finished ? {} : { task_id: "run-1", status: "running", created_at: at }, messages: [
+        { id: "input", chat_session_id: session.id, role: "user", content: "请两位智能体确认任务的项目归属。", task_id: "run-0", created_at: at },
+        ...tasks.flatMap((task, index) => !finished && index === 1 ? [] : [{ id: `reply-${index}`, chat_session_id: session.id, role: "assistant", content: replies[index], task_id: task.id, created_at: at }])
+      ] }; break;
+      case "task.messages": result = request.params.taskId === "run-1" ? [{ seq: 1, type: "text", content: replies[1].slice(0, 12), created_at: at }, { seq: 2, type: "text", content: replies[1].slice(12), created_at: at }] : []; break;
+      case "storage.read": result = null; break;
+      case "context.tasks": result = []; break;
+      case "models.list": result = { supported: true, models: [] }; break;
+      case "usage.read": result = { provider: "codex", context: { usedTokens: null, limitTokens: null, model: null, updatedAt: null }, account: { status: "unavailable", plan: null, windows: [], updatedAt: null } }; break;
+    }
+    port.postMessage({ type: "response", id: request.id, result });
+  };
+  port.start();
+  frame.contentWindow.postMessage({ type: "multica:agent-gui:connect", snapshot }, location.origin, [channel.port2]);
+});
+frame.src = params.get("gui") || "/tutti-agent-gui/index.html";
+</script>
+</html>

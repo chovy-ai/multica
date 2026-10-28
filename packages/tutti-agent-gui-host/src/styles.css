@@ -13,6 +13,7 @@
 @source "../../../vendor/tutti/packages/ui/rich-text/src";
 @source "../../../vendor/tutti/packages/ui/system/src";
 @source "../../ui/components/ui/button.tsx";
+@source "../../ui/components/common/actor-avatar.tsx";
 @source "../../ui/components/ui/badge.tsx";
 @source "../../ui/components/ui/spinner.tsx";
 @source "../../ui/components/ui/dropdown-menu.tsx";
