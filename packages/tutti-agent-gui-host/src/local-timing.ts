@@ -9,7 +9,7 @@ export const LOCAL_TIMING_STAGES = [
   "provider.thread_wait", "provider.thread_ready", "provider.turn_start", "provider.thread_unload",
   "provider.first_stdout", "provider.first_stderr", "provider.first_event", "provider.session_ready",
   "provider.first_output", "provider.first_text", "provider.tool", "provider.result", "provider.exit", "provider.failure", "provider.retry",
-  "user.question", "images.save", "context.dispose", "images.recover", "turn.save", "turn.finished",
+  "title.generate", "title.persist", "user.question", "images.save", "context.dispose", "images.recover", "turn.save", "turn.finished",
 ] as const;
 export type LocalTimingStage = typeof LOCAL_TIMING_STAGES[number];
 export type LocalTimingOutcome = "completed" | "failed" | "cancelled";
@@ -24,6 +24,7 @@ export function localTimingFailure(error: unknown): LocalTimingFailure {
 }
 export interface LocalTimingIdentity {
   source: "main" | "renderer" | "gui";
+  background?: boolean;
   conversationId: string;
   requestId?: string;
   turnId?: string;
@@ -56,6 +57,7 @@ export function parseLocalTiming(value: unknown): LocalTimingRecord | null {
     version: 1, source: raw.source as LocalTimingIdentity["source"], conversationId: raw.conversationId as string,
     at: raw.at, stage: raw.stage as LocalTimingStage, event: raw.event as LocalTimingRecord["event"], elapsedMs: raw.elapsedMs as number,
   };
+  if (raw.background === true) result.background = true;
   if (raw.requestId !== undefined) result.requestId = raw.requestId as string;
   if (raw.turnId !== undefined) result.turnId = raw.turnId as string;
   if (raw.provider === "codex" || raw.provider === "claude") result.provider = raw.provider;
@@ -79,13 +81,27 @@ export function createLocalTiming(identity: LocalTimingIdentity, sink: LocalTimi
   let phase: LocalTimingStage = "turn.execute";
   let closed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
-  const write = (stage: LocalTimingStage, event: LocalTimingRecord["event"], extra: Partial<Pick<LocalTimingRecord, "durationMs" | "idleMs" | "outcome" | "failure">> = {}) => {
-    if (closed) return;
+  const write = (stage: LocalTimingStage, event: LocalTimingRecord["event"], extra: Partial<Pick<LocalTimingRecord, "durationMs" | "idleMs" | "outcome" | "failure">> = {}, background = false) => {
+    if (closed && !background) return;
     try {
-      const record = parseLocalTiming({ ...identity, version: 1, at: new Date().toISOString(), stage, event, elapsedMs: Math.round(performance.now() - start), ...extra });
+      const record = parseLocalTiming({ ...identity, version: 1, at: new Date().toISOString(), stage, event, elapsedMs: Math.round(performance.now() - start), ...(background ? { background: true } : {}), ...extra });
       if (record) sink(record);
     }
     catch { /* Diagnostics must not change execution or delivery. */ }
+  };
+  const span = async <T>(stage: LocalTimingStage, action: () => Promise<T>, background = false): Promise<T> => {
+    const pending = { stage };
+    if (!background) { phase = stage; active.push(pending); }
+    const before = performance.now();
+    write(stage, "start", {}, background);
+    let outcome: LocalTimingOutcome = "completed";
+    let failure: LocalTimingFailure | undefined;
+    try { return await action(); }
+    catch (error) { failure = localTimingFailure(error); outcome = failure === "cancelled" ? "cancelled" : "failed"; throw error; }
+    finally {
+      if (!background) active.splice(active.indexOf(pending), 1);
+      write(stage, "end", { durationMs: Math.round(performance.now() - before), outcome, ...(failure ? { failure } : {}) }, background);
+    }
   };
   return {
     mark(stage: LocalTimingStage, extra?: Partial<Pick<LocalTimingRecord, "durationMs" | "outcome" | "failure">>) {
@@ -104,24 +120,16 @@ export function createLocalTiming(identity: LocalTimingIdentity, sink: LocalTimi
         write(phase, "end", began === undefined ? {} : { durationMs: Math.round(performance.now() - began) });
       }
     },
-    async measure<T>(stage: LocalTimingStage, action: () => Promise<T>): Promise<T> {
-      phase = stage;
-      const pending = { stage }; active.push(pending);
-      const before = performance.now();
-      write(stage, "start");
-      let outcome: LocalTimingOutcome = "completed";
-      let failure: LocalTimingFailure | undefined;
-      try { return await action(); }
-      catch (error) { failure = localTimingFailure(error); outcome = failure === "cancelled" ? "cancelled" : "failed"; throw error; }
-      finally { active.splice(active.indexOf(pending), 1); write(stage, "end", { durationMs: Math.round(performance.now() - before), outcome, ...(failure ? { failure } : {}) }); }
-    },
+    measure<T>(stage: LocalTimingStage, action: () => Promise<T>): Promise<T> { return span(stage, action); },
+    // Cleanup spans remain observable after foreground completion without extending its heartbeat.
+    background<T>(stage: LocalTimingStage, action: () => Promise<T>): Promise<T> { return span(stage, action, true); },
     heartbeat() {
       if (timer || closed) return;
       timer = setInterval(() => write(active.at(-1)?.stage ?? phase, "wait", { idleMs: Math.round(performance.now() - lastActivity) }), 15_000);
     },
+    close() { if (timer) clearInterval(timer); closed = true; },
     finish(outcome: LocalTimingOutcome) {
-      if (timer) clearInterval(timer);
-      write("turn.finished", "end", { outcome }); closed = true;
+      write("turn.finished", "end", { outcome }); this.close();
     },
   };
 }

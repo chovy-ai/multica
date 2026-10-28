@@ -37,20 +37,30 @@ interface Options {
 }
 
 function summarize(records: LocalTimingRecord[]) {
-  const stages = new Map<string, { stage: string; records: number; waits: number; maxDurationMs?: number }>();
+  const stages = new Map<string, { stage: string; background: boolean; records: number; waits: number; durations: number[] }>();
   for (const record of records) {
-    const stage = stages.get(record.stage) ?? { stage: record.stage, records: 0, waits: 0 };
+    const background = record.background === true;
+    const key = `${record.stage}:${background}`;
+    const stage = stages.get(key) ?? { stage: record.stage, background, records: 0, waits: 0, durations: [] };
     stage.records++;
     if (record.event === "wait") stage.waits++;
-    if (record.durationMs !== undefined) stage.maxDurationMs = Math.max(stage.maxDurationMs ?? 0, record.durationMs);
-    stages.set(record.stage, stage);
+    if (record.event === "end" && record.durationMs !== undefined) stage.durations.push(record.durationMs);
+    stages.set(key, stage);
   }
   return {
     recordCount: records.length,
     conversationCount: new Set(records.map((record) => record.conversationId)).size,
     turnCount: new Set(records.flatMap((record) => record.turnId ? [record.turnId] : [])).size,
     failureCount: records.filter((record) => record.failure !== undefined).length,
-    stages: [...stages.values()],
+    stages: [...stages.values()].map(({ durations, ...stage }) => {
+      durations.sort((a, b) => a - b);
+      return { ...stage, ...(durations.length ? {
+        samples: durations.length,
+        p50DurationMs: durations[Math.ceil(durations.length * 0.5) - 1]!,
+        p95DurationMs: durations[Math.ceil(durations.length * 0.95) - 1]!,
+        maxDurationMs: durations.at(-1)!,
+      } : {}) };
+    }),
   };
 }
 

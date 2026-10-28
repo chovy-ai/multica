@@ -232,6 +232,21 @@ describe("local conversation persistence and execution", () => {
     }
     expect(JSON.stringify(options.timing.mock.calls)).not.toContain("PRIVATE_");
   });
+  it("publishes and persists turn completion while context cleanup is still pending", async () => {
+    let release!: () => void;
+    const { service, options } = await setup(undefined, async () => ({ env: {}, systemPrompt: "Context", dispose: () => new Promise<void>((resolve) => { release = resolve; }) }));
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    try {
+      await service.request(scope, "send", { id: entry.id, content: "hello" });
+      await vi.waitFor(() => expect(options.timing.mock.calls.some(([r]) => r.stage === "turn.finished")).toBe(true));
+      expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed");
+      expect(options.timing.mock.calls.some(([r]) => r.stage === "context.dispose" && r.event === "end")).toBe(false);
+      release();
+      await vi.waitFor(() => expect(options.timing.mock.calls.map(([r]) => r)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: "context.dispose", event: "end", background: true, outcome: "completed" }),
+      ])));
+    } finally { release?.(); }
+  });
   it("records preparation failures and terminates their timing span", async () => {
     const { service, options } = await setup(undefined, async () => { throw new Error("fetch failed PRIVATE_TOKEN"); });
     const entry = await service.request(scope, "create", { provider: "codex" });

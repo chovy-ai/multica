@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CHAT_CONTEXT_SNAPSHOT_END, CHAT_CONTEXT_SNAPSHOT_START } from "@multica/core/chat/context-snapshot";
 import { generateLocalConversationTitle } from "./local-conversation-title-generator";
 import { normalizeModelConversationTitle } from "./local-conversation-title";
+import { createLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import type { runLocalProvider } from "./local-provider-runner";
 
 describe("model-generated conversation titles", () => {
@@ -12,11 +13,13 @@ describe("model-generated conversation titles", () => {
       expect((await stat(input.cwd)).isDirectory()).toBe(true);
       return { output: '"查看 TES-131 任务详情"', sessionId: "discarded-title-session" };
     });
-    const title = await generateLocalConversationTitle({ provider, model: "selected-model", content: `[@TES-131 review 另一个 pr](mention://workspace-issue/issue?workspaceId=private) 里面有什么内容，你是如何读取的${CHAT_CONTEXT_SNAPSHOT_START}PRIVATE SNAPSHOT${CHAT_CONTEXT_SNAPSHOT_END}` }, new AbortController().signal, run);
+    const timing = createLocalTiming({ source: "main", conversationId: "title", background: true }, vi.fn());
+    const title = await generateLocalConversationTitle({ timing, provider, model: "selected-model", content: `[@TES-131 review 另一个 pr](mention://workspace-issue/issue?workspaceId=private) 里面有什么内容，你是如何读取的${CHAT_CONTEXT_SNAPSHOT_START}PRIVATE SNAPSHOT${CHAT_CONTEXT_SNAPSHOT_END}` }, new AbortController().signal, run);
     expect(title).toBe("查看 TES-131 任务详情");
     expect(run).toHaveBeenCalledOnce();
     const input = run.mock.calls[0]![0];
     expect(input).toMatchObject({ provider, model: "selected-model", titleOnly: true });
+    expect(input.timing).toBe(timing);
     expect(input.resume).toBeUndefined(); expect(input.mcp).toBeUndefined();
     expect(JSON.parse(input.content)).toEqual({ first_user_message: "@TES-131 review 另一个 pr 里面有什么内容，你是如何读取的" });
     expect(input.systemPrompt).toContain("Summarize the main intent rather than copying");

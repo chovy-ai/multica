@@ -4,7 +4,7 @@ import { CodexRpc, type CodexObject } from "./local-codex-rpc";
 import { CodexTurnStream } from "./local-codex-stream";
 import type { CodexContextBridge } from "./local-codex-context-bridge";
 import type { runLocalProvider } from "./local-provider-runner";
-import { localTimingFailure, type LocalTimingStage } from "@multica/tutti-agent-gui-host/local-timing";
+import { localTimingFailure, type LocalTiming, type LocalTimingStage } from "@multica/tutti-agent-gui-host/local-timing";
 
 export type CodexInput = Parameters<typeof runLocalProvider>[0];
 type Emit = Parameters<typeof runLocalProvider>[1];
@@ -28,9 +28,21 @@ export class LocalCodexWorker {
   }
   stop(): Promise<void> { return this.rpc.stop(); }
 
+  async waitForThread(threadId: string, signal: AbortSignal, timing?: LocalTiming): Promise<void> {
+    signal.throwIfAborted();
+    const pending = this.unloading.get(threadId);
+    if (!pending) return;
+    const wait = () => new Promise<void>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      void pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    });
+    await (timing ? timing.measure("provider.thread_wait", wait) : wait());
+  }
+
   async run(input: CodexInput, native: CodexObject, emit: Emit, signal: AbortSignal): Promise<{ output: string; sessionId: string }> {
     const timed = <T>(stage: LocalTimingStage, action: () => Promise<T>) => input.timing ? input.timing.measure(stage, action) : action();
-    if (input.resume) await timed("provider.thread_wait", async () => this.unloading.get(input.resume!));
+    if (input.resume) await this.waitForThread(input.resume, signal, input.timing);
     signal.throwIfAborted();
     let model = input.model ?? native.model ?? null;
     if (input.resume && !model) {
@@ -128,7 +140,8 @@ export class LocalCodexWorker {
       if (threadId) {
         this.activeThreads.delete(threadId);
         if (this.retiring && !this.activeThreads.size) void this.rpc.stop();
-        await timed("provider.thread_unload", () => this.unload(threadId!)).catch(() => {});
+        const unload = () => this.unload(threadId!);
+        void (input.timing ? input.timing.background("provider.thread_unload", unload) : unload()).catch(() => {});
       }
       this.bridge.release(id);
     }

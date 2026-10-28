@@ -4,6 +4,25 @@ import { createLocalTiming, createLocalPresentationTiming, parseLocalTiming, typ
 
 afterEach(() => vi.useRealTimers());
 describe("local turn timing", () => {
+  it("records background cleanup after completion without extending foreground waits", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance", "setInterval", "clearInterval"] });
+    const records: LocalTimingRecord[] = [];
+    const timing = createLocalTiming({ source: "main", conversationId: "c" }, (record) => records.push(record));
+    timing.heartbeat(); timing.mark("provider.result");
+    let release!: () => void;
+    const cleanup = timing.background("provider.thread_unload", () => new Promise<void>((resolve) => { release = resolve; }));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(records.at(-1)).toMatchObject({ stage: "provider.result", event: "wait" });
+    timing.finish("completed");
+    await vi.advanceTimersByTimeAsync(15_000);
+    release(); await cleanup;
+    expect(records.at(-1)).toMatchObject({ stage: "provider.thread_unload", event: "end", background: true, durationMs: 30_000 });
+    expect(records.filter((record) => record.stage === "turn.finished")).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    const title = createLocalTiming({ source: "main", conversationId: "c", background: true }, (record) => records.push(record));
+    await title.measure("title.generate", async () => {}); title.close(); title.mark("provider.exit");
+    expect(records.at(-1)).toMatchObject({ stage: "title.generate", background: true, outcome: "completed" });
+  });
   it("distinguishes a stalled configuration from a stalled reply and stops heartbeats at termination", async () => {
     vi.useFakeTimers({ toFake: ["Date", "performance", "setInterval", "clearInterval"] });
     const records: LocalTimingRecord[] = [];

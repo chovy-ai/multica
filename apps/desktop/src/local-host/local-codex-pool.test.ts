@@ -57,6 +57,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
   if(r.method==='turn/start') {
     const id=r.params.threadId; const turn='turn-'+(++next); const content=r.params.input[0].text;
     loaded.get(id).skipClose=content==='noClose';
+    loaded.get(id).delayClose=content==='delayedClose';
     if(content==='crash') return process.exit(9);
     const run={turn,item:'item-'+next}; running.set(id,run);
     // Notifications are intentionally emitted before the RPC response.
@@ -71,6 +72,11 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
   }
   if(r.method==='turn/interrupt') { reply({}); return finish(r.params.threadId,'interrupted'); }
   if(r.method==='thread/unsubscribe') {
+    if(loaded.get(r.params.threadId)?.delayClose) {
+      reply({status:'unsubscribed'});
+      const timer=setInterval(()=>{if(fs.existsSync(path.join(process.env.TEST_ROOT,'close.release'))){clearInterval(timer);loaded.delete(r.params.threadId);notify('thread/closed',{threadId:r.params.threadId})}},10);
+      return;
+    }
     const skip=loaded.get(r.params.threadId)?.skipClose;
     loaded.delete(r.params.threadId); reply({status:'unsubscribed'});
     if(skip)return;
@@ -93,6 +99,46 @@ process.on('SIGTERM',exit); process.stdin.on('end',exit);
 }
 
 describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
+  it("finishes a turn before unload while protecting resumed context and unrelated turns", async () => {
+    const { root, pool, input, calls } = await setup(5000);
+    const records: LocalTimingRecord[] = [];
+    const timing = createLocalTiming({ source: "main", conversationId: "finished-turn" }, (record) => records.push(record));
+    let completed = false;
+    const first = pool.run("scope", input("delayedClose", { timing }), vi.fn(), new AbortController().signal).then((reply) => { completed = true; return reply; });
+    try {
+      await wait(async () => expect((await calls()).filter((r) => r.method === "thread/unsubscribe")).toHaveLength(1));
+      await vi.waitFor(() => expect(completed).toBe(true), { timeout: 250 });
+      const result = await first; timing.finish("completed");
+      const next = pool.run("scope", input("follow-up", { resume: result.sessionId }), vi.fn(), new AbortController().signal);
+      void next.catch(() => {});
+      await expect(pool.run("scope", input("unrelated"), vi.fn(), new AbortController().signal)).resolves.toMatchObject({ output: "hello world" });
+      expect((await calls()).filter((r) => r.method === "thread/resume")).toHaveLength(0);
+      await writeFile(join(root, "close.release"), "go");
+      await expect(next).resolves.toMatchObject({ sessionId: result.sessionId });
+      await vi.waitFor(() => expect(records).toContainEqual(expect.objectContaining({ stage: "provider.thread_unload", event: "end", background: true })));
+      expect(records.findIndex((r) => r.stage === "turn.finished")).toBeLessThan(records.findIndex((r) => r.stage === "provider.thread_unload" && r.event === "end"));
+    } finally { await writeFile(join(root, "close.release"), "go"); await first; }
+  });
+  it("resumes on a healthy worker after a background unload times out", async () => {
+    const { pool, input, calls } = await setup(100);
+    const first = await pool.run("scope", input("noClose"), vi.fn(), new AbortController().signal);
+    await expect(pool.run("scope", input("follow-up", { resume: first.sessionId }), vi.fn(), new AbortController().signal)).resolves.toMatchObject({ output: "hello world", sessionId: first.sessionId });
+    const log = await calls();
+    const started = log.find((row) => row.method === "thread/start")!;
+    const resumed = log.find((row) => row.method === "thread/resume")!;
+    expect(resumed.pid).not.toBe(started.pid);
+  });
+  it("cancels a same-thread cleanup wait without delaying another conversation", async () => {
+    const { root, pool, input, calls } = await setup(5000);
+    const first = await pool.run("scope", input("delayedClose"), vi.fn(), new AbortController().signal);
+    const controller = new AbortController();
+    const next = pool.run("scope", input("cancelled", { resume: first.sessionId }), vi.fn(), controller.signal);
+    controller.abort();
+    await expect(next).rejects.toThrow();
+    await expect(pool.run("scope", input("unrelated"), vi.fn(), new AbortController().signal)).resolves.toMatchObject({ output: "hello world" });
+    expect((await calls()).filter((row) => row.method === "thread/resume")).toHaveLength(0);
+    await writeFile(join(root, "close.release"), "go");
+  });
   it("applies thinking effort to new and resumed turns and clears the previous override", async () => {
     const { pool, input, calls } = await setup();
     let resume: string | undefined;
@@ -121,6 +167,7 @@ describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
     expect(first.filter((record) => record.stage === "provider.pool_create")).toHaveLength(2);
     expect(second.filter((record) => record.stage === "provider.pool_create")).toHaveLength(0);
     expect(second.filter((record) => record.stage === "provider.pool_reused")).toHaveLength(1);
+    await vi.waitFor(() => expect(second).toContainEqual(expect.objectContaining({ stage: "provider.thread_unload", event: "end" })));
     for (const records of [first, second]) {
       expect(records).toEqual(expect.arrayContaining(["provider.pool_admission", "provider.lookup", "provider.config", "provider.thread_ready", "provider.turn_start", "provider.thread_unload"].map((stage) => expect.objectContaining({ stage, event: "end", outcome: "completed", durationMs: expect.any(Number) }))));
       expect(records.filter((record) => record.stage === "provider.first_event")).toHaveLength(1);
@@ -200,10 +247,13 @@ describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
 
   it("drains unrelated turns before recycling an instance whose thread closure is delayed", async () => {
     const { root, pool, input, calls } = await setup(100); const signal = new AbortController().signal;
+    const records: LocalTimingRecord[] = [];
+    const timing = createLocalTiming({ source: "main", conversationId: "draining" }, (record) => records.push(record));
     const sibling = pool.run("scope", input("holdSibling"), vi.fn(), signal); void sibling.catch(() => {});
     await wait(async () => expect((await calls()).filter((r) => r.method === "turn/start")).toHaveLength(1));
-    const closing = pool.run("scope", input("noClose"), vi.fn(), signal); void closing.catch(() => {});
+    const closing = pool.run("scope", input("noClose", { timing }), vi.fn(), signal); void closing.catch(() => {});
     await expect(closing).resolves.toMatchObject({ output: "hello world" });
+    await vi.waitFor(() => expect(records).toContainEqual(expect.objectContaining({ stage: "provider.thread_unload", event: "end", outcome: "failed", background: true })));
     expect((await calls()).filter((r) => r.method === "exit")).toHaveLength(0);
     await writeFile(join(root, "holdSibling.release"), "go");
     await expect(sibling).resolves.toMatchObject({ output: "hello world" });
