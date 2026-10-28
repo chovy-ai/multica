@@ -34,7 +34,7 @@ export function LocalFilePreview({ location, scope, sessionId, line, chinese }: 
   </div>;
 }
 
-export function WebResourcePreview({ id, url, scope: owner, active, chinese, onChange, onReference }: { id: string; url: string; scope: LocalConversationScope; active: boolean; chinese: boolean; onChange: (url: string, title?: string) => void; onReference: (url: string, title: string) => void }) {
+export function WebResourcePreview({ id, url, scope: owner, active, chinese, onChange, onReference }: { id: string; url: string; scope: LocalConversationScope; active: boolean; chinese: boolean; onChange: (url: string, title?: string, loading?: boolean) => void; onReference: (url: string, title: string) => void }) {
   const scope = useMemo(() => ({ userId: owner.userId, workspaceId: owner.workspaceId }), [owner.userId, owner.workspaceId]);
   const client = window.desktopAPI.resourcePreview;
   const [state, setState] = useState<WebPreviewState>({ id, url, title: url, loading: true, canGoBack: false, canGoForward: false });
@@ -47,7 +47,7 @@ export function WebResourcePreview({ id, url, scope: owner, active, chinese, onC
   };
   useEffect(() => {
     alive.current = true;
-    const release = client.subscribe((value) => { if (value.id !== id) return; setState(value); if (value.url) { setAddress(value.url); current.current.onChange(value.url, value.title); } });
+    const release = client.subscribe((value) => { if (value.id !== id) return; setState(value); if (value.url) { setAddress(value.url); current.current.onChange(value.url, value.title, value.loading); } });
     return () => { alive.current = false; release(); void client.request(scope, { id, action: "close" }).catch(() => {}); };
   }, [client, id, scope]);
   useEffect(() => {

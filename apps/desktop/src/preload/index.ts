@@ -149,6 +149,11 @@ const desktopAPI = {
     },
     respond: (reply) => ipcRenderer.invoke("settings-host:reply", reply),
   } satisfies import("../shared/settings-host").SettingsHostClient,
+  sideWorkspace: {
+    onCommand: (listener) => { const handler = (_event: Electron.IpcRendererEvent, command: import("../shared/side-workspace").SideWorkspaceCommand) => listener(command); ipcRenderer.on("side-workspace:command", handler); return () => ipcRenderer.removeListener("side-workspace:command", handler); },
+    ack: (reply) => ipcRenderer.invoke("side-workspace:ack", reply),
+    onActivity: (listener) => { const handler = (_event: Electron.IpcRendererEvent, activity: Parameters<typeof listener>[0]) => listener(activity); ipcRenderer.on("side-workspace:activity", handler); return () => ipcRenderer.removeListener("side-workspace:activity", handler); },
+  } satisfies import("../shared/side-workspace").SideWorkspaceClient,
   resourcePreview: {
     request: (scope, command) => ipcRenderer.invoke("resource-preview:request", scope, command),
     listChromeProfiles: (scope) => ipcRenderer.invoke("resource-preview:chrome-profiles", scope),

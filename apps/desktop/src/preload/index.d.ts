@@ -27,6 +27,7 @@ interface DesktopAPI {
     availability(): Promise<import("../shared/local-host-availability").LocalHostAvailability | null>;
     subscribe(listener: (value: import("../shared/local-host-availability").LocalHostAvailability) => void): () => void;
   };
+  sideWorkspace: import("../shared/side-workspace").SideWorkspaceClient;
   resourcePreview: import("../shared/resource-preview").ResourcePreviewClient;
   /** App version + normalized OS, captured synchronously at preload time. */
   appInfo: {

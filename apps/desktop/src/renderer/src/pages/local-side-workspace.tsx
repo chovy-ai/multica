@@ -1,3 +1,5 @@
+import { sideLayoutKey, sideSnapshot, readSideLayout as readLayout, prepareSideTab, applySideCommand, registerSideWorkspaceView, type SideTab as Tab, type SideLayout as Layout } from "./local-side-workspace-sync";
+import { sideWorkspaceControlSchema } from "../../../shared/side-workspace";
 import { SideActivityIcon, SideActivitySummary, sideActivityKey, useSideActivity } from "./local-side-feedback";
 import { LocalRuntimeNotice } from "./local-runtime-notice";
 import { getLocalConversationClient } from "../platform/local-conversation-client";
@@ -14,12 +16,11 @@ import { Input } from "@multica/ui/components/ui/input";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle, useDefaultLayout } from "@multica/ui/components/ui/resizable";
 import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
-import type { LocalConversation, LocalConversationScope, LocalPreviewLocation, LocalProviderId } from "@multica/core/local-conversation/protocol";
+import type { LocalConversation, LocalConversationScope, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { FileLinkPreviewError, fileLinkErrorMessage, resolveConversationFile } from "./local-resource-resolution";
 import { createLocalConversationParentService, localTargetId } from "../platform/local-conversation-service";
 import { LocalFilePreview, PreviewFolder, WebResourcePreview } from "./local-resource-preview";
 
-type Tab = { id: string; kind: "side"; sessionId: string } | { id: string; kind: "file"; location: LocalPreviewLocation; selected?: LocalPreviewLocation; sourceId?: string; line?: number } | { id: string; kind: "web"; url: string; title?: string };
 export interface SideWorkspaceHandle { openSide(id: string, sourceId?: string): void; openResource(sessionId: string, url: string, sourceId?: string): Promise<void>; toggle(): void }
 interface Props {
   scope: LocalConversationScope; slug: string; sessionId?: string | null; source?: LocalConversation; provider: LocalProviderId; sessions: LocalConversation[];
@@ -29,30 +30,22 @@ interface Props {
   children: (visible: boolean) => ReactNode;
   onOpenChange?: (open: boolean) => void;
 }
-type Layout = { tabs: Tab[]; selected: string | null; open: boolean };
 const emptyLayout = (): Layout => ({ tabs: [], selected: null, open: false });
 function layoutKey(scope: LocalConversationScope, sessionId: string) {
-  return `multica-side-workspace:${scope.userId}:${scope.workspaceId}:session:${sessionId}`;
-}
-function readLayout(key: string): Layout {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || "null");
-    if (!value || !Array.isArray(value.tabs)) throw new Error();
-    const tabs = value.tabs.filter((tab: Tab) => tab && typeof tab.id === "string" && (tab.kind === "side" ? typeof tab.sessionId === "string" : tab.kind === "web" ? typeof tab.url === "string" && /^https?:\/\//i.test(tab.url) : tab.kind === "file" && typeof tab.location?.root === "string" && typeof tab.location?.path === "string")).slice(0, 20);
-    return { tabs, selected: tabs.some((tab: Tab) => tab.id === value.selected) ? value.selected : tabs[0]?.id ?? null, open: value.open === true };
-  } catch { return { tabs: [], selected: null, open: false }; }
+  return sideLayoutKey(scope, sessionId);
 }
 
 export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(function LocalSideWorkspace(props, ref) {
   const sessionId = props.sessionId === undefined ? props.source?.id : props.sessionId;
   const key = sessionId ? layoutKey(props.scope, sessionId) : "new";
   const [layouts, setLayouts] = useState<Record<string, Layout>>(() => ({ [key]: sessionId ? readLayout(key) : emptyLayout() }));
+  const layoutsRef = useRef(layouts); layoutsRef.current = layouts;
   const layout = layouts[key] ?? (sessionId ? readLayout(key) : emptyLayout());
   const updateLayout = useCallback((owner: string, update: SetStateAction<Layout>) => {
-    setLayouts((current) => {
-      const previous = current[owner] ?? (owner === "new" ? emptyLayout() : readLayout(owner));
-      return { ...current, [owner]: typeof update === "function" ? update(previous) : update };
-    });
+    const current = layoutsRef.current;
+    const previous = current[owner] ?? (owner === "new" ? emptyLayout() : readLayout(owner));
+    const next = { ...current, [owner]: typeof update === "function" ? update(previous) : update };
+    layoutsRef.current = next; setLayouts(next);
   }, []);
   const setLayout = useCallback((update: SetStateAction<Layout>) => updateLayout(key, update), [key, updateLayout]);
   const [maximized, setMaximized] = useState(false);
@@ -79,6 +72,57 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const root = useRef<HTMLDivElement>(null);
   const latest = useRef(props); latest.current = props;
+  const [browserActivity, setBrowserActivity] = useState<Record<string, { conversationId: string; turnId: string }>>({});
+  const sync = useCallback(async (owner: string, value: Layout, visible: boolean) => {
+    const prefix = sideLayoutKey(latest.current.scope, "");
+    if (!owner.startsWith(prefix)) return;
+    const snapshot = sideSnapshot(owner.slice(prefix.length), value, visible);
+    await getLocalConversationClient(window.desktopAPI.localConversations).request(latest.current.scope, "sideWorkspaceSync", snapshot);
+    return snapshot;
+  }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const values = { ...layoutsRef.current };
+      for (const [owner, value] of Object.entries(values)) if (owner !== "new") void sync(owner, value, owner === key && props.active).catch(() => {});
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [layouts, key, props.active, sync]);
+  useEffect(() => {
+    const fullSync = () => {
+      const prefix = sideLayoutKey(latest.current.scope, "");
+      for (let index = 0; index < localStorage.length; index++) {
+        const owner = localStorage.key(index);
+        if (owner?.startsWith(prefix)) void sync(owner, layoutsRef.current[owner] ?? readLayout(owner), false).catch(() => {});
+      }
+      if (key !== "new") void sync(key, layoutsRef.current[key] ?? readLayout(key), latest.current.active).catch(() => {});
+    };
+    fullSync();
+    const off = window.desktopAPI.localHost?.subscribe((value) => { if (value.state === "connected" && value.sidecar === "ready") fullSync(); });
+    const changed = getLocalConversationClient(window.desktopAPI.localConversations).subscribe((scope, id) => { if (!id && scope.userId === latest.current.scope.userId && scope.workspaceId === latest.current.scope.workspaceId) fullSync(); });
+    return () => { off?.(); changed(); };
+  }, [props.scope.userId, props.scope.workspaceId, key, sync]);
+  useEffect(() => registerSideWorkspaceView({ userId: props.scope.userId, workspaceId: props.scope.workspaceId }), [props.scope.userId, props.scope.workspaceId]);
+  useEffect(() => () => { if (key !== "new") void sync(key, layoutsRef.current[key] ?? readLayout(key), false).catch(() => {}); }, [key, sync]);
+  useEffect(() => window.desktopAPI.sideWorkspace?.onActivity((value) => setBrowserActivity((current) => {
+    const next = { ...current }; if (value.active && value.turnId) next[value.tabId] = { conversationId: value.conversationId, turnId: value.turnId }; else delete next[value.tabId]; return next;
+  })), []);
+  useEffect(() => window.desktopAPI.sideWorkspace?.onCommand((command) => {
+    const request = sideWorkspaceControlSchema.parse(command.request), current = latest.current;
+    if (request.scope.userId !== current.scope.userId || request.scope.workspaceId !== current.scope.workspaceId) return;
+    void (async () => {
+      const owner = sideLayoutKey(current.scope, request.conversationId);
+      const opened = await prepareSideTab(request, getLocalConversationClient(window.desktopAPI.localConversations));
+      if (!mounted.current || latest.current.scope.userId !== current.scope.userId || latest.current.scope.workspaceId !== current.scope.workspaceId) throw new Error("Side workspace changed");
+      const previous = layoutsRef.current[owner] ?? readLayout(owner);
+      const { layout: next, tabId } = applySideCommand(previous, request, opened);
+      layoutsRef.current = { ...layoutsRef.current, [owner]: next }; setLayouts(layoutsRef.current);
+      localStorage.setItem(owner, JSON.stringify(next));
+      if (request.op === "select" || (request.op === "open" && request.select !== false)) current.onSelectSource(request.conversationId);
+      const snapshot = await sync(owner, next, latest.current.active);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      await window.desktopAPI.sideWorkspace.ack({ id: command.id, snapshot, tabId });
+    })().catch((error: unknown) => { void window.desktopAPI.sideWorkspace.ack({ id: command.id, error: error instanceof Error ? error.message : String(error) }); });
+  }), [sync]);
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: "multica-side-workspace-width" });
   const onOpenChange = props.onOpenChange;
   useEffect(() => { onOpenChange?.(layout.open); }, [layout.open, onOpenChange]);
@@ -99,8 +143,14 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     }
   }), [queryClient, props.scope.userId, props.scope.workspaceId]);
   const currentKey = useRef(key); currentKey.current = key;
-  const addTo = useCallback((owner: string, tab: Tab) => { updateLayout(owner, (current) => {
+  const addTo = useCallback((owner: string, tab: Tab) => {
+    const saved = layoutsRef.current[owner] ?? readLayout(owner);
+    if (saved.tabs.length >= 20 && !saved.tabs.some((item) => item.id === tab.id || (item.kind === "web" && tab.kind === "web" && item.url === tab.url) || (item.kind === "file" && tab.kind === "file" && item.location.path === tab.location.path))) {
+      latest.current.onShowMessage(latest.current.chinese ? "右侧工作区最多支持 20 个标签，请先关闭部分标签。" : "The Side workspace supports 20 tabs. Close a tab before opening another.", "warning"); return;
+    }
+    updateLayout(owner, (current) => {
     const existing = current.tabs.find((item) => item.id === tab.id || (item.kind === "web" && tab.kind === "web" && item.url === tab.url) || (item.kind === "file" && tab.kind === "file" && (item.selected ?? item.location).path === (tab.selected ?? tab.location).path));
+    if (!existing && current.tabs.length >= 20) return current;
     return { tabs: existing ? current.tabs.map((item) => item.id === existing.id && item.kind === "file" && tab.kind === "file" ? { ...item, line: tab.line } : item) : [...current.tabs, tab], selected: existing?.id ?? tab.id, open: true };
   }); if (currentKey.current === owner) setError(""); }, [updateLayout]);
   const add = useCallback((tab: Tab) => addTo(key, tab), [addTo, key]);
@@ -163,7 +213,11 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
       if (location && mounted.current && (key !== "new" || epoch.current === started)) add({ id: `file:${crypto.randomUUID()}`, kind: "file", location });
     } catch (error) { if (mounted.current && epoch.current === started) showError(error); }
   };
-  const close = (id: string) => setLayout((current) => { const tabs = current.tabs.filter((tab) => tab.id !== id); return { tabs, selected: current.selected === id ? tabs.at(-1)?.id ?? null : current.selected, open: tabs.length > 0 && current.open }; });
+  const close = (id: string) => {
+    const current = layoutsRef.current[key] ?? layout, tabs = current.tabs.filter((tab) => tab.id !== id);
+    const next = { tabs, selected: current.selected === id ? tabs.at(-1)?.id ?? null : current.selected, open: tabs.length > 0 && current.open };
+    setLayout(next); if (key !== "new") void sync(key, next, props.active).catch(() => {});
+  };
   const sideVisible = layout.open, mainVisible = !(sideVisible && (maximized || narrow));
   const title = (tab: Tab) => tab.kind === "side" ? `${props.chinese ? "旁支" : "Side"} · ${props.sessions.find((entry) => entry.id === tab.sessionId)?.title.replace(/ · Side$/, "") ?? (props.chinese ? "新对话" : "New chat")}` : tab.kind === "web" ? tab.title || new URL(tab.url).hostname : (tab.selected ?? tab.location).name;
   const activeTab = layout.tabs.find((tab) => tab.id === layout.selected);
@@ -177,10 +231,11 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
             {!mainVisible && <IconButton label={props.chinese ? "返回主对话" : "Return to main chat"} onClick={() => { setMaximized(false); if (narrow) setLayout((current) => ({ ...current, open: false })); }}><ArrowLeft /></IconButton>}
             <div role="tablist" aria-label={props.chinese ? "右侧内容" : "Workspace tabs"} className="flex min-w-0 flex-1 overflow-x-auto">
               {layout.tabs.map((tab) => <div key={tab.id} className={`flex min-w-24 max-w-48 shrink-0 items-center rounded-t-md border-b-2 ${tab.id === layout.selected ? "border-foreground bg-surface-selected" : "border-transparent"}`}>
-                <WorkspaceTab tab={tab} scope={props.scope} session={tab.kind === "side" ? props.sessions.find((entry) => entry.id === tab.sessionId) : undefined} active={props.active && sideVisible} title={title(tab)} role="tab" id={`resource-tab-${tab.id}`} aria-selected={tab.id === layout.selected} aria-controls={`resource-content-${tab.id}`} tabIndex={tab.id === layout.selected ? 0 : -1} variant="ghost" size="sm" className="min-w-0 flex-1 justify-start rounded-none px-2 text-label" onClick={() => setLayout((current) => ({ ...current, selected: tab.id }))} onKeyDown={(event) => {
+                <WorkspaceTab tab={tab} chinese={props.chinese} scope={props.scope} session={tab.kind === "side" ? props.sessions.find((entry) => entry.id === tab.sessionId) : undefined} active={props.active && sideVisible} title={title(tab)} role="tab" id={`resource-tab-${tab.id}`} aria-selected={tab.id === layout.selected} aria-controls={`resource-content-${tab.id}`} tabIndex={tab.id === layout.selected ? 0 : -1} variant="ghost" size="sm" className="min-w-0 flex-1 justify-start rounded-none px-2 text-label" onClick={() => setLayout((current) => ({ ...current, selected: tab.id }))} onKeyDown={(event) => {
                   const index = layout.tabs.findIndex((item) => item.id === tab.id); const next = event.key === "ArrowRight" ? layout.tabs[(index + 1) % layout.tabs.length] : event.key === "ArrowLeft" ? layout.tabs[(index + layout.tabs.length - 1) % layout.tabs.length] : event.key === "Home" ? layout.tabs[0] : event.key === "End" ? layout.tabs.at(-1) : undefined;
                   if (next) { event.preventDefault(); setLayout((current) => ({ ...current, selected: next.id })); document.getElementById(`resource-tab-${next.id}`)?.focus(); }
                 }} />
+                {browserActivity[tab.id] && <span aria-label={props.chinese ? "助手操作中" : "Assistant controlling"} className="size-2 shrink-0 rounded-full bg-brand" />}
                 <IconButton label={`${props.chinese ? "关闭" : "Close"} ${title(tab)}`} className="shrink-0" onClick={() => close(tab.id)}><X className="size-3" /></IconButton>
               </div>)}
             </div>
@@ -190,12 +245,16 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
             </DropdownMenuContent></DropdownMenu>
             <IconButton label={maximized ? (props.chinese ? "恢复并排显示" : "Restore split view") : (props.chinese ? "展开右侧面板" : "Expand right workspace")} onClick={() => setMaximized(!maximized)}>{maximized ? <Minimize2 /> : <Maximize2 />}</IconButton><IconButton label={props.chinese ? "关闭右侧面板" : "Close right workspace"} onClick={() => setLayout((current) => ({ ...current, open: false }))}><X /></IconButton>
           </div>
+          {Object.values(browserActivity).some((activity) => activity.conversationId === sessionId) && <div role="status" className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2 text-caption text-muted-foreground"><span>{props.chinese ? "助手操作中 · 使用当前网页登录状态" : "Assistant is using this page and its signed-in session"}</span><Button variant="outline" size="xs" onClick={() => {
+            const activity = Object.values(browserActivity).find((activity) => activity.conversationId === sessionId);
+            if (activity) void getLocalConversationClient(window.desktopAPI.localConversations).request(props.scope, "cancel", { id: activity.conversationId, turnId: activity.turnId }).catch(showError);
+          }}>{props.chinese ? "停止" : "Stop"}</Button></div>}
           {openingFiles > 0 && <div role="status" className="flex items-center gap-2 border-b px-3 py-2 text-caption text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />{props.chinese ? "正在定位文件…" : "Locating file…"}</div>}
           {error && <div role="alert" className="flex items-center justify-between border-b px-3 py-2 text-caption text-destructive"><span>{error}</span><IconButton label={props.chinese ? "关闭错误提示" : "Dismiss error"} onClick={() => setError("")}><X /></IconButton></div>}
           {!activeTab && <div className="flex flex-1 flex-col items-center justify-center gap-4 text-body text-muted-foreground"><PanelRightOpen className="size-8" /><span>{props.chinese ? "在这里继续旁支对话，或查看文件和网页" : "Continue a side chat or inspect files and webpages here"}</span><Button variant="outline" disabled={creating} onClick={() => { void createSide(); }}><Plus className="size-4" />{props.chinese ? "新建旁支" : "New side conversation"}</Button></div>}
           {/* Keep Side composers mounted across conversation switches; native previews are released. */}
           {Object.entries(layouts).flatMap(([owner, saved]) => saved.tabs.filter((tab) => owner === key || tab.kind === "side").map((tab) => <section key={`${owner}:${tab.id}`} role="tabpanel" id={`resource-content-${tab.id}`} aria-labelledby={`resource-tab-${tab.id}`} hidden={owner !== key || layout.selected !== tab.id} className="min-h-0 flex-1 overflow-hidden">
-            {tab.kind === "side" ? <SideConversation {...props} sessionId={tab.sessionId} onSelectSource={(id, turnId, quote) => { setMaximized(false); if (narrow) setLayout((current) => ({ ...current, open: false })); props.onSelectSource(id, turnId, quote); }} onSide={(id) => addTo(owner, { id: `side:${id}`, kind: "side", sessionId: id })} onResource={(id, url) => openResourceFor(owner, id, url)} visible={owner === key && props.active && sideVisible && layout.selected === tab.id} /> : tab.kind === "web" ? <WebResourcePreview id={tab.id} url={tab.url} scope={props.scope} active={props.active && sideVisible && layout.selected === tab.id} chinese={props.chinese} onChange={(url, title) => setLayout((current) => ({ ...current, tabs: current.tabs.map((item) => item.id === tab.id && item.kind === "web" ? { ...item, url, title } : item) }))} onReference={(url, title) => { props.onReference(`[${title}](${url})`); if (narrow) setLayout((current) => ({ ...current, open: false })); }} /> : <div className="flex h-full min-h-0 min-w-0">
+            {tab.kind === "side" ? <SideConversation {...props} sessionId={tab.sessionId} onSelectSource={(id, turnId, quote) => { setMaximized(false); if (narrow) setLayout((current) => ({ ...current, open: false })); props.onSelectSource(id, turnId, quote); }} onSide={(id) => addTo(owner, { id: `side:${id}`, kind: "side", sessionId: id })} onResource={(id, url) => openResourceFor(owner, id, url)} visible={owner === key && props.active && sideVisible && layout.selected === tab.id} /> : tab.kind === "web" ? <WebResourcePreview id={tab.id} url={tab.url} scope={props.scope} active={props.active && sideVisible && layout.selected === tab.id} chinese={props.chinese} onChange={(url, title, loading) => setLayout((current) => ({ ...current, tabs: current.tabs.map((item) => item.id === tab.id && item.kind === "web" ? { ...item, url, title, loading } : item) }))} onReference={(url, title) => { props.onReference(`[${title}](${url})`); if (narrow) setLayout((current) => ({ ...current, open: false })); }} /> : <div className="flex h-full min-h-0 min-w-0">
               {tab.location.kind === "directory" && <div className="w-40 shrink-0 overflow-auto border-r p-1 text-label"><PreviewFolder location={tab.location} selected={tab.selected?.path} scope={props.scope} sessionId={tab.sourceId} chinese={props.chinese} onSelect={(selected) => setLayout((current) => ({ ...current, tabs: current.tabs.map((item) => item.id === tab.id && item.kind === "file" ? { ...item, selected, line: undefined } : item) }))} /></div>}
               <div className="min-w-0 flex-1">{tab.selected || tab.location.kind === "file" ? <LocalFilePreview key={(tab.selected ?? tab.location).path} location={tab.selected ?? tab.location} scope={props.scope} sessionId={tab.sourceId} chinese={props.chinese} line={tab.line} /> : <div className="flex h-full items-center justify-center text-body text-muted-foreground">{props.chinese ? "选择文件进行预览" : "Choose a file to preview"}</div>}</div>
             </div>}
@@ -228,14 +287,16 @@ function SideConversation(props: Props & { sessionId: string; onSide(id: string)
   </div>;
 }
 
-type WorkspaceTabProps = ComponentProps<typeof Button> & { tab: Tab; scope: LocalConversationScope; session?: LocalConversation; active: boolean; title: string };
-function WorkspaceTab({ tab, scope, session, active, title, ...button }: WorkspaceTabProps) {
-  if (tab.kind === "side") return <SideConversationTab {...button} scope={scope} sessionId={tab.sessionId} session={session} active={active} title={title} />;
+type WorkspaceTabProps = ComponentProps<typeof Button> & { tab: Tab; chinese: boolean; scope: LocalConversationScope; session?: LocalConversation; active: boolean; title: string };
+function WorkspaceTab({ tab, chinese, scope, session, active, title, ...button }: WorkspaceTabProps) {
+  if (tab.kind === "side") return <SideConversationTab {...button} chinese={chinese} scope={scope} sessionId={tab.sessionId} session={session} active={active} title={title} />;
   return <Button {...button}>{tab.kind === "web" ? <Globe className="size-4 shrink-0" /> : tab.location.kind === "directory" ? <FolderOpen className="size-4 shrink-0" /> : <File className="size-4 shrink-0" />}<span className="truncate" title={title}>{title}</span></Button>;
 }
-function SideConversationTab({ scope, sessionId, session, active, title, ...button }: Omit<WorkspaceTabProps, "tab"> & { sessionId: string }) {
+function SideConversationTab({ chinese, scope, sessionId, session, active, title, ...button }: Omit<WorkspaceTabProps, "tab"> & { sessionId: string }) {
   const activity = useSideActivity(scope, sessionId, session, active);
+  const detail = activity.query.data ?? session;
+  const initiated = detail?.messages.some((message) => message.origin && detail.turns.some((turn) => turn.id === message.turnId && turn.status === "running"));
   return <Button {...button} aria-busy={activity.spinning} aria-label={`${title} · ${activity.label}`} title={`${title} · ${activity.label}`}>
-    <SideActivityIcon activity={activity} /><span className="truncate">{title}</span>
+    <SideActivityIcon activity={activity} /><span className="truncate">{title}</span>{initiated && <span className="shrink-0 text-caption text-muted-foreground">{chinese ? "主会话发起" : "From main"}</span>}
   </Button>;
 }

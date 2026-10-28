@@ -104,8 +104,10 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       });
       const missing = results.length - attachments.length;
       const note = chinese ? `［${missing} 份附件暂时无法加载，重新打开会话可重试。］` : `[${missing} attachment(s) could not be loaded. Reopen the conversation to retry.]`;
+      const sourceLabel = message.origin ? `[${chinese ? (message.steered ? "来自主会话的引导" : "主会话发起") : (message.steered ? "Steered from main conversation" : "Sent from main conversation")}](mention://agent-session/${encodeURIComponent(message.origin.conversationId)}?workspaceId=${encodeURIComponent(scope.workspaceId)})` : "";
+      const displayed = [sourceLabel, localMessageDisplayContent(message), ...(missing ? [note] : [])].filter(Boolean).join("\n\n");
       return { id: message.id, chat_session_id: id, role: message.role,
-        content: missing ? `${localMessageDisplayContent(message)}\n\n${note}`.trim() : message.content,
+        content: displayed,
         task_id: message.turnId, created_at: message.createdAt,
         ...(attachments.length ? { attachments } : {}), ...(message.failed ? { failure_reason: "agent_error" } : {}) };
     }));

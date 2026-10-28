@@ -12,11 +12,17 @@ type Emit = Parameters<typeof runLocalProvider>[1];
 export class LocalCodexWorker {
   readonly rpc: CodexRpc;
   private unloading = new Map<string, Promise<void>>();
+  private activeTurns = new Map<string, string>();
   private activeThreads = new Set<string>();
   private retiring = false;
   get available(): boolean { return this.rpc.available && !this.retiring; }
   constructor(binary: string, cwd: string, env: NodeJS.ProcessEnv, private bridge: CodexContextBridge, private unloadGraceMs = 15_000) {
     this.rpc = new CodexRpc(binary, cwd, env);
+  }
+  async steer(threadId: string, text: string): Promise<void> {
+    const expectedTurnId = this.activeTurns.get(threadId);
+    if (!expectedTurnId) throw new Error("No active turn found");
+    await this.rpc.request("turn/steer", { threadId, expectedTurnId, input: [{ type: "text", text, text_elements: [] }] }, 15_000);
   }
   async config(cwd: string): Promise<CodexObject> {
     await this.rpc.ready;
@@ -119,6 +125,7 @@ export class LocalCodexWorker {
         stream.accept(message.method, event);
         if (message.method === "error" && !event.willRetry) emit({ type: "status", content: "Codex reported an execution error" });
         if (message.method === "turn/completed") {
+          this.activeTurns.delete(threadId!);
           input.timing?.mark("provider.result", { outcome: event.turn.status === "completed" ? "completed" : event.turn.status === "interrupted" ? "cancelled" : "failed" });
           if (event.turn.status === "completed") resolveTurn();
           else rejectTurn(new Error(event.turn.status === "interrupted" ? "Execution cancelled" : "Codex turn failed"));
@@ -128,6 +135,7 @@ export class LocalCodexWorker {
       const started = await timed("provider.turn_start", () => this.rpc.request("turn/start", { threadId, effort: input.reasoningEffort ?? native.model_reasoning_effort ?? null, input: [{ type: "text", text: input.content, text_elements: [] }] }));
       if (typeof started.turn?.id === "string") turnId = started.turn.id;
       if (!turnId) throw new Error("Codex returned no turn ID");
+      this.activeTurns.set(threadId, turnId);
       for (const message of buffered) receive(message); buffered.length = 0;
       if (signal.aborted) interrupt();
       await done;
@@ -138,6 +146,7 @@ export class LocalCodexWorker {
       if (interruptTimer) clearTimeout(interruptTimer);
       unsubscribe?.();
       if (threadId) {
+        this.activeTurns.delete(threadId);
         this.activeThreads.delete(threadId);
         if (this.retiring && !this.activeThreads.size) void this.rpc.stop();
         const unload = () => this.unload(threadId!);

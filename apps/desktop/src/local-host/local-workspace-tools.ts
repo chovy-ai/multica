@@ -11,11 +11,13 @@ export interface WorkspaceToolOptions {
   userId: string;
   conversationId?: string;
   appUrl?: string;
+  openSide?: (id: string, signal: AbortSignal, requestId: string) => Promise<unknown>;
   avatar?: Pick<AgentAvatarOptions, "receiptsRoot" | "readFile">;
   request(method: Method, path: string, body: unknown, signal: AbortSignal): Promise<unknown>;
   local?: { request<M extends LocalMethod>(method: M, params: LocalConversationMethods[M]["params"]): Promise<LocalConversationMethods[M]["result"]> };
 }
 export interface WorkspaceMcpTool {
+  imageResult?: boolean;
   name: string;
   description: string;
   inputSchema: z.ZodRawShape;
@@ -378,11 +380,12 @@ export function createWorkspaceTools(options: WorkspaceToolOptions): WorkspaceMc
     signal.throwIfAborted(); const value = await local("fork", { id: identity, turnId: turn_id, requestId });
     return { source: "local", id: value.id, title: value.title, forked_from: value.forkedFrom, forked_from_turn_id: value.forkedFromTurnId, fork_mode: value.forkMode, provider: value.provider };
   }, true);
-  tool("create_side_conversation", "Create a saved Side conversation from a local source conversation/turn, optionally quoting a passage. Does not submit a message or start a model. Side panel presentation is handled by the app.", { id, turn_id: id.optional(), quote: z.string().max(8000).optional() }, async ({ id: identity, turn_id, quote }, signal, requestId) => {
+  tool("create_side_conversation", "Create a saved Side conversation from a local source conversation/turn, optionally quoting a passage. Opens the created conversation in the current Side workspace. Does not submit a message or start a model.", { id, turn_id: id.optional(), quote: z.string().max(8000).optional() }, async ({ id: identity, turn_id, quote }, signal, requestId) => {
     const previous = (await local("list", {})).find((entry) => entry.side?.requestId === requestId);
     if (previous?.side && (previous.side.sourceId !== identity || previous.side.turnId !== turn_id || previous.side.quote !== quote)) throw new Error("This request_id belongs to a different Side boundary");
     signal.throwIfAborted(); const value = await local("sideCreate", { id: identity, turnId: turn_id, quote, requestId: requestId! });
-    return { id: value.id, title: value.title, source_id: value.side?.sourceId, source_turn_id: value.side?.turnId, provider: value.provider };
+    const opened = await options.openSide?.(value.id, signal, requestId!);
+    return { ...(opened ? { side_tab: opened } : {}), id: value.id, title: value.title, source_id: value.side?.sourceId, source_turn_id: value.side?.turnId, provider: value.provider };
   }, true);
   tool("list_conversation_branches", "Find saved local conversations, Forks and Side conversations by their source ID. Use the returned IDs with read_context or update_conversation; native provider session IDs are not exposed.", { source_id: id.optional() }, async ({ source_id }, signal) => {
     signal.throwIfAborted(); const list = await local("list", {});

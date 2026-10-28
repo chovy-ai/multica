@@ -21,7 +21,7 @@ export class LocalResourceReader {
     await writeFile(join(this.directory, "preview-roots.json"), JSON.stringify([...new Set([...roots, root])]), { mode: 0o600 });
     return { root, path: canonical, name: basename(canonical), kind: info.isDirectory() ? "directory" : "file" };
   }
-  async readLink(path: string, cwd?: string): Promise<LocalPreviewFile> {
+  async locate(path: string, cwd?: string): Promise<LocalPreviewLocation> {
     if (!isAbsolute(path)) throw new Error("Use an absolute file path");
     const canonical = await realpath(path);
     const roots = [...(cwd ? [await realpath(cwd)] : []), ...await this.roots()];
@@ -30,8 +30,13 @@ export class LocalResourceReader {
       return child !== ".." && !child.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(child);
     });
     if (!root) throw new Error("Choose this folder before previewing its contents");
-    // Reuse canonical containment checks, including symlink escape protection.
-    return { ...await this.read(root, canonical, cwd), root };
+    const info = await stat(canonical);
+    if (!info.isFile() && !info.isDirectory()) throw new Error("Select a regular file or directory");
+    return { root, path: canonical, name: basename(canonical), kind: info.isDirectory() ? "directory" : "file" };
+  }
+  async readLink(path: string, cwd?: string): Promise<LocalPreviewFile> {
+    const location = await this.locate(path, cwd);
+    return { ...await this.read(location.root, location.path, cwd), root: location.root };
   }
   private async path(root: string, path: string, cwd?: string) {
     const canonicalRoot = await realpath(root);
