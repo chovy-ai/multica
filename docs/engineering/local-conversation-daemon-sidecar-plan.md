@@ -16,7 +16,7 @@
 | --- | --- | --- | --- |
 | S1a | 打包的 daemon 以 `ELECTRON_RUN_AS_NODE=1` 运行 `Multica.app` 内的 Electron（hardened runtime 开启，未配置关闭 RunAsNode 的 fuse） | 本地 adhoc 签名包实测 | **已通过**（2026-10-27，Node 24.22 / Electron 44.9.3） |
 | S1b | 正式签名并公证的包中：daemon 由登录项或 launchd 拉起时，sidecar 访问"文稿"目录的权限弹窗归属；公证后 Gatekeeper 是否放行 sidecar | 发布前用 Developer ID 签名的 Canary 包手工验证 | 归属异常时评估：改为由 desktop 在启动时拉起 sidecar |
-| S2 | Windows NSIS 更新时，正在运行的 sidecar（`Multica.exe`）会怎样：被阻塞还是被杀掉；drain 之后再 stop 能否保证更新成功 | 在 Windows 测试机上对比安装新旧版本 | 更新流程中强制先 stop |
+| S2 | Windows NSIS 更新时，正在运行的 sidecar（`Multica.exe`）会怎样：被阻塞还是被杀掉；drain 之后再 stop 能否保证更新成功 | 在 Windows 测试机上对比安装新旧版本 | **暂缓**：本期不考虑 Windows |
 | S3 | `asarUnpack: resources/**` 下，sidecar 的 `index.mjs` 能否解析 Claude Agent SDK 自带的平台二进制和 MCP SDK | 打一个本地包跑最小的 sidecar | 调整打包方式 |
 
 产出：一份记录结论的简短文档，追加到方案 §15。
@@ -54,9 +54,9 @@
 | B-4 | desktop 代理：`local-conversation-proxy.ts`（读取 port 和 token、收到 401 时重新读取；用 npm `ws` 建立 WebSocket，断线退避重连、session.set、subscribe、resync；转发 IPC；用 zod 解析）；文件全程不转 base64（方案 §5.3）：main 注册 `multica-local-file://` 协议流式透传 daemon 文件端点，读写文件一律走 HTTP：renderer 对该协议 GET/POST，main 只补 token 并流式转发给 daemon，文件内容不走 IPC 和 WebSocket；renderer 改为使用该协议地址；host_request 处理：`confirmed_operation`（由 `desktop-settings-host.ts` 弹窗并执行）、`settings_host`、`pick_directory`、`developer_logs_export`；timing 写入 `turn-timing.jsonl`；删除 main 中进程内构造对话服务的代码 | `apps/desktop/src/main/` | desktop 单测：畸形响应、断线重连与重新订阅、token 轮换、`daemon.port` 变化、首个回复生效、账号切换后回复作废 |
 | B-5 | 生命周期：`decideVersionAction` 计入 `local_busy_count`；更新前先 drain 再 stop；退出时只断开连接（AppImage 除外）；`autoStop` 设置项增加说明 | `daemon-manager.ts`、`version-decision.ts`、`updater.ts` | `version-decision` 单测；更新流程按 S2 的结论验证 |
 | B-6 | renderer：删除远程轮询代码；增加不可用状态（未登录、daemon 未运行、`unsupported`、账号不一致、sidecar 崩溃中）和"重启后队列已暂停"提示；文案同时更新中英文 | `renderer/src/platform/local-conversation-*.ts`、`pages/local-*.tsx` | 组件测试；按 conventions 检查文案 |
-| B-7 | E2E：关闭 desktop 后轮次继续；daemon 重启后队列暂停、手动继续后正常；两个 desktop 共用一个 profile；设置确认；迁移后数据可见 | `e2e/` | `pnpm exec playwright test`；macOS 与 Windows 各跑一遍 |
+| B-7 | E2E：关闭 desktop 后轮次继续；daemon 重启后队列暂停、手动继续后正常；两个 desktop 共用一个 profile；设置确认；迁移后数据可见 | `e2e/` | `pnpm exec playwright test`；macOS 跑一遍（Windows 暂缓） |
 
-合入 main 前的总检查：`make check`，`pnpm exec playwright test`，再用 Canary 签名包在 macOS、Windows、Linux（deb 和 AppImage）上手工验证一轮。
+合入 main 前的总检查：`make check`，`pnpm exec playwright test`，再用 Canary 签名包在 macOS、Linux（deb 和 AppImage）上手工验证一轮。Windows 暂缓。
 
 ## 阶段 P2：体验（合入 main 之后）
 
@@ -81,7 +81,7 @@ P0 和 P1-A 可以并行：P0 只改 TS，P1-A 只改 Go。
 | 风险 | 何时确认 | 处理 |
 | --- | --- | --- |
 | macOS 权限弹窗归属、签名 | S1b（发布前） | 不成立时回到方案讨论拓扑 |
-| Windows 更新被正在运行的 sidecar 阻塞 | S2 | 更新流程中强制先 stop |
+| Windows 更新被正在运行的 sidecar 阻塞 | S2（暂缓） | 本期不考虑 Windows；"立即安装"和"退出即安装"两条路径都已先停止 sidecar |
 | WSL2 和离线时的功能回退 | 产品确认 | 在 B-6 中给出明确提示 |
 | 旧版 CLI 调用新 daemon 的 `/shutdown` 返回 403 | A-1 | daemon 与 CLI 同属一个安装包；独立安装的旧 CLI 需要升级，在 release notes 中说明 |
 | 多渠道 desktop 互相触发版本对齐重启 | B-5 | 现有问题，只在空闲时发生；后续单独处理 |
@@ -102,7 +102,8 @@ P0 和 P1-A 可以并行：P0 只改 TS，P1-A 只改 Go。
 | B-5 生命周期 | 完成 | 5475c83fb、d1d391864 |
 | B-6 不可用提示 | 完成 | 9d78ef60a |
 | B-7 真机验证 | 未执行，见下方清单 | — |
-| S1b / S2 / S3 | 未执行，需要签名包、Windows 机器、打包产物 | — |
+| S1b / S3 | 未执行，需要签名包、打包产物 | — |
+| S2 | 暂缓：本期不考虑 Windows | — |
 
 ### 实现决定
 
