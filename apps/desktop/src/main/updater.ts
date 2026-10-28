@@ -109,6 +109,12 @@ function checkForUpdatesOnce(): Promise<unknown> {
   return p;
 }
 
+let updateDownloaded = false;
+/** True when quitting will install a downloaded update (autoInstallOnAppQuit). */
+export function updateInstallsOnQuit(): boolean {
+  return updateDownloaded && autoUpdater.autoInstallOnAppQuit;
+}
+
 /**
  * `beforeInstall` lets the app stop work the installer would otherwise kill
  * or be blocked by; returning false cancels this install request.
@@ -189,6 +195,7 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null, opti
   });
 
   autoUpdater.on("update-downloaded", (info: UpdateDownloadedEvent) => {
+    updateDownloaded = true;
     sendToLiveRenderer(getMainWindow(), "updater:update-downloaded", {
       version: info.version,
       releaseNotes: info.releaseNotes,

@@ -55,6 +55,7 @@ vi.mock("electron", () => ({
 import {
   configureMacX64UpdateChannel,
   setupAutoUpdater,
+  updateInstallsOnQuit,
 } from "./updater";
 import { updaterPreferencesPath } from "./updater-preferences";
 
@@ -279,4 +280,17 @@ describe("setupAutoUpdater", () => {
       "boom",
     );
   });
+
+describe("install on quit", () => {
+  it("reports a pending install only after an update is downloaded", async () => {
+    const { autoUpdater } = await import("electron-updater");
+    autoUpdater.autoInstallOnAppQuit = true;
+    setupAutoUpdater(() => null);
+    expect(updateInstallsOnQuit()).toBe(false);
+    emitUpdater("update-downloaded", { version: "0.3.18", releaseNotes: "" });
+    expect(updateInstallsOnQuit()).toBe(true);
+    autoUpdater.autoInstallOnAppQuit = false;
+    expect(updateInstallsOnQuit()).toBe(false);
+  });
+});
 });

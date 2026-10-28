@@ -9,7 +9,7 @@ import { join } from "path";
 import { pathToFileURL } from "url";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import fixPath from "fix-path";
-import { setupAutoUpdater } from "./updater";
+import { setupAutoUpdater, updateInstallsOnQuit } from "./updater";
 import { setupDaemonManager, daemonDiagnosticLogPath } from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
 import { LocalHostProxy } from "./local-conversation-proxy";
@@ -820,9 +820,10 @@ if (!gotTheLock) {
       if (localShutdown) return;
       event.preventDefault(); localShutdown = true;
       // Local conversations keep running in the daemon; only flush Desktop's own logs.
-      // An AppImage's executable disappears with its mount, so its sidecar cannot outlive it.
+      // The sidecar runs this app's executable, so it cannot outlive the app when
+      // quitting installs a downloaded update or the AppImage mount disappears.
       const proxy = localConversations;
-      const stopped = process.env.APPIMAGE && proxy ? proxy.stopSidecar().catch(() => {}) : Promise.resolve();
+      const stopped = proxy && (process.env.APPIMAGE || updateInstallsOnQuit()) ? proxy.stopSidecar().catch(() => {}) : Promise.resolve();
       void stopped.finally(() => proxy?.close());
       void Promise.all([stopped, localTimingLog?.flush(), ...[...webDiagnosticLogs.values()].map((log) => log.flush())]).finally(() => app.quit());
     });
