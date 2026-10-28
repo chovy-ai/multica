@@ -226,6 +226,22 @@ html.multica-agent-gui .workspace-agents-status-panel__detail-markdown.agent-gui
   line-height: var(--text-body--line-height);
 }
 
+/* Cloned padding can extend a wrapped inline code fragment past the line box. */
+html.multica-agent-gui [data-workspace-agent-markdown] :not(pre) > code {
+  box-decoration-break: slice;
+  -webkit-box-decoration-break: slice;
+}
+
+html.multica-agent-gui [data-multica-markdown-table] > table {
+  width: 100%;
+  max-width: none;
+}
+
+/* Preserve readable column widths before using the table's local scrollbar. */
+html.multica-agent-gui [data-multica-markdown-table] :is(th, td) {
+  overflow-wrap: break-word;
+}
+
 html.multica-agent-gui[data-multica-presentation="conversation"]:not([data-side-pane="true"]) .agent-gui-conversation__assistant-markdown {
   max-width: 100%;
 }

@@ -85,6 +85,46 @@ async function setup(data = backend()) {
 }
 
 describe("Multica Agent GUI runtime with the original session engine", () => {
+  it("reuses the original prepared image and settings on explicit admission retry and shows the failure", async () => {
+    const data = backend(); data.sessions.push(session);
+    const original = data.request.getMockImplementation()!;
+    let admissions = 0;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") return { ...await original(method, params), local: true, queueOwner: "desktop" };
+      if (method === "models.list") return { supported: true, models: [{ id: "test-model", label: "Test", thinking: { supported_levels: [{ value: "high", label: "High" }] } }] };
+      if (method === "host.showMessage") return;
+      if (method === "queue.enqueue") {
+        if (++admissions === 1) throw new Error("The host request timed out");
+        return { revision: 1, paused: true, items: [params.item] };
+      }
+      if (method === "queue.update") return { revision: 2, paused: false, items: [] };
+      return original(method, params);
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true, queueOwner: "desktop", sessions: [session] });
+      handles.push(handle); await handle.initialize();
+      await handle.runtime.getSession(init.workspaceId, session.id);
+      await handle.setModelSelection(agent.id, session.id, "test-model");
+      await handle.setReasoningSelection(agent.id, session.id, "high");
+      await handle.setPermissionSelection(agent.id, session.id, "auto");
+      const prepared = await handle.runtime.uploadPromptContent!({ workspaceId: init.workspaceId,
+        content: [{ type: "text", text: "Use this image" }, { type: "image", name: "image.png", mimeType: "image/png", data: btoa("image bytes") }] });
+      const engine = handle.runtime.getSessionEngine(init.workspaceId);
+      engine.submitPrompt({ agentSessionId: session.id, clientSubmitId: "image-retry", content: prepared.content });
+      await vi.waitFor(() => expect(data.request).toHaveBeenCalledWith("host.showMessage", { message: "The host request timed out", tone: "error" }));
+      const initial = structuredClone(data.request.mock.calls.find(([method]) => method === "queue.enqueue")![1]);
+      expect(initial.item).toMatchObject({ requestId: "image-retry", attachmentIds: ["attachment-1"], model: "test-model", reasoningEffort: "high", permissionMode: "auto" });
+      await handle.setModelSelection(agent.id, session.id, "another-model");
+      await handle.setPermissionSelection(agent.id, session.id, "full-access");
+      engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: session.id, promptId: "image-retry", awaitingTurnExpiresAtUnixMs: Date.now() + 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
+      await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "queue.update")).toHaveLength(1));
+      const attempts = data.request.mock.calls.filter(([method]) => method === "queue.enqueue");
+      expect(attempts).toHaveLength(2);
+      expect(attempts[1]![1]).toEqual(initial);
+      expect(data.request.mock.calls.filter(([method]) => method === "attachment.upload")).toHaveLength(1);
+    } finally { consoleError.mockRestore(); }
+  });
   it("keeps a local project during model changes and forwards its directory when activating a new session", async () => {
     const data = backend();
     const directory = { cwd: "/example/project", projectPath: "/example/project" };

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createAgentSessionEngine, selectSessionIsSubmitting } from "@tutti-os/agent-activity-core";
 import { createDesktopQueueEngine } from "./desktop-queue-engine";
 import type { LocalPromptQueue, LocalQueuedPrompt } from "../local-protocol";
+type SubmitInput = Parameters<ReturnType<typeof createAgentSessionEngine>["submitPrompt"]>[0];
 
 function setup(running = false) {
   const sendInput = vi.fn();
@@ -11,7 +12,7 @@ function setup(running = false) {
     commandPort: { kind: "typed", effects: { sendInput, activateSession: vi.fn(), cancelTurn: vi.fn(), deleteSessions: vi.fn(), respondToInteraction: vi.fn(), renameSession: vi.fn(), setSessionPinned: vi.fn(), updateSessionSettings: vi.fn() }, execute: vi.fn() } });
   base.dispatch({ type: "session/snapshotReceived", sessions: [{ agentSessionId: "session", workspaceId: "ws", provider: "codex", title: "Conversation", cwd: "/workspace", activeTurnId: running ? "active" : null,
     ...(running ? { activeTurn: { agentSessionId: "session", turnId: "active", origin: "user_prompt", phase: "running", startedAtUnixMs: 1, updatedAtUnixMs: 1 } } : {}), pendingInteractions: [], latestTurnInteractions: [] }] });
-  const options = { enabled: () => true, enqueue: vi.fn(async (): Promise<LocalPromptQueue> => ({ revision: 1, paused: false, items: [] })),
+  const options = { enabled: () => true, enqueue: vi.fn(async (_input: SubmitInput): Promise<LocalPromptQueue> => ({ revision: 1, paused: false, items: [] })),
     update: vi.fn(async () => ({ revision: 2, paused: true, items: [] })), error: vi.fn() };
   const adapter = createDesktopQueueEngine(base, options);
   return { ...adapter, options, sendInput };
@@ -20,8 +21,112 @@ function queued(requestId: string): LocalQueuedPrompt {
   return { requestId, content: requestId, display: { id: requestId, clientSubmitId: requestId, createdAtUnixMs: 1, content: [{ type: "text", text: requestId }] } };
 }
 const submit = (engine: ReturnType<typeof setup>["engine"], id: string) => engine.submitPrompt({ agentSessionId: "session", clientSubmitId: id, content: [{ type: "text", text: id }] });
+const sendNow = (engine: ReturnType<typeof setup>["engine"], promptId: string) => engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: "session", promptId, awaitingTurnExpiresAtUnixMs: 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
 const visible = (engine: ReturnType<typeof setup>["engine"]) => engine.getSnapshot().promptQueue.recordsBySessionId.session?.prompts.filter((prompt) => prompt.visibleInQueue !== false).map((prompt) => prompt.id) ?? [];
 describe("desktop queue presentation", () => {
+  it("retains send-now errors across snapshots until the operation succeeds", async () => {
+    const { engine, receive, options } = setup(true);
+    receive("session", { revision: 1, paused: false, items: [queued("next")] });
+    options.update.mockRejectedValue(new Error("Queue update unavailable"));
+    try {
+      engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: "session", promptId: "next", awaitingTurnExpiresAtUnixMs: 1000, cancelCommandId: "cancel", timeoutMs: 1000 });
+      await vi.waitFor(() => expect(options.error).toHaveBeenCalledOnce());
+      expect(visible(engine)).toEqual(["next"]);
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.failureMessage).toBe("Queue update unavailable");
+      receive("session", { revision: 3, paused: false, items: [queued("next")] });
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.failureMessage).toBe("Queue update unavailable");
+      options.update.mockResolvedValue({ revision: 4, paused: false, items: [] });
+      sendNow(engine, "next");
+      await vi.waitFor(() => expect(visible(engine)).toEqual([]));
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.failureMessage).toBeNull();
+    } finally { engine.dispose(); }
+  });
+  it("waits for an in-flight image admission and coalesces repeated send-now clicks", async () => {
+    const { engine, options } = setup(true);
+    let accept!: (queue: LocalPromptQueue) => void;
+    options.enqueue.mockImplementation(() => new Promise((resolve) => { accept = resolve; }));
+    const input = { agentSessionId: "session", clientSubmitId: "image", content: [{ type: "text" as const, text: "use this image" }, { type: "image" as const, attachmentId: "saved-image", mimeType: "image/png" }] };
+    engine.submitPrompt(input);
+    sendNow(engine, "image"); sendNow(engine, "image");
+    expect(options.update).not.toHaveBeenCalled();
+    expect(options.enqueue).toHaveBeenCalledOnce();
+    accept({ revision: 1, paused: false, items: [{ ...queued("image"), attachmentIds: ["saved-image"] }] });
+    await vi.waitFor(() => expect(options.update).toHaveBeenCalledOnce());
+    expect(options.update).toHaveBeenCalledWith("session", "sendNow", "image");
+    expect(options.enqueue).toHaveBeenCalledWith(input);
+    engine.dispose();
+  });
+  it("retries failed admission explicitly with the original submission and preserves its error on refresh", async () => {
+    const { engine, receive, options } = setup(true);
+    options.enqueue.mockRejectedValueOnce(new Error("Admission unavailable"));
+    const input = { agentSessionId: "session", clientSubmitId: "retry", content: [{ type: "text" as const, text: "original" }, { type: "image" as const, attachmentId: "saved-image" }] };
+    engine.submitPrompt(input);
+    await vi.waitFor(() => expect(options.error).toHaveBeenCalledOnce());
+    receive("session", { revision: 1, paused: false, items: [] });
+    expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.failureMessage).toBe("Admission unavailable");
+    expect(options.enqueue).toHaveBeenCalledOnce();
+    input.content[0]!.text = "changed after submission";
+    options.enqueue.mockResolvedValue({ revision: 2, paused: false, items: [queued("retry")] });
+    sendNow(engine, "retry"); sendNow(engine, "retry");
+    await vi.waitFor(() => expect(options.update).toHaveBeenCalledOnce());
+    expect(options.enqueue).toHaveBeenCalledTimes(2);
+    expect(options.enqueue.mock.calls[1]?.[0]).toMatchObject({ clientSubmitId: "retry", content: [{ type: "text", text: "original" }, { type: "image", attachmentId: "saved-image" }] });
+    expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.failureMessage).toBeNull();
+    engine.dispose();
+  });
+  it("confirms a lost admission receipt with the same ID without sending an already executed prompt again", async () => {
+    const { engine, receive, options } = setup();
+    options.enqueue.mockRejectedValueOnce(new Error("The host request timed out"));
+    submit(engine, "completed");
+    await vi.waitFor(() => expect(options.error).toHaveBeenCalledOnce());
+    receive("session", { revision: 2, paused: false, items: [] });
+    options.enqueue.mockResolvedValue({ revision: 3, paused: false, items: [] });
+    sendNow(engine, "completed");
+    await vi.waitFor(() => expect(visible(engine)).toEqual([]));
+    expect(options.enqueue).toHaveBeenCalledTimes(2);
+    expect(options.enqueue.mock.calls[1]?.[0]).toEqual(options.enqueue.mock.calls[0]?.[0]);
+    expect(options.update).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+  it("uses an authoritative admission snapshot even when the RPC acknowledgement fails later", async () => {
+    const { engine, receive, options } = setup();
+    let reject!: (error: Error) => void;
+    options.enqueue.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
+    submit(engine, "confirmed");
+    receive("session", { revision: 1, paused: false, items: [queued("confirmed")], dispatchingRequestId: "confirmed" });
+    receive("session", { revision: 2, paused: false, items: [] });
+    reject(new Error("The host request timed out"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(visible(engine)).toEqual([]);
+    expect(options.error).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+  it("does not interrupt a prompt that starts dispatching while send-now awaits admission", async () => {
+    const { engine, options } = setup(true);
+    let accept!: (queue: LocalPromptQueue) => void;
+    options.enqueue.mockImplementation(() => new Promise((resolve) => { accept = resolve; }));
+    submit(engine, "dispatching");
+    sendNow(engine, "dispatching");
+    accept({ revision: 1, paused: false, items: [queued("dispatching")], dispatchingRequestId: "dispatching" });
+    await vi.waitFor(() => expect(visible(engine)).toEqual([]));
+    expect(options.update).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+  it("keeps a newer operation error when a late admission response succeeds", async () => {
+    const { engine, receive, options } = setup(true);
+    let accept!: (queue: LocalPromptQueue) => void;
+    options.enqueue.mockImplementation(() => new Promise((resolve) => { accept = resolve; }));
+    submit(engine, "next");
+    const receipt = { revision: 1, paused: false, items: [queued("next")] };
+    receive("session", receipt);
+    options.update.mockRejectedValue(new Error("Cancellation failed"));
+    sendNow(engine, "next");
+    await vi.waitFor(() => expect(options.error).toHaveBeenCalledOnce());
+    accept(receipt);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.failureMessage).toBe("Cancellation failed");
+    engine.dispose();
+  });
   it("transfers admission to Electron and does not drain or pause it on GUI disposal", async () => {
     const { engine, options, sendInput } = setup();
     expect(engine.submitPrompt({ agentSessionId: "session", clientSubmitId: "submit", content: [{ type: "text", text: "continue" }] })).toEqual({ accepted: true, queued: false });
@@ -96,7 +201,7 @@ describe("desktop queue presentation", () => {
     engine.dispatch({ type: "queue/removed", agentSessionId: "session", promptId: "removed" });
     engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: "session", promptId: "next", awaitingTurnExpiresAtUnixMs: 1000, cancelCommandId: "cancel", timeoutMs: 1000 });
     engine.stopSession({ agentSessionId: "session" });
-    expect(options.update.mock.calls).toEqual([["session", "remove", "removed"], ["session", "sendNow", "next"], ["session", "stop"]]);
+    expect(options.update.mock.calls).toEqual([["session", "remove", "removed"], ["session", "sendNow", "next"], ["session", "stop", undefined]]);
     await Promise.resolve(); engine.dispose();
   });
 });
