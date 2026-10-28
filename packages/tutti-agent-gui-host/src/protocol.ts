@@ -43,6 +43,8 @@ export interface AgentGuiSession extends ChatSession {
 }
 
 export interface AgentGuiWorkspaceState {
+  /** Local composer storage partition: API origin and main/Side surface. */
+  composerDraftScope?: string;
   queueOwner?: "desktop";
   sideWorkspace?: boolean;
   sidePane?: boolean;
