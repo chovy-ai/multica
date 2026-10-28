@@ -16,6 +16,12 @@
     "more_emojis": "更多表情…",
     "emoji_loading": "載入中…"
   },
+  "avatar_preview": {
+    "open": "預覽頭像",
+    "title": "頭像",
+    "save": "儲存頭像",
+    "save_failed": "無法儲存頭像"
+  },
   "avatar_crop": {
     "title": "編輯頭像",
     "zoom": "縮放",
