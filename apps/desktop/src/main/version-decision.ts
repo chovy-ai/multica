@@ -8,6 +8,7 @@ export interface VersionCheckHealth {
   active_task_count?: number;
   /** Local conversation work a restart would interrupt. */
   local_busy_count?: number;
+  instance_owner_id?: string;
 }
 
 export type VersionAction = "restart" | "defer" | "ok" | "not_running";
@@ -27,12 +28,13 @@ export type VersionAction = "restart" | "defer" | "ok" | "not_running";
 export function decideVersionAction(
   bundled: string | null,
   running: VersionCheckHealth | null,
+  ownerId?: string,
 ): VersionAction {
   if (!running || running.status !== "running") return "not_running";
 
   const runningVersion = running.cli_version;
   if (!bundled || !runningVersion) return "ok";
-  if (runningVersion === bundled) return "ok";
+  if (runningVersion === bundled && (!ownerId || ownerId === running.instance_owner_id)) return "ok";
 
   const activeTasks = running.active_task_count ?? 0;
   if (activeTasks > 0 || (running.local_busy_count ?? 0) > 0) return "defer";

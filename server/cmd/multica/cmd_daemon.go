@@ -25,6 +25,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon"
 	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	logger_pkg "github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/runtimeinstance"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
 )
@@ -190,6 +191,9 @@ func daemonRuntimeProbeFromAgents(agents map[string]daemon.AgentEntry) daemonRun
 // daemonDirForProfile returns the state directory for the given profile.
 // Empty profile → ~/.multica/, named profile → ~/.multica/profiles/<name>/.
 func daemonDirForProfile(profile string) string {
+	if dir, registered := instanceStateDirectory(profile); registered {
+		return dir
+	}
 	dir, err := cli.ProfileDir(profile)
 	if err != nil {
 		return ""
@@ -1129,10 +1133,16 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 	defer healthLn.Close()
 	cfg.HealthPort = actualPort
-	if err := publishDaemonPort(profile, daemonPortRecord{Port: actualPort, PID: os.Getpid()}); err != nil {
-		return fmt.Errorf("publish daemon health port: %w", err)
+	registered, err := registeredInstance(profile)
+	if err != nil {
+		return fmt.Errorf("load Desktop runtime registration: %w", err)
 	}
-	defer removeDaemonPortIfOwned(profile, os.Getpid())
+	if registered == nil {
+		if err := publishDaemonPort(profile, daemonPortRecord{Port: actualPort, PID: os.Getpid()}); err != nil {
+			return fmt.Errorf("publish daemon health port: %w", err)
+		}
+		defer removeDaemonPortIfOwned(profile, os.Getpid())
+	}
 
 	localToken, err := daemon.NewLocalAPIToken()
 	if err != nil {
@@ -1143,16 +1153,50 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 	defer daemon.RemoveLocalAPITokenIfOwned(daemonLocalAPITokenPath(profile), localToken)
 	cfg.LocalAPIToken = localToken
-	cfg.ProfileDir = daemonDirForProfile(profile)
+	cfg.ProfileDir, err = cli.ProfileDir(profile)
+	if err != nil {
+		return err
+	}
 	if exe, err := os.Executable(); err == nil {
 		cfg.LocalHostCLIPath = exe
-		sidecar, err := localhost.Locate(exe, os.Getenv)
+		var sidecar localhost.Sidecar
+		if registered != nil {
+			err = registered.launch.ValidateExecutable(exe)
+			if err != nil {
+				return err
+			}
+			if !registered.launch.MatchesVersion(version, buildCommit) {
+				return fmt.Errorf("runtime registration and CLI build differ; rebuild or re-register this Desktop instance")
+			}
+			if normalizeAPIBaseURL(cfg.ServerBaseURL) != normalizeAPIBaseURL(registered.launch.APIURL) {
+				return fmt.Errorf("runtime instance and configured backend disagree")
+			}
+			sidecar = localhost.Sidecar{ProtocolVersion: registered.launch.ProtocolVersion, Electron: registered.launch.ElectronPath, Entry: registered.launch.EntryPath}
+		} else {
+			sidecar, err = localhost.Locate(exe, os.Getenv)
+		}
 		switch {
 		case err == nil:
 			cfg.LocalHost = &sidecar
 		case !errors.Is(err, localhost.ErrNoManifest):
 			logger.Warn("local conversations disabled: invalid sidecar manifest", "error", err)
 		}
+	}
+	if registered != nil {
+		runID, err := runtimeinstance.NewRunID()
+		if err != nil {
+			return err
+		}
+		cfg.LaunchedBy = "desktop"
+		cfg.AutoUpdateEnabled = false
+		cfg.RuntimeInstanceID = registered.launch.InstanceID
+		cfg.RuntimeOwnerID = registered.launch.OwnerID
+		cfg.RuntimeRunID = runID
+		record := runtimeinstance.Runtime{SchemaVersion: 1, InstanceID: cfg.RuntimeInstanceID, OwnerID: cfg.RuntimeOwnerID, RunID: runID, PID: os.Getpid(), Port: actualPort, Profile: profile, APIURL: registered.launch.APIURL, CLIVersion: version, CLICommit: buildCommit, APIVersion: localhost.APIVersion, SidecarProtocolVersion: registered.launch.ProtocolVersion, LocalConversations: cfg.LocalHost != nil, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+		if err := registered.store.PublishRuntime(record); err != nil {
+			return fmt.Errorf("publish runtime: %w", err)
+		}
+		defer registered.store.RemoveRuntimeIfOwned(record.InstanceID, record.RunID, record.PID)
 	}
 
 	ctx, stop := notifyShutdownContext(context.Background())

@@ -460,10 +460,52 @@ make up C=desktop
 This writes a marked `apps/desktop/.env.development.local` pointing at this
 environment's backend, starts Electron with the renderer port and app name from
 the environment registry, and waits until that renderer is actually serving.
-Several checkouts can therefore run Desktop side by side without maintaining a
-second path-derived identity. `make destroy` removes the marked env file and
+Each checkout keeps its renderer and Electron userData identity. The Desktop
+runtime itself is single-instance: the most recently launched Desktop takes
+over its shared registration. `make destroy` removes the marked env file and
 this environment's Electron userData. Direct `pnpm dev:desktop` still uses its
 path-derived fallback when it is run outside `make up`.
+
+Desktop dev startup requires Go and compiles the current checkout's CLI before
+launching Electron. Missing Go or a compile failure stops startup; dev never
+substitutes a downloaded or globally installed CLI. Rebuild Go changes with
+`pnpm --filter @multica/desktop bundle-cli -- --require-build`. The binary in
+`apps/desktop/resources/bin/` is replaced atomically after compilation completes.
+
+Desktop publishes its absolute CLI, Electron and conversation-host entry paths
+in `~/.multica/desktop-runtime/launch.json`. This also works in development,
+where those files do not live in an installed `.app` bundle. Daemon discovery
+uses the private `runtime.json` and `local-api.token` beside that file; requests
+and events still use the authenticated loopback HTTP/WebSocket API, not file
+polling. PID, owner/start identifiers, build revision and protocol are verified
+before connecting. An old process cannot remove its successor's live record.
+
+Settings → Daemon → Terminal command installs a user-scoped command pointing
+through `~/.multica/desktop-runtime/cli`. Subsequent Desktop starts replace this
+pointer, so the terminal command follows the latest Desktop or dev worktree
+without reinstalling. `multica instance list` shows the current registration;
+`multica instance status` verifies its running process. Explicit `--profile`
+values for standalone CLI use retain their existing meaning.
+
+The shared Desktop profile is `desktop-runtime`; credentials and conversation
+data live in `~/.multica/profiles/desktop-runtime/`. Desktop login supplies its
+CLI token. Switching API origins discards that profile's cached credential
+before authenticating against the new backend. A previous Desktop runtime is
+replaced only when its tasks and local conversations are idle; otherwise the
+new Desktop waits or asks to retry. Superseded windows cannot manage the new
+runtime. Legacy Desktop profiles are preserved, not automatically copied while
+an older process may still be writing them.
+
+Desktop requires its own bundled CLI in development and packaged builds. A
+missing component is reported instead of downloading or borrowing an unrelated
+CLI. Rebuild a dev checkout or reinstall a broken packaged app.
+
+Development browser sign-in uses a short-lived loopback callback with a random
+state, reusing the web login's CLI callback contract. The login result returns
+to the initiating instance even when several worktrees are open. Dev instances
+do not register the global `multica://` handler; packaged Desktop keeps that
+handler. Do not open `node_modules/.../Electron.app` directly to start Multica;
+use the dev launcher so the app entry point and environment are provided.
 
 Log in with `dev@localhost` and `888888`.
 
@@ -479,10 +521,10 @@ Nothing in this flow touches the system-installed `multica` or the default
 | Workspaces dir | `~/multica_workspaces/` | `~/multica_workspaces_dev-<slug>-<offset>/` |
 | Database | remote / production | local: `multica_<slug>_<offset>` |
 | Registry | — | `~/.multica/dev/envs/<name>/` |
-| Desktop profile | `desktop-api.multica.ai` | `desktop-localhost-<port>` |
+| Desktop runtime/profile | Shared `desktop-runtime`; latest Desktop wins | Same shared registration/profile |
 
-Multiple environments run simultaneously without conflict; `make list` shows
-all of them.
+API, Web and standalone daemon environments can run simultaneously; `make list`
+shows all of them. Desktop intentionally uses one shared runtime per machine.
 
 ## Troubleshooting
 

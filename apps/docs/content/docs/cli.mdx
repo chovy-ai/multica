@@ -9,6 +9,26 @@ The Multica CLI both connects local runtimes and manages workspaces, issues, age
 
 ## Installation
 
+**Install from Desktop**
+
+Open **Settings → Daemon → Terminal command** in Desktop and select **Install CLI**. This supports macOS and Linux with zsh or bash, without administrator access or another download.
+
+Desktop links `~/.local/bin/multica` through its shared runtime registration and adds that directory to your shell configuration's PATH. Open a new terminal and run `multica --version`. The command follows the most recently started Desktop, including a development build from another worktree.
+
+**Check version** reads the version and revision of both your terminal CLI and the bundled CLI. The installation target is the CLI included with this Desktop app, not the official release channel. An older CLI offers **Update CLI**; a different version or build offers **Install matching version**. A newer terminal version is clearly labeled and is never automatically downgraded. Failed checks can be retried and are never reported as current.
+
+Installing alongside Homebrew or another installation preserves the original binary and makes new terminals prefer the Desktop CLI in `~/.local/bin`. If another installation already occupies `~/.local/bin/multica` itself, remove that command with its original installer first.
+
+The **Uninstall** action removes only this installation's command link and PATH configuration. It preserves your login and local data.
+
+**Development builds**
+
+`pnpm dev:desktop` first compiles the current worktree's CLI with Go. Missing Go or a failed build stops startup instead of falling back to an official release. Settings shows **Current development instance** and its binary path. **Install dev CLI** installs the global command once; subsequent Desktop starts update its source automatically.
+
+To rebuild Go changes, run `pnpm --filter @multica/desktop bundle-cli -- --require-build`. The complete binary is published atomically and the existing terminal link follows it. Desktop uses one shared `desktop-runtime` profile and registration per machine. A new Desktop waits for an older runtime's tasks and local conversations to become idle before replacing that process. Existing legacy profiles remain on disk. Rebuilding does not interrupt CLI processes already running.
+
+Use `multica instance list` to discover the current registration and `multica instance status` to verify its running process. Explicit `--profile` values for standalone CLI commands retain their existing meaning.
+
 **macOS / Linux**
 
 ```bash

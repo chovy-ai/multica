@@ -975,6 +975,16 @@ func TestHealthHandlerReportsProfileIdentity(t *testing.T) {
 		return raw
 	}
 
+	t.Run("Desktop publishes owner and per-start identity", func(t *testing.T) {
+		t.Parallel()
+		raw := rawHealth(t, Config{Profile: "desktop-runtime", RuntimeInstanceID: "desktop", RuntimeOwnerID: "owner", RuntimeRunID: "start"})
+		for field, want := range map[string]string{"instance_id": "desktop", "instance_owner_id": "owner", "instance_run_id": "start"} {
+			if raw[field] != want {
+				t.Errorf("%s = %v, want %s", field, raw[field], want)
+			}
+		}
+	})
+
 	t.Run("named profile reports its name", func(t *testing.T) {
 		t.Parallel()
 		raw := rawHealth(t, Config{Profile: "desktop-api.multica.ai", LaunchedBy: "desktop"})

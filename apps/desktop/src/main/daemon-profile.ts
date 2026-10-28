@@ -6,7 +6,8 @@ import { join } from "path";
 export const DEFAULT_HEALTH_PORT = 19514;
 
 /**
- * Desktop owns only `~/.multica/profiles/desktop-<host>/`. The default profile
+ * Desktop uses `~/.multica/profiles/desktop-runtime/` and a separate runtime
+ * registration directory. The default profile
  * at `~/.multica/` — config, daemon log, and health port 19514 — belongs to the
  * user's terminal CLI and must never be read, written, probed, or passed to the
  * bundled CLI.
@@ -23,9 +24,7 @@ export function assertResolvedProfile(profile: string): void {
   }
 }
 
-// Desktop owns a dedicated CLI profile named after the target API host, so it
-// never reads or writes the user's hand-configured profiles. Profile dir:
-//   ~/.multica/profiles/desktop-<host>/
+// Legacy profile naming retained for standalone discovery and existing tests.
 export function deriveProfileName(targetUrl: string): string {
   try {
     const url = new URL(targetUrl);
@@ -58,15 +57,21 @@ export function profileConfigPath(profile: string): string {
 }
 
 export function profileLogPath(profile: string): string {
-  return join(profileDir(profile), "daemon.log");
+  return join(profileStateDir(profile), "daemon.log");
 }
 
 export function profilePidPath(profile: string): string {
-  return join(profileDir(profile), "daemon.pid");
+  return join(profileStateDir(profile), "daemon.pid");
 }
 
 export function profilePortPath(profile: string): string {
-  return join(profileDir(profile), "daemon.port");
+  const registered = profile === "desktop-runtime";
+  return join(profileStateDir(profile), registered ? "runtime.json" : "daemon.port");
+}
+
+function profileStateDir(profile: string): string {
+  assertResolvedProfile(profile);
+  return profile === "desktop-runtime" ? join(homedir(), ".multica", "desktop-runtime") : profileDir(profile);
 }
 
 // Sidecar file that records which Multica user the cached PAT in config.json
@@ -87,9 +92,9 @@ export function profileArgs(profile: string): string[] {
   return ["--profile", profile];
 }
 
-/** Credentials desktop synced into its profile for `apiUrl`; throws when absent. */
-export async function readDesktopProfileCredentials(apiUrl: string): Promise<{ userId: string; token: string; serverUrl: string }> {
-  const profile = deriveProfileName(apiUrl);
+/** Credentials Desktop synced into its named profile; throws when absent. */
+export async function readDesktopProfileCredentials(profile: string): Promise<{ userId: string; token: string; serverUrl: string }> {
+  assertResolvedProfile(profile);
   const userId = (await readFile(profileUserIdPath(profile), "utf8")).trim();
   const config = JSON.parse(await readFile(profileConfigPath(profile), "utf8"));
   return { userId, token: config.token, serverUrl: config.server_url };

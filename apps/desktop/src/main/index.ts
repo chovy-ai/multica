@@ -12,6 +12,8 @@ import fixPath from "fix-path";
 import { setupAutoUpdater, updateInstallsOnQuit } from "./updater";
 import { setupDaemonManager, daemonDiagnosticLogPath } from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
+import { setupTerminalCli } from "./terminal-cli-ipc";
+import { registerDesktopProtocol, setupBrowserLogin } from "./browser-login-ipc";
 import { LocalHostProxy } from "./local-conversation-proxy";
 import { ResourceWebPreview } from "./resource-web-preview";
 import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
@@ -33,7 +35,8 @@ import { getAppVersion } from "./app-version";
 import { DEVELOPER_LOGS_MCP_NAME, writeDeveloperLogsManifest } from "./developer-logs-mcp-server";
 import { registerCodexStdioMcp } from "./codex-mcp-registration";
 import { findLocalProvider } from "../local-host/local-provider-runner";
-import { deriveProfileName, profileLogPath, readDesktopProfileCredentials } from "./daemon-profile";
+import { profileLogPath, readDesktopProfileCredentials } from "./daemon-profile";
+import { desktopRuntimeRegistry, desktopRuntimeProfile } from "./desktop-runtime-instance";
 import { loadRuntimeConfig } from "./runtime-config-loader";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import {
@@ -617,14 +620,9 @@ if (is.dev) {
 
 // --- Protocol registration -----------------------------------------------
 
-if (process.defaultApp) {
-  // In dev, register with the path to the electron binary + app path
-  app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [
-    app.getAppPath(),
-  ]);
-} else {
-  app.setAsDefaultProtocolClient(PROTOCOL);
-}
+// Generic dev Electron bundles share a macOS identity and cannot cold-start
+// our entry point through Launch Services. Dev browser auth uses loopback.
+registerDesktopProtocol(is.dev);
 
 // --- Single instance lock ------------------------------------------------
 
@@ -680,8 +678,12 @@ if (!gotTheLock) {
 
     if (runtimeConfigResult.ok) {
       const localApiUrl = runtimeConfigResult.config.apiUrl;
+      // A missing local component must not prevent login and Settings from opening.
+      await desktopRuntimeRegistry().register(localApiUrl).catch((error: unknown) => {
+        console.error("[runtime-instance] Could not register this Desktop runtime", error);
+      });
       const settingsHost = createDesktopSettingsHost(() => mainWindow, () => settingsUserId, () => authSessionGeneration, async ({ method, path, body }, signal, scope) => {
-        const credentials = await readDesktopProfileCredentials(localApiUrl);
+        const credentials = await readDesktopProfileCredentials(desktopRuntimeProfile());
         if (credentials.userId !== scope.userId || !credentials.token) throw new SettingsOperationError("account_mismatch", "The desktop is signed in to another account");
         return multicaWorkspaceRequest({ apiUrl: localApiUrl, token: credentials.token, workspaceId: scope.workspaceId }, method, path, body, signal);
       });
@@ -697,7 +699,8 @@ if (!gotTheLock) {
       };
       localConversations = new LocalHostProxy({
         apiUrl: localApiUrl,
-        profile: deriveProfileName(localApiUrl),
+        profile: desktopRuntimeProfile(),
+        endpoint: () => desktopRuntimeRegistry().endpoint(localApiUrl),
         legacyDataDir: join(app.getPath("userData"), "local-conversations"),
         providerEnv: () => localProviderEnv(),
         notify: notifyRenderer,
@@ -760,7 +763,7 @@ if (!gotTheLock) {
       publishDeveloperLogsManifest = () => {
         void writeDeveloperLogsManifest(diagnosticsDir, {
           version: 1, apiUrl, userId: settingsUserId ?? null,
-          daemonLogPath: daemonDiagnosticLogPath() ?? profileLogPath(deriveProfileName(apiUrl)),
+          daemonLogPath: daemonDiagnosticLogPath() ?? profileLogPath(desktopRuntimeProfile()),
           runtime: { appVersion: getAppVersion(), platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, chromeVersion: process.versions.chrome, nodeVersion: process.versions.node, packaged: app.isPackaged },
         }).catch((error: unknown) => console.warn("[developer-logs-mcp] Could not publish the diagnostics manifest", error));
       };
@@ -851,6 +854,15 @@ if (!gotTheLock) {
     // (the renderer itself runs sandboxed).
     ipcMain.handle("shell:openExternal", (_event, url: string) => {
       return openExternalSafely(url);
+    });
+    setupBrowserLogin({
+      development: is.dev,
+      getWindow: () => mainWindow,
+      getAppUrl: () => {
+        if (!runtimeConfigResult.ok) throw new Error("Desktop runtime config is unavailable");
+        return runtimeConfigResult.config.appUrl;
+      },
+      onToken: (token) => dispatchToMainRenderer("auth:token", token),
     });
 
     // Renderer requests its own window close (e.g. Cmd+W on the last main
@@ -1063,6 +1075,7 @@ if (!gotTheLock) {
       },
     });
     setupLocalDirectory(() => mainWindow);
+    setupTerminalCli(() => mainWindow);
 
     app.on("activate", () => {
       const window = ensureMainWindow();

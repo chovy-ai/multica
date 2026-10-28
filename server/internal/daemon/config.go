@@ -118,6 +118,9 @@ type Config struct {
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
 	LocalAPIToken                  string                // bearer token for loopback control endpoints; empty rejects them
 	ProfileDir                     string                // this profile's state directory; holds local conversation data
+	RuntimeOwnerID                 string                // Desktop process that registered this runtime
+	RuntimeInstanceID              string                // stable Desktop installation/worktree identity
+	RuntimeRunID                   string                // identifies this daemon launch, including after PID reuse
 	LocalHost                      *localhost.Sidecar    // Desktop-packaged conversation sidecar; nil disables local conversations
 	LocalHostCLIPath               string                // multica binary the sidecar runs for CLI-backed context tools
 	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)

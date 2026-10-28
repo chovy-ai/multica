@@ -9,6 +9,26 @@ Multica CLI 既负责连接本机运行时，也可以在终端中管理工作�
 
 ## 安装
 
+**通过 Desktop 安装到终端**
+
+在 Desktop 的「设置 → 守护进程 → 终端命令」中点击「一键安装」。macOS 和 Linux 的 zsh、bash 可使用此功能，无需管理员权限或额外下载。
+
+Desktop 会在 `~/.local/bin/multica` 创建通过共享运行时注册定位包内 CLI 的链接，并在终端配置中添加 PATH。安装后新开一个终端，运行 `multica --version` 验证。命令会跟随最近启动的 Desktop，也支持其他工作树的开发版。
+
+点击「检查版本」可读取终端 CLI 与 Desktop 内置 CLI 的实际版本号和构建标识。这里以当前 Desktop 内置版本为安装目标，不查询官方发行频道。旧版会显示「一键更新」；版本或构建不同则提供「安装匹配版本」。如果终端版本更高，会明确提示切换到内置版本，不会自动降级。检测失败时可重试，不会误报为最新。
+
+已有 Homebrew 等其他位置的安装时，一键安装会保留原二进制，让新终端优先使用 `~/.local/bin` 中的 CLI。只有安装目标 `~/.local/bin/multica` 被其他来源占用时，才需先用原安装方式移除该命令。
+
+同一位置提供「卸载」，仅删除此功能管理的命令链接和 PATH 配置，保留登录与本地数据。
+
+**开发场景**
+
+通过 `pnpm dev:desktop` 启动时会先用 Go 编译当前 worktree 的 CLI。缺少 Go 或编译失败时启动会停止，不会回退到官方发行版。设置中会显示「当前开发实例」和产物路径。「安装开发版 CLI」只需安装一次，后续启动 Desktop 时会自动更新命令来源。
+
+需要重编 Go 代码时，运行 `pnpm --filter @multica/desktop bundle-cli -- --require-build`。产物会在完整构建后原子替换，已有终端链接随之更新。每台机器上的 Desktop 共用一份 `desktop-runtime` 配置档案和运行时注册；旧运行时仍有任务或本机会话执行时，新 Desktop 会等待其空闲后再替换进程。原有旧配置档案会保留在磁盘上。已运行的 CLI 进程不会因重新编译而中断。
+
+使用 `multica instance list` 查看当前注册，使用 `multica instance status` 验证正在运行的进程。独立 CLI 命令显式指定 `--profile` 时，保留原有配置选择行为。
+
 **macOS / Linux**
 
 ```bash

@@ -1,15 +1,11 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import WebSocket from "ws";
 import type { LocalConversationMethod, LocalConversationMethods, LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import {
-  eventNotificationSchema, helloSchema, hostRequestNotificationSchema, LOCAL_HOST_API_VERSION, resyncNotificationSchema,
+  eventNotificationSchema, helloSchema, hostRequestNotificationSchema, LOCAL_HOST_API_VERSION, LOCAL_HOST_SIDECAR_PROTOCOL_VERSION, resyncNotificationSchema,
   sessionResultSchema, sidecarStatusNotificationSchema, subscribeResultSchema, type LocalHostHello,
 } from "@multica/core/local-conversation/wire";
 import { appError, JsonRpcPeer, RpcError, type MessageTransport } from "../local-host/json-rpc";
 import type { LocalHostAvailability } from "../shared/local-host-availability";
-import { healthPortForProfile, profileDir } from "./daemon-profile";
-import { readDaemonPortRecord } from "./daemon-port";
 
 export interface LocalHostProxyOptions {
   apiUrl: string;
@@ -24,8 +20,8 @@ export interface LocalHostProxyOptions {
   availability(value: LocalHostAvailability): void;
   hostRequest(kind: string, payload: unknown): Promise<unknown>;
   timing(record: unknown): void;
-  /** Where the daemon listens; defaults to the profile's published port and token. */
-  endpoint?: () => Promise<{ base: string; token: string }>;
+  /** Verified endpoint from the selected instance's registration. */
+  endpoint: () => Promise<{ base: string; token: string }>;
 }
 
 const RECONNECT_MIN_MS = 500;
@@ -67,13 +63,7 @@ export class LocalHostProxy {
   }
 
   private async resolveEndpoint(): Promise<{ base: string; token: string }> {
-    if (this.options.endpoint) return this.options.endpoint();
-    const record = await readDaemonPortRecord(this.options.profile);
-    const port = record?.port ?? healthPortForProfile(this.options.profile);
-    let token: string;
-    try { token = (await readFile(join(profileDir(this.options.profile), "local-api.token"), "utf8")).trim(); }
-    catch { throw appError("daemon_offline", "Start the local daemon to use local conversations"); }
-    return { base: `127.0.0.1:${port}`, token };
+    return this.options.endpoint();
   }
 
   /** Version and capability probe; re-reads the token once when it rotated. */
@@ -86,7 +76,10 @@ export class LocalHostProxy {
       if (response.status === 403 && attempt === 0) { this.endpoint = undefined; continue; }
       if (!response.ok) throw appError("daemon_offline", `The local daemon refused the connection (HTTP ${response.status})`);
       const hello = helloSchema.safeParse(await response.json());
-      if (!hello.success || hello.data.apiVersion !== LOCAL_HOST_API_VERSION) throw appError("incompatible", "Update Multica so Desktop and the local daemon match");
+      if (!hello.success || hello.data.apiVersion !== LOCAL_HOST_API_VERSION
+        || (hello.data.sidecar.status !== "unsupported" && hello.data.sidecarProtocolVersion !== LOCAL_HOST_SIDECAR_PROTOCOL_VERSION)) {
+        throw appError("incompatible", "Update Multica so Desktop and the local daemon match");
+      }
       return hello.data;
     }
     throw appError("daemon_offline", "The local daemon refused the connection");

@@ -433,6 +433,7 @@ function main() {
       "node",
       [
         bundleCliScript,
+        "--require-build",
         "--target-platform",
         PLATFORM_CONFIG[target.platform].runtimePlatform,
         "--target-arch",

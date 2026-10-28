@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/runtimeinstance"
 )
 
 // TestRealSidecarRoundTrip drives the packaged TypeScript sidecar through the
@@ -27,7 +29,25 @@ func TestRealSidecarRoundTrip(t *testing.T) {
 		t.Fatal("MULTICA_LOCALHOST_ELECTRON and MULTICA_LOCALHOST_ENTRY are required")
 	}
 	h := newHarness(t, true)
-	h.srv.sup.cmd = SidecarCommand(Sidecar{ProtocolVersion: 2, Electron: electron, Entry: entry})
+	// Development registers absolute paths; it must not depend on a packaged
+	// .app layout or on a manifest inherited from the launching shell.
+	cliPath, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := runtimeinstance.New(t.TempDir())
+	launch := runtimeinstance.Launch{SchemaVersion: 1, InstanceID: "desktop", OwnerID: "11111111111111111111111111111111", Kind: "development", AppPath: filepath.Dir(entry), CLIPath: cliPath, ElectronPath: electron, EntryPath: entry, CLIVersion: "test", CLICommit: "abcdef123", Profile: runtimeinstance.ProfileName, APIURL: "https://api.example", ProtocolVersion: 2}
+	if err := store.PublishLaunch(launch); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := store.ReadLaunch("desktop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registered.ValidateExecutable(cliPath); err != nil {
+		t.Fatal(err)
+	}
+	h.srv.sup.cmd = SidecarCommand(Sidecar{ProtocolVersion: registered.ProtocolVersion, Electron: registered.ElectronPath, Entry: registered.EntryPath})
 	h.signIn(scope.UserID)
 	if err := os.WriteFile(filepath.Join(h.profile, "config.json"), []byte(`{"token":"","server_url":"https://api.example"}`), 0o600); err != nil {
 		t.Fatal(err)
