@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
 import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 import { CHAT_CONTEXT_SNAPSHOT_END, CHAT_CONTEXT_SNAPSHOT_START } from "@multica/core/chat/context-snapshot";
 import { LocalConversationService } from "./local-conversation-service";
@@ -16,7 +17,7 @@ const scope = { userId: "title-user", workspaceId: "title-workspace" };
 
 async function modelTitleService(generateTitle: ConversationTitleGenerator) {
   const root = await mkdtemp(join(tmpdir(), "multica-model-title-test-"));
-  const options = { root, apiUrl: "https://title.example.test", generateTitle: vi.fn(generateTitle),
+  const options = { timing: vi.fn<(record: LocalTimingRecord) => void>(), root, apiUrl: "https://title.example.test", generateTitle: vi.fn(generateTitle),
     run: vi.fn<typeof runLocalProvider>(async () => ({ output: "Assistant response", sessionId: "main-native-session" })),
     find: async () => "/test-owned/fake-provider", chooseDirectory: async () => null, notify: vi.fn() };
   const service = new LocalConversationService(options); service.setCurrentUser(scope.userId);
@@ -93,6 +94,49 @@ describe("first-user-message conversation titles", () => {
 });
 
 describe("background model title lifecycle", () => {
+  it("does not compete with the foreground turn for a title inference", async () => {
+    let reply!: () => void;
+    const { service, options } = await modelTitleService(async () => "Background title");
+    options.run.mockImplementationOnce(() => new Promise((resolve) => { reply = () => resolve({ output: "Done", sessionId: "main-native-session" }); }));
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    try {
+      await service.request(scope, "send", { id: entry.id, content: "PRIVATE_PROMPT" });
+      await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
+      expect(options.generateTitle).not.toHaveBeenCalled();
+      reply();
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).title).toBe("Background title"));
+      const records = options.timing.mock.calls.map(([record]) => record);
+      const finished = records.findIndex((record) => record.stage === "turn.finished");
+      expect(finished).toBeGreaterThan(-1);
+      expect(records.findIndex((record) => record.stage === "title.generate")).toBeGreaterThan(finished);
+      expect(records.filter((record) => record.stage.startsWith("title."))).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: "title.generate", event: "end", background: true, outcome: "completed" }),
+        expect.objectContaining({ stage: "title.persist", event: "end", background: true, outcome: "completed" }),
+      ]));
+      expect(records.filter((record) => record.stage === "turn.finished")).toHaveLength(1);
+      expect(JSON.stringify(records)).not.toContain("PRIVATE_PROMPT");
+    } finally { reply?.(); }
+  });
+  it.each(["codex", "claude"] as const)("lets the %s queue drain before generating a title", async (provider) => {
+    let release!: () => void;
+    const { service, options } = await modelTitleService(async () => "Queued title");
+    options.run.mockResolvedValueOnce({ output: "First", sessionId: "main-native-session" });
+    options.run.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ output: "Second", sessionId: "main-native-session" }); }));
+    const entry = await service.request(scope, "create", { provider });
+    try {
+      for (const requestId of ["title-first", "title-second"]) await service.request(scope, "queueEnqueue", {
+        id: entry.id, paused: true,
+        item: { requestId, content: requestId, display: { id: requestId, clientSubmitId: requestId, content: [{ type: "text", text: requestId }], createdAtUnixMs: Date.now() } },
+      });
+      await service.request(scope, "queueUpdate", { id: entry.id, action: "resume" });
+      await vi.waitFor(() => expect(options.run).toHaveBeenCalledTimes(2));
+      expect(options.generateTitle).not.toHaveBeenCalled();
+      release();
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).title).toBe("Queued title"));
+      expect(options.generateTitle).toHaveBeenCalledOnce();
+      expect(options.generateTitle.mock.calls[0]![0].content).toBe("title-first");
+    } finally { release?.(); }
+  });
   it.each(["codex", "claude"] as const)("keeps %s sends, replies, and follow-ups independent of pending title inference", async (provider) => {
     let finish!: (title: string) => void;
     const { service, options } = await modelTitleService(() => new Promise((resolve) => { finish = resolve; }));
@@ -103,7 +147,7 @@ describe("background model title lifecycle", () => {
       expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed");
     });
     expect((await service.request(scope, "read", { id: entry.id })).titleGeneration).toBe("pending");
-    expect(options.generateTitle).toHaveBeenCalledWith({ provider, model: "selected-model", content: "[@TES-131](mention://workspace-issue/issue) 里面有什么内容，你是如何读取的" }, expect.any(AbortSignal));
+    expect(options.generateTitle).toHaveBeenCalledWith(expect.objectContaining({ provider, model: "selected-model", content: "[@TES-131](mention://workspace-issue/issue) 里面有什么内容，你是如何读取的" }), expect.any(AbortSignal));
     await service.request(scope, "send", { id: entry.id, content: "Second request", model: "another-model" });
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[1]?.status).toBe("completed"));
     const before = await service.request(scope, "read", { id: entry.id });
@@ -169,7 +213,7 @@ describe("background model title lifecycle", () => {
     const entry = await service.request(scope, "create", { provider: "claude" });
     await service.request(scope, "remoteBegin", { id: entry.id, content: "[@设计评审](mention://agent/reviewer) 评审登录界面", agents: [{ id: "reviewer", name: "设计评审" }] });
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).title).toBe("登录界面设计评审"));
-    expect(options.generateTitle).toHaveBeenCalledWith({ provider: "claude", model: null, content: "[@设计评审](mention://agent/reviewer) 评审登录界面" }, expect.any(AbortSignal));
+    expect(options.generateTitle).toHaveBeenCalledWith(expect.objectContaining({ provider: "claude", model: null, content: "[@设计评审](mention://agent/reviewer) 评审登录界面" }), expect.any(AbortSignal));
     expect(options.run).not.toHaveBeenCalled();
   });
 

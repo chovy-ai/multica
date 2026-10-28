@@ -234,30 +234,39 @@ export class LocalConversationService {
       this.pendingWrites.delete(key); if (this.activeUser === scope.userId) void this.save(scope).catch(() => console.warn("[local-conversations] Could not persist the latest execution progress"));
     }, 200));
   }
+  private generateTitleWhenIdle(scope: LocalConversationScope, entry: LocalConversation): void {
+    const queue = entry.promptQueue;
+    if (scope.userId === this.activeUser && !entry.turns.some((turn) => turn.status === "running") && (queue?.paused || !queue?.items.length)) this.generateTitle(scope, entry);
+  }
   private generateTitle(scope: LocalConversationScope, entry: LocalConversation): void {
     const generate = this.options.generateTitle;
     const key = `${this.key(scope)}:${entry.id}`;
     if (!generate || this.stopping || entry.titleMode !== "auto" || entry.forkedFrom || entry.importedFrom || this.titleRuns.has(key) || entry.titleGeneration === "complete" || entry.titleGeneration === "failed") return;
     const first = entry.messages.find((message) => message.role === "user");
     if (!first) return;
-    const input = { provider: entry.provider, model: entry.model, content: first.content };
+    const timing = createLocalTiming({ source: "main", conversationId: entry.id, turnId: first.turnId, provider: entry.provider, background: true }, this.options.timing ?? (() => {}));
+    const input = { provider: entry.provider, model: entry.model, content: first.content, timing };
     const controller = new AbortController();
     entry.titleGeneration = "pending";
     this.titleRuns.set(key, { scope, controller });
+    timing.heartbeat();
     const current = () => !controller.signal.aborted && scope.userId === this.activeUser && entry.titleMode === "auto" && entry.messages.find((message) => message.role === "user")?.id === first.id;
     const operation = (async () => {
       try {
-        await this.save(scope);
+        await timing.measure("title.persist", () => this.save(scope));
         if (!current()) return;
-        const title = normalizeModelConversationTitle(await generate(input, controller.signal));
+        const title = await timing.measure("title.generate", async () => {
+          const value = normalizeModelConversationTitle(await generate(input, controller.signal));
+          if (!value) throw new Error("Invalid generated conversation title");
+          return value;
+        });
         if (!current()) return;
-        if (!title) throw new Error("Invalid generated conversation title");
         entry.title = title; entry.titleGeneration = "complete";
         // A title-only update must not change the conversation's recency.
-        await this.save(scope); if (current()) this.options.notify(scope, entry.id);
+        await timing.measure("title.persist", () => this.save(scope)); if (current()) this.options.notify(scope, entry.id);
       } catch {
         if (current()) { entry.titleGeneration = "failed"; await this.save(scope); }
-      } finally { this.titleRuns.delete(key); }
+      } finally { timing.close(); this.titleRuns.delete(key); }
     })();
     this.executions.add(operation);
     void operation.finally(() => this.executions.delete(operation)).catch(() => console.warn("[local-conversations] Could not persist generated title"));
@@ -576,7 +585,7 @@ export class LocalConversationService {
         timing.heartbeat();
         try { await timing.measure("turn.persist", () => this.save(scope)); }
         catch (error) { timing.finish("failed"); entry.messages = entry.messages.filter((message) => message.id !== messageId); entry.turns = entry.turns.filter((turn) => turn.id !== turnId); entry.model = previousModel; entry.reasoningEffort = previousEffort; entry.permissionMode = previousPermission; throw error; }
-        this.changed(scope, entry); this.generateTitle(scope, entry);
+        this.changed(scope, entry);
         const controller = new AbortController(); this.runs.set(turnId, { scope, controller });
         const operation = this.execute(scope, entry, turnId, prompt, controller, references, timing); this.executions.add(operation);
         void operation.finally(() => this.executions.delete(operation)).catch(() => console.warn("[local-conversations] Could not persist execution completion"));
@@ -855,6 +864,7 @@ export class LocalConversationService {
       this.queueDrains.delete(key); this.executions.delete(operation);
       // Fast fake/local completions can settle before the admission write.
       if (!entry.promptQueue?.paused && entry.promptQueue?.items.length && !this.runsHasSession(entry) && !entry.turns.some((turn) => turn.status === "running")) this.drainQueue(scope, entry);
+      this.generateTitleWhenIdle(scope, entry);
     });
     this.executions.add(operation);
   }
@@ -1014,7 +1024,10 @@ export class LocalConversationService {
       try {
         const imageResults = await timing.measure("images.save", () => Promise.allSettled(imageWrites));
         if (imageResults.some((result) => result.status === "rejected")) turn.events.push({ type: "status", content: "Could not save an image preview", seq: turn.events.length + 1, created_at: new Date().toISOString() });
-        if (!retainedContext) await timing.measure("context.dispose", async () => context?.dispose().catch(() => console.warn("[local-conversations] Could not remove temporary CLI context")));
+        if (!retainedContext) {
+          const cleanup = timing.background("context.dispose", async () => context?.dispose()).catch(() => console.warn("[local-conversations] Could not remove temporary CLI context"));
+          this.executions.add(cleanup); void cleanup.finally(() => this.executions.delete(cleanup));
+        }
         if (controller.signal.aborted) turn.status = "cancelled";
         turn.completedAt = new Date().toISOString(); this.runs.delete(turnId);
         await timing.measure("images.recover", () => this.recoverOutputImages(scope, entry, true));
@@ -1024,7 +1037,10 @@ export class LocalConversationService {
           this.changed(scope, entry); await timing.measure("turn.save", () => this.save(scope));
           this.drainQueue(scope, entry);
         }
-      } finally { timing.finish(controller.signal.aborted ? "cancelled" : turn.status === "completed" ? "completed" : "failed"); }
+      } finally {
+        timing.finish(controller.signal.aborted ? "cancelled" : turn.status === "completed" ? "completed" : "failed");
+        this.generateTitleWhenIdle(scope, entry);
+      }
     }
   }
 

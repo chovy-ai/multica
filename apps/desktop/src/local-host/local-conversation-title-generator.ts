@@ -1,11 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
 import type { LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { runLocalProvider } from "./local-provider-runner";
 import { conversationTitleSource, normalizeModelConversationTitle } from "./local-conversation-title";
 
-export interface ConversationTitleInput { provider: LocalProviderId; model: string | null; content: string }
+export interface ConversationTitleInput { provider: LocalProviderId; model: string | null; content: string; timing?: LocalTiming }
 export type ConversationTitleGenerator = (input: ConversationTitleInput, signal: AbortSignal) => Promise<string>;
 
 const TITLE_INSTRUCTIONS = `Generate a concise conversation title from the first user message supplied as quoted JSON data.
@@ -24,7 +25,7 @@ export async function generateLocalConversationTitle(input: ConversationTitleInp
   let cwd: string | undefined;
   try {
     cwd = await mkdtemp(join(tmpdir(), "multica-title-"));
-    const result = await run({ provider: input.provider, model: input.model, cwd, titleOnly: true,
+    const result = await run({ provider: input.provider, model: input.model, cwd, titleOnly: true, timing: input.timing,
       systemPrompt: TITLE_INSTRUCTIONS, content: JSON.stringify({ first_user_message: source }),
     }, () => {}, combined);
     if (combined.aborted) throw new Error("Title generation cancelled");

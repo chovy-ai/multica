@@ -29,6 +29,12 @@ export class LocalCodexPool {
   async run(scope: string, input: CodexInput, emit: Emit, signal: AbortSignal): Promise<{ output: string; sessionId: string }> {
     if (input.provider !== "codex" || input.titleOnly) throw new Error("The Codex pool is restricted to local dialogue turns");
     const timed = <T>(stage: LocalTimingStage, action: () => Promise<T>) => input.timing ? input.timing.measure(stage, action) : action();
+    // Waiting for this thread's old MCP snapshot must not hold up admission for unrelated turns.
+    if (input.resume) {
+      if (this.threads.has(input.resume)) throw new Error("This Codex thread already has an active turn");
+      await Promise.allSettled(this.slots.map((slot) => slot.worker.waitForThread(input.resume!, signal, input.timing)));
+      signal.throwIfAborted();
+    }
     const created = new Set<LocalCodexWorker>();
     const admitted = this.admission.catch(() => {}).then(async () => {
       signal.throwIfAborted();

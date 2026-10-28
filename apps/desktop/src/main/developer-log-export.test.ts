@@ -44,11 +44,29 @@ describe("developer log export", () => {
       expect(exported.recordCount).toBe(1);
       expect(JSON.parse(contents).records[0]).toMatchObject({ turnId: "turn", stage: "provider.first_text" });
       expect(contents).not.toMatch(/NEVER_EXPORT|foreign|message|env/);
-      expect(exported.stages).toEqual([{ stage: "provider.first_text", records: 1, waits: 0 }]);
+      expect(exported.stages).toEqual([{ stage: "provider.first_text", background: false, records: 1, waits: 0 }]);
       if (process.platform !== "win32") {
         expect((await stat(exported.path)).mode & 0o777).toBe(0o600);
         expect((await stat(f.selected)).mode & 0o777).toBe(0o600);
       }
+    } finally { await f.cleanup(); }
+  });
+  it("separates background timings and exports duration percentiles through both entry points", async () => {
+    const f = await fixture();
+    try {
+      for (const background of [false, true]) for (const durationMs of [10, 20, 100]) f.log.write({
+        version: 1, source: "main", conversationId: "conversation", turnId: "turn", at: new Date().toISOString(),
+        stage: "context.dispose", event: "end", elapsedMs: 100, durationMs, background,
+      });
+      const exported = await f.exporter.export(scope, { sinceMinutes: 60 }, signal());
+      await f.exporter.save(scope);
+      const saved = JSON.parse(await readFile(f.selected, "utf8"));
+      expect(exported.stages).toEqual(saved.summary.stages);
+      expect(exported.stages.filter((stage) => stage.stage === "context.dispose")).toEqual([false, true].map((background) => ({
+        stage: "context.dispose", background, records: 3, waits: 0, samples: 3, p50DurationMs: 20, p95DurationMs: 100, maxDurationMs: 100,
+      })));
+      const bundle = JSON.parse(await readFile(exported.path, "utf8"));
+      expect(bundle.records.filter((record: { background?: boolean }) => record.background)).toHaveLength(3);
     } finally { await f.cleanup(); }
   });
   it("includes Web and daemon logs in the same UI and MCP bundle with honest source coverage", async () => {
