@@ -180,6 +180,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       ? createDesktopPendingStore(window.sessionStorage, JSON.stringify([init.composerDraftScope, init.userId, workspaceId]))
       : undefined,
     enabled: () => workspace.queueOwner === "desktop",
+    locale: () => init.locale,
     enqueue: enqueueDesktop,
     update: async (id, action, requestId) => client.request("queue.update", { sessionId: await backendSessionId(id), action, requestId }),
     error(error) {

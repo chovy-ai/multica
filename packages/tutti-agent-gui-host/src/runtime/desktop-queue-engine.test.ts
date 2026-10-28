@@ -25,6 +25,53 @@ const submit = (engine: ReturnType<typeof setup>["engine"], id: string) => engin
 const sendNow = (engine: ReturnType<typeof setup>["engine"], promptId: string) => engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: "session", promptId, awaitingTurnExpiresAtUnixMs: 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
 const visible = (engine: ReturnType<typeof setup>["engine"]) => engine.getSnapshot().promptQueue.recordsBySessionId.session?.prompts.filter((prompt) => prompt.visibleInQueue !== false).map((prompt) => prompt.id) ?? [];
 describe("desktop queue presentation", () => {
+  it("rejects the 101st prompt before admission or checkpointing and accepts after a slot opens", () => {
+    const store = createDesktopPendingStore();
+    const { engine, receive, options } = setup(true, store);
+    const items = Array.from({ length: 100 }, (_, index) => queued(`saved-${index}`));
+    receive("session", { revision: 1, paused: true, items });
+    try {
+      expect(submit(engine, "overflow")).toEqual({ accepted: false, queued: false });
+      expect(options.enqueue).not.toHaveBeenCalled();
+      expect(options.error).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("100") }));
+      expect(store.getState().queues).toEqual([]);
+      expect(visible(engine)).toHaveLength(100);
+      receive("session", { revision: 2, paused: true, items: items.slice(1) });
+      expect(submit(engine, "overflow").accepted).toBe(true);
+      expect(options.enqueue).toHaveBeenCalledOnce();
+    } finally { engine.dispose(); }
+  });
+  it("reserves capacity synchronously for unanswered submissions, including hidden dispatches", () => {
+    const store = createDesktopPendingStore();
+    const { engine, receive, options } = setup(true, store);
+    const items = Array.from({ length: 99 }, (_, index) => queued(`saved-${index}`));
+    options.enqueue.mockImplementation(() => new Promise(() => {}));
+    receive("session", { revision: 1, paused: false, items, dispatchingRequestId: "saved-0" });
+    try {
+      expect(submit(engine, "last-slot").accepted).toBe(true);
+      expect(submit(engine, "overflow")).toEqual({ accepted: false, queued: false });
+      expect(options.enqueue).toHaveBeenCalledOnce();
+      expect(store.getState().queues[0]?.prompts.map((prompt) => prompt.id)).toEqual(["last-slot"]);
+      // A canonical confirmation transfers ownership without consuming a second slot.
+      receive("session", { revision: 2, paused: true, items: [...items, queued("last-slot")] });
+      expect(store.getState().queues).toEqual([]);
+      expect(submit(engine, "still-full").accepted).toBe(false);
+      receive("session", { revision: 3, paused: true, items });
+      expect(submit(engine, "new-slot").accepted).toBe(true);
+    } finally { engine.dispose(); }
+  });
+  it("counts restored unconfirmed submissions toward the per-conversation limit without replaying them", () => {
+    const store = createDesktopPendingStore();
+    store.getState().setQueues([{ agentSessionId: "session", prompts: [queued("restored").display] }]);
+    const { engine, receive, options } = setup(true, store);
+    receive("session", { revision: 1, paused: true, items: Array.from({ length: 99 }, (_, index) => queued(`saved-${index}`)) });
+    try {
+      expect(submit(engine, "overflow").accepted).toBe(false);
+      expect(options.enqueue).not.toHaveBeenCalled();
+      expect(engine.submitPrompt({ agentSessionId: "other-session", clientSubmitId: "independent", content: [{ type: "text", text: "independent" }] }).accepted).toBe(true);
+      expect(options.enqueue).toHaveBeenCalledOnce();
+    } finally { engine.dispose(); }
+  });
   it("retains send-now errors across snapshots until the operation succeeds", async () => {
     const { engine, receive, options } = setup(true);
     receive("session", { revision: 1, paused: false, items: [queued("next")] });

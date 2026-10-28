@@ -2,6 +2,7 @@ import type { AgentSessionEngine, EngineQueuedPrompt, PromptQueueRecord } from "
 import { selectEngineSubmitWouldBeVisibleInQueue } from "@tutti-os/agent-activity-core";
 import type { LocalPromptQueue } from "@multica/core/local-conversation/protocol";
 import type { DesktopPendingStore } from "./desktop-pending-store";
+const MAX_QUEUED_PROMPTS = 100;
 type SubmitInput = Parameters<AgentSessionEngine["submitPrompt"]>[0];
 interface PendingPrompt {
   input: SubmitInput;
@@ -14,6 +15,7 @@ interface PendingPrompt {
 /** Presentation adapter only: Electron owns admission, persistence and draining. */
 export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
   enabled(): boolean;
+  locale?(): string;
   enqueue(input: SubmitInput): Promise<LocalPromptQueue>;
   update(id: string, action: "pause" | "stop" | "resume" | "remove" | "sendNow", requestId?: string): Promise<LocalPromptQueue>;
   error(error: unknown): void;
@@ -153,7 +155,16 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       if (!options.enabled()) return base.submitPrompt(input);
       if (!input.content.length || !input.clientSubmitId) return { accepted: false, queued: false };
       const id = input.agentSessionId;
-      const queued = selectEngineSubmitWouldBeVisibleInQueue(snapshot(), id);
+      const state = snapshot();
+      // Include unanswered admissions and dispatching items, which still occupy
+      // canonical capacity. Reject before the GUI clears or checkpoints the draft.
+      if ((state.promptQueue.recordsBySessionId[id]?.prompts.length ?? 0) >= MAX_QUEUED_PROMPTS) {
+        options.error(new Error(options.locale?.() === "zh-CN"
+          ? `每个会话最多排队 ${MAX_QUEUED_PROMPTS} 条消息，请等待或移除部分消息后再发送。`
+          : `Each conversation can queue up to ${MAX_QUEUED_PROMPTS} messages. Wait or remove a queued message before sending.`));
+        return { accepted: false, queued: false };
+      }
+      const queued = selectEngineSubmitWouldBeVisibleInQueue(state, id);
       const saved = structuredClone(input);
       const item: PendingPrompt = { input: saved, display: { ...saved, id: saved.clientSubmitId, createdAtUnixMs: Date.now(), visibleInQueue: queued } };
       pending.set(id, [...(pending.get(id) ?? []), item]); publish();

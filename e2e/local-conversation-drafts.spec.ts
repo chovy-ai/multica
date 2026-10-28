@@ -1,13 +1,14 @@
 import "./env";
 import { expect, test, type Page } from "@playwright/test";
 import type { AgentGuiInitSnapshot, AgentGuiSession } from "../packages/tutti-agent-gui-host/src/protocol";
+import type { LocalPromptQueue } from "../packages/core/local-conversation/protocol";
 
-async function mountDraftHarness(page: Page, desktopQueue: boolean, holdAdmission = false) {
+async function mountDraftHarness(page: Page, desktopQueue: boolean, holdAdmission = false, queueSize = 0, locale: "en" | "zh-CN" = "en") {
   const at = "2026-10-28T00:00:00Z";
   const sessions = ["a", "b"].map((id) => ({ id, workspace_id: "draft-workspace", creator_id: "draft-user", agent_id: "local:codex",
     title: `Conversation ${id}`, status: "active", created_at: at, updated_at: at, has_unread: false } as AgentGuiSession));
   const snapshot: AgentGuiInitSnapshot = {
-    workspaceId: "draft-workspace", workspaceSlug: "test", userId: "draft-user", locale: "en", theme: "light",
+    workspaceId: "draft-workspace", workspaceSlug: "test", userId: "draft-user", locale, theme: "light",
     local: true, composerDraftScope: JSON.stringify(["https://api.example.test", ""]),
     ...(desktopQueue ? { queueOwner: "desktop" as const } : {}),
     hostActive: true, hostVisible: true, agents: [], sessions, activeSessionId: "a", selectedAgentId: "local:codex",
@@ -16,11 +17,15 @@ async function mountDraftHarness(page: Page, desktopQueue: boolean, holdAdmissio
   await page.route("**/__test/conversation-drafts", (route) => route.fulfill({ contentType: "text/html", body: '<button id="away">Other tab</button><button id="back">Conversation tab</button><button id="a">Open A</button><button id="b">Open B</button><button id="accept">Accept pending</button><div id="content"></div>' }));
   await page.setViewportSize({ width: 1280, height: 950 });
   await page.goto("/__test/conversation-drafts");
-  await page.evaluate(({ snapshot, at, holdAdmission }) => {
+  await page.evaluate(({ snapshot, at, holdAdmission, queueSize }) => {
     const storage = new Map<string, string>();
     let frame: HTMLIFrameElement | null = null;
     let port: MessagePort | null = null;
     let sends = 0;
+    const queue: LocalPromptQueue = { revision: 0, paused: queueSize > 0, items: Array.from({ length: queueSize }, (_, index) => {
+      const id = `saved-${index}`;
+      return { requestId: id, content: id, display: { id, clientSubmitId: id, createdAtUnixMs: 1, content: [{ type: "text", text: id }] } };
+    }) };
     const sent = new Map<string, string>();
     const accepted = new Set<string>();
     let completeAdmission: (() => void) | null = null;
@@ -55,7 +60,7 @@ async function mountDraftHarness(page: Page, desktopQueue: boolean, holdAdmissio
           case "session.load": {
             const session = snapshot.sessions.find((entry) => entry.id === request.params.sessionId)!;
             result = { session, messages: [{ id: `reply-${session.id}`, chat_session_id: session.id, role: "assistant", content: sent.get(session.id) ?? `Saved reply ${session.id}`, task_id: null, created_at: at }],
-              tasks: [], pending: {}, ...(snapshot.queueOwner ? { promptQueue: { revision: sends, paused: false, items: [] } } : {}) };
+              tasks: [], pending: {}, ...(snapshot.queueOwner ? { promptQueue: queue } : {}) };
             break;
           }
           case "queue.enqueue":
@@ -101,8 +106,29 @@ async function mountDraftHarness(page: Page, desktopQueue: boolean, holdAdmissio
     });
     document.body.dataset.sends = "0";
     mount();
-  }, { snapshot, at, holdAdmission });
+  }, { snapshot, at, holdAdmission, queueSize });
 }
+
+for (const locale of ["en", "zh-CN"] as const) test(`preserves the draft at the 100-message limit (${locale})`, async ({ page }) => {
+  await mountDraftHarness(page, true, false, 100, locale);
+  const gui = page.frameLocator("iframe");
+  const editor = gui.getByTestId("agent-gui-composer-editor");
+  await expect(editor).toBeVisible({ timeout: 30_000 });
+  await editor.fill("Keep this draft\nQueue is full");
+  await gui.getByTestId("agent-gui-composer-send").click();
+  await expect(page.locator("body")).toHaveAttribute("data-notice", locale === "en"
+    ? "Each conversation can queue up to 100 messages. Wait or remove a queued message before sending."
+    : "每个会话最多排队 100 条消息，请等待或移除部分消息后再发送。");
+  await expect(editor).toContainText("Keep this draft");
+  await expect(page.locator("body")).toHaveAttribute("data-sends", "0");
+  await page.screenshot({ path: `test-results/conversation-queue-limit-${locale}.png` });
+  await page.locator("#away").click();
+  await page.locator("#back").click();
+  await expect(editor).toContainText("Keep this draft");
+  await expect(editor).toContainText("Queue is full");
+  await expect(page.locator("body")).toHaveAttribute("data-sends", "0");
+  await expect(gui.getByTestId("agent-gui-composer-queued-prompts")).not.toContainText("Keep this draft");
+});
 
 test("preserves per-conversation multiline drafts across real GUI document destruction", async ({ page }) => {
   test.setTimeout(120_000);
