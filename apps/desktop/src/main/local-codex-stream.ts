@@ -1,4 +1,4 @@
-import { ProviderStream, type runLocalProvider } from "./local-provider-runner";
+import { codexMessageSeparator, ProviderStream, type runLocalProvider } from "./local-provider-runner";
 import type { CodexObject } from "./local-codex-rpc";
 
 type Emit = Parameters<typeof runLocalProvider>[1];
@@ -10,9 +10,10 @@ export class CodexTurnStream {
   constructor(private emit: Emit) { this.parser = new ProviderStream("codex", emit); }
   accept(method: string, params: CodexObject): void {
     if (method === "item/agentMessage/delta" && typeof params.delta === "string") {
-      if (this.completed.has(params.itemId)) return;
+      if (this.completed.has(params.itemId) || !params.delta) return;
+      const prefix = this.text.has(params.itemId) ? "" : codexMessageSeparator(this.parser.output);
       this.text.set(params.itemId, (this.text.get(params.itemId) ?? "") + params.delta);
-      this.emit({ type: "text", content: params.delta }); return;
+      this.emit({ type: "text", content: prefix + params.delta }); return;
     }
     if (method !== "item/started" && method !== "item/completed") return;
     const item = params.item;
@@ -21,8 +22,9 @@ export class CodexTurnStream {
     if (item.type === "agentMessage" && method === "item/completed") {
       const full = typeof item.text === "string" ? item.text : "";
       const delivered = this.text.get(item.id) ?? "";
-      if (full.startsWith(delivered) && full.length > delivered.length) this.emit({ type: "text", content: full.slice(delivered.length) });
-      this.parser.output += full; this.text.delete(item.id); return;
+      const prefix = full ? codexMessageSeparator(this.parser.output) : "";
+      if (full.startsWith(delivered) && full.length > delivered.length) this.emit({ type: "text", content: (delivered ? "" : prefix) + full.slice(delivered.length) });
+      this.parser.output += prefix + full; this.text.delete(item.id); return;
     }
     const types: Record<string, string> = { commandExecution: "command_execution", fileChange: "file_change", mcpToolCall: "mcp_tool_call", imageGeneration: "image_generation", dynamicToolCall: "dynamic_tool_call" };
     const converted = { ...item, type: types[item.type] ?? item.type,

@@ -46,6 +46,12 @@ export async function findLocalProvider(provider: LocalProviderId): Promise<stri
 }
 
 type Emit = (event: Omit<LocalConversationEvent, "seq" | "created_at">) => void;
+
+export function codexMessageSeparator(previous: string): string {
+  if (!previous || previous.endsWith("\n\n")) return "";
+  return previous.endsWith("\n") ? "\n" : "\n\n";
+}
+
 export class ProviderStream {
   sessionId?: string;
   output = "";
@@ -74,7 +80,10 @@ export class ProviderStream {
       }
       if (this.seen.has(item.id)) return;
       this.seen.add(item.id);
-      if (item.type === "agent_message" && typeof item.text === "string") { this.output += item.text; this.emit({ type: "text", content: item.text }); }
+      if (item.type === "agent_message" && typeof item.text === "string") {
+        const content = item.text ? codexMessageSeparator(this.output) + item.text : "";
+        this.output += content; this.emit({ type: "text", content });
+      }
       else if (item.type === "reasoning" && typeof item.text === "string") this.emit({ type: "thinking", content: item.text });
       else if (item.type === "command_execution") this.emit({ type: "tool_result", tool: "Bash", output: item.aggregated_output ?? "", call_id: item.id });
       else if (item.type === "file_change") this.emit({ type: "tool_result", tool: "Edit", output: JSON.stringify(item.changes ?? []), call_id: item.id });
