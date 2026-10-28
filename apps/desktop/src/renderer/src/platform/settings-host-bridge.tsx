@@ -6,8 +6,6 @@ import { getCurrentWsId, getCurrentSlug } from "@multica/core/platform";
 import { api } from "@multica/core/api";
 import { paths } from "@multica/core/paths";
 import { SETTINGS_OPERATIONS } from "@multica/core/settings/operations";
-import { useFeatureEnabled } from "@multica/core/config";
-import { PROJECT_WORKFLOWS_V1_FLAG } from "@multica/core/feature-flags";
 import { z } from "zod";
 import { useChatStore } from "@multica/core/chat";
 import { useCommentComposerStore } from "@multica/core/issues/stores";
@@ -104,7 +102,6 @@ export async function performSettingsHostOperation(request: SettingsHostMessage,
 
 export function DesktopSettingsHostBridge() {
   const { theme, setTheme } = useTheme();
-  const workflowsEnabled = useFeatureEnabled(PROJECT_WORKFLOWS_V1_FLAG, false);
   const client = useQueryClient();
   const deps = useRef<SettingsRendererDependencies>(null!);
   deps.current = {
@@ -117,7 +114,7 @@ export function DesktopSettingsHostBridge() {
     open: (domain) => {
       const slug = getCurrentSlug();
       if (!slug) throw new Error("No active workspace");
-      const tab = domain === "statuses" ? workflowsEnabled ? "workflows" : "issue-statuses" : domain;
+      const tab = domain === "statuses" ? "workflows" : domain;
       useTabStore.getState().openTab(`${paths.workspace(slug).settings()}?tab=${encodeURIComponent(tab)}`, "", { activate: true });
     },
   };

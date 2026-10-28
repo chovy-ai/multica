@@ -9,8 +9,13 @@ import { join } from "path";
 import { pathToFileURL } from "url";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import fixPath from "fix-path";
-import { setupAutoUpdater, updateInstallsOnQuit } from "./updater";
-import { setupDaemonManager, daemonDiagnosticLogPath } from "./daemon-manager";
+import { createElectronBusyInstallPrompt, setupAutoUpdater, updateInstallsOnQuit } from "./updater";
+import {
+  prepareDaemonForUpdateInstall,
+  resumeDaemonAfterAbortedUpdateInstall,
+  setupDaemonManager,
+  daemonDiagnosticLogPath,
+} from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
 import { setupTerminalCli } from "./terminal-cli-ipc";
 import { registerDesktopProtocol, setupBrowserLogin } from "./browser-login-ipc";
@@ -818,18 +823,6 @@ if (!gotTheLock) {
       if (request.method === "GET" && route.startsWith("files/")) return localConversations.file(request, scope, decodeURIComponent(route.slice("files/".length)));
       return new Response("Not found", { status: 404 });
     });
-    let localShutdown = false;
-    app.on("before-quit", (event) => {
-      if (localShutdown) return;
-      event.preventDefault(); localShutdown = true;
-      // Local conversations keep running in the daemon; only flush Desktop's own logs.
-      // The sidecar runs this app's executable, so it cannot outlive the app when
-      // quitting installs a downloaded update or the AppImage mount disappears.
-      const proxy = localConversations;
-      const stopped = proxy && (process.env.APPIMAGE || updateInstallsOnQuit()) ? proxy.stopSidecar().catch(() => {}) : Promise.resolve();
-      void stopped.finally(() => proxy?.close());
-      void Promise.all([stopped, localTimingLog?.flush(), ...[...webDiagnosticLogs.values()].map((log) => log.flush())]).finally(() => app.quit());
-    });
 
     electronApp.setAppUserModelId(
       is.dev ? "ai.multica.desktop.dev" : "ai.multica.desktop",
@@ -1047,6 +1040,17 @@ if (!gotTheLock) {
     createWindow();
 
     setupAutoUpdater(() => mainWindow, {
+      // Windows only (the updater ignores it elsewhere): stop the bundled
+      // daemon before the installer runs so multica.exe is replaced. #8823
+      daemonGate: {
+        prepare: prepareDaemonForUpdateInstall,
+        resumeAfterAbortedInstall: resumeDaemonAfterAbortedUpdateInstall,
+        confirmInstallWhileBusy: createElectronBusyInstallPrompt((options) =>
+          mainWindow && !mainWindow.isDestroyed()
+            ? dialog.showMessageBox(mainWindow, options)
+            : dialog.showMessageBox(options),
+        ),
+      },
       // The sidecar runs this app's executable: stop it before the installer
       // replaces the app, after asking when that would interrupt a turn.
       beforeInstall: async () => {
@@ -1074,6 +1078,19 @@ if (!gotTheLock) {
         return busy === 0;
       },
     });
+    let localShutdown = false;
+    app.on("before-quit", (event) => {
+      if (event.defaultPrevented || localShutdown) return;
+      event.preventDefault(); localShutdown = true;
+      // Local conversations keep running in the daemon; only flush Desktop's own logs.
+      // The sidecar runs this app's executable, so it cannot outlive the app when
+      // quitting installs a downloaded update or the AppImage mount disappears.
+      const proxy = localConversations;
+      const stopped = proxy && (process.env.APPIMAGE || updateInstallsOnQuit()) ? proxy.stopSidecar().catch(() => {}) : Promise.resolve();
+      void stopped.finally(() => proxy?.close());
+      void Promise.all([stopped, localTimingLog?.flush(), ...[...webDiagnosticLogs.values()].map((log) => log.flush())]).finally(() => app.quit());
+    });
+
     setupLocalDirectory(() => mainWindow);
     setupTerminalCli(() => mainWindow);
 
