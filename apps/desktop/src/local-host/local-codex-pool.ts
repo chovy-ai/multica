@@ -23,6 +23,7 @@ export class LocalCodexPool {
   private shutdown?: Promise<void>;
   private waiters = new Set<() => void>();
   private threads = new Set<string>();
+  private threadWorkers = new Map<string, LocalCodexWorker>();
   private latest?: { create(): Slot; epoch: string };
   constructor(private find: () => Promise<string | null>, private unloadGraceMs = 15_000) {}
 
@@ -94,12 +95,17 @@ export class LocalCodexPool {
     this.admission = admitted;
     const { slot, native } = await timed("provider.pool_admission", () => admitted);
     let threadId = input.resume;
-    try { return await slot.worker.run({ ...input, onSessionId: (id) => { threadId = id; this.threads.add(id); input.onSessionId?.(id); } }, native, emit, signal); }
+    try { return await slot.worker.run({ ...input, onSessionId: (id) => { threadId = id; this.threads.add(id); this.threadWorkers.set(id, slot.worker); input.onSessionId?.(id); } }, native, emit, signal); }
     finally {
-      if (threadId) this.threads.delete(threadId); slot.busy--;
+      if (threadId) { this.threads.delete(threadId); this.threadWorkers.delete(threadId); } slot.busy--;
       for (const wake of this.waiters) wake();
       this.rewarm(slot);
     }
+  }
+  async steer(threadId: string, content: string): Promise<void> {
+    const worker = this.threadWorkers.get(threadId);
+    if (!worker) throw new Error("No active turn found");
+    await worker.steer(threadId, content);
   }
   private rewarm(slot: Slot): void {
     const maintenance = this.admission.catch(() => {}).then(async () => {

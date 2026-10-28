@@ -29,6 +29,7 @@ import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
 import { DesktopAuthSessionBridge } from "./platform/auth-session-bridge";
+import { DesktopSideWorkspaceBridge } from "./platform/side-workspace-bridge";
 import { DesktopSettingsHostBridge } from "./platform/settings-host-bridge";
 import {
   tearDownOnLogout,
@@ -471,7 +472,7 @@ export default function App() {
           localeAdapter={localeAdapter}
         >
           <DesktopAuthSessionBridge />
-          {windowContext.kind === "main" && <DesktopSettingsHostBridge />}
+          {windowContext.kind === "main" && <><DesktopSettingsHostBridge /><DesktopSideWorkspaceBridge /></>}
           {windowContext.kind === "main" && <DiagnosticRouteReporter />}
           {windowContext.kind === "main" && (
             <DesktopClientUsageReporter

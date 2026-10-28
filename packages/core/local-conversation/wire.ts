@@ -58,7 +58,7 @@ export const logParamsSchema = z.object({ level: z.string(), message: z.string()
 export const hostRequestParamsSchema = z.object({ connectionId: z.string(), kind: z.string(), payload: z.unknown() }).strict();
 
 /** Host request kinds Desktop knows how to serve. */
-export const HOST_REQUEST_KINDS = ["confirmed_operation", "settings_host", "pick_directory", "pick_preview", "developer_logs_export"] as const;
+export const HOST_REQUEST_KINDS = ["confirmed_operation", "settings_host", "pick_directory", "pick_preview", "developer_logs_export", "side_workspace"] as const;
 export type HostRequestKind = (typeof HOST_REQUEST_KINDS)[number];
 
 export type LocalHostScope = z.infer<typeof scope>;

@@ -139,6 +139,17 @@ describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
     expect((await calls()).filter((row) => row.method === "thread/resume")).toHaveLength(0);
     await writeFile(join(root, "close.release"), "go");
   });
+  it("steers only the acknowledged active provider turn and stops steering after completion", async () => {
+    const { pool, input, calls, root } = await setup();
+    let threadId = "";
+    const pending = pool.run("scope", input("holdSteer", { onSessionId: (id) => { threadId = id; } }), vi.fn(), new AbortController().signal);
+    await wait(async () => expect((await calls()).some((call) => call.method === "turn/start")).toBe(true));
+    await pool.steer(threadId, "User guidance");
+    const steer = (await calls()).find((call) => call.method === "turn/steer");
+    expect(steer?.params).toMatchObject({ threadId, expectedTurnId: expect.stringMatching(/^turn-/), input: [{ type: "text", text: "User guidance" }] });
+    await writeFile(join(root, "holdSteer.release"), "go"); await pending;
+    await expect(pool.steer(threadId, "too late")).rejects.toThrow("No active turn");
+  });
   it("applies thinking effort to new and resumed turns and clears the previous override", async () => {
     const { pool, input, calls } = await setup();
     let resume: string | undefined;

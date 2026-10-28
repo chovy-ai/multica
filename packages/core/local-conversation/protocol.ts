@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { RuntimeModel } from "../types";
 
 export const LOCAL_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
@@ -54,7 +55,7 @@ export interface LocalUserQuestion extends LocalUserQuestionInput {
   answers?: Record<string, string | string[]>;
 }
 export interface LocalUserQuestionResult { answersByQuestionId: Record<string, string | string[]> }
-export interface LocalConversationMessage { id: string; role: "user" | "assistant"; content: string; turnId: string; createdAt: string; failed?: boolean; attachmentIds?: string[] }
+export interface LocalConversationMessage { steered?: boolean; origin?: { conversationId: string; requestId: string }; id: string; role: "user" | "assistant"; content: string; turnId: string; createdAt: string; failed?: boolean; attachmentIds?: string[] }
 /** Keep internal image prompt markers out of displayed history and previews. */
 export function localMessageDisplayContent(message?: Pick<LocalConversationMessage, "role" | "content" | "attachmentIds">): string {
   if (!message) return "";
@@ -89,7 +90,7 @@ export interface LocalImportResult {
   failed: { sourceId: string; error: string }[];
 }
 export interface LocalConversationModels { supported: boolean; models: RuntimeModel[] }
-export interface LocalSidePrompt { content: string; attachmentIds?: string[]; references?: { kind: "session" | "issue" | "agent"; id: string }[]; model?: string; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; requestId: string }
+export interface LocalSidePrompt { origin?: { conversationId: string; requestId: string }; content: string; attachmentIds?: string[]; references?: { kind: "session" | "issue" | "agent"; id: string }[]; model?: string; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; requestId: string }
 export interface LocalQueuedPrompt extends LocalSidePrompt {
   prompt?: string;
   display: LocalQueueDisplayPrompt;
@@ -139,7 +140,26 @@ export interface LocalProviderUsage {
 }
 export const LOCAL_CONVERSATION_PROTOCOL_VERSION = 2;
 export interface LocalConversationCapabilities { protocolVersion: number; methods: string[] }
+
+const sideId = z.string().min(1).max(160);
+const sidePath = z.string().min(1).max(4096);
+export const sideWorkspaceTabSchema = z.discriminatedUnion("kind", [
+  z.object({ id: sideId, kind: z.literal("web"), url: z.string().url().max(8192).refine((value) => { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password; }), title: z.string().max(4096).optional(), loading: z.boolean().optional(), openedBy: z.enum(["user", "agent"]).optional(), turnId: sideId.optional(), keep: z.boolean().optional() }).strict(),
+  z.object({ id: sideId, kind: z.literal("file"), root: sidePath, path: sidePath, fileKind: z.enum(["file", "directory"]), selectedPath: sidePath.optional(), line: z.number().int().positive().optional() }).strict(),
+  z.object({ id: sideId, kind: z.literal("side"), sessionId: sideId }).strict(),
+]);
+export const sideWorkspaceSyncSchema = z.object({
+  conversationId: sideId, revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), panelOpen: z.boolean(), visible: z.boolean().default(false),
+  selectedTabId: sideId.nullable(), tabs: z.array(sideWorkspaceTabSchema).max(20),
+}).strict().superRefine((value, ctx) => {
+  if (new Set(value.tabs.map((tab) => tab.id)).size !== value.tabs.length || (value.selectedTabId !== null && !value.tabs.some((tab) => tab.id === value.selectedTabId))) ctx.addIssue({ code: "custom", message: "Invalid Side selection or duplicate tab" });
+});
+export type SideWorkspaceTab = z.infer<typeof sideWorkspaceTabSchema>;
+export type SideWorkspaceSnapshot = z.infer<typeof sideWorkspaceSyncSchema>;
+
 export interface LocalConversationMethods {
+  sideWorkspaceSync: { params: SideWorkspaceSnapshot; result: { revision: number } };
+  sideWorkspaceState: { params: { conversationId: string }; result: SideWorkspaceSnapshot | null };
   capabilities: { params: Record<string, never>; result: LocalConversationCapabilities };
   queueEnqueue: { params: { id: string; item: LocalQueuedPrompt; paused?: boolean }; result: LocalPromptQueue };
   queueUpdate: { params: { id: string; action: "pause" | "stop" | "resume" | "remove" | "sendNow"; requestId?: string }; result: LocalPromptQueue };
@@ -149,6 +169,7 @@ export interface LocalConversationMethods {
   folderProjectAdd: { params: Record<string, never>; result: LocalFolderProject | null };
   sideCreate: { params: { id: string; turnId?: string; quote?: string; requestId: string; pending?: LocalSidePrompt; queuedPrompt?: LocalQueuedPrompt }; result: LocalConversation };
   sideAccepted: { params: { id: string; requestId: string }; result: void };
+  previewLocate: { params: { path: string; id?: string }; result: LocalPreviewLocation };
   previewChoose: { params: { kind: "file" | "directory" }; result: LocalPreviewLocation | null };
   previewList: { params: { root: string; path: string; id?: string }; result: LocalPreviewLocation[] };
   previewRead: { params: { root?: string; path: string; id?: string }; result: LocalPreviewFile };
@@ -162,7 +183,7 @@ export interface LocalConversationMethods {
   fork: { params: { id: string; turnId?: string; requestId?: string }; result: LocalConversation };
   update: { params: { id: string; title?: string; pinned?: boolean; archived?: boolean; projectId?: string | null }; result: LocalConversation };
   directory: { params: { id: string }; result: LocalConversation };
-  send: { params: { id: string; content: string; prompt?: string; references?: { kind: "session" | "issue" | "agent"; id: string }[]; attachmentIds?: string[]; model?: string; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; requestId?: string }; result: { messageId: string; turnId: string; createdAt: string; replayed?: boolean } };
+  send: { params: { origin?: { conversationId: string; requestId: string }; id: string; content: string; prompt?: string; references?: { kind: "session" | "issue" | "agent"; id: string }[]; attachmentIds?: string[]; model?: string; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; requestId?: string }; result: { messageId: string; turnId: string; createdAt: string; replayed?: boolean } };
   fileStore: { params: { name: string; mimeType: string; data: string }; result: { id: string } };
   fileInfo: { params: { id: string }; result: { name: string; mimeType: string; path: string; url: string; size: number } };
   fileRead: { params: { id: string }; result: { name: string; mimeType: string; data: string; path: string; size: number } };
@@ -194,6 +215,8 @@ export interface LocalConversationClient {
 
 /** Adding an IPC method requires advertising it to the renderer. */
 export const LOCAL_CONVERSATION_METHODS = {
+  sideWorkspaceSync: true,
+  sideWorkspaceState: true,
   capabilities: true,
   queueEnqueue: true,
   queueUpdate: true,
@@ -203,6 +226,7 @@ export const LOCAL_CONVERSATION_METHODS = {
   folderProjectAdd: true,
   sideCreate: true,
   sideAccepted: true,
+  previewLocate: true,
   previewChoose: true,
   previewList: true,
   previewRead: true,

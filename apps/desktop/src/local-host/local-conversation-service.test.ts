@@ -623,7 +623,7 @@ describe("local conversation persistence and execution", () => {
     const created = await service.request(scope, "create", { provider: "codex" });
     await service.request(scope, "send", { id: created.id, content: "Read a task" });
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: created.id })).turns[0]?.status).toBe(failed ? "failed" : "completed"));
-    expect(prepare).toHaveBeenCalledWith(scope, expect.any(AbortSignal), { conversationId: created.id, references: [], timing: expect.objectContaining({ mark: expect.any(Function), measure: expect.any(Function) }), askUser: expect.any(Function), readAvatarFile: expect.any(Function) });
+    expect(prepare).toHaveBeenCalledWith(scope, expect.any(AbortSignal), { conversationId: created.id, turnId: expect.any(String), references: [], timing: expect.objectContaining({ mark: expect.any(Function), measure: expect.any(Function) }), askUser: expect.any(Function), readAvatarFile: expect.any(Function) });
     expect(options.run).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt: expect.stringContaining(context.systemPrompt), env: context.env, content: "Read a task" }), expect.any(Function), expect.any(AbortSignal));
     expect(context.dispose).toHaveBeenCalledOnce();
     await service.flush();

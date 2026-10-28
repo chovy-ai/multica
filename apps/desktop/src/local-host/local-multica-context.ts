@@ -14,6 +14,7 @@ import type { AskLocalUser } from "./local-user-question";
 import type { LocalQueueCloudRequest } from "./local-queued-cloud-run";
 import { SETTINGS_MCP_INSTRUCTIONS } from "@multica/core/settings/operations";
 import { createSettingsTools, type SettingsToolOptions } from "./local-settings-tools";
+import { SIDE_WORKSPACE_INSTRUCTIONS } from "./local-side-workspace-tools";
 import { multicaWorkspaceRequest } from "./multica-api-request";
 const executeFile = promisify(execFile);
 const createdTaskSchema = CreateIssueResponseSchema.pick({ id: true, workspace_id: true, identifier: true, title: true, status: true });
@@ -38,10 +39,12 @@ interface Options {
   local?: (scope: LocalConversationScope) => LocalContextReader;
   localActions?: (scope: LocalConversationScope) => NonNullable<WorkspaceToolOptions["local"]>;
   settings?: Pick<SettingsToolOptions, "host" | "confirmAndApply">;
+  openSide?: (scope: LocalConversationScope, current: LocalRunContext, id: string, signal: AbortSignal, requestId: string) => Promise<unknown>;
+  sideTools?: (scope: LocalConversationScope, current: LocalRunContext, data: LocalContextData) => { tools: WorkspaceMcpTool[]; summary: unknown };
   developerLogTool?: (scope: LocalConversationScope, conversationId?: string) => WorkspaceMcpTool;
 }
 
-export interface LocalRunContext { timing?: LocalTiming; conversationId: string; references: { kind: "session" | "issue" | "agent"; id: string }[]; askUser?: AskLocalUser; readAvatarFile?: NonNullable<WorkspaceToolOptions["avatar"]>["readFile"] }
+export interface LocalRunContext { timing?: LocalTiming; conversationId: string; turnId?: string; references: { kind: "session" | "issue" | "agent"; id: string }[]; askUser?: AskLocalUser; readAvatarFile?: NonNullable<WorkspaceToolOptions["avatar"]>["readFile"] }
 
 function quote(value: string, windows: boolean): string {
   return `'${value.replaceAll("'", windows ? "''" : "'\\''")}'`;
@@ -158,7 +161,8 @@ export class LocalMulticaContext {
       const workspaceTools = this.options.workspaceOperations ? createWorkspaceTools({
         workspaceId: scope.workspaceId, userId: scope.userId, conversationId: current?.conversationId, appUrl: this.options.appUrl,
         ...(current?.readAvatarFile ? { avatar: { receiptsRoot: join(this.options.root, "..", "avatar-operation-receipts"), readFile: current.readAvatarFile } } : {}),
-        local: this.options.localActions?.(scope), request: workspaceRequest,
+        local: this.options.localActions?.(scope),
+        ...(current && this.options.openSide ? { openSide: (id: string, signal: AbortSignal, requestId: string) => this.options.openSide!(scope, current, id, signal, requestId) } : {}), request: workspaceRequest,
       }).filter((tool) => token || ["create_conversation", "update_conversation", "fork_conversation", "create_side_conversation", "list_conversation_branches", "send_conversation_message", "cancel_local_conversation_run"].includes(tool.name)) : [];
       const settingsTools = this.options.workspaceOperations ? createSettingsTools({
         ...scope, root: join(this.options.root, "..", "settings-operation-receipts"), cloudAvailable: Boolean(token),
@@ -166,8 +170,10 @@ export class LocalMulticaContext {
       }) : [];
       workspaceTools.push(...settingsTools);
       if (this.options.developerLogTool) workspaceTools.push(this.options.developerLogTool(scope, current?.conversationId));
+      const side = current && this.options.sideTools?.(scope, current, data);
+      if (side) workspaceTools.push(...side.tools);
       const startMcp = () => startLocalContextMcp(data, { workspace_id: scope.workspaceId, conversation_id: current?.conversationId,
-        references: current?.references.filter((reference) => !isTaskCreationReference(reference)) ?? [], actions: [...new Set([...(actions ? ["create_task"] : []), ...workspaceTools.map((tool) => tool.name)])] }, signal, actions, workspaceTools, current?.askUser);
+        ...(side ? { side_workspace: side.summary } : {}), references: current?.references.filter((reference) => !isTaskCreationReference(reference)) ?? [], actions: [...new Set([...(actions ? ["create_task"] : []), ...workspaceTools.map((tool) => tool.name)])] }, signal, actions, workspaceTools, current?.askUser);
       mcp = await (current?.timing ? current.timing.measure("context.mcp", startMcp) : startMcp());
       env[CONTEXT_MCP_TOKEN_ENV] = mcp.token;
       env.MULTICA_SETTINGS_MCP_URL = mcp.url;
@@ -183,6 +189,7 @@ export class LocalMulticaContext {
       try { await access(this.options.cliPath, constants.X_OK); } catch { installed = false; }
       const systemPrompt = [
         ...(settingsTools.length ? [SETTINGS_MCP_INSTRUCTIONS, `CLI access to the same Settings registry uses this execution's exact scoped prefix: ${command} settings capabilities; ${command} settings call <settings_tool_name> --input-file <json-file>. Do not use an ambient CLI profile.`] : []),
+        ...(side ? [SIDE_WORKSPACE_INSTRUCTIONS] : []),
         "You are running in Multica Desktop's local conversation flow, as an ordinary local coding assistant.",
         ...(current?.askUser ? ["Interactive questions are supported in this conversation, including Side panes. When you need the user's choice or clarification, call multica_desktop_context.ask_user_question and wait for its real result before continuing. It renders selectable options, multiple-choice and free-text answers in the GUI and resumes this same execution. Use this MCP tool rather than a provider-native AskUserQuestion/request_user_input tool that may be unavailable in noninteractive CLI mode, or printing a pretend question card in text. Do not answer on the user's behalf. This is for clarification only, never a replacement for command/tool permission approval."] : []),
         `The current Multica workspace ID is ${JSON.stringify(scope.workspaceId)}. ${workspaceTools.length ? "Workspace context and operation tools are available within this desktop user's permissions." : actions ? "The user selected the New task mention in this message, enabling the create_task MCP tool for this execution." : "This integration is for read-only context queries."}`,

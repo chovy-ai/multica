@@ -87,5 +87,11 @@ export class ResourceWebPreview {
     }
     return this.state(id);
   }
+  async ensure(owner: string, id: string, url: string) {
+    await this.request(owner, { id, action: "show", url });
+    const entry = this.entries.get(id);
+    if (!entry || entry.owner !== owner || entry.view.webContents.isDestroyed()) throw new Error("Invalid preview target");
+    return entry.view.webContents;
+  }
   dispose() { this.chromeProfiles.dispose(); for (const entry of this.entries.values()) { if (!this.window.isDestroyed()) this.window.contentView.removeChildView(entry.view); if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } this.entries.clear(); }
 }

@@ -302,6 +302,49 @@ func TestHostRequestGoesOnlyToOriginAndFirstReplyWins(t *testing.T) {
 	}
 }
 
+func TestSideWorkspaceHostRequestPreservesPayloadAndImageReply(t *testing.T) {
+	h := newHarness(t, true)
+	h.signIn(scope.UserID)
+	origin := h.dial()
+	h.session(origin)
+	connectionID := mustConnID(t, h, origin)
+	payload := json.RawMessage(`{"op":"browser","conversationId":"main","tabId":"web:one","turnId":"turn","action":{"type":"screenshot"}}`)
+	type outcome struct {
+		value any
+		err   error
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		value, err := h.srv.hostRequest(ctx, connectionID, "side_workspace", payload)
+		result <- outcome{value, err}
+	}()
+	var request HostRequestNotification
+	if err := json.Unmarshal(origin.next(t, "hostRequest"), &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Kind != "side_workspace" || !bytes.Equal(request.Payload, payload) {
+		t.Fatalf("forwarded request = %s %s", request.Kind, request.Payload)
+	}
+	image := strings.Repeat("A", 650*1024*4/3)
+	reply := map[string]any{"untrusted_page_content": true, "image": map[string]any{"mimeType": "image/jpeg", "data": image}}
+	if _, err := origin.call(t, "hostReply", map[string]any{"id": request.ID, "result": reply}); err != nil {
+		t.Fatal(err)
+	}
+	got := <-result
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	encoded, err := json.Marshal(got.value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) >= maxMessageBytes || !bytes.Contains(encoded, []byte(image)) {
+		t.Fatalf("image reply size = %d", len(encoded))
+	}
+}
+
 func TestHostRequestFailsFastWhenOriginDisconnects(t *testing.T) {
 	h := newHarness(t, true)
 	h.signIn(scope.UserID)

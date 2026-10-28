@@ -1,3 +1,5 @@
+import { SideWorkspaceControl } from "./side-workspace-control";
+import { sideWorkspaceSyncSchema } from "@multica/core/local-conversation/protocol";
 import { LocalTimingLog } from "./local-timing-log";
 import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
 import { DeveloperLogExporter } from "./developer-log-export";
@@ -720,6 +722,7 @@ if (!gotTheLock) {
           const payload = (raw ?? {}) as Record<string, unknown>;
           const signal = AbortSignal.timeout(90_000);
           switch (kind) {
+            case "side_workspace": return sideWorkspaceControl.handle(raw, signal);
             case "confirmed_operation": {
               const request = payload.request as Parameters<NonNullable<typeof settingsHost.confirmAndApply>>[0];
               if (request?.scope?.userId !== settingsUserId) throw new SettingsOperationError("settings_host_unavailable", "Open the main app with the same signed-in account to continue");
@@ -786,11 +789,27 @@ if (!gotTheLock) {
       return developerLogs.save(scope);
     });
     let resourcePreview: ResourceWebPreview | undefined;
+    const getResourcePreview = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable");
+      return resourcePreview ??= new ResourceWebPreview(mainWindow, { createSource: () => createMacosChromeCookieImportAdapter({ isEnabled: () => true }) });
+    };
+    const sideWorkspaceControl = new SideWorkspaceControl({
+      currentUser: () => settingsUserId,
+      snapshot: (scope, conversationId) => localConversations!.request(scope, "sideWorkspaceState", { conversationId }),
+      assertTurn: async (scope, id, turnId) => { const entry = await localConversations!.request(scope, "read", { id }); if (!entry.turns.some((turn) => turn.id === turnId && turn.status === "running")) throw new Error("The controlling Side execution has ended"); },
+      preview: getResourcePreview,
+      send: (command) => { if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable"); mainWindow.webContents.send("side-workspace:command", command); },
+      activity: (tabId, conversationId, turnId, active) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("side-workspace:activity", { tabId, conversationId, turnId, active }); },
+    });
+    mainWindow?.once("closed", () => sideWorkspaceControl.dispose());
+    ipcMain.handle("side-workspace:ack", (event, reply) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("Side acknowledgement requires the main window");
+      sideWorkspaceControl.ack(reply);
+    });
     const previewFor = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Preview requires the active main window");
       if (scope.userId !== settingsUserId) throw new Error("This account is no longer active");
-      resourcePreview ??= new ResourceWebPreview(mainWindow, { createSource: () => createMacosChromeCookieImportAdapter({ isEnabled: () => true }) });
-      return { preview: resourcePreview, owner: JSON.stringify([scope.userId, scope.workspaceId]) };
+      return { preview: getResourcePreview(), owner: JSON.stringify([scope.userId, scope.workspaceId]) };
     };
     ipcMain.handle("resource-preview:request", (event, scope: LocalConversationScope, command: import("../shared/resource-preview").WebPreviewCommand) => {
       const { preview, owner } = previewFor(event, scope);
@@ -805,10 +824,12 @@ if (!gotTheLock) {
       const { preview, owner } = previewFor(event, scope);
       return preview.chromeProfiles.cancel(owner, requestId);
     });
-    ipcMain.handle("local-conversation:request", (event, scope: LocalConversationScope, method: LocalConversationMethod, params) => {
+    ipcMain.handle("local-conversation:request", async (event, scope: LocalConversationScope, method: LocalConversationMethod, params) => {
       if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Local conversations require the active main window");
       localScopeTracker?.(scope);
-      return localConversations.request(scope, method, params);
+      const result = await localConversations.request(scope, method, params);
+      if (method === "sideWorkspaceSync" && (result as { revision: number }).revision === (params as { revision: number }).revision) sideWorkspaceControl.reconcile(sideWorkspaceSyncSchema.parse(params));
+      return result;
     });
     ipcMain.handle("local-conversation:availability", (event) => event.sender === mainWindow?.webContents ? localAvailability : null);
     ipcMain.on("local-conversation:file-key", (event) => {
@@ -956,6 +977,7 @@ if (!gotTheLock) {
         publishDeveloperLogsManifest?.();
         const accountInvalidated = authSessionCoordinator.reportMain(userId);
         if (accountInvalidated) {
+          sideWorkspaceControl.dispose();
           resourcePreview?.dispose();
           authSessionGeneration += 1;
           mainRendererMessages.clear("inbox:open");

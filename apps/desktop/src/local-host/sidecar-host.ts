@@ -12,6 +12,7 @@ import { LocalConversationService } from "./local-conversation-service";
 import { generateLocalConversationTitle } from "./local-conversation-title-generator";
 import { LocalMulticaContext } from "./local-multica-context";
 import { migrateLegacyData } from "./legacy-migration";
+import { createSideWorkspaceTools } from "./local-side-workspace-tools";
 import { developerLogTool } from "./developer-log-tool";
 
 /** Methods that start model work; a draining host refuses them so a restart interrupts nothing new. */
@@ -52,6 +53,8 @@ async function createConversationService(input: { apiUrl: string; dataDir: strin
     workspaceOperations: true,
     cliPath: input.cliPath,
     readProfile: () => readProfileCredentials(input.profileDir),
+    sideTools: (scope, current, data) => createSideWorkspaceTools({ service, scope, conversationId: current.conversationId, turnId: current.turnId, data, control: (request, signal) => bridge.hostRequest("side_workspace", request, signal) }),
+    openSide: (scope, current, id, signal, requestId) => bridge.hostRequest("side_workspace", { op: "open", scope, conversationId: current.conversationId, turnId: current.turnId, tab: { kind: "side", sessionId: id }, requestId }, signal),
     settings: {
       host: (request, signal) => bridge.hostRequest("settings_host", { request }, signal),
       confirmAndApply: async (request, apply, signal) => await bridge.hostRequest("confirmed_operation", { request, apply }, signal) as SettingsApplyOutcome,
@@ -72,6 +75,7 @@ async function createConversationService(input: { apiUrl: string; dataDir: strin
     root: input.dataDir,
     apiUrl: input.apiUrl,
     generateTitle: generateLocalConversationTitle,
+    sideControl: (request, signal) => bridge.hostRequest("side_workspace", request, signal),
     prepareContext: (scope, signal, current) => context.prepare(scope, signal, current),
     queueCloudClient: (scope, signal) => context.queueClient(scope, signal),
     notify: (scope, sessionId) => bridge.notify(scope, sessionId),

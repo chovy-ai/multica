@@ -237,7 +237,7 @@ describe("removing projects from the local conversation list", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "从列表移除" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Removable project" })).not.toBeInTheDocument());
     expect(source).toEqual(original);
-    expect(mock.request.mock.calls.every((call) => ["list", "providers"].includes(call[1]))).toBe(true);
+    expect(mock.request.mock.calls.every((call) => ["list", "providers", "sideWorkspaceSync"].includes(call[1]))).toBe(true);
     expect(mock.replace).not.toHaveBeenCalled();
     expect(draft).toHaveValue("Keep this draft");
     fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), { target: { value: "Original" } });
@@ -342,7 +342,7 @@ describe("local conversation context menu", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "复制会话 ID" }));
     await waitFor(() => expect(mock.success).toHaveBeenCalledWith("已复制会话 ID"));
     expect(mock.copyText).toHaveBeenCalledExactlyOnceWith("copied-multica-id");
-    expect(mock.request.mock.calls.every((call) => call[1] === "list" || call[1] === "providers")).toBe(true);
+    expect(mock.request.mock.calls.every((call) => call[1] === "sideWorkspaceSync" || call[1] === "list" || call[1] === "providers")).toBe(true);
     expect(mock.replace).not.toHaveBeenCalled();
   });
   it("reports clipboard failure without reporting success", async () => {
