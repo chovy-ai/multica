@@ -234,7 +234,7 @@ describe("IssueLimitUpgradeDialog", () => {
     const user = await openPrompt();
 
     await waitFor(() => {
-      expect(queryRecoveryDialog()).toContainElement(document.activeElement);
+      expect(queryRecoveryDialog()?.contains(document.activeElement)).toBe(true);
     });
     await user.keyboard("{Escape}");
 
