@@ -16,6 +16,12 @@
     "more_emojis": "Plus d'emojis…",
     "emoji_loading": "Chargement…"
   },
+  "avatar_preview": {
+    "open": "Afficher l’avatar",
+    "title": "Avatar",
+    "save": "Enregistrer l’avatar",
+    "save_failed": "Impossible d’enregistrer l’avatar"
+  },
   "avatar_crop": {
     "title": "Modifier l'avatar",
     "zoom": "Zoom",

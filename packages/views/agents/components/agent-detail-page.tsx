@@ -61,7 +61,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink, useNavigation } from "../../navigation";
 import { PAGE_GUTTER, PAGE_RAIL, PageHeader } from "../../layout/page-header";
-import { ActorAvatar } from "../../common/actor-avatar";
+import { AgentAvatarControl } from "./agent-avatar-control";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
 import { VisibilityBadge } from "./visibility-badge";
 import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
@@ -353,6 +353,8 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         backHref={paths.agents()}
         canAssign={canAssign.allowed}
         canArchive={canEdit.allowed}
+        canEdit={canEdit.allowed}
+        onAvatarChange={(value) => handleUpdate(agent.id, { avatar_url: value })}
         dmPending={permissionsLoading}
         dmHref={`${paths.chat()}?agent=${agent.id}`}
         onDm={handleDm}
@@ -482,6 +484,8 @@ function DetailHeader({
   backHref,
   canAssign,
   canArchive,
+  canEdit,
+  onAvatarChange,
   dmPending,
   dmHref,
   onDm,
@@ -494,6 +498,8 @@ function DetailHeader({
   backHref: string;
   canAssign: boolean;
   canArchive: boolean;
+  canEdit: boolean;
+  onAvatarChange: (value: string) => Promise<unknown>;
   dmPending: boolean;
   dmHref: string;
   /** Runs before the link navigates; calls preventDefault when a gate denies
@@ -527,12 +533,10 @@ function DetailHeader({
 
         <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-start gap-4">
-            <ActorAvatar
-              actorType="agent"
-              actorId={agent.id}
-              size="2xl"
-              profileLink={false}
-              className="ring-1 ring-border"
+            <AgentAvatarControl
+              agent={agent}
+              canEdit={canEdit}
+              onChange={onAvatarChange}
             />
             <div className="min-w-0 pt-0.5">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
