@@ -22,6 +22,10 @@ interface DesktopAPI {
   developerLogs: import("../shared/developer-logs").DeveloperLogsClient;
   settingsHost?: import("../shared/settings-host").SettingsHostClient;
   localConversations: import("@multica/core/local-conversation/protocol").LocalConversationClient;
+  localHost: {
+    availability(): Promise<import("../shared/local-host-availability").LocalHostAvailability | null>;
+    subscribe(listener: (value: import("../shared/local-host-availability").LocalHostAvailability) => void): () => void;
+  };
   resourcePreview: import("../shared/resource-preview").ResourcePreviewClient;
   /** App version + normalized OS, captured synchronously at preload time. */
   appInfo: {

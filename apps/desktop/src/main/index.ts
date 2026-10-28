@@ -156,6 +156,7 @@ function freezeBreadcrumbPath(): string {
 let mainWindow: BrowserWindow | null = null;
 let localConversations: LocalHostProxy | null = null;
 let localScopeTracker: ((scope: LocalConversationScope) => void) | undefined;
+let localAvailability: import("../shared/local-host-availability").LocalHostAvailability | null = null;
 let localTimingLog: LocalTimingLog | undefined;
 let developerLogs: DeveloperLogExporter | undefined;
 const issueWindows = new Set<BrowserWindow>();
@@ -702,7 +703,10 @@ if (!gotTheLock) {
         notify: notifyRenderer,
         // Every open view re-reads its scope; the renderer keys queries by scope.
         resync: () => { for (const scope of recentScopes.values()) notifyRenderer(scope, ""); },
-        availability: (value) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:availability", value); },
+        availability: (value) => {
+          localAvailability = value;
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:availability", value);
+        },
         timing: (record) => { const parsed = parseLocalTiming(record); if (parsed) localTimingLog?.write(parsed); },
         hostRequest: async (kind, raw) => {
           const payload = (raw ?? {}) as Record<string, unknown>;
@@ -798,6 +802,7 @@ if (!gotTheLock) {
       localScopeTracker?.(scope);
       return localConversations.request(scope, method, params);
     });
+    ipcMain.handle("local-conversation:availability", (event) => event.sender === mainWindow?.webContents ? localAvailability : null);
     ipcMain.on("local-conversation:file-key", (event) => {
       event.returnValue = event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame ? LOCAL_FILE_KEY : "";
     });

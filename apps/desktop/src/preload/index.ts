@@ -21,6 +21,7 @@ import {
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
 import type { LocalConversationClient, LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import type { LocalHostAvailability } from "../shared/local-host-availability";
 import type {
   DaemonStatus,
   LocalRuntimeProbe,
@@ -150,6 +151,14 @@ const desktopAPI = {
     cancelChromeProfileImport: (scope, requestId) => ipcRenderer.invoke("resource-preview:cancel-chrome-import", scope, requestId),
     subscribe: (listener) => { const handler = (_event: Electron.IpcRendererEvent, state: import("../shared/resource-preview").WebPreviewState) => listener(state); ipcRenderer.on("resource-preview:changed", handler); return () => ipcRenderer.removeListener("resource-preview:changed", handler); },
   } satisfies import("../shared/resource-preview").ResourcePreviewClient,
+  localHost: {
+    availability: () => ipcRenderer.invoke("local-conversation:availability") as Promise<LocalHostAvailability | null>,
+    subscribe: (listener: (value: LocalHostAvailability) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: LocalHostAvailability) => listener(value);
+      ipcRenderer.on("local-conversation:availability", handler);
+      return () => ipcRenderer.removeListener("local-conversation:availability", handler);
+    },
+  },
   localConversations: {
     files: localFileTransport,
     request: (scope, method, params) => ipcRenderer.invoke("local-conversation:request", scope, method, params),

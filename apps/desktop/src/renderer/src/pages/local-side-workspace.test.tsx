@@ -29,7 +29,7 @@ beforeEach(() => {
     return undefined;
   });
   preview.request.mockImplementation(async (_scope, command) => command.action === "close" || command.action === "hide" ? null : { id: command.id, url: command.url, title: "Example", loading: false, canGoBack: false, canGoForward: false });
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: (listener: (scope: LocalConversationScope, id: string) => void) => { changes.add(listener); return () => changes.delete(listener); } }, resourcePreview: preview, openExternal: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: (listener: (scope: LocalConversationScope, id: string) => void) => { changes.add(listener); return () => changes.delete(listener); } }, resourcePreview: preview, openExternal: vi.fn() } });
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {

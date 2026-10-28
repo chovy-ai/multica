@@ -4,15 +4,12 @@ import WebSocket from "ws";
 import type { LocalConversationMethod, LocalConversationMethods, LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import {
   eventNotificationSchema, helloSchema, hostRequestNotificationSchema, LOCAL_HOST_API_VERSION, resyncNotificationSchema,
-  sessionResultSchema, sidecarStatusNotificationSchema, subscribeResultSchema, type LocalHostHello, type SidecarStatus,
+  sessionResultSchema, sidecarStatusNotificationSchema, subscribeResultSchema, type LocalHostHello,
 } from "@multica/core/local-conversation/wire";
 import { appError, JsonRpcPeer, RpcError, type MessageTransport } from "../local-host/json-rpc";
+import type { LocalHostAvailability } from "../shared/local-host-availability";
 import { healthPortForProfile, profileDir } from "./daemon-profile";
 import { readDaemonPortRecord } from "./daemon-port";
-
-export type LocalHostAvailability =
-  | { state: "connected"; sidecar: SidecarStatus }
-  | { state: "unavailable"; reason: "daemon_offline" | "unsupported" | "not_signed_in" | "account_mismatch" | "incompatible" };
 
 export interface LocalHostProxyOptions {
   apiUrl: string;
