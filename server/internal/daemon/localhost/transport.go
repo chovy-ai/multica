@@ -9,9 +9,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// maxMessageBytes bounds one control message; file content uses HTTP instead.
-const maxMessageBytes = 1 << 20
-
 // lineTransport frames messages as newline-delimited JSON over a pipe pair.
 type lineTransport struct {
 	r       *bufio.Reader
@@ -32,9 +29,6 @@ func (t *lineTransport) ReadMessage() ([]byte, error) {
 			return nil, err
 		}
 		line = append(line, chunk...)
-		if len(line) > maxMessageBytes {
-			return nil, errMessageTooLarge
-		}
 		if !isPrefix {
 			if len(line) == 0 {
 				continue
@@ -45,9 +39,6 @@ func (t *lineTransport) ReadMessage() ([]byte, error) {
 }
 
 func (t *lineTransport) WriteMessage(data []byte) error {
-	if len(data) > maxMessageBytes {
-		return errMessageTooLarge
-	}
 	_, err := t.w.Write(append(data, '\n'))
 	return err
 }
@@ -64,12 +55,6 @@ func (t *lineTransport) Close() error {
 	})
 	return err
 }
-
-type tooLarge struct{}
-
-func (tooLarge) Error() string { return "message exceeds 1 MiB" }
-
-var errMessageTooLarge error = tooLarge{}
 
 // wsTransport frames messages as WebSocket text messages and keeps the
 // connection honest with ping/pong: two missed pongs end it.
@@ -88,7 +73,6 @@ const (
 
 func newWSTransport(c *websocket.Conn) *wsTransport {
 	t := &wsTransport{c: c, done: make(chan struct{})}
-	c.SetReadLimit(maxMessageBytes)
 	_ = c.SetReadDeadline(time.Now().Add(pongWait))
 	c.SetPongHandler(func(string) error { return c.SetReadDeadline(time.Now().Add(pongWait)) })
 	go t.pingLoop()
@@ -127,9 +111,6 @@ func (t *wsTransport) ReadMessage() ([]byte, error) {
 }
 
 func (t *wsTransport) WriteMessage(data []byte) error {
-	if len(data) > maxMessageBytes {
-		return errMessageTooLarge
-	}
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
 	_ = t.c.SetWriteDeadline(time.Now().Add(writeWait))

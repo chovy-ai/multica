@@ -162,6 +162,32 @@ func TestLocalAPIRejectsUnauthorizedRequests(t *testing.T) {
 	}
 }
 
+func TestLargeMessagesRoundTripThroughWebSocketAndSidecar(t *testing.T) {
+	h := newHarness(t, true)
+	h.signIn(scope.UserID)
+	client := h.dial()
+	h.session(client)
+	for _, text := range []string{strings.Repeat("x", (1<<20)-1), strings.Repeat("会话🙂", 200_000), "next"} {
+		raw, err := client.call(t, "request", map[string]any{
+			"scope": scope, "method": "echo", "params": map[string]string{"text": text},
+		})
+		if err != nil {
+			t.Fatalf("echo %d bytes: %v", len(text), err)
+		}
+		var result struct {
+			Params struct {
+				Text string `json:"text"`
+			} `json:"params"`
+		}
+		if err := json.Unmarshal(raw, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Params.Text != text {
+			t.Fatalf("echo %d bytes was changed or truncated", len(text))
+		}
+	}
+}
+
 func TestHelloReportsUnsupportedWithoutSidecar(t *testing.T) {
 	h := newHarness(t, false)
 	req, _ := http.NewRequest(http.MethodGet, h.url("/local/v1/hello"), nil)
@@ -340,7 +366,7 @@ func TestSideWorkspaceHostRequestPreservesPayloadAndImageReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(encoded) >= maxMessageBytes || !bytes.Contains(encoded, []byte(image)) {
+	if !bytes.Contains(encoded, []byte(image)) {
 		t.Fatalf("image reply size = %d", len(encoded))
 	}
 }

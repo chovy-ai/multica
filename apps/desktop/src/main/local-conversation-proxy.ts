@@ -118,7 +118,7 @@ export class LocalHostProxy {
           throw appError("unsupported", "Local conversations require the daemon bundled with Multica Desktop");
         }
         const endpoint = this.endpoint!;
-        const socket = new WebSocket(`ws://${endpoint.base}/local/v1/ws`, { headers: { Authorization: `Bearer ${endpoint.token}` }, maxPayload: 1 << 20 });
+        const socket = new WebSocket(`ws://${endpoint.base}/local/v1/ws`, { headers: { Authorization: `Bearer ${endpoint.token}` }, maxPayload: 0 });
         await new Promise<void>((resolve, reject) => { socket.once("open", () => resolve()); socket.once("error", reject); });
         const peer = new JsonRpcPeer(wsTransport(socket), (method, params) => this.handleNotification(method, params));
         void peer.closed.then(() => { if (this.peer === peer) { this.peer = undefined; this.scheduleReconnect(); } });

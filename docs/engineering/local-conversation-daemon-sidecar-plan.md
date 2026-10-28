@@ -38,7 +38,7 @@
 | PR | 内容 | 主要文件 | 验证 |
 | --- | --- | --- | --- |
 | A-1 | `/shutdown` 加鉴权：daemon 生成 `local-api.token`（0600，每次启动轮换），`/shutdown` 校验 token、Host 和 Origin；CLI 的 `daemon stop` 读取 token 后再调用 | `server/internal/daemon/health.go`、`server/cmd/multica/cmd_daemon.go:1422` | Go 测试：缺 token / Host 错误 / 带 Origin 均返回 403；`daemon stop` 端到端。需确认 desktop 停止 daemon 是否全部经由 CLI 进行 |
-| A-2 | `internal/daemon/localhost`：manifest 定位、Local API（HTTP：hello、文件读写；WebSocket（gorilla/websocket）：session.set、subscribe、request、hostReply、sidecar.drain/undrain/stop，握手鉴权、1MB 上限、心跳）、连接表（连接断开时其 host_request 立即失败）、环形缓冲、host_request 定向投递与 90 秒超时、sidecar 监管（按需拉起、退避重启、stdin 关闭、shutdown） | 新包；`health.go` 挂载路由；`/health` 增加 `local_conversations`、`local_busy_count` | 使用测试内假 sidecar 脚本的 Go 测试，覆盖方案 §14 中列出的 Go 项 |
+| A-2 | `internal/daemon/localhost`：manifest 定位、Local API（HTTP：hello、文件读写；WebSocket（gorilla/websocket）：session.set、subscribe、request、hostReply、sidecar.drain/undrain/stop，握手鉴权、消息大小无上限、心跳）、连接表（连接断开时其 host_request 立即失败）、环形缓冲、host_request 定向投递与 90 秒超时、sidecar 监管（按需拉起、退避重启、stdin 关闭、shutdown） | 新包；`health.go` 挂载路由；`/health` 增加 `local_conversations`、`local_busy_count` | 使用测试内假 sidecar 脚本的 Go 测试，覆盖方案 §14 中列出的 Go 项 |
 | A-3 | 重启屏障：在 `tryBeginServerUpdate`（`daemon.go:5034,5047`）、`tryAutoUpdate`、`trySelfReload` 中计入本地忙碌计数；检查前先执行 drain，不重启时再执行 undrain | `daemon.go`、`auto_update.go` | 竞态测试：drain 之后不能再开始新轮次 |
 | A-4 | 协议契约 fixture：daemon↔sidecar 与 desktop↔daemon 的 JSON-RPC 消息、HTTP 响应各一组样例 | `server/internal/daemon/localhost/testdata/protocol/` | Go 侧读取 fixture；P1-B 中由 vitest 读取同一批 fixture |
 

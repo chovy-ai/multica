@@ -247,7 +247,8 @@ func (s *supervisor) start() error {
 
 func (s *supervisor) logStderr(r interface{ Read([]byte) (int, error) }) {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64<<10), maxMessageBytes)
+	const maxStderrLineBytes = 1 << 20
+	scanner.Buffer(make([]byte, 64<<10), maxStderrLineBytes)
 	for scanner.Scan() {
 		s.logger.Info("local host", "stderr", scanner.Text())
 	}

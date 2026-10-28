@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { LocalConversation } from "@multica/core/local-conversation/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 import { JsonRpcPeer, appError } from "../local-host/json-rpc";
@@ -62,6 +63,22 @@ const handler = (method: string) => {
 };
 
 describe("local host proxy", () => {
+  it("reads a conversation larger than 1 MiB without losing the connection", async () => {
+    const createdAt = "2026-10-28T00:00:00.000Z";
+    const conversation: LocalConversation = {
+      id: "conv", title: "Large history", provider: "codex", cwd: "/test", pinned: false, archived: false, model: null,
+      createdAt, updatedAt: createdAt, turns: [],
+      messages: [{ id: "m1", role: "assistant", turnId: "t1", content: "会话🙂".repeat(200_000), createdAt }],
+    };
+    const daemon = await fakeDaemon((method, params) => method === "request" && (params as { method: string }).method === "read" ? conversation : handler(method));
+    cleanups.push(() => daemon.close());
+    const { proxy } = proxyFor(daemon);
+    proxy.setUser("user");
+    expect(await proxy.request(scope, "read", { id: "conv" })).toEqual(conversation);
+    expect(await proxy.request(scope, "list", {})).toEqual([{ id: "conv" }]);
+    expect(daemon.sockets).toHaveLength(1);
+  });
+
   it("rejects an incompatible sidecar protocol before opening a socket", async () => {
     const daemon = await fakeDaemon(handler); cleanups.push(() => daemon.close());
     daemon.hello.sidecarProtocolVersion = 99;
