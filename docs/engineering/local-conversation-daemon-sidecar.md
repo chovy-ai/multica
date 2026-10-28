@@ -154,7 +154,7 @@ WebSocket 连接：
 
 - 一条连接代表一个 desktop 连接，连接本身就是 `connectionId`，不再需要单独的建连端点。
 - 消息格式为 JSON-RPC 2.0，与 daemon↔sidecar 协议一致；daemon 只做鉴权、路由，并给请求打上 `connectionId`。
-- 单条消息上限 1MB，超过返回错误，大数据改走文件端点。
+- Desktop WebSocket、daemon WebSocket/stdio 与 sidecar JSON-RPC 均不设单条消息大小上限；完整会话历史和较大的请求、响应、通知可直接传输。文件内容继续走文件端点。JSON 编解码仍使用完整消息内存，资源消耗随消息大小增长。
 - 每 15 秒一次 ping/pong，两次未回应即断开。
 
 desktop → daemon（请求）：
@@ -339,7 +339,7 @@ daemon → desktop（通知）：`event`、`hostRequest`、`hostRequestResolved`
   - `/shutdown` 鉴权
   - manifest 定位与 `unsupported` 状态
   - 事件补读与 resync
-  - WebSocket 握手鉴权（缺 token、Host 错误、带 Origin 均拒绝）、消息大小上限、心跳超时断开
+  - WebSocket 握手鉴权（缺 token、Host 错误、带 Origin 均拒绝）、超过 1 MiB 的消息完整往返、心跳超时断开
   - 连接断开时其 pending host_request 立即失败
   - 文件端点的路径检查、Range、25MB 上限；上传和下载都不经过 sidecar stdio
   - host_request 定向投递、首个回复生效、超时

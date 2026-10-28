@@ -10,8 +10,6 @@ export const appError = (code: string, message: string) => new RpcError(-32000, 
 type Handler = (method: string, params: unknown) => unknown;
 interface Message { jsonrpc: "2.0"; id?: number; method?: string; params?: unknown; result?: unknown; error?: { code: number; message: string; data?: unknown } }
 
-const MAX_MESSAGE_BYTES = 1 << 20;
-
 /** Moves whole JSON-RPC messages; framing belongs to the transport. */
 export interface MessageTransport {
   send(text: string): void;
@@ -88,7 +86,6 @@ export class JsonRpcPeer {
   private write(message: Message): void {
     if (this.closedError) throw this.closedError;
     const line = JSON.stringify(message);
-    if (Buffer.byteLength(line) > MAX_MESSAGE_BYTES) throw new Error("message exceeds 1 MiB");
     this.transport.send(line);
   }
 
