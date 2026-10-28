@@ -64,6 +64,11 @@ export function parseContextUsage(provider: LocalProviderId, rows: unknown[], li
   for (const raw of rows) {
     const row = record(raw);
     if (provider === "claude") {
+      if (row.type === "system" && row.subtype === "compact_boundary" && !row.isSidechain && !row.parent_tool_use_id) {
+        const metadata = record(row.compactMetadata ?? row.compact_metadata);
+        context = { ...context, usedTokens: number(metadata.postTokens ?? metadata.post_tokens), updatedAt: typeof row.timestamp === "string" ? row.timestamp : null };
+        continue;
+      }
       if (row.type !== "assistant" || row.isSidechain || row.parent_tool_use_id) continue;
       const message = record(row.message), usage = record(message.usage);
       const input = number(usage.input_tokens);

@@ -80,7 +80,7 @@ export function createAgentGuiRpcClient(port: MessagePort): {
           reject(new AgentGuiHostError({ code: "timeout", message: "The host request timed out" }));
         // Existing runtime discovery can spend 30s pending + 60s running;
         // its canonical poller allows 100s including network slack.
-        }, method === "models.list" ? 110_000 : 60_000);
+        }, method === "session.compact" ? 360_000 : method === "models.list" ? 110_000 : 60_000);
         const cleanup = () => {
           clearTimeout(timer);
           options?.signal?.removeEventListener("abort", abort);

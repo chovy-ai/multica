@@ -69,6 +69,26 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
     else setImmediate(()=>finish(id));
     return;
   }
+  if(r.method==='thread/compact/start') {
+    const id=r.params.threadId; const turn='compact-'+(++next);
+    if(id==='unsupported') return send({id:r.id,error:{code:-32601,message:'not supported'}});
+    notify('turn/completed',{threadId:id,turn:{id:'replayed-turn',status:'completed'}});
+    reply({});
+    setImmediate(()=>{
+      notify('turn/completed',{threadId:'another-thread',turn:{id:'unrelated',status:'completed'}});
+      notify('turn/started',{threadId:id,turn:{id:turn}});
+      notify('turn/completed',{threadId:id,turn:{id:'old-turn',status:'completed'}});
+      running.set(id,{turn,item:'compact-item'});
+      const timer=setInterval(()=>{
+        if(!fs.existsSync(path.join(process.env.TEST_ROOT,'compact.release')))return;
+        clearInterval(timer);
+        notify('item/completed',{threadId:id,turnId:turn,item:{id:'compact-item',type:'contextCompaction'}});
+        finish(id,id==='failed'?'failed':'completed');
+      },10);
+      running.get(id).timer=timer;
+    });
+    return;
+  }
   if(r.method==='turn/interrupt') { reply({}); return finish(r.params.threadId,'interrupted'); }
   if(r.method==='thread/unsubscribe') {
     const skip=loaded.get(r.params.threadId)?.skipClose;
@@ -93,6 +113,29 @@ process.on('SIGTERM',exit); process.stdin.on('end',exit);
 }
 
 describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
+  it("waits for the compaction terminal event, ignores other turns and unloads before the next send", async () => {
+    const { pool, input, calls, root } = await setup();
+    let settled = false;
+    const compact = pool.run("scope", input("", { resume: "native-thread", compact: true }), vi.fn(), new AbortController().signal)
+      .finally(() => { settled = true; });
+    await wait(async () => expect((await calls()).some((row) => row.method === "thread/compact/start")).toBe(true));
+    expect(settled).toBe(false);
+    await expect(pool.run("scope", input("overlap", { resume: "native-thread" }), vi.fn(), new AbortController().signal)).rejects.toThrow(/active turn/);
+    await writeFile(join(root, "compact.release"), "");
+    await compact;
+    await pool.run("scope", input("next", { resume: "native-thread" }), vi.fn(), new AbortController().signal);
+    const log = await calls();
+    expect(log.filter((row) => row.method === "thread/compact/start")).toHaveLength(1);
+    expect(log.filter((row) => row.method === "turn/start")).toHaveLength(1);
+    expect(log.filter((row) => row.method === "thread/unsubscribe")).toHaveLength(2);
+  });
+  it("reports unsupported and failed compaction without submitting a normal prompt", async () => {
+    const { pool, input, calls, root } = await setup();
+    await expect(pool.run("scope", input("", { resume: "unsupported", compact: true }), vi.fn(), new AbortController().signal)).rejects.toThrow(/update Codex/);
+    await writeFile(join(root, "compact.release"), "");
+    await expect(pool.run("scope", input("", { resume: "failed", compact: true }), vi.fn(), new AbortController().signal)).rejects.toThrow(/failed/);
+    expect((await calls()).filter((row) => row.method === "turn/start")).toHaveLength(0);
+  });
   it("applies thinking effort to new and resumed turns and clears the previous override", async () => {
     const { pool, input, calls } = await setup();
     let resume: string | undefined;

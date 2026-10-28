@@ -18,12 +18,66 @@ const scope = { userId: "user", workspaceId: "workspace" };
 async function setup(run: typeof runLocalProvider = async () => ({ output: "Reply", sessionId: "native-thread" }), prepareContext?: (currentScope: typeof scope, signal: AbortSignal) => Promise<LocalExecutionContext>) {
   const root = await mkdtemp(join(tmpdir(), "multica-local-conversations-"));
   const usage = { read: vi.fn(async () => ({ provider: "claude" as const, context: { usedTokens: 120, limitTokens: 1000, model: null, updatedAt: null }, account: { status: "unavailable" as const, plan: null, windows: [], updatedAt: null } })), reset: vi.fn() };
-  const options = { timing: vi.fn<(record: LocalTimingRecord) => void>(), root, apiUrl: "https://example.test", notify: vi.fn(), chooseDirectory: vi.fn(async () => "/selected-directory"), find: vi.fn(async () => "/test-owned/fake-cli"), run: vi.fn(run), fork: vi.fn<typeof forkLocalProvider>(async () => "native-branch"), usage, prepareContext };
+  const compact = vi.fn(async (_input: { provider: string; sessionId: string }, _signal: AbortSignal) => {});
+  const options = { timing: vi.fn<(record: LocalTimingRecord) => void>(), root, apiUrl: "https://example.test", notify: vi.fn(), chooseDirectory: vi.fn(async () => "/selected-directory"), find: vi.fn(async () => "/test-owned/fake-cli"), run: vi.fn(run), fork: vi.fn<typeof forkLocalProvider>(async () => "native-branch"), usage, prepareContext, compact };
   const service = new LocalConversationService(options); service.setCurrentUser(scope.userId);
   cleanups.push(async () => { await service.stop(); await rm(root, { recursive: true, force: true }); });
-  return { service, options };
+  return { service, options, compact };
 }
 describe("local conversation persistence and execution", () => {
+  it("compacts only an idle native conversation and locks sends, forks and queues until completion", async () => {
+    const { service, compact } = await setup();
+    const entry = await service.request(scope, "create", { provider: "claude" });
+    await expect(service.request(scope, "compact", { id: entry.id })).rejects.toThrow(/message/i);
+    await service.request(scope, "send", { id: entry.id, content: "Hello" });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+    let finish!: () => void;
+    compact.mockImplementationOnce(async () => new Promise<void>((resolve) => { finish = resolve; }));
+    const pending = service.request(scope, "compact", { id: entry.id });
+    await vi.waitFor(() => expect(compact).toHaveBeenCalledOnce());
+    try {
+      expect((await service.request(scope, "usage", { provider: "claude", id: entry.id })).compaction?.status).toBe("running");
+      await expect(service.request(scope, "compact", { id: entry.id })).rejects.toThrow(/compact/i);
+      await expect(service.request(scope, "send", { id: entry.id, content: "During compaction" })).rejects.toThrow(/compact/i);
+      await expect(service.request(scope, "fork", { id: entry.id })).rejects.toThrow(/compact/i);
+      await expect(service.request(scope, "queueEnqueue", { id: entry.id, item: { requestId: "queued", content: "Later", display: { id: "queued", content: [{ type: "text", text: "Later" }], createdAtUnixMs: Date.now() } } })).rejects.toThrow(/compact/i);
+    } finally { finish(); await pending; }
+    expect(compact).toHaveBeenCalledWith(expect.objectContaining({ provider: "claude", sessionId: "native-thread" }), expect.any(AbortSignal));
+    const after = await service.request(scope, "read", { id: entry.id });
+    expect(after.messages).toHaveLength(2);
+    expect(after.turns).toHaveLength(1);
+    expect((await service.request(scope, "usage", { provider: "claude", id: entry.id })).compaction?.status).toBe("ready");
+    compact.mockRejectedValueOnce(new Error("Compaction failed"));
+    await expect(service.request(scope, "compact", { id: entry.id })).rejects.toThrow("Compaction failed");
+    await expect(service.request(scope, "compact", { id: entry.id })).resolves.toBeUndefined();
+  });
+  it("rejects compaction with queued messages or an archived conversation", async () => {
+    const { service, compact } = await setup();
+    const entry = await service.request(scope, "create", { provider: "claude" });
+    await service.request(scope, "send", { id: entry.id, content: "Hello" });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+    await service.request(scope, "queueEnqueue", { id: entry.id, paused: true, item: { requestId: "later", content: "Later", display: { id: "later", content: [{ type: "text", text: "Later" }], createdAtUnixMs: Date.now() } } });
+    await expect(service.request(scope, "compact", { id: entry.id })).rejects.toThrow(/queued/);
+    await service.request(scope, "queueUpdate", { id: entry.id, action: "remove", requestId: "later" });
+    await service.request(scope, "update", { id: entry.id, archived: true });
+    await expect(service.request(scope, "compact", { id: entry.id })).rejects.toThrow(/read-only/);
+    expect(compact).not.toHaveBeenCalled();
+  });
+  it.each(["logout", "shutdown"] as const)("cancels compaction on %s and awaits cleanup without replay", async (action) => {
+    const { service, compact } = await setup();
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    await service.request(scope, "send", { id: entry.id, content: "Hello" });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+    compact.mockImplementationOnce(async (_input, signal) => new Promise<void>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("Compaction cancelled")), { once: true });
+    }));
+    const pending = expect(service.request(scope, "compact", { id: entry.id })).rejects.toThrow(/cancelled/);
+    await vi.waitFor(() => expect(compact).toHaveBeenCalledOnce());
+    if (action === "logout") service.setCurrentUser(null);
+    else await service.stop();
+    await pending;
+    expect(compact).toHaveBeenCalledOnce();
+  });
   it.each(["codex", "claude"] as const)("orders %s conversations by turn start through output, reverse completion and restart", async (provider) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const at = (minute: number) => vi.setSystemTime(new Date(`2026-10-27T10:${String(minute).padStart(2, "0")}:00Z`));
@@ -254,6 +308,9 @@ describe("local conversation persistence and execution", () => {
     const list = await service.request(scope, "list", {});
     expect(list[0]?.turns[0]).toMatchObject({ status: "completed", backgroundTasks: [{ id: "watcher", status: "running" }] });
     expect(disposeContext).not.toHaveBeenCalled();
+    expect((await service.request(scope, "usage", { provider: "claude", id: entry.id })).compaction).toEqual({ status: "unavailable", reason: "busy" });
+    await expect(service.request(scope, "compact", { id: entry.id })).rejects.toThrow(/background/);
+    expect(options.compact).not.toHaveBeenCalled();
     await service.request(scope, "send", { id: entry.id, content: "Continue now" });
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[1]?.status).toBe("completed"));
     expect(factory).toHaveBeenCalledOnce(); expect(worker.run).toHaveBeenCalledTimes(2); expect(options.run).not.toHaveBeenCalled();

@@ -345,6 +345,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
         return { ...result, id: "local-models", runtime_id: params.agentId, status: "completed" };
       }
       case "usage.read": return local("usage", { provider: localProviderId(params.agentId), ...(params.sessionId ? { id: params.sessionId } : {}), force: params.force === true });
+      case "session.compact": return local("compact", { id: params.sessionId });
       case "storage.read": case "storage.write": return cloud.request(method, { ...params, key: `local-provider:${options.storagePrefix ?? ""}${params.key}` } as never);
       case "host.selectSession": {
         const sequence = ++selectionSequence;

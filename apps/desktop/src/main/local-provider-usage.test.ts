@@ -16,6 +16,14 @@ const account = { subscription_type: "max", rate_limits_available: true, rate_li
   five_hour: { utilization: 22, resets_at: "2099-01-01T12:00:00Z" }, seven_day: { utilization: 5, resets_at: "2099-01-05T12:00:00Z" },
 } };
 describe("local provider usage", () => {
+  it("uses the Claude compaction boundary count and clears old usage when no post-compaction count is reported", () => {
+    const before = { type: "assistant", message: { model: "test-model", usage: { input_tokens: 900 } } };
+    const boundary = { type: "system", subtype: "compact_boundary", timestamp: "2026-10-27T18:00:00Z", compactMetadata: { trigger: "manual", preTokens: 900 } };
+    expect(parseContextUsage("claude", [before, boundary], 1000)).toMatchObject({ usedTokens: null, limitTokens: 1000, model: "test-model" });
+    expect(parseContextUsage("claude", [before, { ...boundary, compactMetadata: { ...boundary.compactMetadata, postTokens: 150 } }])).toMatchObject({ usedTokens: 150 });
+    expect(parseContextUsage("claude", [before, boundary, { ...before, message: { model: "test-model", usage: { input_tokens: 180 } } }])).toMatchObject({ usedTokens: 180 });
+    expect(parseContextUsage("claude", [before, { ...boundary, isSidechain: true }])).toMatchObject({ usedTokens: 900 });
+  });
   it("reads only structured quota fields and does not invent absent limits or expose credentials", () => {
     const parsed = parseAccountUsage("claude", { ...account, token: "must-not-leak", rate_limits: { ...account.rate_limits, model_scoped: [{ display_name: "Fable", utilization: 0, resets_at: null }] } });
     expect(parsed).toMatchObject({ status: "available", plan: "max", windows: [{ id: "five_hour", usedPercent: 22 }, { id: "seven_day", usedPercent: 5 }, { label: "Fable", usedPercent: 0 }] });

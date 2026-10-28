@@ -267,6 +267,40 @@ git diff --check
 截图：[项目分组](../../.tmp/local-conversations/08-project-groups.png)。项目归属只保存在本机，折叠状态暂不跨重启保存；本次未增加拖拽移动或本机目录分组模式。
 
 
+## Manual context compaction
+
+The usage popover exposes a compact action immediately before refresh. The GUI
+calls `session.compact`, which maps to the additive desktop IPC method
+`compact({ id })`. Usage responses include a derived `compaction` state so empty,
+archived, queued, running and background-active conversations can explain why
+the action is unavailable. The main process owns the lock; sends, forks, Side
+creation and queue mutations cannot race an admitted compaction. The lock and
+progress are ephemeral and do not change the conversation file format.
+
+Claude Code resumes the exact native session through the Agent SDK, checks
+`supportedCommands()` before dispatching `/compact`, and requires a manual
+`compact_boundary` plus a successful result. Codex uses the existing two-slot
+pool, resumes the thread, dispatches `thread/compact/start`, and waits for the
+matching `contextCompaction` item and completed turn before unloading. Neither
+path falls back to an ordinary model prompt when compaction is unsupported.
+See the [Claude SDK command contract](https://code.claude.com/docs/en/agent-sdk/slash-commands)
+and [Codex app-server protocol](https://github.com/openai/codex/tree/main/codex-rs/app-server).
+
+Compaction has a five-minute execution deadline; logout and application shutdown
+abort it and await cleanup. The GUI allows six minutes for interruption and
+thread unload, reports failures, and never automatically replays a mutation.
+Switching sessions discards the old operation's local feedback without cancelling
+or replaying the main-process operation. Successful completion re-reads native
+usage; a Claude compact boundary without a post-compaction count clears the old
+count until a later provider record reports one. Compaction does not refund
+account quota.
+
+Regression coverage: `local-claude-compaction.test.ts` (actual SDK with a fake
+CLI), `local-codex-pool.test.ts`, `local-conversation-service.test.ts`,
+`local-provider-usage.test.ts`, the desktop bridge tests, GUI usage/RPC tests,
+and `e2e/local-context-compaction.spec.ts` in both themes. Real-model smoke tests
+remain opt-in. Main/preload updates require a full desktop restart.
+
 ## Desktop runtime compatibility
 
 Local conversation requests first query the main process's `capabilities` endpoint.
