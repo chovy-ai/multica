@@ -8,6 +8,56 @@ import tailwindcss from "@tailwindcss/vite";
 
 const hostPresentationAdaptations = [
   {
+    path: "/composer/useComposerDraftAttachments.ts",
+    original: "            const message =\n              error instanceof Error ? error.message : String(error);\n            reportAgentComposerDiagnostic(agentActivityRuntime, {\n              details: {\n                error: message.slice(0, 500),\n                imageId: draftImage.id",
+    replacement: "            const message =\n              error instanceof Error ? error.message : String(error);\n            showErrorToast(translate(\"agentHost.agentGui.imageLoadFailed\"));\n            reportAgentComposerDiagnostic(agentActivityRuntime, {\n              details: {\n                error: message.slice(0, 500),\n                imageId: draftImage.id",
+  },
+  {
+    path: "/composer/useComposerDraftAttachments.ts",
+    original: "      for (const draftImage of nextImages) {",
+    replacement: "      for (const { image: draftImage, reference } of imagePreparations) {",
+  },
+  {
+    path: "/projection/agentMessageFinalTextProjection.ts",
+    original: "import type { WorkspaceAgentSessionDetailViewModel }",
+    replacement: "import { projectMessageImageCopies } from \"@multica-message-image-clipboard\";\nimport type { WorkspaceAgentSessionDetailViewModel }",
+  },
+  {
+    path: "/projection/agentMessageFinalTextProjection.ts",
+    original: "    return changed ? { ...row, messages } : row;",
+    replacement: "    return projectMessageImageCopies(changed ? { ...row, messages } : row);",
+  },
+  {
+    path: "/agentRichText/AgentRichTextEditor.tsx",
+    original: "import { routeAgentRichTextTextPaste }",
+    replacement: "import { pasteMessageImageReferences } from \"@multica-message-image-clipboard\";\nimport { routeAgentRichTextTextPaste }",
+  },
+  {
+    path: "/agentRichText/AgentRichTextEditor.tsx",
+    original: "        paste: (_view, event) => {",
+    replacement: "        paste: (_view, event) => {\n          if (disabled) return false;\n          if (pasteMessageImageReferences({\n            text: event.clipboardData?.getData(\"text/plain\") ?? \"\",\n            supported: promptImagesSupportedRef.current,\n            onImages: onPasteImagesRef.current,\n            onUnsupported: onPromptImagesUnsupportedRef.current,\n            insertText: (text) => routeAgentRichTextTextPaste({\n              availableCapabilities: availableCapabilitiesRef.current,\n              availableSkills: availableSkillsRef.current,\n              editorRef, html: \"\", mentionSuggestionSuppression, text,\n            }),\n          })) {\n            event.preventDefault();\n            return true;\n          }",
+  },
+  {
+    path: "/composer/useComposerDraftAttachments.ts",
+    original: "import { flushSync } from \"react-dom\";",
+    replacement: "import { flushSync } from \"react-dom\";\nimport { createMessageDraftImage, prepareMessageDraftImage } from \"@multica-message-image-clipboard\";",
+  },
+  {
+    path: "/composer/useComposerDraftAttachments.ts",
+    original: "      const nextImages = images.slice(0, remainingSlots).map((image) => ({\n        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,\n        name: image.name,\n        mimeType: image.mimeType,\n        data: image.data,\n        previewUrl: `data:${image.mimeType};base64,${image.data}`,\n        uploading: Boolean(uploadPromptContent)\n      }));",
+    replacement: "      const imagePreparations = images.slice(0, remainingSlots).map((image) =>\n        createMessageDraftImage(image, Boolean(uploadPromptContent))\n      );\n      const nextImages = imagePreparations.map(({ image }) => image);",
+  },
+  {
+    path: "/composer/useComposerDraftAttachments.ts",
+    original: "        void uploadPromptContent({\n          workspaceId,\n          content: [\n            {\n              type: \"image\",\n              mimeType: draftImage.mimeType,\n              data: draftImage.data,\n              name: draftImage.name\n            }\n          ]\n        })",
+    replacement: "        void prepareMessageDraftImage({\n          workspaceId, image: draftImage, reference, runtime: agentActivityRuntime, uploadPromptContent\n        })",
+  },
+  {
+    path: "/composer/useComposerDraftAttachments.ts",
+    original: "                        previewUrl: image.previewUrl,",
+    replacement: "                        previewUrl: uploadedImage.previewUrl ?? image.previewUrl,",
+  },
+  {
     path: "/agentConversation/components/AgentSystemNoticeMessage.tsx",
     original: '        <div className="font-medium text-[var(--text-secondary)]">{title}</div>',
     replacement: '        <div className="font-medium text-[var(--text-secondary)]">{title}</div>\n        {notice?.noticeKind === "background_task" && message.body.trim() !== title ? <div role="status" className="mt-1 whitespace-pre-line break-words text-[12px] leading-5">{message.body}</div> : null}',
@@ -487,6 +537,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      "@multica-message-image-clipboard": fileURLToPath(new URL("./src/message-image-clipboard.ts", import.meta.url)),
       "@multica-composer-file-picker": fileURLToPath(new URL("./src/composer-file-picker.ts", import.meta.url)),
       "@multica-large-text-paste": fileURLToPath(new URL("./src/large-text-paste.ts", import.meta.url)),
       "@multica-resource-link": fileURLToPath(new URL("./src/resource-link.tsx", import.meta.url)),
