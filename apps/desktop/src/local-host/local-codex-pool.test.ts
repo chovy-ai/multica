@@ -236,19 +236,24 @@ describe("dialogue Codex app-server pool", { timeout: 15_000 }, () => {
     expect(eb.mock.calls.filter(([event]) => event.type === "text").map(([event]) => event.content).join("")).toBe("hello world");
   });
 
-  it("refreshes per-turn MCP endpoints and credentials without spawning another pair", async () => {
+  it.each(["default", "auto", "full-access"] as const)("refreshes MCP scope without a second approval in %s mode", async (permissionMode) => {
     const { pool, input, calls } = await setup();
-    const firstInput = input("one");
+    const firstInput = input("one", { permissionMode });
     firstInput.env = { ...firstInput.env, MULTICA_CONTEXT_MCP_TOKEN: "private-first" };
     firstInput.mcp = { url: "http://127.0.0.1:1/first", claudeConfigPath: "unused", tools: ["current_context"] };
     const first = await pool.run("scope", firstInput, vi.fn(), new AbortController().signal);
-    const secondInput = input("two", { resume: first.sessionId, systemPrompt: "new turn context" });
+    const secondInput = input("two", { permissionMode, resume: first.sessionId, systemPrompt: "new turn context" });
     secondInput.env = { ...secondInput.env, MULTICA_CONTEXT_MCP_TOKEN: "private-second" };
     secondInput.mcp = { ...firstInput.mcp, url: "http://127.0.0.1:2/second" };
     await pool.run("scope", secondInput, vi.fn(), new AbortController().signal);
     const log = await calls();
     expect(log.filter((r) => r.method === "launch")).toHaveLength(2);
     const setups = log.filter((r) => r.method === "thread/start" || r.method === "thread/resume");
+    expect(setups).toHaveLength(2);
+    for (const setup of setups) {
+      expect(setup.params.config.mcp_servers.multica_desktop_context).toMatchObject({ enabled: true, required: true, default_tools_approval_mode: "approve" });
+      expect(setup.params.config.mcp_servers.native).toEqual({ enabled: false });
+    }
     const endpoints = setups.map((r) => r.params.config.mcp_servers.multica_desktop_context.url);
     expect(new Set(endpoints).size).toBe(2);
     expect(endpoints.every((url: string) => /^http:\/\/127\.0\.0\.1:\d+\/mcp\//.test(url))).toBe(true);
