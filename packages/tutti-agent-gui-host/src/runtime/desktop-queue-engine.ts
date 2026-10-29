@@ -43,6 +43,17 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
     if (cached && state === lastBase && revision === lastRevision) return cached;
     const records = { ...state.promptQueue.recordsBySessionId };
     const submits = { ...state.pendingIntents.submitsByClientSubmitId };
+    const activations = { ...state.pendingIntents.activationsByRequestId };
+    for (const [requestId, activation] of Object.entries(activations)) {
+      if (activation.mode !== "new" || activation.status !== "confirmed") continue;
+      // Admission can fail or remain paused without starting a turn. Keep its
+      // optimistic prompt until history contains it or the user removes it.
+      const id = activation.agentSessionId;
+      const hasUserMessage = state.sessionMessages.messagesBySessionId[id]?.some((message) => message.role === "user");
+      const hasInitialPrompt = pending.get(id)?.some((item) => item.input.clientSubmitId === activation.clientSubmitId)
+        || queues.get(id)?.items.some((item) => item.requestId === activation.clientSubmitId);
+      activations[requestId] = { ...activation, initialTurnExpected: false, initialPromptRetracted: Boolean(hasUserMessage || !hasInitialPrompt) };
+    }
     for (const id of new Set([...queues.keys(), ...pending.keys(), ...errors.keys()])) {
       const queue = queues.get(id);
       const dispatching = queue?.paused || queue?.error ? undefined : queue?.dispatchingRequestId;
@@ -63,7 +74,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       } satisfies PromptQueueRecord;
     }
     lastBase = state; lastRevision = revision;
-    return cached = { ...state, promptQueue: { ...state.promptQueue, recordsBySessionId: records }, pendingIntents: { ...state.pendingIntents, submitsByClientSubmitId: submits } };
+    return cached = { ...state, promptQueue: { ...state.promptQueue, recordsBySessionId: records }, pendingIntents: { ...state.pendingIntents, submitsByClientSubmitId: submits, activationsByRequestId: activations } };
   };
   const publish = () => {
     if (disposed) return;

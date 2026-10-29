@@ -85,13 +85,19 @@ async function setup(data = backend()) {
 }
 
 describe("Multica Agent GUI runtime with the original session engine", () => {
-  it("keeps the first local session identity when its initial queue admission fails and is explicitly retried", async () => {
+  it.each(["retry", "remove"] as const)("keeps first-send content recoverable after admission failure (%s)", async (action) => {
     const data = backend();
     const original = data.request.getMockImplementation()!;
     let admissions = 0;
     data.request.mockImplementation(async (method, params) => {
+      if (method === "session.create") {
+        const created = { ...await original(method, params), created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+        return created;
+      }
       if (method === "workspace.load") return { ...await original(method, params), local: true, queueOwner: "desktop" };
       if (method === "models.list") return { supported: true, models: [] };
+      if (method === "host.showMessage") return;
+      if (method === "queue.update") return { revision: 2, paused: false, items: [] };
       if (method === "queue.enqueue") {
         if (++admissions === 1) throw new Error("Initial queue admission failed");
         return { revision: 1, paused: true, items: [params.item] };
@@ -107,10 +113,22 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
       const input = { mode: "new" as const, agentSessionId: "first-local-draft", agentTargetId: agent.id, cwd: "/project",
         requestId: "first-activation", clientSubmitId: "first-submit", initialContent: [{ type: "text" as const, text: "First local message" }] };
       engine.activateSession(input);
-      await vi.waitFor(() => expect(JSON.stringify(engine.getSnapshot().pendingIntents)).toContain("Initial queue admission failed"));
+      await vi.waitFor(() => expect(engine.getSnapshot().promptQueue.recordsBySessionId[input.agentSessionId]).toMatchObject({
+        failureMessage: "Initial queue admission failed", prompts: [{ clientSubmitId: "first-submit", content: input.initialContent, visibleInQueue: true }],
+      }));
+      await vi.waitFor(() => expect(engine.getSnapshot().pendingIntents.activationsByRequestId["first-activation"]?.status).toBe("confirmed"));
       expect(admissions).toBe(1);
       expect(handle.toServerSessionId(input.agentSessionId)).toBe(session.id);
-      engine.activateSession({ ...input, requestId: "explicit-retry" });
+      expect(engine.getSnapshot().pendingIntents.activationsByRequestId["first-activation"]).toMatchObject({ initialTurnExpected: false, initialPromptRetracted: false });
+      if (action === "remove") {
+        engine.dispatch({ type: "queue/removed", agentSessionId: input.agentSessionId, promptId: "first-submit" });
+        await vi.waitFor(() => expect(engine.getSnapshot().promptQueue.recordsBySessionId[input.agentSessionId]?.prompts).toEqual([]));
+        expect(engine.getSnapshot().pendingIntents.activationsByRequestId["first-activation"]?.initialPromptRetracted).toBe(true);
+        expect(admissions).toBe(1);
+        return;
+      }
+      engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: input.agentSessionId, promptId: "first-submit",
+        awaitingTurnExpiresAtUnixMs: Date.now() + 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
       await vi.waitFor(() => expect(admissions).toBe(2));
       expect(data.request.mock.calls.filter(([method]) => method === "session.create")).toHaveLength(1);
       expect(data.request.mock.calls.find(([method]) => method === "session.create")?.[1]).toMatchObject({ cwd: "/project" });
