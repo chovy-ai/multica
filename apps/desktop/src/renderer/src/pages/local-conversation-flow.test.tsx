@@ -10,7 +10,7 @@ import { LocalConversationFlowPage } from "./local-conversation-flow";
 import { useProjectVisibilityStore } from "../stores/local-conversation-project-visibility";
 import { useConversationLayoutStore } from "../stores/local-conversation-layout";
 
-const mock = vi.hoisted(() => ({ request: vi.fn(), replace: vi.fn(), pathname: "/test/conversations", selected: "source", error: vi.fn(), success: vi.fn(), copyText: vi.fn(), compact: false, projects: [] as Project[], folders: [] as LocalFolderProject[], folderError: null as Error | null }));
+const mock = vi.hoisted(() => ({ request: vi.fn(), replace: vi.fn(), pathname: "/test/conversations", selected: "source", error: vi.fn(), success: vi.fn(), copyText: vi.fn(), compact: false, locale: "zh-Hans", projects: [] as Project[], folders: [] as LocalFolderProject[], folderError: null as Error | null }));
 vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: mock.copyText }));
 vi.mock("@multica/core/projects/queries", () => ({ projectListOptions: () => ({ queryKey: ["test-projects"], queryFn: async () => mock.projects }) }));
 vi.mock("sonner", () => ({ toast: { error: mock.error, success: mock.success, info: vi.fn() } }));
@@ -21,7 +21,7 @@ vi.mock("@multica/views/navigation", () => ({
   useNavigation: () => ({ pathname: mock.pathname, searchParams: new URLSearchParams({ session: mock.selected }), replace: mock.replace }),
   AppLink: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a>,
 }));
-vi.mock("@multica/views/i18n", () => ({ useLocale: () => "zh-Hans", useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: { title: string }) => selector(chat).replace("{{title}}", options?.title ?? "") }) }));
+vi.mock("@multica/views/i18n", () => ({ useLocale: () => mock.locale, useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: { title: string }) => selector(chat).replace("{{title}}", options?.title ?? "") }) }));
 vi.mock("@multica/ui/hooks/use-mobile", () => ({ useIsCompact: () => mock.compact }));
 vi.mock("@multica/views/runtimes/provider-logo", () => ({ ProviderLogo: () => null }));
 vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: () => <textarea aria-label="Conversation draft" /> }));
@@ -33,7 +33,7 @@ beforeEach(() => {
   useConversationLayoutStore.setState({ sessionListWidth: 268 });
   useProjectVisibilityStore.setState({ hiddenByScope: {} });
   vi.clearAllMocks(); mock.selected = "source"; mock.pathname = "/test/conversations";
-  mock.compact = false;
+  mock.compact = false; mock.locale = "zh-Hans";
   mock.projects = [];
   mock.folders = [];
   mock.folderError = null;
@@ -523,16 +523,22 @@ describe("Side conversations in the main session list", () => {
 });
 
 describe("local conversation fork entry", () => {
-  it("opens a saved fork's source even when the source is archived", async () => {
-    source.forkedFrom = "parent"; source.forkedFromTurnId = "parent-turn"; source.forkMode = "saved-context";
-    const parent = { ...source, id: "parent", title: "Source conversation", archived: true, forkedFrom: undefined };
+  it.each([
+    ["zh-Hans", false, false], ["zh-Hans", true, true],
+    ["en", false, true], ["en", true, false],
+  ] as const)("omits header fork actions in %s (compact=%s, fork=%s)", async (locale, compact, forked) => {
+    mock.locale = locale; mock.compact = compact;
+    if (forked) {
+      source.forkedFrom = "parent"; source.forkedFromTurnId = "parent-turn"; source.forkMode = "saved-context";
+    }
+    const parent = { ...source, id: "parent", title: "Parent", archived: true, forkedFrom: undefined };
     mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, parent] : [{ id: "codex", available: true }]);
     render(page());
-    const back = await screen.findByRole("button", { name: "来源会话" });
-    expect(back).toHaveAttribute("title", "Source conversation");
-    expect(screen.getByText("上下文分叉")).toBeVisible();
-    fireEvent.click(back);
-    expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex&session=parent");
+    await screen.findByRole("button", { name: locale === "en" ? "Choose working directory" : "选择工作目录" });
+    expect(screen.queryByRole("button", { name: /来源会话|Source conversation|分叉会话|Fork conversation/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: locale === "en" ? "Open right workspace" : "打开右侧面板" })).toBeVisible();
+    if (compact) expect(screen.getByRole("button", { name: locale === "en" ? "Local sessions" : "本机会话" })).toBeVisible();
+    if (forked) expect(screen.getByText(locale === "en" ? "Context fork" : "上下文分叉")).toBeVisible();
   });
   it.each(["codex", "claude"] as const)("keeps unsent %s drafts out of the list and counts until the first message is accepted", async (provider) => {
     const draft = { ...source, id: "draft", title: "Unsent draft", provider, providerSessionId: undefined, messages: [], turns: [] };
@@ -692,34 +698,40 @@ describe("local conversation fork entry", () => {
     let release!: (branch: LocalConversation) => void;
     mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source] : method === "fork" ? new Promise((resolve) => { release = resolve; }) : []);
     render(page());
-    const button = await screen.findByRole("button", { name: "分叉会话" });
-    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作：Original" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "分叉" }));
+    fireEvent.click(screen.getByRole("button", { name: "会话操作：Original" }));
+    const button = await screen.findByRole("menuitem", { name: "正在分叉…" });
     expect(mock.request).toHaveBeenCalledWith({ userId: "user", workspaceId: "workspace" }, "fork", { id: "source" });
-    expect(button).toBeDisabled(); expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveAttribute("aria-disabled", "true"); expect(button).toHaveAttribute("aria-busy", "true");
     expect(mock.replace).not.toHaveBeenCalled();
     release({ ...source, id: "branch", forkedFrom: "source" });
     await waitFor(() => expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex&session=branch"));
-    expect(button).toHaveAttribute("aria-busy", "false");
+    expect(await screen.findByRole("menuitem", { name: "分叉" })).toHaveAttribute("aria-busy", "false");
   });
   it("keeps the current conversation on failure and does not redirect after the user selects another session", async () => {
     mock.request.mockImplementation(async (_scope, method) => { if (method === "fork") throw new Error("Native fork failed"); return method === "list" ? [source] : []; });
     const view = render(page());
-    fireEvent.click(await screen.findByRole("button", { name: "分叉会话" }));
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作：Original" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "分叉" }));
     await waitFor(() => expect(mock.error).toHaveBeenCalledWith("Native fork failed"));
     expect(mock.replace).not.toHaveBeenCalled();
     let release!: (branch: LocalConversation) => void;
     mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, { ...source, id: "other" }] : method === "fork" ? new Promise((resolve) => { release = resolve; }) : []);
-    fireEvent.click(screen.getByRole("button", { name: "分叉会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "会话操作：Original" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "分叉" }));
+    fireEvent.click(screen.getByRole("button", { name: "会话操作：Original" }));
     act(() => { qc.setQueryData(["test-local-sessions"], [source, { ...source, id: "other" }]); });
     mock.selected = "other"; view.rerender(page());
     release({ ...source, id: "branch" });
-    await waitFor(() => expect(screen.getByRole("button", { name: "分叉会话" })).toHaveAttribute("aria-busy", "false"));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "分叉" })).toHaveAttribute("aria-busy", "false"));
     expect(mock.replace).not.toHaveBeenCalled();
   });
   it("disables forking while an execution is running", async () => {
     source.turns = [{ id: "turn", status: "running", createdAt: "2026-01-01", events: [] }];
     render(page());
-    expect(await screen.findByRole("button", { name: "分叉会话" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("button", { name: "会话操作：Original" }));
+    expect(await screen.findByRole("menuitem", { name: "分叉" })).toHaveAttribute("aria-disabled", "true");
   });
 });
 
