@@ -1,4 +1,5 @@
-import { getLocalConversationClient, LocalRuntimeUpdateRequired } from "../platform/local-conversation-client";
+import { localV2, localV2Error, LocalV2RequestError } from "../platform/local-v2";
+import { localV2SummarySchema } from "@multica/core/local-conversation/v2";
 import { LocalRuntimeNotice } from "./local-runtime-notice";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -23,11 +24,10 @@ import { useLocale, useT } from "@multica/views/i18n";
 import { ProviderLogo } from "@multica/views/runtimes/provider-logo";
 import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
-import type { LocalConversation, LocalConversationMethods, LocalProviderId } from "@multica/core/local-conversation/protocol";
-import { localMessageDisplayContent } from "@multica/core/local-conversation/protocol";
+import type { LocalFolderProject, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { createLocalConversationParentService, localConversationKey, localTargetId } from "../platform/local-conversation-service";
 import { useLocalConversationPages } from "../platform/local-conversation-pages";
-import { projectForDirectory } from "../platform/local-conversation-projects";
+import { projectForDirectory, sessionEntry, type LocalSessionEntry } from "../platform/local-conversation-projects";
 import { LocalConversationImportButton } from "./local-conversation-import";
 import { LocalSideWorkspace, type SideWorkspaceHandle } from "./local-side-workspace";
 import { PanelRightOpen } from "lucide-react";
@@ -37,8 +37,13 @@ import { projectVisibilityScopeKey, useProjectVisibilityStore } from "../stores/
 import { SESSION_LIST_MIN_WIDTH, SESSION_LIST_MAX_WIDTH, useConversationLayoutStore } from "../stores/local-conversation-layout";
 
 const EMPTY_PROJECT_IDS: string[] = [];
+function folderProject(project: { id: string; title: string; path: string; created_at: string }): LocalFolderProject {
+  return { id: project.id, title: project.title, path: project.path, createdAt: project.created_at };
+}
+
+/** A daemon without the local v2 API answers its routes with 404. */
 function localProjectsRequireRestart(error: unknown): boolean {
-  return error instanceof LocalRuntimeUpdateRequired || (error instanceof Error && error.message.includes("Unknown local conversation request"));
+  return error instanceof LocalV2RequestError && error.kind === "http_404";
 }
 
 export function LocalConversationFlowPage() {
@@ -74,12 +79,13 @@ export function LocalConversationFlowPage() {
     window.addEventListener("blur", finish);
   };
   const qc = useQueryClient();
-  const client = getLocalConversationClient(window.desktopAPI.localConversations);
+  const transport = window.desktopAPI.localV2;
   const sideWorkspace = useRef<SideWorkspaceHandle>(null);
   const [sideOpen, setSideOpen] = useState(false);
   const [referenceDraft, setReferenceDraft] = useState<RestoreDraftRequest | null>(null);
   const [locateRequest, setLocateRequest] = useState<{ sessionId: string; turnId?: string; quote?: string; sequence: number } | null>(null);
   const scope = { userId: userId || "", workspaceId: workspace?.id || "" };
+  const v2 = localV2(transport, scope);
   const visibilityScope = projectVisibilityScopeKey(scope);
   const hiddenProjectPreferences = useProjectVisibilityStore((state) => state.hiddenByScope[visibilityScope] ?? EMPTY_PROJECT_IDS);
   const setProjectHidden = useProjectVisibilityStore((state) => state.setProjectHidden);
@@ -93,7 +99,7 @@ export function LocalConversationFlowPage() {
   const [forkingId, setForkingId] = useState<string | null>(null);
   const forking = forkingId !== null;
   const [updatingId, setUpdatingId] = useState<string | null>(null);
-  const [renameTarget, setRenameTarget] = useState<Pick<LocalConversation, "id" | "title"> | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Pick<LocalSessionEntry, "id" | "title"> | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const renameInput = useRef<HTMLInputElement>(null);
@@ -103,17 +109,18 @@ export function LocalConversationFlowPage() {
   const [contextSelection, setContextSelection] = useState("");
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const [focusSequence, setFocusSequence] = useState(0);
-  const providers = useQuery({ queryKey: [...localConversationKey(scope), "providers"], queryFn: () => client.request(scope, "providers", {}), enabled: !!workspace && !!userId });
+  const providers = useQuery({ queryKey: [...localConversationKey(scope), "providers"], queryFn: async () => (await v2.request("GET", "/providers") as { providers: { id: LocalProviderId; name: string; available: boolean }[] }).providers, enabled: !!workspace && !!userId });
   const projectQuery = useQuery({ ...projectListOptions(scope.workspaceId), enabled: !!workspace && !!userId });
   const projects = (projectQuery.data ?? []).filter((project) => project.workspace_id === scope.workspaceId);
-  const folderQuery = useQuery({ queryKey: [...localConversationKey(scope), "folder-projects"], queryFn: () => client.request(scope, "folderProjects", {}), enabled: !!workspace && !!userId,
+  const folderQuery = useQuery({ queryKey: [...localConversationKey(scope), "folder-projects"], queryFn: async () => (await v2.request("GET", "/folder-projects") as { projects: { id: string; title: string; path: string; created_at: string }[] }).projects.map(folderProject), enabled: !!workspace && !!userId,
     retry: (count, error) => !localProjectsRequireRestart(error) && count < 2 });
   const folderProjects = folderQuery.data ?? [];
   const hiddenProjectIds = hiddenProjectPreferences.filter((id) => folderProjects.some((project) => project.id === id));
   const selectedId = searchParams.get("session");
-  const sessions = useLocalConversationPages(client, scope, folderProjects, hiddenProjectIds, archived, search, !!workspace && !!userId && folderQuery.isSuccess);
-  const selectedQuery = useQuery({ queryKey: [...localConversationKey(scope), "selected", selectedId], queryFn: () => client.request(scope, "read", { id: selectedId! }), enabled: !!workspace && !!userId && !!selectedId, retry: false, refetchOnMount: "always" });
-  const selected = selectedQuery.data;
+  const sessions = useLocalConversationPages(transport, scope, folderProjects, hiddenProjectIds, archived, search, !!workspace && !!userId && folderQuery.isSuccess);
+  const selectedQuery = useQuery({ queryKey: [...localConversationKey(scope), "selected", selectedId], queryFn: async () => sessionEntry((await v2.snapshot(selectedId!)).conversation), enabled: !!workspace && !!userId && !!selectedId, retry: false, refetchOnMount: "always" });
+  const listed = sessions.data?.find((entry) => entry.id === selectedId);
+  const selected = listed ?? selectedQuery.data;
   const selectedRef = useRef(selectedId); selectedRef.current = selectedId;
   const provider = selected?.provider ?? (searchParams.get("provider") === "claude" ? "claude" : "codex");
   const active = pathname === paths.conversationFlow() && getCurrentSlug() === slug;
@@ -130,7 +137,7 @@ export function LocalConversationFlowPage() {
     const source = sessions.data?.find((entry) => entry.id === id) ?? (selected?.id === id ? selected : undefined);
     const sequence = ++focusIntentSequence.current;
     const startedIntent = currentIntent.current;
-    const locate = (entry: LocalConversation) => {
+    const locate = (entry: LocalSessionEntry) => {
       if (sequence !== focusIntentSequence.current || currentIntent.current !== startedIntent) return;
       setSearch(""); setArchived(entry.archived);
       const project = projectForDirectory(folderProjects, entry.cwd);
@@ -138,16 +145,13 @@ export function LocalConversationFlowPage() {
       select(id, entry.provider); setLocateRequest({ sessionId: id, turnId, quote, sequence });
     };
     if (source) locate(source);
-    else void qc.fetchQuery({ queryKey: [...localConversationKey(scope), "selected", id], queryFn: () => client.request(scope, "read", { id }) }).then(locate).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+    else void qc.fetchQuery({ queryKey: [...localConversationKey(scope), "selected", id], queryFn: async () => sessionEntry((await v2.snapshot(id)).conversation) }).then(locate).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
   };
-  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: chinese ? "zh-CN" : "en", getSelectionIntent: () => currentIntent.current, getSelectedSessionId: () => selectedRef.current, onLocalSelect: (id, choice) => latest.current.select(id, choice), onOpenSide: (id, sourceId) => sideWorkspace.current?.openSide(id, sourceId), onOpenResource: (id, url) => { void sideWorkspace.current?.openResource(id, url, id).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error))); }, onLocateSource: (sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote) }, client), [client, chinese]);
-  useEffect(() => client.subscribe((changed) => {
-    if (changed.userId === scope.userId && changed.workspaceId === scope.workspaceId) void qc.invalidateQueries({ queryKey: localConversationKey(changed) });
-  }), [client, qc, scope.userId, scope.workspaceId]);
+  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: chinese ? "zh-CN" : "en", getSelectionIntent: () => currentIntent.current, getSelectedSessionId: () => selectedRef.current, onLocalSelect: (id, choice) => latest.current.select(id, choice), onOpenSide: (id, sourceId) => sideWorkspace.current?.openSide(id, sourceId), onOpenResource: (id, url) => { void sideWorkspace.current?.openResource(id, url, id).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error))); }, onLocateSource: (sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote) }, transport), [transport, chinese]);
   useEffect(() => {
     // Restored tabs may still contain an old cloud chat ID. Cloud history remains in Chat.
     // A stale list or the outgoing page must not clear another tab's selection.
-    if (active && selectedQuery.isError && selectedQuery.error.message.includes("Local conversation not found") && selectedId) latest.current.select(null, provider);
+    if (active && selectedQuery.isError && selectedQuery.error instanceof LocalV2RequestError && selectedQuery.error.kind === "not_found" && selectedId) latest.current.select(null, provider);
   }, [active, selectedQuery.isError, selectedQuery.error, selectedId, provider]);
   if (!workspace || !userId) return null;
   const labels = chinese ? {
@@ -167,14 +171,15 @@ export function LocalConversationFlowPage() {
     setAddingProject(true);
     const startedIntent = intent;
     try {
-      const project = await client.request(scope, "folderProjectAdd", {});
-      if (!project) return;
+      const added = await transport.choose(scope, { purpose: "folder_project", ...(folderProjects.at(-1) ? { defaultPath: folderProjects.at(-1)!.path } : {}) }) as { id: string; title: string; path: string; created_at: string } | null;
+      if (!added) return;
+      const project = folderProject(added);
       await qc.invalidateQueries({ queryKey: localConversationKey(scope) });
       if (currentIntent.current === startedIntent) {
         setSearch(""); setArchived(false); setProjectHidden(scope, project.id, false);
         setCollapsedProjects((previous) => { const next = new Set(previous); next.delete(project.id); return next; });
       }
-    } catch (error) { if (localProjectsRequireRestart(error)) toast.error(folderRestartMessage); else report(error); } finally { setAddingProject(false); }
+    } catch (raw) { const error = localV2Error(raw); if (localProjectsRequireRestart(error)) toast.error(folderRestartMessage); else report(error); } finally { setAddingProject(false); }
   };
   const restoreProject = (projectId: string) => {
     setProjectHidden(scope, projectId, false);
@@ -193,26 +198,26 @@ export function LocalConversationFlowPage() {
     setNewConversation({ scope: visibilityScope, request: { sequence, projectPath: folderProjects.find((project) => project.id === folderProjectId)?.path ?? null } });
     setSearch(""); setArchived(false); setFocusSequence(sequence); latest.current.select(null, target.id);
   };
-  const update = async (params: LocalConversationMethods["update"]["params"], onError: (error: unknown) => void = report) => {
+  const update = async (params: { id: string; title?: string; pinned?: boolean; archived?: boolean; projectId?: string | null }, onError: (error: unknown) => void = report) => {
     if (updatingId) return false;
     setUpdatingId(params.id);
     const startedIntent = intent;
     try {
-      await client.request(scope, "update", params);
+      const { id, projectId, ...fields } = params;
+      v2.receiveSummary(localV2SummarySchema.parse(await v2.command(id, { type: "update", ...fields, ...(projectId !== undefined ? { project_id: projectId } : {}) })));
       await qc.invalidateQueries({ queryKey: localConversationKey(scope) });
       if (params.archived !== undefined && selectedId === params.id && currentIntent.current === startedIntent) latest.current.select(null, provider);
       return true;
     } catch (error) { onError(error); return false; } finally { setUpdatingId(null); }
   };
-  const startRename = (entry: LocalConversation) => {
+  const startRename = (entry: LocalSessionEntry) => {
     renameReturnFocus.current = sessionLinks.current.get(entry.id) ?? null;
     setRenameDraft(entry.title); setRenameError(null); setRenameTarget({ id: entry.id, title: entry.title });
   };
-  const stopBackground = async (entry: LocalConversation) => {
-    const turn = entry.turns.find((turn) => turn.backgroundTasks?.some((task) => task.status === "running"));
-    if (!turn || updatingId) return;
+  const stopBackground = async (entry: LocalSessionEntry) => {
+    if (updatingId) return;
     setUpdatingId(entry.id);
-    try { await client.request(scope, "stopBackgroundTasks", { id: entry.id }); await qc.invalidateQueries({ queryKey: localConversationKey(scope) }); }
+    try { await v2.command(entry.id, { type: "stop_background_tasks" }); }
     catch (error) { report(error); } finally { setUpdatingId(null); }
   };
   const rename = async () => {
@@ -223,12 +228,13 @@ export function LocalConversationFlowPage() {
     if (await update({ id: renameTarget.id, title }, (error) => setRenameError(error instanceof Error ? error.message : labels.failed))) setRenameTarget(null);
   };
   const fork = async (entry = selected) => {
-    if (forking || !entry || !entry.providerSessionId || !entry.messages.length || entry.turns.some((turn) => turn.status === "running")) return;
+    if (forking || !entry || !entry.turnCount || entry.running) return;
     setForkingId(entry.id);
     const startedIntent = intent;
     try {
-      const created = await client.request(scope, "fork", { id: entry.id });
-      await qc.invalidateQueries({ queryKey: localConversationKey(scope) });
+      const summary = localV2SummarySchema.parse(await v2.command(entry.id, { type: "fork", request_id: crypto.randomUUID() }));
+      v2.receiveSummary(summary);
+      const created = sessionEntry(summary);
       if (currentIntent.current === startedIntent) {
         setSearch(""); setArchived(false); setFocusSequence(++focusIntentSequence.current); latest.current.select(created.id, created.provider);
       }
@@ -239,7 +245,7 @@ export function LocalConversationFlowPage() {
   const directoryName = automaticDirectory
     ? (chinese ? "无绑定文件夹" : "No folder linked")
     : selected?.cwd.split(/[\\/]/).filter(Boolean).at(-1) || labels.directory;
-  const renderSessionActions = (entry: LocalConversation, contextMenu: boolean) => {
+  const renderSessionActions = (entry: LocalSessionEntry, contextMenu: boolean) => {
     const Sub = contextMenu ? ContextMenuSub : DropdownMenuSub;
     const SubTrigger = contextMenu ? ContextMenuSubTrigger : DropdownMenuSubTrigger;
     const SubContent = contextMenu ? ContextMenuSubContent : DropdownMenuSubContent;
@@ -248,15 +254,15 @@ export function LocalConversationFlowPage() {
     const Item = contextMenu ? ContextMenuItem : DropdownMenuItem;
     const Separator = contextMenu ? ContextMenuSeparator : DropdownMenuSeparator;
     const disabled = updatingId !== null;
-    const entryRunning = entry.turns.some((turn) => turn.status === "running");
+    const entryRunning = entry.running;
     return <>
       <Item disabled={disabled} onClick={() => startRename(entry)}><Pencil />{renameLabels.action}</Item>
-      <Item disabled={disabled || forking || entryRunning || !entry.providerSessionId || !entry.messages.length} aria-busy={forkingId === entry.id}
-        title={entryRunning ? labels.forkWaiting : !entry.providerSessionId || !entry.messages.length ? labels.forkEmpty : labels.forkHint} onClick={() => { void fork(entry); }}>
+      <Item disabled={disabled || forking || entryRunning || !entry.turnCount} aria-busy={forkingId === entry.id}
+        title={entryRunning ? labels.forkWaiting : !entry.turnCount ? labels.forkEmpty : labels.forkHint} onClick={() => { void fork(entry); }}>
         {forkingId === entry.id ? <Loader2 className="animate-spin" /> : <GitFork />}{forkingId === entry.id ? labels.forking : labels.fork}
       </Item>
       <Item disabled={disabled} onClick={() => { void update({ id: entry.id, pinned: !entry.pinned }); }}>{entry.pinned ? <PinOff /> : <Pin />}{entry.pinned ? labels.unpin : labels.pinned}</Item>
-      {entry.turns.some((turn) => turn.backgroundTasks?.some((task) => task.status === "running")) && <Item disabled={disabled} onClick={() => { void stopBackground(entry); }}><Square />{chinese ? "停止后台任务" : "Stop background tasks"}</Item>}
+      {entry.backgroundTasks > 0 && <Item disabled={disabled} onClick={() => { void stopBackground(entry); }}><Square />{chinese ? "停止后台任务" : "Stop background tasks"}</Item>}
       <Separator />
       <Sub>
         <SubTrigger disabled={disabled}><FolderKanban />{projectLabels.move}</SubTrigger>
@@ -277,10 +283,10 @@ export function LocalConversationFlowPage() {
       <Item disabled={disabled} onClick={() => { void update({ id: entry.id, archived: !archived }); }}><Archive />{archived ? labels.history : labels.archive}</Item>
     </>;
   };
-  const renderSession = (entry: LocalConversation) => {
-    const entryRunning = entry.turns.some((turn) => turn.status === "running");
-    const waitingForAnswer = entry.turns.some((turn) => turn.status === "running" && turn.questions?.some((question) => question.status === "pending"));
-    const background = entry.turns.flatMap((turn) => (turn.backgroundTasks ?? []).filter((task) => task.status === "running" && !task.ambient));
+  const renderSession = (entry: LocalSessionEntry) => {
+    const entryRunning = entry.running;
+    const waitingForAnswer = entry.waitingForAnswer;
+    const background = entry.backgroundTasks;
     return <ContextMenu key={entry.id}>
     <ContextMenuTrigger className="group relative block select-text" data-session-id={entry.id} onContextMenu={(event) => {
       const selection = window.getSelection();
@@ -288,9 +294,9 @@ export function LocalConversationFlowPage() {
     }}>
     <AppLink ref={(node) => { if (node) sessionLinks.current.set(entry.id, node); else sessionLinks.current.delete(entry.id); }} href={`${paths.conversationFlow()}?${new URLSearchParams({ provider: entry.provider, session: entry.id })}`} aria-current={selectedId === entry.id ? "true" : undefined}
       onClick={(event) => { event.preventDefault(); select(entry.id, entry.provider); }}
-      className={`flex min-w-0 items-start gap-3 rounded-lg px-3 py-3 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring ${entryRunning || background.length ? "pr-16" : `group-hover:pr-11 group-focus-within:pr-11 ${updatingId === entry.id ? "pr-11" : ""}`} ${selectedId === entry.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}>
+      className={`flex min-w-0 items-start gap-3 rounded-lg px-3 py-3 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring ${entryRunning || background ? "pr-16" : `group-hover:pr-11 group-focus-within:pr-11 ${updatingId === entry.id ? "pr-11" : ""}`} ${selectedId === entry.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}>
       <span aria-hidden="true" className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/50 text-foreground"><ProviderLogo provider={entry.provider} className="size-5" /></span>
-      <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5">{entry.pinned && <Pin aria-label={labels.pinned} className="size-3 shrink-0 text-muted-foreground" />}<span className="truncate font-medium">{entry.title}</span></span><span className={`mt-0.5 block truncate text-caption ${waitingForAnswer ? "text-foreground" : "text-muted-foreground"}`}>{waitingForAnswer ? t($ => $.desktop.local_conversation.waiting_for_answer) : <>{entry.provider === "codex" ? "Codex" : "Claude Code"} · {localMessageDisplayContent(entry.messages.at(-1)) || labels.storage}</>}</span></span>
+      <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5">{entry.pinned && <Pin aria-label={labels.pinned} className="size-3 shrink-0 text-muted-foreground" />}<span className="truncate font-medium">{entry.title}</span></span><span className={`mt-0.5 block truncate text-caption ${waitingForAnswer ? "text-foreground" : "text-muted-foreground"}`}>{waitingForAnswer ? t($ => $.desktop.local_conversation.waiting_for_answer) : <>{entry.provider === "codex" ? "Codex" : "Claude Code"} · {entry.preview || labels.storage}</>}</span></span>
     </AppLink>
     <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
       <div className={`focus-within:opacity-100 group-hover:opacity-100 ${updatingId === entry.id ? "opacity-100" : "opacity-0"}`}>
@@ -304,7 +310,7 @@ export function LocalConversationFlowPage() {
       {waitingForAnswer ? <IconButton size="icon-xs" label={t($ => $.desktop.local_conversation.waiting_for_answer_label, { title: entry.title })} onClick={() => select(entry.id, entry.provider)}>
         <CircleHelp aria-hidden="true" className="size-4 text-muted-foreground" />
       </IconButton> : entryRunning && <Spinner aria-label={chinese ? `会话运行中：${entry.title}` : `Conversation running: ${entry.title}`} className="shrink-0 text-muted-foreground motion-reduce:animate-none" />}
-      {!entryRunning && background.length > 0 && <span role="status" aria-label={chinese ? `后台运行中：${entry.title}（${background.length}）` : `Background tasks: ${entry.title} (${background.length})`} title={`${chinese ? "后台运行中" : "Running in background"}\n${background.map((task) => task.description).join("\n")}`} className="flex shrink-0 items-center text-muted-foreground"><Clock3 aria-hidden="true" className="size-4" /></span>}
+      {!entryRunning && background > 0 && <span role="status" aria-label={chinese ? `后台运行中：${entry.title}（${background}）` : `Background tasks: ${entry.title} (${background})`} title={chinese ? "后台运行中" : "Running in background"} className="flex shrink-0 items-center text-muted-foreground"><Clock3 aria-hidden="true" className="size-4" /></span>}
     </div>
     </ContextMenuTrigger>
     <ContextMenuContent aria-label={`${projectLabels.actions}：${entry.title}`}>
@@ -344,7 +350,7 @@ export function LocalConversationFlowPage() {
           <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
             <h1 className="min-w-0 flex-1 truncate text-body font-semibold">{labels.sessions}</h1>
             <div className="flex shrink-0 items-center gap-1">
-              <LocalConversationImportButton key={`${scope.userId}:${scope.workspaceId}`} scope={scope} client={client} projects={projects} chinese={chinese} onImported={() => { void qc.invalidateQueries({ queryKey: localConversationKey(scope) }); }} />
+              <LocalConversationImportButton key={`${scope.userId}:${scope.workspaceId}`} scope={scope} client={transport} projects={projects} chinese={chinese} onImported={() => { void qc.invalidateQueries({ queryKey: localConversationKey(scope) }); }} />
               <IconButton label={projectLabels.new} disabled={addingProject} aria-busy={addingProject} onClick={() => { void addProject(); }}>{addingProject ? <Loader2 className="animate-spin" /> : <FolderPlus />}</IconButton>
               <IconButton label={labels.new} disabled={!providers.data?.some((entry) => entry.available)} disabledReason={labels.unavailable} onClick={() => create()}><Plus /></IconButton>
             </div>
@@ -413,9 +419,8 @@ export function LocalConversationFlowPage() {
           <div className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
             {compact && <IconButton label={labels.sessions} onClick={() => setShowList(true)}><ArrowLeft /></IconButton>}
             <span className="min-w-0 flex-1 truncate text-body font-medium">{selected?.title ?? labels.newTitle}</span>
-            {selected?.forkMode === "saved-context" && <span className="shrink-0 text-micro text-muted-foreground" title={chinese ? "从该轮保存的消息建立独立上下文；未保存的原生状态不包含在内。" : "Independent context from saved messages through this turn; unsaved native state is not included."}>{chinese ? "上下文分叉" : "Context fork"}</span>}
             <div className="flex min-w-0 items-center gap-1">
-              {selected && <Button variant="ghost" size="sm" className="min-w-0 max-w-48 shrink" aria-label={labels.directory} disabled={selected.messages.length > 0} title={`${automaticDirectory ? directoryName : selected.cwd}${selected.messages.length ? ` · ${labels.directoryLocked}` : ""}`} onClick={() => { void client.request(scope, "directory", { id: selected.id }).then(() => qc.invalidateQueries({ queryKey: localConversationKey(scope) })).catch(report); }}><FolderOpen className="size-4" /><span className="truncate">{directoryName}</span></Button>}
+              {selected && <Button variant="ghost" size="sm" className="min-w-0 max-w-48 shrink" aria-label={labels.directory} disabled={selected.turnCount > 0} title={`${automaticDirectory ? directoryName : selected.cwd}${selected.turnCount ? ` · ${labels.directoryLocked}` : ""}`} onClick={() => { void transport.choose(scope, { purpose: "conversation_directory", conversationId: selected.id, defaultPath: selected.cwd }).then((changed) => { if (changed) v2.receiveSummary(localV2SummarySchema.parse(changed)); }).catch((error: unknown) => report(localV2Error(error))); }}><FolderOpen className="size-4" /><span className="truncate">{directoryName}</span></Button>}
               <IconButton aria-expanded={sideOpen} label={sideOpen ? (chinese ? "关闭右侧面板" : "Close right workspace") : (chinese ? "打开右侧面板" : "Open right workspace")} onClick={() => sideWorkspace.current?.toggle()}><PanelRightOpen /></IconButton>
             </div>
           </div>

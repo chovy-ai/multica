@@ -1,26 +1,17 @@
-import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, CircleAlert, CircleHelp, CircleStop, Loader2, MessagesSquare } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "@multica/views/i18n";
-import type { LocalConversation, LocalConversationScope } from "@multica/core/local-conversation/protocol";
-import { getLocalConversationClient } from "../platform/local-conversation-client";
+import type { LocalV2Scope } from "@multica/core/local-conversation/v2";
+import { useLocalV2Conversation } from "../platform/use-local-v2-conversation";
 import { localSideActivity } from "./local-side-activity";
 
-export const sideActivityKey = (scope: LocalConversationScope, id: string) => ["local-side-activity", scope.userId, scope.workspaceId, id] as const;
-
-export function useSideActivity(scope: LocalConversationScope, id: string, summary: LocalConversation | undefined, active: boolean) {
+/** A Side's current activity, kept live while it is shown. */
+export function useSideActivity(scope: LocalV2Scope, id: string, active: boolean) {
   const { t } = useT("chat");
-  const query = useQuery({
-    queryKey: sideActivityKey(scope, id),
-    queryFn: () => getLocalConversationClient(window.desktopAPI.localConversations).request(scope, "read", { id }),
-    enabled: active, refetchOnMount: "always",
-  });
-  // The list can report a newly started turn before its detail request resolves.
-  const live = summary && (summary.turns.some((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running")) || summary.promptQueue?.dispatchingRequestId);
-  const session = live && (!query.data || summary.updatedAt > query.data.updatedAt) ? summary : query.data ?? summary;
-  const activity = localSideActivity(session);
-  const label = query.isError ? t($ => $.desktop.side_activity.unavailable) : !query.data && !live && query.isPending ? t($ => $.desktop.side_activity.loading) : t($ => $.desktop.side_activity[activity.state]);
-  return { ...activity, label, query };
+  const live = useLocalV2Conversation(scope, id, active);
+  const activity = localSideActivity(live.conversation);
+  const label = live.error ? t($ => $.desktop.side_activity.unavailable) : live.pending ? t($ => $.desktop.side_activity.loading) : t($ => $.desktop.side_activity[activity.state]);
+  return { ...activity, label, conversationId: id, query: { isError: !!live.error, isPending: live.pending, refetch: live.retry } };
 }
 
 export function SideActivityIcon({ activity }: { activity: ReturnType<typeof useSideActivity> }) {

@@ -176,6 +176,7 @@ const desktopAPI = {
   localV2: {
     request: (scope, method, path, body) => ipcRenderer.invoke("local-v2:request", scope, method, path, body),
     send: (scope, message) => ipcRenderer.invoke("local-v2:send", scope, message),
+    choose: (scope, request) => ipcRenderer.invoke("local-v2:choose", scope, request),
     subscribe: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; message: unknown }) => listener(payload.scope, payload.message);
       ipcRenderer.on("local-v2:message", handler);

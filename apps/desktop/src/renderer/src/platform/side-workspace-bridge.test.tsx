@@ -1,7 +1,6 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SideWorkspaceCommand } from "../../../shared/side-workspace";
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/core/local-conversation/protocol";
 import { DesktopSideWorkspaceBridge } from "./side-workspace-bridge";
 import { sideLayoutKey, type SideLayout } from "../pages/local-side-workspace-sync";
 const fake = vi.hoisted(() => ({ openTab: vi.fn(), navigateActiveSession: vi.fn() }));
@@ -11,27 +10,33 @@ vi.mock("@multica/core/platform", () => ({ getCurrentWsId: () => "workspace", ge
 vi.mock("../stores/tab-store", () => ({ useTabStore: Object.assign((selector: (value: unknown) => unknown) => selector({ activeWorkspaceSlug: "test" }), { getState: () => ({ openTab: fake.openTab, navigateActiveSession: fake.navigateActiveSession }) }) }));
 const scope = { userId: "user", workspaceId: "workspace" };
 let command: (value: SideWorkspaceCommand) => void;
-let availability: (value: unknown) => void;
+let connection: (value: typeof scope, connected: boolean) => void;
 let request: ReturnType<typeof vi.fn>;
+/** Layouts the bridge recorded in the daemon. */
+const synced = () => request.mock.calls.filter((call) => call[2].endsWith("/commands") && call[3].type === "side_workspace_sync").map((call) => call[3].workspace);
 const ack = vi.fn(async () => {});
 beforeEach(() => {
   localStorage.clear(); vi.clearAllMocks();
-  request = vi.fn(async (_scope, method, params) => method === "capabilities" ? { protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) } : method === "read" ? { id: params.id, provider: "codex" } : { revision: params.revision });
+  request = vi.fn(async (_scope, _method, path: string, body?: { workspace?: { revision: number } }) => {
+    const snapshot = /^\/sessions\/([^/]+)\/snapshot$/.exec(path);
+    if (snapshot) return { version: 2, store_generation: "g", snapshot_seq: 0, turns: [], conversation: { conversation_id: snapshot[1], summary_seq: 1, provider: "codex", title: "", status: "idle", pinned: false, archived: false, updated_at: "2026-10-29T00:00:00Z" } };
+    return { revision: body?.workspace?.revision };
+  });
   Object.defineProperty(window, "desktopAPI", { configurable: true, value: {
-    localConversations: { request, subscribe: () => () => {} }, localHost: { subscribe: (listener: typeof availability) => { availability = listener; return () => {}; } },
+    localV2: { request, send: vi.fn(), subscribe: () => () => {}, onConnection: (listener: typeof connection) => { connection = listener; return () => {}; } },
     sideWorkspace: { onCommand: (listener: typeof command) => { command = listener; return () => {}; }, ack },
   } });
 });
 afterEach(() => { cleanup(); localStorage.clear(); });
-it("pushes saved layouts at application startup and sidecar restart without mounting the chat page", async () => {
+it("pushes saved layouts at application startup and daemon reconnect without mounting the chat page", async () => {
   const layout: SideLayout = { open: true, selected: "web:one", tabs: [{ id: "web:one", kind: "web", url: "https://example.test" }] };
   localStorage.setItem(sideLayoutKey(scope, "main"), JSON.stringify(layout));
   localStorage.setItem(sideLayoutKey({ ...scope, userId: "other" }, "foreign"), JSON.stringify(layout));
   render(<DesktopSideWorkspaceBridge />);
-  await waitFor(() => expect(request).toHaveBeenCalledWith(scope, "sideWorkspaceSync", expect.objectContaining({ conversationId: "main", visible: false })));
-  expect(request.mock.calls.some((call) => call[2].conversationId === "foreign")).toBe(false);
-  request.mockClear(); act(() => availability({ state: "connected", sidecar: "ready" }));
-  await waitFor(() => expect(request).toHaveBeenCalledWith(scope, "sideWorkspaceSync", expect.objectContaining({ conversationId: "main" })));
+  await waitFor(() => expect(synced()).toContainEqual(expect.objectContaining({ conversationId: "main", visible: false })));
+  expect(synced().some((layout) => layout.conversationId === "foreign")).toBe(false);
+  request.mockClear(); act(() => connection(scope, true));
+  await waitFor(() => expect(synced()).toContainEqual(expect.objectContaining({ conversationId: "main" })));
 });
 it("cleans temporary tabs when the chat page is unmounted and acknowledges the new snapshot", async () => {
   localStorage.setItem(sideLayoutKey(scope, "main"), JSON.stringify({ open: true, selected: "agent", tabs: [

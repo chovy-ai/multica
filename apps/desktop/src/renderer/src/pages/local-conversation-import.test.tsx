@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LocalConversationClient, LocalImportCandidate } from "@multica/core/local-conversation/protocol";
+import type { LocalImportCandidate } from "@multica/core/local-conversation/protocol";
+import type { LocalV2Transport } from "@multica/core/local-conversation/v2";
 import { LocalConversationImportButton } from "./local-conversation-import";
 
 vi.mock("@multica/views/runtimes/provider-logo", () => ({ ProviderLogo: () => <span /> }));
@@ -10,16 +11,27 @@ const clients: QueryClient[] = [];
 afterEach(() => { cleanup(); clients.splice(0).forEach((client) => client.clear()); });
 const scope = { userId: "user", workspaceId: "workspace" };
 const candidate = (id: string, importedId?: string): LocalImportCandidate => ({ id, title: `History ${id}`, provider: "codex", cwd: `/work/${id}`, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z", importedId });
-function mount(request: ReturnType<typeof vi.fn>) {
+function mount(request: (...args: any[]) => Promise<any>) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } }); clients.push(qc);
   const onImported = vi.fn();
-  const client = { request, subscribe: () => () => {}, files: { upload: vi.fn(), read: vi.fn(), url: vi.fn() } } as unknown as LocalConversationClient;
+  // The dialog's daemon routes, as the import operations these cases describe.
+  const client = { request: async (scopeValue: typeof scope, method: string, path: string, body?: { provider: string; ids: string[]; project_id: string | null }) => {
+    const url = new URL(path, "http://daemon");
+    if (method === "GET" && url.pathname === "/imports") {
+      const page = await request(scopeValue, "importScan", { provider: url.searchParams.get("provider"), ...(url.searchParams.get("cursor") ? { cursor: url.searchParams.get("cursor") } : {}) });
+      return { sessions: page.sessions.map((entry: LocalImportCandidate) => ({ id: entry.id, provider: entry.provider, title: entry.title, cwd: entry.cwd, created_at: entry.createdAt, updated_at: entry.updatedAt, ...(entry.importedId ? { imported_id: entry.importedId } : {}) })), next_cursor: page.nextCursor };
+    }
+    if (url.pathname === "/imports/cancel") return request(scopeValue, "importCancel", {});
+    const result = await request(scopeValue, "importSessions", { provider: body!.provider, ids: body!.ids, projectId: body!.project_id });
+    const outcome = (entry: { sourceId: string; conversationId?: string; error?: string }) => ({ source_id: entry.sourceId, conversation_id: entry.conversationId ?? "", error: entry.error ?? "" });
+    return { imported: result.imported.map(outcome), skipped: result.skipped.map(outcome), failed: result.failed.map(outcome) };
+  }, send: vi.fn(), subscribe: () => () => {}, onConnection: () => () => {}, fileUrl: vi.fn(), upload: vi.fn(), choose: vi.fn() } as unknown as LocalV2Transport;
   render(<QueryClientProvider client={qc}><LocalConversationImportButton scope={scope} client={client} projects={[{ id: "project-a", title: "Project A" }]} chinese onImported={onImported} /></QueryClientProvider>);
   return { onImported };
 }
 describe("local conversation import dialog", () => {
   it("explains when an already-running desktop needs to reload the new native interface", async () => {
-    mount(vi.fn(async () => { throw new Error("Unknown local conversation request"); }));
+    mount(vi.fn(async () => { throw new Error("http_404: Local conversation request failed (HTTP 404)"); }));
     fireEvent.click(screen.getByRole("button", { name: "导入本机会话" }));
     await screen.findByText("重启 Multica 后可使用本机会话导入。");
     expect(screen.getByRole("button", { name: "导入所选 (0)" })).toBeDisabled();

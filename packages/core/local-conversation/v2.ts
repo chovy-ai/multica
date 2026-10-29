@@ -39,6 +39,8 @@ export const localV2SummarySchema = z.object({
   last_message_preview: z.string().default(""),
   pending_interactions: z.number().int().default(0),
   queue_count: z.number().int().default(0),
+  /** Background tasks still running after their turn. */
+  background_tasks: z.number().int().default(0),
   side_source_id: z.string().optional(),
   side_source_turn_id: z.string().optional(),
   side_quote: z.string().optional(),
@@ -141,7 +143,17 @@ export interface LocalV2Transport {
   fileUrl(scope: LocalV2Scope, path: string): string;
   /** Uploads a message attachment. */
   upload(scope: LocalV2Scope, file: File): Promise<LocalV2Upload>;
+  /**
+   * Asks the user for a path and applies it; null when cancelled. Paths that
+   * widen what the daemon may read come only from the OS picker.
+   */
+  choose(scope: LocalV2Scope, request: LocalV2ChooseRequest): Promise<unknown>;
 }
+
+export type LocalV2ChooseRequest =
+  | { purpose: "preview"; kind: "file" | "directory" }
+  | { purpose: "folder_project"; defaultPath?: string }
+  | { purpose: "conversation_directory"; conversationId: string; defaultPath?: string };
 
 export const localV2UploadSchema = z.object({ id: z.string(), name: z.string(), mime_type: z.string(), size: z.number() });
 export type LocalV2Upload = z.infer<typeof localV2UploadSchema>;
@@ -149,4 +161,31 @@ export type LocalV2Upload = z.infer<typeof localV2UploadSchema>;
 /** Daemon file routes the renderer may stream. */
 export function isLocalV2FilePath(path: string): boolean {
   return /^\/attachments\/[\w-]{1,128}$/.test(path) || /^\/sessions\/[\w:.~-]{1,160}\/image\?path=/.test(path) || /^\/preview\/content\?/.test(path);
+}
+
+/** A page of the provider's native history that can be imported. */
+export const localV2ImportPageSchema = z.object({
+  sessions: z.array(z.object({
+    id: z.string(), provider: z.string(), title: z.string().default(""), cwd: z.string().default(""),
+    created_at: z.string().default(""), updated_at: z.string().default(""), imported_id: z.string().optional(),
+  })).default([]),
+  next_cursor: z.string().nullable().default(null),
+});
+export type LocalV2ImportPage = z.infer<typeof localV2ImportPageSchema>;
+
+const importOutcomeSchema = z.object({ source_id: z.string(), conversation_id: z.string().default(""), error: z.string().default("") });
+export const localV2ImportResultSchema = z.object({
+  imported: z.array(importOutcomeSchema).default([]), skipped: z.array(importOutcomeSchema).default([]), failed: z.array(importOutcomeSchema).default([]),
+});
+export type LocalV2ImportResult = z.infer<typeof localV2ImportResultSchema>;
+
+/**
+ * Renderer writes the main process forwards. Adding a readable root, a
+ * folder project or a working directory takes a path the user chose in the
+ * OS picker, so those go through `choose` instead.
+ */
+export function isLocalV2RendererPost(path: string, body: unknown): boolean {
+  if (path === "/preview/roots" || path === "/folder-projects") return false;
+  if (/^\/sessions\/[^/]+\/commands$/.test(path)) return (body as { type?: unknown } | null)?.type !== "set_directory";
+  return true;
 }

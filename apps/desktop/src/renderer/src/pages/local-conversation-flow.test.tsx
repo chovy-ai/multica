@@ -1,9 +1,8 @@
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/core/local-conversation/protocol";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LocalConversation, LocalFolderProject, LocalUserQuestion } from "@multica/core/local-conversation/protocol";
+import { localMessageDisplayContent, type LocalConversation, type LocalFolderProject, type LocalUserQuestion } from "@multica/core/local-conversation/protocol";
 import type { Project } from "@multica/core/types";
 import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 import { LocalConversationFlowPage } from "./local-conversation-flow";
@@ -32,6 +31,88 @@ vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: (
 } }));
 vi.mock("../platform/local-conversation-service", () => ({ localConversationKey: () => ["test-local-sessions"], localTargetId: (provider: string) => `local:${provider}`, createLocalConversationParentService: vi.fn() }));
 
+let summarySeq = 0;
+/** Publishes the list again, as the daemon does after any change. */
+let publishList: () => Promise<void> = async () => {};
+let daemonRequests: { method: string; path: string; body?: Record<string, unknown> }[] = [];
+/** Reads of the conversation list. */
+const listReads = () => daemonRequests.filter((entry) => entry.method === "GET" && entry.path.startsWith("/sessions?"));
+/** The daemon's list row for a v1-shaped fixture. */
+function summary(entry: LocalConversation) {
+  const running = entry.turns.filter((turn) => turn.status === "running");
+  return { conversation_id: entry.id, summary_seq: ++summarySeq, provider: entry.provider, title: entry.title, cwd: entry.cwd, project_id: entry.projectId ?? null, pinned: entry.pinned, archived: entry.archived,
+    background_tasks: entry.turns.flatMap((turn) => turn.backgroundTasks ?? []).filter((task) => task.status === "running" && !task.ambient).length,
+    status: running.length ? "running" : "idle", pending_interactions: running.flatMap((turn) => turn.questions ?? []).filter((question) => question.status === "pending").length,
+    last_message_preview: localMessageDisplayContent(entry.messages.at(-1)), turn_count: Math.max(entry.turns.length, entry.messages.length ? 1 : 0),
+    updated_at: `${entry.updatedAt.slice(0, 10)}T00:00:00Z`, created_at: `${entry.createdAt.slice(0, 10)}T00:00:00Z`,
+    ...(entry.side ? { side_source_id: entry.side.sourceId, ...(entry.side.turnId ? { side_source_turn_id: entry.side.turnId } : {}), ...(entry.side.quote ? { side_quote: entry.side.quote } : {}) } : {}) };
+}
+const folderRow = (project: LocalFolderProject) => ({ id: project.id, title: project.title, path: project.path, created_at: project.createdAt });
+/**
+ * Serves the page's v2 routes from the cases' v1-shaped fixtures: mock.request
+ * still answers listPage, read, update, fork and the folder actions.
+ */
+function installDaemon() {
+  const v2Listeners = new Set<(scope: unknown, message: unknown) => void>();
+  daemonRequests = [];
+  const rows = async (scope: unknown): Promise<LocalConversation[]> => {
+    const result = await mock.request(scope, "listPage", {});
+    return Array.isArray(result) ? result : result?.sessions ?? [];
+  };
+  const read = async (scope: unknown, id: string): Promise<LocalConversation> => {
+    const result = await mock.request(scope, "read", { id });
+    const entry = result && !Array.isArray(result) ? result : (await rows(scope)).find((row) => row.id === id);
+    if (!entry) throw new Error("not_found: Local conversation not found");
+    return entry;
+  };
+  const fail = (error: unknown): never => { throw error instanceof Error && /^[a-z_0-9]+: /.test(error.message) ? error : new Error(`internal: ${error instanceof Error ? error.message : String(error)}`); };
+  const localConversations = {
+    // Cases announce a changed conversation here; the daemon publishes the list again.
+    subscribe: () => () => {},
+  };
+  const refresh = async (scope: unknown) => {
+    const summaries = (await rows(scope)).map(summary);
+    v2Listeners.forEach((listener) => listener(scope, { version: 2, type: "scope.summaries", scope_seq: summarySeq, summaries }));
+  };
+  publishList = () => refresh({ userId: "user", workspaceId: "workspace" });
+  const localV2 = {
+    request: async (scope: unknown, method: string, path: string, body?: Record<string, unknown>) => {
+      daemonRequests.push({ method, path, body });
+      try {
+        const url = new URL(path, "http://daemon");
+        if (path === "/providers") return { providers: ((await mock.request(scope, "providers", {})) ?? []).map((entry: { id: string; name?: string; available: boolean }) => ({ name: entry.id, ...entry })) };
+        if (path === "/folder-projects") { if (mock.folderError) throw mock.folderError; return { projects: mock.folders.map(folderRow) }; }
+        if (url.pathname === "/sessions" && method === "GET") return { scope_seq: summarySeq, summaries: (await rows(scope)).map(summary), has_more: false };
+        const match = /^\/sessions\/([^/]+)\/(snapshot|commands)$/.exec(url.pathname);
+        if (match?.[2] === "snapshot") { const entry = await read(scope, match[1]!); return { version: 2, store_generation: "g", snapshot_seq: 0, conversation: summary(entry), turns: [] }; }
+        if (match && body?.type === "update") {
+          const { type: _type, project_id, ...fields } = body;
+          const result = await mock.request(scope, "update", { id: match[1], ...fields, ...(project_id !== undefined ? { projectId: project_id } : {}) });
+          const changed = summary(result ?? { ...await read(scope, match[1]!), ...fields });
+          void refresh(scope); return changed;
+        }
+        if (match && body?.type === "fork") { const forked = summary(await mock.request(scope, "fork", { id: match[1] })); void refresh(scope); return forked; }
+        if (match && body?.type === "stop_background_tasks") { await mock.request(scope, "stopBackgroundTasks", { id: match[1] }); void refresh(scope); return { status: "requested" }; }
+      } catch (error) { fail(error); }
+      throw new Error(`http_404: ${method} ${path}`);
+    },
+    choose: async (scope: unknown, choice: { purpose: string; conversationId?: string }) => {
+      try {
+        if (choice.purpose === "folder_project") { const project = await mock.request(scope, "folderProjectAdd", {}); return project && folderRow(project); }
+        if (choice.purpose === "conversation_directory") return summary(await mock.request(scope, "directory", { id: choice.conversationId }) ?? await read(scope, choice.conversationId!));
+      } catch (error) { fail(error); }
+      return null;
+    },
+    send: async () => {}, onConnection: () => () => {}, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
+    subscribe: (listener: (scope: unknown, message: unknown) => void) => {
+      v2Listeners.add(listener);
+      window.desktopAPI.localConversations.subscribe((scope: unknown) => { void refresh(scope); });
+      return () => v2Listeners.delete(listener);
+    },
+  };
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localV2, localConversations, pickDirectory: vi.fn() } });
+}
+
 let qc: QueryClient;
 let source: LocalConversation;
 beforeEach(() => {
@@ -45,30 +126,13 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   source = { id: "source", title: "Original", provider: "codex", cwd: "/owned/work", providerSessionId: "native", model: null, pinned: false, archived: false, createdAt: "2026-01-01", updatedAt: "2026-01-01", messages: [{ id: "message", role: "assistant", content: "Result", turnId: "turn", createdAt: "2026-01-01" }], turns: [] };
   mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source] : method === "providers" ? [{ id: "codex", available: true }] : undefined);
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localConversations: { request: async (scope: unknown, method: string, params: Record<string, unknown>) => {
-    if (method === "capabilities") return { protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) };
-    if (method === "folderProjects") { if (mock.folderError) throw mock.folderError; return mock.folders; }
-    const result = await mock.request(scope, method, params);
-    if (method === "read" && (!result || Array.isArray(result))) {
-      const rows = await mock.request(scope, "listPage", {});
-      const entry = (Array.isArray(rows) ? rows : rows.sessions).find((entry: LocalConversation) => entry.id === params.id);
-      if (!entry) throw new Error("Local conversation not found");
-      return entry;
-    }
-    if (method !== "listPage" || !Array.isArray(result)) return result;
-    const rows = result.filter((entry: LocalConversation) => {
-      const project = mock.folders.find((project) => project.path.replace(/\/$/, "") === entry.cwd.replace(/\/$/, ""));
-      const search = String(params.search ?? "").toLowerCase();
-      return !entry.side && !!entry.messages?.length && entry.archived === !!params.archived && (project?.id ?? null) === params.folderProjectId && (!search || [entry.title, entry.messages.at(-1)?.content, project?.title, project?.path].some((value) => value?.toLowerCase().includes(search)));
-    });
-    const offset = Number(params.cursor ?? 0);
-    return { sessions: rows.slice(offset, offset + 8), nextCursor: offset + 8 < rows.length ? String(offset + 8) : null };
-  }, subscribe: () => () => {} } } });
+  installDaemon();
   qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
 });
 afterEach(() => { cleanup(); qc.clear(); useProjectVisibilityStore.setState({ hiddenByScope: {} }); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.removeItem("multica_local_conversation_width"); localStorage.clear(); });
-function cachedSessions() {
-  return qc.getQueriesData<{ sessions: LocalConversation[] }[]>({ queryKey: ["test-local-sessions", "pages"] }).flatMap(([, groups]) => groups?.flatMap((group) => group.sessions) ?? []);
+/** IDs the list currently shows, in its order. */
+function listedIds() {
+  return screen.queryAllByRole("link").map((link) => new URL(link.getAttribute("href")!, "http://app").searchParams.get("session"));
 }
 const page = () => <QueryClientProvider client={qc}><LocalConversationFlowPage /></QueryClientProvider>;
 const folder = (id: string, title: string, path = "/owned/work"): LocalFolderProject => ({ id, title, path, createdAt: "2026-01-01T00:00:00Z" });
@@ -82,47 +146,43 @@ function activateWithPointer(element: HTMLElement) {
 
 describe("project conversation pagination", () => {
   function rows(count = 17) { return Array.from({ length: count }, (_, index) => ({ ...source, id: `row-${index}`, title: `Paged conversation ${index}` })); }
-  const pageCalls = () => mock.request.mock.calls.filter((call) => call[1] === "listPage" && call[2].folderProjectId !== undefined);
   it("loads 8 then 8 then 1 only on clicks, keeps loaded pages through refresh, and ignores scroll", async () => {
     mock.selected = "";
     mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? rows() : []);
     render(page());
     const list = await screen.findByTestId("local-conversation-sessions");
     await waitFor(() => expect(within(list).getAllByRole("link")).toHaveLength(8));
-    expect(pageCalls()).toHaveLength(1);
+    expect(listReads()).toHaveLength(1);
     fireEvent.scroll(list, { target: { scrollTop: 10000 } });
-    expect(pageCalls()).toHaveLength(1);
+    expect(listReads()).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
     await waitFor(() => expect(within(list).getAllByRole("link")).toHaveLength(16));
     await act(async () => { await qc.invalidateQueries({ queryKey: ["test-local-sessions", "pages"] }); });
     expect(within(list).getAllByRole("link")).toHaveLength(16);
-    expect(pageCalls().map((call) => call[2].cursor)).toEqual([undefined, "8", undefined, "8"]);
+    // Pages show more of the list the daemon already sent.
+    expect(listReads()).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
     await waitFor(() => expect(within(list).getAllByRole("link")).toHaveLength(17));
     expect(screen.queryByRole("button", { name: "加载更多" })).not.toBeInTheDocument();
     expect(mock.request.mock.calls.some((call) => ["list", "read", "fileInfo", "fileRead", "imageRead"].includes(call[1]))).toBe(false);
   });
-  it("deduplicates rapid clicks and retries a failed page without dropping loaded rows", async () => {
+  it("offers a retry when the list cannot be read and keeps showing more after it loads", async () => {
     mock.selected = "";
-    let reject!: (error: Error) => void;
     let fail = true;
-    mock.request.mockImplementation(async (_scope, method, params) => {
+    mock.request.mockImplementation(async (_scope, method) => {
       if (method !== "listPage") return [];
-      if (params.cursor && fail) return new Promise((_resolve, failRequest) => { reject = failRequest; });
+      if (fail) throw new Error("internal: list unavailable");
       return rows(9);
     });
     render(page());
-    const more = await screen.findByRole("button", { name: "加载更多" });
-    fireEvent.click(more); fireEvent.click(more);
-    await waitFor(() => expect(more).toBeDisabled());
-    expect(pageCalls()).toHaveLength(2);
-    await act(async () => { reject(new Error("Page unavailable")); });
-    expect(mock.error).toHaveBeenCalledWith("Page unavailable");
-    expect(screen.getAllByRole("link")).toHaveLength(8);
+    const retry = await screen.findByRole("button", { name: "重试" });
     fail = false;
-    fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+    fireEvent.click(retry);
+    const more = await screen.findByRole("button", { name: "加载更多" });
+    expect(screen.getAllByRole("link")).toHaveLength(8);
+    fireEvent.click(more); fireEvent.click(more);
     await waitFor(() => expect(screen.getAllByRole("link")).toHaveLength(9));
-    expect(pageCalls()).toHaveLength(3);
+    expect(listReads()).toHaveLength(2);
   });
   it("keeps project pagination independent and searches beyond the loaded page", async () => {
     mock.selected = "";
@@ -147,8 +207,7 @@ describe("project conversation pagination", () => {
     expect(await screen.findByText("Paged conversation 16")).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByRole("link")).toHaveLength(8));
     expect(mock.replace).not.toHaveBeenCalled();
-    expect(pageCalls()).toHaveLength(1);
-    expect(mock.request).toHaveBeenCalledWith(expect.anything(), "read", { id: entries[16]!.id });
+    expect(listReads()).toHaveLength(1);
   });
 });
 
@@ -217,7 +276,8 @@ describe("local conversation execution indicators", () => {
     const updateQuestions = async (statuses: LocalUserQuestion["status"][]) => {
       source = { ...source, turns: source.turns.map((turn) => ({ ...turn, questions: turn.questions!.map((item, index) => ({ ...item, status: statuses[index]! })) })) };
       act(() => notify({ userId: "user", workspaceId: "workspace" }, source.id));
-      await waitFor(() => expect(cachedSessions()).toEqual([other, source]));
+      // The daemon publishes the changed row; wait until the page shows it.
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     };
     await updateQuestions(["answered", "pending"]);
     expect(screen.getByRole("button", { name: "等待你的回答：Original" })).toBeVisible();
@@ -298,7 +358,7 @@ describe("local conversation execution indicators", () => {
 
     background = { ...background, turns: background.turns.slice(1) };
     act(() => notify({ userId: "user", workspaceId: "workspace" }, background.id));
-    await waitFor(() => expect(mock.request.mock.calls.filter((call) => call[1] === "listPage" && call[2].folderProjectId !== undefined)).toHaveLength(2));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(screen.getByRole("status", { name: "会话运行中：Background conversation" })).toBeVisible();
     background = { ...background, turns: [] };
     act(() => notify({ userId: "user", workspaceId: "workspace" }, background.id));
@@ -365,7 +425,8 @@ describe("removing projects from the local conversation list", () => {
 
 describe("local conversation project creation", () => {
   it("explains a stale desktop process for both folder loading and adding instead of reporting a generic project failure", async () => {
-    const error = new Error("Error invoking remote method 'local-conversation:request': Error: Unknown local conversation request");
+    // A daemon without the local v2 API.
+    const error = new Error("http_404: Local conversation request failed (HTTP 404)");
     mock.folderError = error;
     mock.request.mockImplementation(async (_scope, method) => {
       if (method === "folderProjectAdd") throw error;
@@ -631,7 +692,7 @@ describe("Side conversations in the main session list", () => {
     fireEvent.click(list.getByRole("button", { name: "归档" }));
     expect(await list.findByRole("link", { name: /Archived main/ })).toBeVisible();
     expect(list.queryAllByRole("link", { name: /Side/ })).toHaveLength(0);
-    expect(cachedSessions()).not.toContainEqual(expect.objectContaining({ side: expect.anything() }));
+    expect(listedIds()).not.toContain("side");
     fireEvent.click(screen.getByRole("button", { name: "定位来源" }));
     expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex&session=source");
     expect(await list.findByRole("link", { name: /Original/ })).toBeVisible();
@@ -655,7 +716,6 @@ describe("local conversation fork entry", () => {
     expect(screen.queryByRole("button", { name: /来源会话|Source conversation|分叉会话|Fork conversation/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: locale === "en" ? "Open right workspace" : "打开右侧面板" })).toBeVisible();
     if (compact) expect(screen.getByRole("button", { name: locale === "en" ? "Local sessions" : "本机会话" })).toBeVisible();
-    if (forked) expect(screen.getByText(locale === "en" ? "Context fork" : "上下文分叉")).toBeVisible();
   });
   it.each(["codex", "claude"] as const)("keeps unsent %s drafts out of the list and counts until the first message is accepted", async (provider) => {
     const draft = { ...source, id: "draft", title: "Unsent draft", provider, providerSessionId: undefined, messages: [], turns: [] };
@@ -669,7 +729,7 @@ describe("local conversation fork entry", () => {
     fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
     await waitFor(() => expect(mock.replace).toHaveBeenCalledWith(`/test/conversations?provider=${provider}`));
     expect(mock.request.mock.calls.some((call) => call[1] === "create")).toBe(false);
-    expect(cachedSessions()).toHaveLength(1);
+    expect(listedIds()).toEqual(["source"]);
     mock.selected = "";
     view.rerender(page());
     const firstRequest = JSON.parse(screen.getByRole("textbox", { name: "Conversation draft" }).getAttribute("data-new-conversation")!);
@@ -684,7 +744,7 @@ describe("local conversation fork entry", () => {
 
     const at = "2026-10-24T18:00:00Z";
     rows = [...rows, { ...draft, title: "First submitted message", messages: [{ id: "first-message", role: "user", content: "First submitted message", turnId: "first-turn", createdAt: at }], turns: [{ id: "first-turn", status: "running", createdAt: at, events: [] }] }];
-    await act(async () => { await qc.invalidateQueries({ queryKey: ["test-local-sessions"] }); });
+    await act(async () => { await publishList(); });
     expect(await screen.findByRole("link", { name: /First submitted message/ })).toBeInTheDocument();
     expect(within(screen.getByRole("button", { name: "未分配项目" })).getByText("2")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Older unsent draft/ })).not.toBeInTheDocument();

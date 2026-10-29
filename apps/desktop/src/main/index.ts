@@ -25,7 +25,7 @@ import { registerDesktopProtocol, setupBrowserLogin } from "./browser-login-ipc"
 import { LocalHostProxy } from "./local-conversation-proxy";
 import { LocalV2Error, LocalV2Proxy } from "./local-conversation-v2";
 import { localV2HostHandler } from "./local-v2-host";
-import { isLocalV2FilePath, localV2ClientMessageSchema } from "@multica/core/local-conversation/v2";
+import { isLocalV2FilePath, isLocalV2RendererPost, localV2ClientMessageSchema, type LocalV2ChooseRequest } from "@multica/core/local-conversation/v2";
 import { ResourceWebPreview } from "./resource-web-preview";
 import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
@@ -845,7 +845,10 @@ if (!gotTheLock) {
       const { preview, owner } = previewFor(event, scope);
       return preview.chromeProfiles.cancel(owner, requestId);
     });
-    setupLocalFileContextMenu({ getWindow: () => mainWindow, currentUser: () => settingsUserId, request: (scope, method, params) => localConversations!.request(scope, method, params) });
+    setupLocalFileContextMenu({ getWindow: () => mainWindow, currentUser: () => settingsUserId, request: (scope, path) => {
+      if (!localV2) throw new Error("Local conversations require the active main window");
+      return localV2.request(scope, "GET", path);
+    } });
     ipcMain.handle("local-conversation:request", async (event, scope: LocalConversationScope, method: LocalConversationMethod, params) => {
       if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Local conversations require the active main window");
       localScopeTracker?.(scope);
@@ -858,13 +861,32 @@ if (!gotTheLock) {
       if (scope?.userId !== settingsUserId || !scope.workspaceId) throw new Error("This account is no longer active");
       return localV2;
     };
+    // Structured kinds survive IPC only inside the message.
+    const ipcError = (error: unknown): never => {
+      if (error instanceof LocalV2Error) throw new Error(`${error.kind}: ${error.message}`);
+      throw error;
+    };
     ipcMain.handle("local-v2:request", (event, scope: LocalConversationScope, method: "GET" | "POST", path: string, body?: unknown) => {
       if (method !== "GET" && method !== "POST") throw new Error("Invalid local conversation request");
-      return mainFrame(event, scope).request(scope, method, path, body).catch((error: unknown) => {
-        // Structured kinds survive IPC only inside the message.
-        if (error instanceof LocalV2Error) throw new Error(`${error.kind}: ${error.message}`);
-        throw error;
+      if (method === "POST" && !isLocalV2RendererPost(path, body)) throw new Error("invalid_request: Choose this folder in Multica first");
+      return mainFrame(event, scope).request(scope, method, path, body).catch(ipcError);
+    });
+    ipcMain.handle("local-v2:choose", async (event, scope: LocalConversationScope, request: LocalV2ChooseRequest) => {
+      const proxy = mainFrame(event, scope);
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const file = request?.purpose === "preview" && request.kind === "file";
+      const result = await dialog.showOpenDialog(mainWindow, {
+        ...("defaultPath" in request && typeof request.defaultPath === "string" ? { defaultPath: request.defaultPath } : {}),
+        properties: file ? ["openFile"] : ["openDirectory", "createDirectory"],
       });
+      const path = result.canceled ? undefined : result.filePaths[0];
+      if (!path) return null;
+      const apply = request.purpose === "preview" ? proxy.request(scope, "POST", "/preview/roots", { path })
+        : request.purpose === "folder_project" ? proxy.request(scope, "POST", "/folder-projects", { path })
+        : request.purpose === "conversation_directory" && typeof request.conversationId === "string"
+          ? proxy.request(scope, "POST", `/sessions/${encodeURIComponent(request.conversationId)}/commands`, { type: "set_directory", cwd: path })
+          : Promise.reject(new Error("Invalid local conversation request"));
+      return apply.catch(ipcError);
     });
     ipcMain.handle("local-v2:send", (event, scope: LocalConversationScope, message: unknown) => {
       const parsed = localV2ClientMessageSchema.parse(message);

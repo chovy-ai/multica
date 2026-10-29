@@ -13,7 +13,7 @@ function transport(pages: unknown[] = []) {
     request: vi.fn(async () => pages.shift() ?? { scope_seq: 0, summaries: [], has_more: false }),
     send: vi.fn(async (_scope, message) => { sent.push(message); }),
     subscribe: vi.fn(() => () => {}), onConnection: vi.fn(() => () => {}),
-    fileUrl: (_scope, path) => `file:${path}`, upload: vi.fn(),
+    fileUrl: (_scope, path) => `file:${path}`, upload: vi.fn(), choose: vi.fn(),
   };
   return { t, sent };
 }

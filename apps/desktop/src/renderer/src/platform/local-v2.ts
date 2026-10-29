@@ -35,6 +35,8 @@ const SUMMARY_PAGES = 100;
  */
 export class LocalV2ScopeClient {
   private summaryMap = new Map<string, LocalV2Summary>();
+  /** The list as last read; replaced on each change so React sees a new value. */
+  private summaryList: LocalV2Summary[] = [];
   private summaryLoad?: Promise<void>;
   private scopeSeq = 0;
   private summaryListeners = new Set<() => void>();
@@ -58,6 +60,7 @@ export class LocalV2ScopeClient {
     const snapshot = parseWithFallback<LocalV2Snapshot | null>(raw, localV2SnapshotSchema, null, { endpoint: "local-v2.snapshot" });
     if (!snapshot) throw new LocalV2RequestError("invalid_response", "Invalid local conversation response. Reload and retry.");
     this.generation = snapshot.store_generation;
+    this.receiveSummary(snapshot.conversation);
     return snapshot;
   }
 
@@ -65,7 +68,7 @@ export class LocalV2ScopeClient {
   upload(file: File) { return this.transport.upload(this.scope, file); }
 
   /** Every conversation of the scope, loaded once and kept current. */
-  summaries(): LocalV2Summary[] { return [...this.summaryMap.values()]; }
+  summaries(): LocalV2Summary[] { return this.summaryList; }
   summary(id: string): LocalV2Summary | undefined { return this.summaryMap.get(id); }
 
   loadSummaries(): Promise<void> {
@@ -74,7 +77,7 @@ export class LocalV2ScopeClient {
       for (let page = 0; page < SUMMARY_PAGES; page++) {
         const raw = await this.request("GET", `/sessions?after_scope_seq=${after}`);
         const list = parseWithFallback<z.infer<typeof localV2SessionListSchema>>(raw, localV2SessionListSchema, { scope_seq: after, summaries: [], has_more: false }, { endpoint: "local-v2.sessions" });
-        for (const summary of list.summaries) this.receiveSummary(summary);
+        for (const summary of list.summaries) this.store(summary);
         after = Math.max(after, list.scope_seq, ...list.summaries.map((summary) => summary.summary_seq));
         if (!list.has_more) break;
       }
@@ -89,11 +92,17 @@ export class LocalV2ScopeClient {
     return () => { this.summaryListeners.delete(listener); };
   }
 
-  /** Records a conversation the caller just created or changed. */
+  /** Records a conversation the caller just created, changed or read. */
   receiveSummary(summary: LocalV2Summary): void {
+    if (this.store(summary)) this.notifySummaries();
+  }
+
+  private store(summary: LocalV2Summary): boolean {
     const current = this.summaryMap.get(summary.conversation_id);
-    if (current && current.summary_seq > summary.summary_seq) return;
+    if (current && current.summary_seq >= summary.summary_seq) return false;
     this.summaryMap.set(summary.conversation_id, summary);
+    this.summaryList = [...this.summaryMap.values()];
+    return true;
   }
 
   private notifySummaries() { for (const listener of this.summaryListeners) listener(); }
@@ -127,7 +136,7 @@ export class LocalV2ScopeClient {
     if (!parsed.success) return;
     const message = parsed.data;
     if (message.type === "scope.summaries") {
-      for (const summary of message.summaries) this.receiveSummary(summary);
+      for (const summary of message.summaries) this.store(summary);
       this.scopeSeq = Math.max(this.scopeSeq, message.scope_seq);
       this.notifySummaries();
       return;
@@ -168,7 +177,8 @@ let routed: LocalV2Transport | undefined;
 /** The renderer's client of a scope; one per account and workspace. */
 export function localV2(transport: LocalV2Transport, scope: LocalV2Scope): LocalV2ScopeClient {
   if (routed !== transport) {
-    routed = transport;
+    // One transport per renderer; tests create their own.
+    routed = transport; clients.clear();
     const find = (value: LocalV2Scope) => clients.get(JSON.stringify([value.userId, value.workspaceId]));
     transport.subscribe((value, message) => find(value)?.receive(message));
     transport.onConnection((value, connected) => find(value)?.connection(connected));

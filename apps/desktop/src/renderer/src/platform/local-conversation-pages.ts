@@ -1,53 +1,42 @@
-import { useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { LocalConversation, LocalConversationClient, LocalConversationScope, LocalFolderProject } from "@multica/core/local-conversation/protocol";
-import { localConversationKey } from "./local-conversation-service";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import type { LocalFolderProject } from "@multica/core/local-conversation/protocol";
+import type { LocalV2Scope, LocalV2Transport } from "@multica/core/local-conversation/v2";
+import { groupLocalConversations, sessionEntry, type LocalConversationProjectGroup, type LocalSessionEntry } from "./local-conversation-projects";
+import { localV2 } from "./local-v2";
 
-export interface ConversationPageGroup {
-  id: string | null;
-  project?: LocalFolderProject;
-  sessions: LocalConversation[];
+const PAGE = 8;
+
+export interface ConversationPageGroup extends LocalConversationProjectGroup {
+  /** Set while more conversations of the group are hidden. */
   nextCursor: string | null;
   pageCount: number;
 }
-export function useLocalConversationPages(client: LocalConversationClient, scope: LocalConversationScope, projects: LocalFolderProject[], hidden: string[], archived: boolean, search: string, enabled: boolean) {
-  const qc = useQueryClient();
-  const queryKey = [...localConversationKey(scope), "pages", projects.map(({ id, path }) => [id, path]), [...hidden].sort(), archived, search.trim()];
-  const pending = useRef(new Set<string | null>());
-  const [loading, setLoading] = useState(new Set<string | null>());
-  const query = useQuery({ queryKey, enabled, refetchOnMount: "always", queryFn: async () => {
-    const previous = qc.getQueryData<ConversationPageGroup[]>(queryKey);
-    return Promise.all([...projects.filter((project) => !hidden.includes(project.id)).map((project) => ({ id: project.id as string | null, project })), { id: null, project: undefined }].map(async ({ id, project }) => {
-      const pageCount = previous?.find((group) => group.id === id)?.pageCount ?? 1;
-      const sessions = new Map<string, LocalConversation>();
-      let cursor: string | undefined;
-      let count = 0;
-      do {
-        const page = await client.request(scope, "listPage", { folderProjectId: id, archived, search: search.trim(), cursor });
-        page.sessions.forEach((entry) => sessions.set(entry.id, entry));
-        cursor = page.nextCursor ?? undefined;
-        count++;
-      } while (cursor && count < pageCount);
-      return { id, project, sessions: [...sessions.values()], nextCursor: cursor ?? null, pageCount: count };
-    }));
-  } });
+
+/**
+ * The local conversation list, grouped by folder project. The complete list
+ * comes from the scope's v2 summaries and stays current with them; groups
+ * show eight conversations per page, pinned first, then most recent.
+ */
+export function useLocalConversationPages(transport: LocalV2Transport, scope: LocalV2Scope, projects: LocalFolderProject[], hidden: string[], archived: boolean, search: string, enabled: boolean) {
+  const client = localV2(transport, scope);
+  const [status, setStatus] = useState<{ pending: boolean; error: Error | null; fetching: boolean }>({ pending: true, error: null, fetching: false });
+  const [pages, setPages] = useState(new Map<string | null, number>());
+  const version = useSyncExternalStore(useCallback((listener) => client.onSummaries(listener), [client]), () => client.summaries());
+  const load = useCallback(() => {
+    setStatus((current) => ({ ...current, fetching: true }));
+    client.loadSummaries().then(() => setStatus({ pending: false, error: null, fetching: false }), (error: unknown) => setStatus({ pending: false, error: error instanceof Error ? error : new Error(String(error)), fetching: false }));
+  }, [client]);
+  useEffect(() => { if (enabled) load(); }, [enabled, load]);
+  // Sides open beside their source; a conversation joins the list with its first message.
+  const sessions: LocalSessionEntry[] = version.filter((summary) => !summary.side_source_id && summary.turn_count > 0).map(sessionEntry)
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
+  const groups: ConversationPageGroup[] = groupLocalConversations(sessions, projects.filter((project) => !hidden.includes(project.id)), archived, search).map((group) => {
+    const pageCount = pages.get(group.id) ?? 1;
+    const visible = group.sessions.slice(0, pageCount * PAGE);
+    return { ...group, sessions: visible, pageCount, nextCursor: visible.length < group.sessions.length ? String(pageCount) : null };
+  }).filter((group) => group.sessions.length || (!archived && !search.trim() && (group.id !== null || projects.length > 0)));
   const loadMore = async (group: ConversationPageGroup) => {
-    if (!group.nextCursor || pending.current.has(group.id) || query.isFetching) return;
-    pending.current.add(group.id); setLoading(new Set(pending.current));
-    try {
-      const page = await client.request(scope, "listPage", { folderProjectId: group.id, archived, search: search.trim(), cursor: group.nextCursor });
-      qc.setQueryData<ConversationPageGroup[]>(queryKey, (groups) => groups?.map((current) => {
-        // A refresh may have replaced this cursor while the click was in flight.
-        if (current.id !== group.id || current.nextCursor !== group.nextCursor) return current;
-        const sessions = new Map(current.sessions.map((entry) => [entry.id, entry]));
-        page.sessions.forEach((entry) => sessions.set(entry.id, entry));
-        return { ...current, sessions: [...sessions.values()], nextCursor: page.nextCursor, pageCount: current.pageCount + 1 };
-      }));
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("Conversation list changed or expired")) await qc.invalidateQueries({ queryKey, exact: true });
-      throw error;
-    } finally { pending.current.delete(group.id); setLoading(new Set(pending.current)); }
+    setPages((current) => new Map(current).set(group.id, group.pageCount + 1));
   };
-  const groups = (query.data ?? []).filter((group) => group.sessions.length || (!archived && !search.trim() && (group.id !== null || projects.length > 0)));
-  return { ...query, data: query.data?.flatMap((group) => group.sessions), groups, loading, loadMore };
+  return { data: sessions, groups, loading: new Set<string | null>(), loadMore, isPending: enabled && status.pending, isError: !!status.error, error: status.error, isFetching: status.fetching, refetch: load };
 }

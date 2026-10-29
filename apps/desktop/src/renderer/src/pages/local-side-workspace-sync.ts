@@ -1,5 +1,8 @@
 import type { SideWorkspaceControlRequest } from "../../../shared/side-workspace";
-import { sideWorkspaceSyncSchema, type LocalConversationClient, type LocalConversationScope, type LocalPreviewLocation, type SideWorkspaceSnapshot } from "@multica/core/local-conversation/protocol";
+import { sideWorkspaceSyncSchema, type LocalConversationScope, type LocalPreviewLocation, type SideWorkspaceSnapshot } from "@multica/core/local-conversation/protocol";
+import type { LocalV2Transport } from "@multica/core/local-conversation/v2";
+import { localV2 } from "../platform/local-v2";
+import { localV2Preview } from "../platform/local-v2-preview";
 
 export type SideTab = { id: string; kind: "side"; sessionId: string }
   | { id: string; kind: "file"; location: LocalPreviewLocation; selected?: LocalPreviewLocation; sourceId?: string; line?: number }
@@ -31,7 +34,11 @@ export function readSideLayout(key: string): SideLayout {
     return { tabs, selected: tabs.some((tab: SideTab) => tab.id === value.selected) ? value.selected : tabs[0]?.id ?? null, open: value.open === true };
   } catch { return { tabs: [], selected: null, open: false }; }
 }
-export async function prepareSideTab(request: SideWorkspaceControlRequest, client: LocalConversationClient): Promise<SideTab | undefined> {
+/** Records a Side workspace layout in the daemon, where the conversation's tools read it. */
+export async function syncSideWorkspace(transport: LocalV2Transport, scope: LocalConversationScope, snapshot: SideWorkspaceSnapshot) {
+  await localV2(transport, scope).command(snapshot.conversationId, { type: "side_workspace_sync", workspace: snapshot });
+}
+export async function prepareSideTab(request: SideWorkspaceControlRequest, transport: LocalV2Transport): Promise<SideTab | undefined> {
   if (request.op !== "open") return;
   if (!request.tab) throw new Error("Specify a tab");
   if (request.tab.kind === "web") {
@@ -41,10 +48,10 @@ export async function prepareSideTab(request: SideWorkspaceControlRequest, clien
   }
   if (request.tab.kind === "side") {
     if (request.tab.sessionId === request.conversationId) throw new Error("Cannot open this conversation inside itself");
-    await client.request(request.scope, "read", { id: request.tab.sessionId });
+    await localV2(transport, request.scope).snapshot(request.tab.sessionId);
     return { id: `side:${request.tab.sessionId}`, kind: "side", sessionId: request.tab.sessionId };
   }
-  const file = await client.request(request.scope, "previewLocate", { id: request.conversationId, path: request.tab.path });
+  const file = await localV2Preview(transport, request.scope).locate(request.conversationId, request.tab.path);
   return { id: `file:${crypto.randomUUID()}`, kind: "file", sourceId: request.conversationId, location: { root: file.root, path: file.path, name: file.name, kind: file.kind } };
 }
 export function applySideCommand(previous: SideLayout, request: SideWorkspaceControlRequest, opened?: SideTab): { layout: SideLayout; tabId?: string } {
