@@ -62,3 +62,59 @@ it.each(["codex", "claude"] as const)("selects and displays %s thinking effort, 
   expect(document.body.textContent).toContain("No effort options reported for this model");
   expect(option("High")).toBeUndefined();
 });
+
+it.each([
+  { local: true, locale: "en" }, { local: true, locale: "zh-CN" },
+  { local: false, locale: "en" }, { local: false, locale: "zh-CN" },
+] as const)("keeps error recovery and scopes the model menu footer for local=$local, locale=$locale", async ({ local, locale }) => {
+  const target = { id: "local:codex", name: "Codex", provider: "codex", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true };
+  const snapshot: AgentGuiInitSnapshot = { workspaceId: "ws", workspaceSlug: "workspace", userId: "user", theme: "light", locale, local,
+    activeSessionId: null, agents: [], executionTargets: [target], sessions: [] };
+  let attempts = 0;
+  const request = vi.fn(async (method: string) => {
+    if (method === "storage.read") return null;
+    if (method === "storage.write" || method === "session.watch") return;
+    if (method === "workspace.load") return snapshot;
+    if (method === "models.list") {
+      if (++attempts === 1) throw new Error("Catalog unavailable");
+      return { supported: true, models: [{ id: "reasoning", label: "Reasoning", thinking: { supported_levels: [{ value: "high", label: "High" }] } }] };
+    }
+    throw new Error(`Unexpected request: ${method}`);
+  });
+  const client: AgentGuiRpcClient = { request: request as AgentGuiRpcClient["request"], subscribe: () => () => {} };
+  handle = createMulticaAgentGuiRuntime(client, snapshot); await handle.initialize();
+  await act(async () => root.render(<ComposerFooterControls context={{ selectedAgentTarget: { agentTargetId: target.id } } as ComponentProps<typeof ComposerFooterControls>["context"]}
+    client={client} handle={handle} targets={[target]} snapshot={snapshot} onLeaveSession={vi.fn()} onCancelTargetSwitch={vi.fn()} onSelectAgent={vi.fn()} onReadyForFocus={vi.fn()} />));
+  const open = () => act(async () => {
+    container.querySelector('[data-testid="multica-model-picker"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  const item = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((entry) => entry.textContent === label);
+  const retry = locale === "zh-CN" ? "重试" : "Retry";
+  const refresh = locale === "zh-CN" ? "刷新模型" : "Refresh models";
+  const scope = locale === "zh-CN" ? "用于当前会话的运行器" : "Applies to this conversation's provider";
+  await open();
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain("Catalog unavailable");
+  expect(item(retry)).toBeDefined();
+  await act(async () => item(retry)!.click());
+  expect(request).toHaveBeenCalledWith("models.list", { agentId: target.id, force: true }, expect.anything());
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(item(retry)).toBeUndefined();
+  if (local) {
+    expect(item(refresh)).toBeUndefined();
+    expect(document.body.textContent).not.toContain(scope);
+    expect(document.querySelector('.multica-model-picker-menu')!.lastElementChild?.getAttribute("role")).not.toBe("separator");
+  } else {
+    expect(item(refresh)).toBeDefined();
+    expect(document.body.textContent).toContain(scope);
+  }
+  const model = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((entry) => entry.textContent === "Reasoning")!;
+  await act(async () => model.click());
+  expect(handle.getModelSelection(target.id)).toBe("reasoning");
+  await open();
+  expect(attempts).toBe(2);
+  if (local) expect(document.querySelector('.multica-model-picker-effort')).not.toBeNull();
+  else {
+    await act(async () => item(refresh)!.click());
+    expect(attempts).toBe(3);
+  }
+});
