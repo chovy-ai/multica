@@ -79,6 +79,29 @@ async function setup(getSelectionIntent?: () => string) {
   return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage, base, chooseDirectory };
 }
 describe("local providers and official agent invocation routing", () => {
+  it("counts session and task history reads separately without logging conversation content", async () => {
+    const { service, bridge, run } = await setup();
+    run.mockImplementation(async (_input, emit) => { emit({ type: "text", content: "PRIVATE_RESULT" }); return { output: "PRIVATE_RESULT", sessionId: "fake-thread" }; });
+    const scope = { userId: "user", workspaceId: "ws" };
+    const entry = await service.request(scope, "create", { provider: "codex", title: "PRIVATE_TITLE" });
+    const sent = await service.request(scope, "send", { id: entry.id, content: "PRIVATE_PROMPT" });
+    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 1500);
+    const log = vi.spyOn(console, "debug").mockImplementation(() => {});
+    try {
+      await bridge.request("session.load", { sessionId: entry.id });
+      clock.mockReturnValue(now + 3000);
+      await bridge.request("task.messages", { taskId: sent.turnId });
+      const records = log.mock.calls.filter(([prefix]) => prefix === "[local-history]").map(([, record]) => JSON.parse(record as string));
+      expect(records).toHaveLength(2);
+      expect(records[0]).toMatchObject({ sources: { sessionLoad: 1 }, activeReads: 0, peakReads: 1, failures: 0 });
+      expect(records[1]).toMatchObject({ sources: { taskMessages: 1 }, activeReads: 0, peakReads: 1, failures: 0 });
+      expect(records[1].maxHistoryEvents).toBeGreaterThan(0);
+      expect(JSON.stringify(records)).not.toMatch(/PRIVATE_TITLE|PRIVATE_PROMPT|PRIVATE_RESULT/);
+    } finally { clock.mockRestore(); log.mockRestore(); }
+  });
+
   it("initializes with one page of summaries and synchronizes off-page runs without reading their resources", async () => {
     const { service, client, bridge } = await setup();
     const scope = { userId: "user", workspaceId: "ws" };

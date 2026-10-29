@@ -202,6 +202,7 @@ func (s *supervisor) start() error {
 		s.mu.Unlock()
 		return fmt.Errorf("start local conversation service: %w", err)
 	}
+	s.logger.Info("local conversation service started", "instance", instance, "pid", proc.Process.Pid, "parent_pid", os.Getpid())
 	go s.logStderr(stderr)
 
 	conn := NewConn(newLineTransport(stdout, stdin, nil), func(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -260,6 +261,12 @@ func (s *supervisor) onExit(instance string, err error) {
 	if s.instance != instance {
 		return
 	}
+	pid := 0
+	if s.proc != nil && s.proc.Process != nil {
+		pid = s.proc.Process.Pid
+	}
+	s.logger.Info("local conversation service exit observed", "instance", instance, "pid", pid,
+		"uptime_ms", time.Since(s.startedAt).Milliseconds(), "busy", s.busy.Load(), "stopping", s.stopping, "error", err)
 	s.conn, s.proc = nil, nil
 	s.busy.Store(0)
 	if s.stopping {
@@ -274,6 +281,7 @@ func (s *supervisor) onExit(instance string, err error) {
 	}
 	delay := s.backoff
 	s.backoff = min(s.backoff*2, maxRestartBackoff)
+	s.logger.Info("local conversation service restart scheduled", "previous_instance", instance, "delay_ms", delay.Milliseconds(), "crashes", s.crashes.Load())
 	s.instance = ""
 	s.setStatus(StatusCrashed)
 	s.restartTmr = time.AfterFunc(delay, func() {
