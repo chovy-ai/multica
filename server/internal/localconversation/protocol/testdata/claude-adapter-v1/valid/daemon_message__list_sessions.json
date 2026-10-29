@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "type": "list_sessions",
+  "id": "r7",
+  "limit": 50,
+  "offset": 0
+}

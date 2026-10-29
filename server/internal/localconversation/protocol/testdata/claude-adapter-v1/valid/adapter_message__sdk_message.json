@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "type": "sdk_message",
+  "query_generation": 1,
+  "message": {
+    "type": "stream_event",
+    "session_id": "5f0c2f7e-1111-4222-8333-944445555666",
+    "event": {
+      "type": "content_block_delta",
+      "index": 0,
+      "delta": {
+        "type": "text_delta",
+        "text": "测试"
+      }
+    }
+  }
+}

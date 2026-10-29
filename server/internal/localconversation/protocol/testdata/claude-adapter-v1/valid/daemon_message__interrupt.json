@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "type": "interrupt",
+  "id": "r3",
+  "deadline_ms": 5000
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "type": "start",
+  "id": "r1",
+  "executable": "/usr/local/bin/claude",
+  "cwd": "/repo",
+  "resume": "5f0c2f7e-1111-4222-8333-944445555666",
+  "fork": {
+    "up_to_message_id": "7a9d1c3e-0000-4000-8000-000000000001"
+  }
+}

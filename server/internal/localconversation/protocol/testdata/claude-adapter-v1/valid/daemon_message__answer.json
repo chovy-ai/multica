@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "type": "answer",
+  "id": "r5",
+  "interaction_id": "ix-1",
+  "status": "answered",
+  "answer": {
+    "behavior": "allow"
+  }
+}

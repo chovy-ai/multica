@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "type": "start",
+  "id": "r1",
+  "executable": "/usr/local/bin/claude",
+  "cwd": "/repo",
+  "sandbox": true
+}

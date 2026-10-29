@@ -1,0 +1,84 @@
+{
+  "version": 2,
+  "type": "conversation.events",
+  "conversation_id": "conv-1",
+  "from_seq": 30,
+  "to_seq": 33,
+  "events": [
+    {
+      "seq": 30,
+      "turn_id": "turn-1",
+      "turn_seq": 30,
+      "item_id": "it-4",
+      "type": "item.completed",
+      "final": true,
+      "created_at": "2026-10-29T12:00:00Z",
+      "payload": {
+        "kind": "file_change",
+        "status": "completed",
+        "changes": [
+          {
+            "path": "src/a.ts",
+            "kind": "update",
+            "diff": "@@ -1 +1 @@\n-a\n+b\n"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 31,
+      "turn_id": "turn-1",
+      "turn_seq": 31,
+      "item_id": "it-5",
+      "type": "item.started",
+      "final": false,
+      "created_at": "2026-10-29T12:00:00Z",
+      "payload": {
+        "kind": "tool_call",
+        "tool": "search_issues",
+        "server": "multica",
+        "input": {
+          "query": "crash"
+        }
+      }
+    },
+    {
+      "seq": 32,
+      "turn_id": "turn-1",
+      "turn_seq": 32,
+      "item_id": "it-5",
+      "type": "item.completed",
+      "final": true,
+      "created_at": "2026-10-29T12:00:00Z",
+      "payload": {
+        "kind": "tool_call",
+        "status": "failed",
+        "tool": "search_issues",
+        "server": "multica",
+        "input": {
+          "query": "crash"
+        },
+        "output": "",
+        "error": {
+          "kind": "tool_error",
+          "message": "timeout"
+        }
+      }
+    },
+    {
+      "seq": 33,
+      "turn_id": "turn-1",
+      "turn_seq": 33,
+      "item_id": "it-6",
+      "type": "item.completed",
+      "final": true,
+      "created_at": "2026-10-29T12:00:00Z",
+      "payload": {
+        "kind": "image",
+        "status": "completed",
+        "attachment_id": "att-1",
+        "mime_type": "image/png"
+      }
+    }
+  ]
+}
