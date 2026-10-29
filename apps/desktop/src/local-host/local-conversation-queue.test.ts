@@ -22,6 +22,42 @@ async function setup(run: typeof runLocalProvider) {
   return { service, options };
 }
 describe("Electron-owned conversation queue", () => {
+  it("acknowledges removal of rejected and already removed submissions without changing other queued work", async () => {
+    const { service, options } = await setup(async () => ({ output: "unused" }));
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    const remove = (requestId: string) => service.request(scope, "queueUpdate", { id: entry.id, action: "remove", requestId });
+    expect(await remove("never-admitted")).toMatchObject({ items: [], paused: false });
+    await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("discard"), paused: true });
+    await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("keep"), paused: true });
+    const receipts = await Promise.all([remove("discard"), remove("discard")]);
+    for (const receipt of receipts) expect(receipt).toMatchObject({ paused: true, items: [{ requestId: "keep" }] });
+    expect(receipts[1]!.revision).toBeGreaterThan(receipts[0]!.revision);
+    expect(options.run).not.toHaveBeenCalled();
+    await service.stop();
+    const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId); cleanup.unshift(() => reopened.stop());
+    expect((await reopened.request(scope, "read", { id: entry.id })).promptQueue?.items.map((item) => item.requestId)).toEqual(["keep"]);
+  });
+  it("rejects removal without interrupting or replaying a prompt during or after dispatch", async () => {
+    let allowAdmission!: () => void;
+    let finish!: () => void;
+    const admission = new Promise<void>((resolve) => { allowAdmission = resolve; });
+    const running = new Promise<void>((resolve) => { finish = resolve; });
+    const { service, options } = await setup(async () => { await running; return { output: "done" }; });
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    options.find = async () => { await admission; return "/test-owned/fake-cli"; };
+    try {
+      await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("started") });
+      const duringDispatch = service.request(scope, "queueUpdate", { id: entry.id, action: "remove", requestId: "started" });
+      allowAdmission();
+      await expect(duringDispatch).rejects.toThrow("This queued message has already started");
+      await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
+      await expect(service.request(scope, "queueUpdate", { id: entry.id, action: "remove", requestId: "started" })).rejects.toThrow("This queued message has already started");
+      expect(options.run.mock.calls[0]?.[2].aborted).toBe(false);
+      finish();
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+      expect(options.run).toHaveBeenCalledOnce();
+    } finally { allowAdmission(); finish(); }
+  });
   it.each(["codex", "claude"] as const)("steers %s once after delayed provider exit without another click", async (provider) => {
     let exit!: () => void;
     let finishNext!: () => void;

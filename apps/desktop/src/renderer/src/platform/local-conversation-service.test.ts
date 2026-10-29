@@ -100,6 +100,19 @@ describe("local providers and official agent invocation routing", () => {
     expect(request.mock.calls.filter(([, method]) => method === "listPage")).toHaveLength(1);
     expect(request.mock.calls.some(([, method]) => ["list", "read", "fileInfo", "fileRead", "imageRead"].includes(method))).toBe(false);
   });
+  it("routes a file context menu through the desktop client with its account and source session", async () => {
+    const { bridge } = await setup();
+    const show = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("desktopAPI", { localFileContextMenu: { show } });
+    try {
+      const session = await bridge.request("session.create", { agentId: "local:codex" });
+      const input = { sessionId: session.id, url: "./测试%20build.dmg", hasSelection: false };
+      await bridge.request("host.showFileContextMenu", input);
+      expect(show).toHaveBeenCalledExactlyOnceWith({ userId: "user", workspaceId: "ws" }, input);
+      await expect(bridge.request("host.showFileContextMenu", { ...input, sessionId: "missing" })).rejects.toThrow();
+      expect(show).toHaveBeenCalledTimes(1);
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("omits old empty sessions from the reference catalog without deleting history or hiding submitted work", async () => {
     const { bridge, service } = await setup();
     const scope = { userId: "user", workspaceId: "ws" };

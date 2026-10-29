@@ -191,6 +191,9 @@ export function createLocalConversationParentService(options: ParentServiceOptio
         await local("sideAccepted", { id: side.id, requestId: pending.requestId }); return undefined;
       }
       case "host.openResource": await read(params.sessionId); options.onOpenResource?.(params.sessionId, params.url); return undefined;
+      case "host.showFileContextMenu":
+        await read(params.sessionId); assertCurrent();
+        await window.desktopAPI.localFileContextMenu.show(scope, { sessionId: params.sessionId, url: params.url, hasSelection: params.hasSelection }); return undefined;
       case "host.locateSource": await read(params.sessionId); options.onLocateSource?.(params.sessionId, params.turnId, params.quote); return undefined;
       case "session.load": return detail(params.sessionId);
       case "interaction.respond": return local("answerQuestion", { id: params.sessionId, turnId: params.turnId, requestId: params.requestId, answers: params.answers });
