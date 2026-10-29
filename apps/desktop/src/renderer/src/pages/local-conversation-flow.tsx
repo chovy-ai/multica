@@ -110,7 +110,6 @@ export function LocalConversationFlowPage() {
   const hiddenProjectIds = hiddenProjectPreferences.filter((id) => folderProjects.some((project) => project.id === id));
   const selectedId = searchParams.get("session");
   const selected = sessions.data?.find((entry) => entry.id === selectedId);
-  const forkSource = sessions.data?.find((entry) => entry.id === selected?.forkedFrom);
   const provider = selected?.provider ?? (searchParams.get("provider") === "claude" ? "claude" : "codex");
   const active = pathname === paths.conversationFlow() && getCurrentSlug() === slug;
   const intent = `${userId}:${workspace?.id}:${selectedId}:${provider}`;
@@ -139,9 +138,9 @@ export function LocalConversationFlowPage() {
   }, [active, sessions.isSuccess, sessions.fetchStatus, sessions.data, selectedId, provider]);
   if (!workspace || !userId) return null;
   const labels = chinese ? {
-    sessions: "本机会话", new: "新建会话", search: "搜索会话", empty: "还没有本机会话", noResults: "没有匹配的会话", retry: "重试", loading: "正在加载…", archive: "归档", history: "返回会话", pinned: "置顶", unpin: "取消置顶", directory: "选择工作目录", newTitle: "新建会话", storage: "历史保存在本机", directoryLocked: "工作目录在首次发送后固定；如需更换，请新建会话。", unavailable: "请先在本机安装 Codex 或 Claude Code", failed: "操作失败，请重试", fork: "分叉", forking: "正在分叉…", forkLabel: "分叉会话", forkHint: "从当前历史创建独立会话", forkWaiting: "执行结束后可分叉", forkEmpty: "发送消息后可分叉",
+    sessions: "本机会话", new: "新建会话", search: "搜索会话", empty: "还没有本机会话", noResults: "没有匹配的会话", retry: "重试", loading: "正在加载…", archive: "归档", history: "返回会话", pinned: "置顶", unpin: "取消置顶", directory: "选择工作目录", newTitle: "新建会话", storage: "历史保存在本机", directoryLocked: "工作目录在首次发送后固定；如需更换，请新建会话。", unavailable: "请先在本机安装 Codex 或 Claude Code", failed: "操作失败，请重试", fork: "分叉", forking: "正在分叉…", forkHint: "从当前历史创建独立会话", forkWaiting: "执行结束后可分叉", forkEmpty: "发送消息后可分叉",
   } : {
-    sessions: "Local sessions", new: "New conversation", search: "Search conversations", empty: "No local conversations yet", noResults: "No matching conversations", retry: "Retry", loading: "Loading…", archive: "Archive", history: "Back to sessions", pinned: "Pin", unpin: "Unpin", directory: "Choose working directory", newTitle: "New conversation", storage: "History saved on this computer", directoryLocked: "The working directory is fixed after the first message. Start a new conversation to change it.", unavailable: "Install Codex or Claude Code on this computer", failed: "Could not update the conversation", fork: "Fork", forking: "Forking…", forkLabel: "Fork conversation", forkHint: "Create an independent conversation from this history", forkWaiting: "Wait for the current execution to finish", forkEmpty: "Send a message before forking",
+    sessions: "Local sessions", new: "New conversation", search: "Search conversations", empty: "No local conversations yet", noResults: "No matching conversations", retry: "Retry", loading: "Loading…", archive: "Archive", history: "Back to sessions", pinned: "Pin", unpin: "Unpin", directory: "Choose working directory", newTitle: "New conversation", storage: "History saved on this computer", directoryLocked: "The working directory is fixed after the first message. Start a new conversation to change it.", unavailable: "Install Codex or Claude Code on this computer", failed: "Could not update the conversation", fork: "Fork", forking: "Forking…", forkHint: "Create an independent conversation from this history", forkWaiting: "Wait for the current execution to finish", forkEmpty: "Send a message before forking",
   };
   const report = (error: unknown) => toast.error(error instanceof Error ? error.message : labels.failed);
   const renameLabels = chinese ? { action: "重命名", title: "重命名会话", name: "会话名称", save: "保存", saving: "正在保存...", cancel: "取消" }
@@ -230,7 +229,6 @@ export function LocalConversationFlowPage() {
       }
     } catch (error) { report(error); } finally { setForkingId(null); }
   };
-  const running = selected?.turns.some((turn) => turn.status === "running");
   // Internal execution folders, including those inherited by forks, are not user-bound folders.
   const automaticDirectory = /(?:^|[\\/])local-conversations[\\/][a-f0-9]{64}[\\/]workdirs[\\/][^\\/]+[\\/]?$/.test(selected?.cwd ?? "");
   const directoryName = automaticDirectory
@@ -406,15 +404,6 @@ export function LocalConversationFlowPage() {
             {compact && <IconButton label={labels.sessions} onClick={() => setShowList(true)}><ArrowLeft /></IconButton>}
             <span className="min-w-0 flex-1 truncate text-body font-medium">{selected?.title ?? labels.newTitle}</span>
             {selected?.forkMode === "saved-context" && <span className="shrink-0 text-micro text-muted-foreground" title={chinese ? "从该轮保存的消息建立独立上下文；未保存的原生状态不包含在内。" : "Independent context from saved messages through this turn; unsaved native state is not included."}>{chinese ? "上下文分叉" : "Context fork"}</span>}
-            {selected?.forkedFrom && <Button variant="ghost" size="sm" disabled={!forkSource} title={forkSource?.title ?? (chinese ? "来源会话不可用" : "Source conversation unavailable")} onClick={() => {
-              if (!forkSource) return;
-              setSearch(""); setArchived(forkSource.archived);
-              setCollapsedProjects((previous) => { const next = new Set(previous); next.delete(projectForDirectory(folderProjects, forkSource.cwd)?.id ?? "unassigned"); return next; });
-              select(forkSource.id, forkSource.provider);
-            }}><ArrowLeft className="size-4" />{chinese ? "来源会话" : "Source conversation"}</Button>}
-            {selected && <Button variant="ghost" size="sm" className="shrink-0" aria-label={labels.forkLabel} aria-busy={forking} disabled={forking || running || !selected.providerSessionId} title={running ? labels.forkWaiting : !selected.providerSessionId ? labels.forkEmpty : labels.forkHint} onClick={() => { void fork(); }}>
-              {forking ? <Loader2 className="size-4 animate-spin" /> : <GitFork className="size-4" />}{forking ? labels.forking : labels.fork}
-            </Button>}
             {selected && <Button variant="ghost" size="sm" className="max-w-48" aria-label={labels.directory} disabled={selected.messages.length > 0} title={`${automaticDirectory ? directoryName : selected.cwd}${selected.messages.length ? ` · ${labels.directoryLocked}` : ""}`} onClick={() => { void client.request(scope, "directory", { id: selected.id }).then(() => qc.invalidateQueries({ queryKey: localConversationKey(scope) })).catch(report); }}><FolderOpen className="size-4" /><span className="truncate">{directoryName}</span></Button>}
             <IconButton aria-expanded={sideOpen} label={sideOpen ? (chinese ? "关闭右侧面板" : "Close right workspace") : (chinese ? "打开右侧面板" : "Open right workspace")} onClick={() => sideWorkspace.current?.toggle()}><PanelRightOpen /></IconButton>
           </div>
