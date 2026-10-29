@@ -47,19 +47,14 @@
         "type": { "const": "start" },
         "executable": { "type": "string", "description": "Absolute path of the claude CLI; the adapter never searches PATH." },
         "cwd": { "type": "string" },
-        "resume": { "type": "string", "description": "Native session to resume." },
-        "fork": {
-          "type": "object",
-          "description": "Fork `resume` instead of continuing it.",
-          "additionalProperties": false,
-          "properties": { "up_to_message_id": { "type": "string" } }
-        },
+        "resume": { "type": "string", "description": "Native session to resume. Forks are created beforehand with fork_session." },
         "model": { "type": ["string", "null"] },
         "reasoning_effort": { "type": ["string", "null"] },
         "permission_mode": { "$ref": "#/$defs/permission_mode" },
         "append_system_prompt": { "type": "string" },
         "mcp_servers": { "$ref": "#/$defs/mcp_servers" },
         "allowed_tools": { "type": "array", "items": { "type": "string" } },
+        "settings": { "type": "object", "description": "Claude settings passed to the SDK `settings` option, prepared by the daemon (plugin configuration)." },
         "env": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     },
@@ -83,7 +78,6 @@
       "properties": {
         "version": true, "id": true,
         "type": { "const": "interrupt" },
-        "cancel_queued": { "type": "boolean" },
         "deadline_ms": { "type": "integer", "minimum": 1, "description": "Cooperative interrupt budget before the adapter closes the Query transport." }
       }
     },
