@@ -2,7 +2,7 @@
 
 日期：2026-10-29。状态：待评审的实施方案，架构迁移尚未开始。代码现状基于 `f13b9f9b5`（已包含 #73 的本地对话传输打点）。
 
-将本地 Codex 与 Claude 对话的运行、状态和存储统一交给 Go 守护进程：Go 直接连接 Codex app-server 与 Claude Code CLI，实时内容通过 WebSocket 推送给 Desktop，列表与历史通过 HTTP 按需读取，会话与事件持久化到独立的 SQLite 数据库并开启 WAL。迁移完成后删除 Node sidecar，本地对话不再有独立 Node 进程。
+将本地 Codex 与 Claude 对话的状态和存储统一交给 Go 守护进程：Go 直接连接 Codex app-server；Claude 继续使用官方 Agent SDK，由 Go 为每个会话启动一个只做执行适配的 Node 进程。实时内容通过 WebSocket 推送给 Desktop，列表与历史通过 HTTP 按需读取，会话与事件持久化到独立的 SQLite 数据库并开启 WAL。迁移完成后删除现有的共享 Node sidecar。
 
 本方案同时处理重复读取、无界缓冲和重启恢复三个问题。移除 Node 中转本身不能保证没有积压；每一段队列仍需明确容量、消费方式和失败行为。
 
@@ -14,9 +14,9 @@
 | --- | --- |
 | Codex 运行链路 | Go 直接启动、监管并连接 app-server |
 | app-server 到 Go | 保留原生 stdio JSONL 协议，去掉 Node 中转 |
-| Claude 运行链路 | Go 直接启动 Claude Code CLI，使用 stream-json 输入输出与 control 协议，不再经过 Agent SDK |
-| Provider 边界 | 两个 provider 都在 Go 内实现同一接口；事件归一化、MCP 托管只在 Go 一处 |
-| Node sidecar | 迁移完成后删除，包括监管、manifest 中的 Electron Node 启动和 sidecar 协议 |
+| Claude 运行链路 | 继续使用 `@anthropic-ai/claude-agent-sdk`；Go 为每个 Claude 会话启动一个 Node 进程（Claude 适配器），只负责调用 SDK，不持有会话状态、不写存储（§4.4） |
+| Provider 边界 | 两个 provider 在 Go 内实现同一接口；会话状态、存储、事件归一化、MCP 托管只在 Go |
+| 共享 Node sidecar | 迁移完成后删除：现有承载全部会话、状态与 JSON 存储的单一 sidecar 及其协议 |
 | Go 到 Desktop 实时数据 | WS 携带文本、思考、工具调用与结果等实际内容 |
 | 会话列表、项目列表、历史 | HTTP 查询，分页且限制响应大小 |
 | 订阅 | 一条 WS 连接上分两层：scope 级摘要流和会话级内容流 |
@@ -37,7 +37,7 @@
 
 不在本轮范围：旧 JSON 会话导入（§10）、现有 Node 链路的止血补丁（§3 方案 B）、Windows 验收。从 Codex / Claude 原生历史导入会话的现有能力仍需保留，用户可以通过它重新接入原生会话。
 
-**Claude 纳入本轮范围。** Agent SDK 的 `query()` 本质是启动用户安装的 `claude` CLI，并在 stdin / stdout 上收发 `stream-json` 与 `control_request` / `control_response` 帧；Go 云端路径（`server/pkg/agent/claude.go`、`claude_supplement.go`、`claude_models.go`）已使用该协议的启动参数、`initialize` 握手、hooks 和 `list_models`。本地还用到 SDK 的两类能力，需在 P1 前完成技术验证（见 §4.4）：运行中的 control 子命令，以及 SDK 在 TS 内直接解析 `~/.claude` transcript 的会话读取与 fork。验证结论决定这两类能力的 Go 实现方式，不改变"不保留常驻 Node 进程"的目标。
+**Claude 采用 SDK + Node 形式。** Claude 不在 Go 中重新实现 CLI 协议，继续使用官方 Agent SDK：运行、运行中改参数、后台任务、fork 与原生历史读取都调用 SDK。为避免现有共享 sidecar 的问题（一个进程承载所有会话，一次写入错误使全部会话中断），改为每个 Claude 会话一个 Node 进程，由 Go 启动和监管，进程内不保存会话状态、不写存储、不托管 MCP。这一形态参考 Tutti 已在生产使用的 `claude-sdk-sidecar`（每会话一个进程、带版本号的 NDJSON 协议、Go 持有状态与 SQLite）。
 
 本文给出推荐默认值。API、表结构及资源上限属于方案设计，尚未成为已实现的协议或实测性能结论。
 
@@ -110,12 +110,13 @@ sidecar 当前从 CLI profile 配置读取 Multica API 凭据，并直接调用�
 
 | 方案 | 实现方式 | 收益与限制 | 定位 |
 | --- | --- | --- | --- |
-| A：Go 接管完整链路 | Go 管 Codex、Claude、公共会话状态和 SQLite；WS 实时内容 + HTTP 历史 | 删除 Node sidecar，消除中转和整会话刷新放大；迁移范围较大，需完整能力验收 | 推荐目标 |
+| A：Go 接管状态与存储 | Go 管 Codex、全部公共会话状态和 SQLite；Claude 执行按 D′；WS 实时内容 + HTTP 历史 | 删除共享 sidecar，消除中转和整会话刷新放大；迁移范围较大，需完整能力验收 | 推荐目标 |
 | B：现有链路止血 | Node 写入等待背压、处理 Socket 错误、`task.messages` 按轮次过滤后再返回、合并变更通知，并修复重建后的初始化 | 可较快降低当前故障风险；状态和数据仍经过 Node | 不做；精力集中在 A |
 | C：仅把 provider 客户端移到 Go | Go 收到输出后再交给 Node 管状态，Node 再回传 Go | 仍有跨进程往返、重复序列化和 Node 数据通路 | 不作为目标架构 |
-| D：Go 管 Codex，Claude 留在 Node SDK 适配器 | Node 只运行 Claude 并上报事件 | 保留 sidecar 监管、初始化和 Node 写入背压问题；MCP 与事件归一化需跨语言划界 | 不采用 |
+| D：Go 管 Codex，Claude 留在一个共享的 Node SDK 进程 | 单个 Node 进程运行全部 Claude 会话并上报事件 | 一次写入错误仍会中断所有 Claude 会话；保留共享 sidecar 的监管与初始化问题 | 不采用 |
+| D′：Go 管 Codex，每个 Claude 会话一个 SDK 进程 | Node 进程只调用 SDK 并上报原始 SDK 消息，状态与存储在 Go | 故障限于单个会话；fork 与原生历史直接用 SDK；协议跟进由 SDK 负责；需保留 Node 运行时 | **采用**，作为 A 中 Claude 部分的实现方式 |
 
-选择 A 后可分阶段开发，但同一会话在任一时刻只能有一个状态所有者。A 完成后 Node 链路整体删除。不单独发布 B；迁移完成前现有链路维持现状，A 上线即替换。接口混合版本的兼容通过明确能力协商处理，不通过隐式双写或静默重放处理。
+选择 A 后可分阶段开发，但同一会话在任一时刻只能有一个状态所有者。A 完成后共享 sidecar 整体删除，Node 只以每会话 Claude 适配器的形式存在。不单独发布 B；迁移完成前现有链路维持现状，A 上线即替换。接口混合版本的兼容通过明确能力协商处理，不通过隐式双写或静默重放处理。
 
 JSON 存储本身不是这次退出的直接原因，但它是选择 SQLite 的依据：`local-conversation-store.ts` 每次保存把整份会话详情 `JSON.stringify` 后原子替换，长会话的写入量随历史长度增长，且无法在存储层按轮次或范围读取。
 
@@ -124,7 +125,8 @@ JSON 存储本身不是这次退出的直接原因，但它是选择 SQLite 的�
 ```mermaid
 flowchart LR
   C[Codex app-server] <-->|stdio JSONL| P[Go Codex 协议客户端]
-  CL[Claude Code CLI] <-->|stdio stream-json + control| Q[Go Claude 协议客户端]
+  CL[Claude Code CLI] <-->|Agent SDK| N[Claude 适配器 Node 进程 每会话一个]
+  N <-->|stdio NDJSON 带版本| Q[Go Claude provider]
   P <--> S[Go LocalConversationService]
   Q <--> S
   S <--> X[Go Context MCP 服务]
@@ -139,16 +141,16 @@ flowchart LR
   M -->|HTTP 列表 历史 控制| A
 ```
 
-Electron main 仍承担原生能力（Side workspace、原生选择框等）、Desktop 登录态、网络连接和 IPC。删除的是独立 Node sidecar；不能将 Electron 本身的主进程也理解为需要删除的进程。
+Electron main 仍承担原生能力（Side workspace、原生选择框等）、Desktop 登录态、网络连接和 IPC。删除的是现有的共享 Node sidecar；Electron 主进程和每会话 Claude 适配器进程都保留。
 
 建议代码位置如下，目录尚未创建：
 
 | 位置 | 职责 |
 | --- | --- |
 | `server/pkg/codexappserver/` | 子进程、initialize、JSONL 编解码、请求关联、双向 RPC、通知与退出 |
-| `server/pkg/claudecode/` | Claude CLI 子进程、stream-json 帧编解码、`initialize`、control 请求关联与回复、transcript 读取 |
+| `apps/desktop/src/claude-host/`（新增，取代 `src/local-host/` 中的 Claude 部分） | Claude 适配器：调用 Agent SDK，按 §4.4 协议与 Go 通信；打包为独立入口，以 Electron Node 模式运行 |
 | `server/internal/localconversation/` | 会话与轮次状态、provider 接口与调度、事件归一化、消息队列、历史与恢复 |
-| `server/internal/localconversation/provider/codex`、`provider/claude` | 两个 provider 的常驻会话实现：进程池、续接、steer、取消、运行中改参数、后台任务 |
+| `server/internal/localconversation/provider/codex`、`provider/claude` | Codex：进程池与常驻 thread；Claude：每会话适配器进程的启动、监管、请求关联与原始 SDK 消息归一化 |
 | `server/internal/localconversation/contextmcp/` | Context MCP 服务、工作区与 Side 工具、每轮凭据绑定 |
 | `server/internal/localconversation/store/` | SQLite schema、单写协程、快照与历史查询、schema 升级与备份 |
 | `server/internal/daemon/localhost/` | 复用现有监听、鉴权和文件入口，增加 HTTP 查询与增量 WS 协议 |
@@ -156,21 +158,21 @@ Electron main 仍承担原生能力（Side workspace、原生选择框等）、D
 | `apps/desktop/src/renderer/src/platform/` | wire DTO 校验和转换、增量应用、历史分页 |
 | `packages/tutti-agent-gui-host/` | 本地增量事件接入，保留云端数据源行为 |
 
-从 `server/pkg/agent/codex.go` 和 `claude.go` 提取通用协议能力之前，先区分任务调度逻辑与纯协议逻辑。云端 backend 是"一个任务一次运行"，本地需要常驻多轮会话；协议层由两者共用，会话层分开实现。不能为了复用，把本地会话强行转换成云端运行。
+从 `server/pkg/agent/codex.go` 提取通用协议能力之前，先区分任务调度逻辑与纯协议逻辑（第一步已在 #75 完成）。云端 backend 是"一个任务一次运行"，本地需要常驻多轮会话；协议层由两者共用，会话层分开实现。不能为了复用，把本地会话强行转换成云端运行。
 
-`localconversation` 从第一阶段起定义 provider 接口，至少覆盖：启动或续接会话、提交轮次、steer、取消、运行中修改模型 / 推理强度 / 权限、回答交互请求、模型列表、原生历史读取与 fork，以及向服务层上报原始 provider 事件。事件归一化在服务层按 provider 实现，结果是同一套 v2 事件类型；不存在第二种语言的归一化实现。
+`localconversation` 从第一阶段起定义 provider 接口，至少覆盖：启动或续接会话、提交轮次、steer、取消、运行中修改模型 / 推理强度 / 权限、回答交互请求、模型列表、原生历史读取与 fork，以及向服务层上报原始 provider 事件。事件归一化在服务层按 provider 实现，结果是同一套 v2 事件类型；Claude 适配器只上报原始 SDK 消息，不做归一化，因此不存在第二种语言的归一化实现。SDK 消息与 CLI stream-json 消息结构一致，Go 侧可复用 `pkg/agent/claude.go` 已有的消息解析。
 
 ### 4.1 Context MCP 与凭据
 
-Context MCP 服务迁到 Go，Codex 与 Claude 指向同一服务。当前 Claude 读取配置中的 HTTP MCP 地址，Codex 经 context bridge 绑定每轮路由，两者都不依赖进程内 SDK MCP server，因此切换只改服务地址与路由绑定。保留现有约束：每轮独立凭据、仅绑定 127.0.0.1、拒绝带 Origin 的请求、限制请求体、轮次结束释放路由。Go 需新增 MCP 服务实现依赖，选型在 P0 确定。
+Context MCP 服务迁到 Go，Codex 与 Claude 指向同一服务；Claude 适配器把 Go 下发的 MCP 地址与凭据原样传给 SDK 的 `mcpServers`。当前 Claude 读取配置中的 HTTP MCP 地址，Codex 经 context bridge 绑定每轮路由，两者都不依赖进程内 SDK MCP server，因此切换只改服务地址与路由绑定。保留现有约束：每轮独立凭据、仅绑定 127.0.0.1、拒绝带 Origin 的请求、限制请求体、轮次结束释放路由。Go 需新增 MCP 服务实现依赖，选型在 P0 确定。
 
 Go daemon 直接使用 CLI profile 凭据调用云端 API，替代 sidecar 的 `readProfileCredentials`；凭据不进入 provider 的持久化配置、事件、日志或 Desktop 状态。Desktop 登录账号与 profile 账号的一致性继续沿用现有 `session.set` 中的 `not_signed_in` / `account_mismatch` 校验语义。
 
-### 4.2 sidecar 删除范围
+### 4.2 共享 sidecar 删除范围
 
-完成切换后删除：`server/internal/daemon/localhost/sidecar.go` 的进程监管、manifest 中 Electron 以 Node 模式运行的入口、daemon 到 sidecar 的协议、`apps/desktop/src/local-host/` 下被 Go 取代的模块和对应打包产物。
+完成切换后删除：`server/internal/daemon/localhost/sidecar.go` 的共享 sidecar 监管、daemon 与共享 sidecar 之间的协议、`apps/desktop/src/local-host/` 下被 Go 取代的模块（状态、存储、Codex、MCP、上下文与工具）和对应打包产物。
 
-保留能力开关：只有 Desktop 安装的 daemon（现有 manifest 发现规则）才提供本地对话；独立安装的 CLI daemon 不因逻辑移入 Go 而自动获得该能力。manifest 中只保留协议版本等仍需要的字段。
+保留并改造：Electron 以 Node 模式运行的能力与 manifest 发现规则，用于启动每会话 Claude 适配器；manifest 中的入口改为 Claude 适配器入口和它的协议版本。只有 Desktop 安装的 daemon（manifest 位于同一安装目录）才提供本地对话；独立安装的 CLI daemon 不因逻辑移入 Go 而自动获得该能力。
 
 原 `hostRequest` 改为 Go 服务直接发起：Side workspace 控制、settings host 和开发者日志导出仍按连接定向投递给发起该工作的 Desktop，保留"连接不存在立即失败、超时不确认结果、只能由同一连接回复"的语义。
 
@@ -182,34 +184,44 @@ stdio 已由当前 Go backend 和本地 Codex 客户端使用，去掉中间转�
 
 原生协议还支持 Unix socket；它使用 WebSocket over UDS 和 HTTP Upgrade，并非任意自定义二进制流。可作为后续传输替换点。TCP WebSocket 当前被官方标为实验性且不受支持，不作为本轮默认依赖。协议事实见 [Codex App Server 协议](https://learn.chatgpt.com/docs/app-server#protocol)。
 
-协议客户端必须有请求超时与取消、进程退出时清空 pending、有限帧大小、完整短写处理和初始化失败传播。不要使用默认 64 KiB 上限的 Scanner 直接读取可能较大的 JSONL；超限必须返回可诊断错误，不能静默截断。以上要求同样适用于 Claude 协议客户端。
+协议客户端必须有请求超时与取消、进程退出时清空 pending、有限帧大小、完整短写处理和初始化失败传播。不要使用默认 64 KiB 上限的 Scanner 直接读取可能较大的 JSONL；超限必须返回可诊断错误，不能静默截断。以上要求同样适用于 Go 与 Claude 适配器之间的连接。
+
+Codex 原生协议类型参考 Tutti `codexproto` 的做法：由 Codex 上游导出的 JSON Schema 生成 Go 类型，并固定到具体的 Codex 版本，替代手写的 `map[string]any` 解析。
 
 本地 Codex 会话层在云端实现之外还需保留：按配置代次隔离的进程池与空闲回收、常驻 thread 与 `thread/unsubscribe` / `thread/closed` 处理、`CODEX_PLUGIN_ISOLATION_ARGS`、每轮 MCP 路由绑定，以及只以 `turn/start` 响应确定新轮次（resume 可能重放旧通知）。
 
-### 4.4 Claude 到 Go 的通信与技术验证
+### 4.4 Claude 适配器（SDK + Node）
 
-Go 以 `--input-format stream-json --output-format stream-json` 启动用户配置的 `claude` CLI，stdin 在会话期间保持打开，用于持续提交用户消息和回复 `control_request`。启动参数覆盖现有 SDK 选项：`resume`、模型、推理强度、权限模式、追加系统提示、`settingSources`、partial message 输出和 Context MCP 配置。
+**进程模型。** Go 为每个需要运行的 Claude 会话启动一个 Claude 适配器进程（Electron Node 模式，入口见 §4.2），进程内用 Agent SDK 的 `query()` 维持该会话的常驻多轮 Query。轮次结束后进程保留以承接后续轮次，空闲超时或会话关闭时由 Go 结束进程；进程数受 §6.3 全局并发上限约束。fork、原生历史列表与读取、模型列表等不依附运行会话的操作，由 Go 启动一次性适配器进程执行，完成即退出。
 
-现有本地实现用到的 SDK 能力及 Go 侧做法：
+**职责边界。**
 
-| SDK 能力 | 本质 | Go 实现 |
-| --- | --- | --- |
-| `query()` 常驻会话、多轮消息推送 | stream-json 输入流 | 新写常驻会话；云端现有为单次运行 |
-| `supportedModels` | `initialize` 响应字段 | 读取 `initialize` 响应；无会话时复用 `list_models` |
-| `setModel`、`setPermissionMode`、`applyFlagSettings`、`setMcpServers`、`stopTask` | 运行中 control 子命令 | 子类型与字段见下方第 1 项结果，按 CLI 版本测试 |
-| 后台任务 system 事件（`task_started`、`task_progress`、`task_updated`、`background_tasks_changed`、`task_notification`） | 输出事件 | 按 `local-claude-conversation.ts` 的现有语义归一化 |
-| `listSessions`、`getSessionInfo`、`getSessionMessages` | SDK 在 TS 内解析 `~/.claude` transcript 文件 | Go 解析 transcript；格式未公开，按版本建立样本夹具 |
-| `forkSession` | SDK 文件级操作 | 不移植；改用 CLI `--resume <id> --fork-session [--resume-session-at <uuid>]` 延迟 fork（见下方结论） |
+| 在 Claude 适配器内 | 在 Go 内 |
+| --- | --- |
+| 调用 SDK：`query()`、`interrupt()`、`setModel`、`setPermissionMode`、`applyFlagSettings`、`setMcpServers`、`stopTask`、`forkSession`、`listSessions`、`getSessionInfo`、`getSessionMessages`、`supportedModels` | 会话与轮次状态、消息队列、命令幂等、SQLite 存储 |
+| 把 SDK 消息原样（加会话、请求关联标识）写给 Go | 原始 SDK 消息的归一化、最终事件合成、后台任务状态 |
+| 把 SDK 的权限回调与用户问题转成请求发给 Go，等待 Go 的回答 | 交互请求持久化、抢占式回答（§8.3） |
+| 使用 Go 下发的 MCP 地址与凭据 | Context MCP 服务、云端凭据 |
 
-P1 前完成 1–2 天技术验证：
+适配器不读写会话库和 JSON 存储，不调用 Multica 云端 API，不做标题生成、上下文组装或事件归一化。
 
-1. 把上表每项 SDK 调用映射到 control 子类型或 CLI 参数，记录依据的 SDK 版本。
-2. 用 Go 跑通常驻会话：多轮推送、`setModel`、`setPermissionMode`、`stopTask`。
-3. 用两个 CLI 版本的 transcript 验证 Go 解析结果，并比较 `--fork-session` 与 SDK `forkSession`。
+**Go ↔ 适配器协议。** stdin / stdout 上的换行分隔 JSON：
 
-**第 1 项结果（静态核对，2026-10-29）。** 依据仓库当前锁定的 `@anthropic-ai/claude-agent-sdk` 0.3.310（对应 Claude Code 2.1.310）的打包源码：
+- 每条消息带协议版本号，任一方收到不支持或缺失的版本时直接报错退出，不猜测兼容（参考 Tutti 做法）。版本号写入 manifest，并纳入 §5.6 的 schema 与黄金样例。
+- Go → 适配器：`start`（cwd、resume、fork 选项、模型、推理强度、权限模式、追加系统提示、MCP 配置）、`send`（用户消息与请求标识）、`interrupt`、`set_model`、`set_permission_mode`、`apply_flag_settings`、`set_mcp_servers`、`stop_task`、`answer`（交互请求的回答）、`close`；一次性进程的 `fork_session`、`list_sessions`、`get_session_messages`、`supported_models`。
+- 适配器 → Go：`sdk_message`（原始 SDK 消息）、请求结果、`interaction_request`（权限确认与用户问题）、结构化错误（稳定错误码与"已拒绝 / 未派发 / 结果未知"等派发结论，Go 依据它决定命令受理结果，不解析错误文本）。
+- **写入必须处理背压**：适配器写 stdout 时遵守 `write()` 返回值等待 `drain`，并处理流的 error 事件；本次 `write ENOBUFS` 退出不能在适配器中重现。Go 读取端按 §6.2 持续读取，不因存储变慢暂停。
+- stderr 只用于诊断日志，不承载协议；不记录提示词、工具入参、凭据和原始输出。
 
-| SDK 调用 | 协议映射 |
+**故障隔离。** 适配器进程退出只影响对应会话：运行中轮次按 §8.2 明确失败，交互请求关闭；下一次发送时 Go 重新启动适配器并以 `resume` 续接原生会话。
+
+**fork 与原生历史。** 直接使用 SDK 的 `forkSession()`（支持截断到指定消息）与 `getSessionMessages()` / `listSessions()`，不在 Go 中解析 transcript。原生对账（§5.4）同样通过一次性适配器读取 transcript。
+
+**SDK 版本。** SDK 版本由仓库锁定，随 Desktop 一起发布；它对应的最低 Claude Code CLI 版本按 §4.5 检测。升级 SDK 时以其类型定义与变更说明为准，更新适配器与 Go 侧的消息解析样例。
+
+**参考：SDK 调用与底层协议的对应关系（静态核对，SDK 0.3.310 / Claude Code 2.1.310）。** 便于排查问题和理解 SDK 行为，不作为 Go 直连 CLI 的实现依据：
+
+| SDK 调用 | 底层协议 |
 | --- | --- |
 | `setModel(model)` | control `set_model`，字段 `model` |
 | `setPermissionMode(mode)` | control `set_permission_mode`，字段 `mode` |
@@ -217,25 +229,15 @@ P1 前完成 1–2 天技术验证：
 | `setMcpServers(servers)` | control `mcp_set_servers`，字段 `servers` |
 | `stopTask(id)` | control `stop_task`，字段 `task_id` |
 | `interrupt()` | control `interrupt`，可选 `cancel_queued` |
-| `supportedModels()` | 不单独请求，取 `initialize` 响应中的 `models`；Go 云端路径的 `list_models` 仍可用于不建立会话时的模型发现 |
-| `systemPrompt` 追加、hooks | 不走 CLI 参数，随 `initialize` control 请求下发（`appendSystemPrompt`、`hooks` 等字段） |
-| `resume`、`forkSession` 选项、`resumeSessionAt`、`effort`、`settingSources`、partial messages、MCP 配置、`allowedTools` | CLI 参数 `--resume`、`--fork-session`、`--resume-session-at`、`--effort`、`--setting-sources`、`--include-partial-messages`、`--mcp-config`、`--allowedTools` |
-
-结论：
-
-- **control 子命令可在 Go 实现**，均为单字段请求，复用 Go 现有 control 帧收发即可。
-- **SDK 的 `forkSession()` 不宜移植**：它在 TS 内重写 transcript 文件，处理 compaction 元数据、sidechain、progress 条目、UUID 重映射、标题和多种 transcript 存储后端，与 CLI 内部格式强耦合。
-- **fork 改用 CLI 原生参数**：`--resume <源会话> --fork-session`，需要截断到某条消息时加 `--resume-session-at <uuid>`。差异是新会话 ID 在第一次运行时才产生（延迟 fork）：fork 操作先只在库中记录来源会话与截断点，首个轮次启动时由 CLI 完成分叉，并把新原生会话 ID 写回会话。导入（完整复制）同样处理。
-- **原生历史读取（`listSessions` / `getSessionMessages`）仍需 Go 解析 transcript**，但只读、可降级；截断点 UUID 由同一解析得到。该解析的格式样本与多版本夹具是 P1b 的主要风险项。
-- 第 2、3 项需要运行真实 `claude` CLI，按仓库规则在单独授权后以 `agentintegration` 冒烟测试执行。
-
-transcript 解析失败时，对应会话降级为"不可导入 / 不可读取原生历史"并给出可诊断错误，不影响其他会话或进程。如果验证表明 transcript 读取或 fork 无法在 Go 中可靠实现，可评审一个按需启动、执行完即退出的 Node 工具进程，仅处理这两类低频操作；它不持有状态、不写存储、不常驻，也不恢复 sidecar 协议。
+| `supportedModels()` | `initialize` 响应中的 `models` |
+| `systemPrompt` 追加、hooks | 随 `initialize` control 请求下发 |
+| `forkSession()` | TS 内重写 transcript 文件（处理 compaction、sidechain、UUID 重映射等），不经过 CLI |
 
 ### 4.5 Provider 版本要求
 
-每个 provider 声明最低支持版本和所需能力。Go 在首次启动 provider 时检测：Codex 读取 `initialize` 响应中的版本信息，Claude 读取 CLI 版本并在 `initialize` 握手中确认所需 control 子命令可用。检测结果按"可执行文件路径 + 文件指纹"缓存，文件变化后重新检测。
+每个 provider 声明最低支持版本和所需能力。Go 在首次启动 provider 时检测：Codex 读取 `initialize` 响应中的版本信息；Claude 由适配器在 SDK 初始化后上报 Claude Code CLI 版本与能力，最低版本取锁定 SDK 所对应的 CLI 版本。检测结果按"可执行文件路径 + 文件指纹"缓存，文件变化后重新检测。
 
-不满足要求时不启动轮次，也不让进程崩溃：命令受理结果和会话中各返回一条可读错误消息，说明当前版本、最低版本和受影响能力；模型列表等接口返回同一错误码。部分能力缺失（例如某个 control 子命令不支持）时，只禁用对应操作并在执行该操作时返回消息，其余能力照常使用。最低版本在 §4.4 技术验证后写入。
+不满足要求时不启动轮次，也不让进程崩溃：命令受理结果和会话中各返回一条可读错误消息，说明当前版本、最低版本和受影响能力；模型列表等接口返回同一错误码。部分能力缺失（例如某个 control 子命令不支持）时，只禁用对应操作并在执行该操作时返回消息，其余能力照常使用。最低版本在 P0 确定。
 
 ## 5. 实时事件与历史查询
 
@@ -365,7 +367,7 @@ scope 级订阅的流程相同：`subscribe_scope { after_scope_seq }`，回放�
 | --- | --- | --- |
 | Desktop 侧：WS 断开、慢客户端被断开、窗口或应用重启 | 能，完整补回 | 已提交事件全部在库中，按 §5.3 从 `last_applied_seq` 回放 |
 | 网络重复或乱序 | 能 | 按 `seq` 去重；缺口触发重新订阅 |
-| daemon 在 COMMIT 前崩溃 | 部分能 | 最多丢失一个合批窗口内未提交的输出。重启后对被中断的轮次做原生对账：Codex 通过 thread 续接读取该轮次已完成的输出块，Claude 读取 transcript，把库中缺失的已完成内容以 `recovered` 事件追加。只能补回 provider 已落盘的完整 item，delta 粒度无法还原 |
+| daemon 在 COMMIT 前崩溃 | 部分能 | 最多丢失一个合批窗口内未提交的输出。重启后对被中断的轮次做原生对账：Codex 通过 thread 续接读取该轮次已完成的输出块，Claude 通过一次性适配器调用 SDK `getSessionMessages()`，把库中缺失的已完成内容以 `recovered` 事件追加。只能补回 provider 已落盘的完整 item，delta 粒度无法还原 |
 | provider 进程在输出前被终止 | 不能 | provider 自己没有产生或保存的内容无法恢复；轮次标记失败 |
 | 断电或系统崩溃 | 已提交的能 | 依赖 §7.5 的同步设置；未提交部分同"COMMIT 前崩溃" |
 
@@ -403,8 +405,9 @@ v2 的 HTTP / WS wire 协议以一份 JSON Schema 为唯一定义源，生成 Go
 - 定义源放在 Go 与 TS 都能引用的固定目录（例如 `server/internal/daemon/localhost/schema/v2/`），按消息拆文件。
 - 生成命令纳入 `make` 与 `pnpm` 脚本，生成产物提交入库；CI 检查生成结果是否与定义源一致，做法与 `make sqlc` 相同。
 - 生成的 zod schema 必须满足仓库 API 兼容规则：可选字段有默认值、未知枚举有回退、经 `parseWithFallback` 解析。现成生成器做不到时，在生成后套一层固定模板，或使用仓库内的小型生成脚本；工具在 P0 按这几项要求选型。
-- 现有 `testdata/protocol/` 黄金样例机制保留，用于验证语义和跨语言往返：新增 v2 样例，Go 编码、TS 解析都对其测试；删除 sidecar 时同时删除 `daemon-to-sidecar`、`sidecar-to-daemon` 样例。
-- provider 原生协议不在此生成范围。Codex app-server 若能导出自身 schema，可评估用于生成 Go 侧原生类型；Claude stream-json 继续按 §4.4 验证结论手写。
+- 现有 `testdata/protocol/` 黄金样例机制保留，用于验证语义和跨语言往返：新增 v2 样例，Go 编码、TS 解析都对其测试；删除共享 sidecar 时同时删除 `daemon-to-sidecar`、`sidecar-to-daemon` 样例；Go ↔ Claude 适配器协议另建样例。
+- Go ↔ Claude 适配器协议纳入同一 schema 与生成流程；其中 `sdk_message` 的内容是原始 SDK 消息，不在 schema 中逐字段定义。
+- Codex 原生协议类型按 §4.3 由上游 schema 生成，不在本节的 v2 定义源中。
 
 ## 6. 大小与时间合批及背压
 
@@ -434,7 +437,7 @@ v2 的 HTTP / WS wire 协议以一份 JSON Schema 为唯一定义源，生成 Go
 
 | 队列 | 位置 | 容量与处理 |
 | --- | --- | --- |
-| provider 输入帧（app-server / Claude CLI） | Go 协议客户端内存 | 按字节限制；单写协程，超时 / 关闭时让调用方得到失败 |
+| provider 输入帧（app-server / Claude 适配器） | Go 协议客户端内存 | 按字节限制；单写协程，超时 / 关闭时让调用方得到失败 |
 | 读取帧与待提交事件 | Go 协议解析及领域服务内存 | 限制单帧和总字节；不创建无限 goroutine 或 channel |
 | 持久化等待 | Go 单写入调度器 | 有界，超限时暂停新轮次受理；存储长期不可用则明确中止受影响执行 |
 | WS 发送 | 每个客户端独立内存队列 | 字节预算 + 写入截止时间；慢客户端断开后按序号恢复，不拖住其他客户端 |
@@ -446,13 +449,39 @@ v2 的 HTTP / WS wire 协议以一份 JSON Schema 为唯一定义源，生成 Go
 
 不要把一个慢 Desktop 的队列反压到整个 provider 进程：事件先入库，慢客户端通过 HTTP 追赶。数据库本身持续变慢则是另一种故障，需要限制新工作并最终结束无法可靠存储的执行。
 
-Go 读取 app-server 和 Claude CLI 时必须考虑它们在同一条输出流上复用 RPC / control 响应、输出通知和交互请求。规则：**读取协程永不因存储或下游变慢而暂停**。响应、control 回复和交互请求不进入待提交队列，直接交给协议层处理；输出事件进入有界待提交队列，超过预算时立即中止该轮次（Codex `turn/interrupt`，Claude 中断请求），轮次以"存储超限"失败结束，之后到达的该轮次输出只计数并丢弃。不把反压传回 provider 进程，避免 cancel / approval 被普通输出堵住。
+Go 读取 app-server 和 Claude 适配器时必须考虑它们在同一条输出流上复用请求结果、输出消息和交互请求。规则：**读取协程永不因存储或下游变慢而暂停**。响应、control 回复和交互请求不进入待提交队列，直接交给协议层处理；输出事件进入有界待提交队列，超过预算时立即中止该轮次（Codex `turn/interrupt`，Claude 发送 `interrupt` 给适配器），轮次以"存储超限"失败结束，之后到达的该轮次输出只计数并丢弃。不把反压传回 provider 进程，避免 cancel / approval 被普通输出堵住。
 
 ### 6.3 全局并发上限
 
-全局最多 20 个运行中轮次，跨 Codex、Claude、普通会话与 Side 会话统一计数；值作为常量集中定义，P5 压测后再确认。Claude 后台任务属于其所在会话进程，不单独占用额度。
+全局最多 20 个运行中轮次，跨 Codex、Claude、普通会话与 Side 会话统一计数；值作为常量集中定义，P5 压测后再确认。Claude 后台任务属于其所在会话的适配器进程，不单独占用额度；一次性适配器进程（fork、历史读取）不占用运行中轮次额度，但同时最多 4 个。
 
 达到上限时，新的发送命令不受理，返回错误码 `concurrency_limit` 和可读消息（当前运行数与上限）；Desktop 按现有发送规则保留待发状态并允许重试。消息队列中的排队项不因此出队，等有额度后按现有队列规则继续。provider 进程数受此上限约束，空闲进程按现有回收规则释放。
+
+### 6.4 端到端积压控制
+
+本次故障的机制是：生产者写得比消费者读得快，且中间的缓冲没有上限（Node 不等待 `drain`，数据堆在 Node 用户态缓冲中直到 `write ENOBUFS`）；同时"变更后重读整份会话"不断制造大响应，放大了写入量。新架构在每一段都只允许两种处理方式之一：
+
+- **有界阻塞**：缓冲有字节上限，满了让生产者等待。只用于"一个生产者对一个消费者、且消费者保证持续读取"的段。
+- **先持久化，再丢弃慢消费者**：数据先写进 SQLite，慢的消费者被断开，之后从库里按序号追赶。用于所有面向 Desktop 的段。
+
+| 段 | 生产者 → 消费者 | 处理方式 |
+| --- | --- | --- |
+| Claude CLI → 适配器 | CLI stdout → SDK 异步迭代器 | SDK 按拉取方式消费：适配器只有在上一条写完后才取下一条，CLI 由管道自然阻塞 |
+| 适配器 → Go | 适配器 stdout → Go 读取协程 | 有界阻塞：适配器写入等待 `drain`，自身待写缓冲设字节上限；Go 读取协程从不暂停，所以等待只发生在内核管道（约 64 KiB）满时。若待写缓冲持续超限，说明 Go 不再读取，适配器以明确错误退出，不无限增长 |
+| app-server → Go | app-server stdout → Go 读取协程 | Go 直连，读取协程从不暂停（§6.2） |
+| Go 读取 → 待提交队列 | 归一化后的事件 → 单写协程 | 有界；超限中止该轮次（§6.2），不把反压传回 provider |
+| 待提交 → SQLite | 单写协程 | 跨会话合并提交（§6.1） |
+| SQLite → Desktop WS | 已提交事件 → 每个连接、每个订阅 | 先持久化再推送；每连接字节预算与写入截止时间，超限断开该订阅，客户端按 `seq` 追赶（§5.3） |
+| Electron main → renderer | IPC 批量转发 | 有界；超限重建订阅 |
+
+另外两项改变消除了写入量的放大来源：
+
+- 实时内容直接推送增量，不再"收到 changed 就重读整份会话"；历史按轮次分页读取（§5.1、§7.4）。
+- 共享进程拆成每会话进程，一个会话的积压不会拖住其他会话（§4.4）。
+
+选择"每会话一个适配器"而不是"一个共享适配器"，也与这一节有关：共享进程中，一个会话的写入等待会阻塞同进程的所有会话（队头阻塞）；每会话进程把等待限制在本会话内。
+
+验收：§12 的压力测试中，各段的队列字节数都有上限，压力结束后回落；适配器在 Go 停止读取时以明确错误退出，而不是内存增长或 `ENOBUFS`。
 
 ## 7. SQLite WAL 存储
 
@@ -547,7 +576,7 @@ WS 只发布已成功提交的事件。进程在 COMMIT 后、发送前退出，
 
 发送、steer、回答和队列操作携带客户端生成的 `request_id`。Go 在同一事务里登记指纹和受理结果；相同 ID、相同内容重试返回同一结果，相同 ID、不同内容返回冲突。
 
-SQLite 事务与向 provider 写入命令无法组成一个原子事务。如果进程恰好在"已发送但未持久化原生受理结果"时退出，标记为执行结果不确定，核对原生 thread / turn 或 Claude 会话信息，或由用户处理。禁止自动再次发送非幂等的 Codex `turn/start` 或 Claude 用户消息，不能用请求去重表宣称端到端 exactly-once。
+SQLite 事务与向 provider 写入命令无法组成一个原子事务。如果进程恰好在"已发送但未持久化原生受理结果"时退出，标记为执行结果不确定，核对原生 thread / turn，或通过适配器读取 Claude 会话消息，或由用户处理。禁止自动再次发送非幂等的 Codex `turn/start` 或 Claude 用户消息，不能用请求去重表宣称端到端 exactly-once。
 
 取消接口返回"已请求"与 provider 确认"已取消"分开表达；同一轮次最终状态只能提交一次。取消、完成同时到达时按状态机归并，不能使已完成轮次倒退成 running。
 
@@ -557,7 +586,7 @@ SQLite 事务与向 provider 写入命令无法组成一个原子事务。如果
 | --- | --- |
 | Desktop 退出或 WS 断开 | Go 与 provider 继续，事件入库；重连补齐 |
 | 一个 Desktop 消费过慢 | 只断开该订阅，其他会话继续 |
-| app-server 或 Claude CLI 退出 | 该进程内受影响轮次结束为明确失败，清理 pending；Claude 运行中的后台任务标记为中断；后续轮次可新建进程 |
+| app-server 或 Claude 适配器进程退出 | 该进程内受影响轮次结束为明确失败，清理 pending；Claude 运行中的后台任务标记为中断；Claude 下一次发送时重新启动适配器并 `resume`；其他会话不受影响 |
 | daemon 重启 | 对原运行轮次做一次原生对账（§5.4）后标记失败，业务队列暂停，用户手动继续；不自动重放 |
 | 达到全局并发上限 | 新发送返回 `concurrency_limit`，已运行轮次不受影响（§6.3） |
 | provider 版本不满足要求 | 不启动轮次，返回说明版本要求的错误消息（§4.5） |
@@ -589,8 +618,8 @@ Side workspace 控制、settings host、开发者日志导出等 host 请求不�
 | 事件归一化 | 对照 `local-codex-stream.ts` 和 `local-claude-conversation.ts` 保留文本、思考、工具、错误及完成语义；两个 provider 输出同一套 v2 事件 |
 | Claude 常驻会话 | 保留多轮推送、steer、运行中改模型 / 推理强度 / 权限、MCP 刷新和中断；参考 `local-claude-conversation.ts` |
 | Claude 后台任务 | 保留启动、进度、停止、输出读取与轮次结束后的结果投递；参考 `local-claude-conversation.ts`、`local-background-task-output.ts` |
-| 模型列表 | Codex 与 Claude 模型及推理强度发现；参考 `local-provider-models.ts` 与 Go `claude_models.go` |
-| 原生历史 | Claude transcript 列表与消息读取；参考 `local-native-history.ts`，按 §4.4 验证结论实现 |
+| 模型列表 | Codex 与 Claude 模型及推理强度发现；Claude 经适配器调用 SDK `supportedModels()`；参考 `local-provider-models.ts` |
+| 原生历史 | Claude 会话列表与消息读取经一次性适配器调用 SDK；参考 `local-native-history.ts` |
 | 权限与插件隔离 | 对照 `local-codex-worker.ts`、`local-provider-extensions.ts` 保留原生配置合并与权限模式 |
 | MCP 与上下文 | 对照 `local-codex-context-bridge.ts`、`local-context-mcp.ts` 及其工具模块，保留每轮凭据和账号隔离 |
 | 原生确认与问题 | 持久化交互请求，推送给所有订阅者，抢占式受理回答；过期或不同账号回答无效（§8.3） |
@@ -601,7 +630,7 @@ Side workspace 控制、settings host、开发者日志导出等 host 请求不�
 | 模型、用量、标题 | 保留现有能力和错误状态，标题更新不改变不应改变的排序语义 |
 | 云端调用 | 保留 `@智能体` 的云端调用、取消和结果归档，不改成隐式本地执行 |
 
-MCP 领域工具、上下文组装、标题生成、用量、输出图片和云端队列运行等当前仍有 TS 实现；删除 Node sidecar 时这些都迁到 Go，原生 UI 操作只由 Desktop 执行。不能只迁 provider 客户端，却把核心上下文与状态再转回 Node。唯一可评审的例外是 §4.4 所述按需启动的 transcript / fork 工具进程；其他例外需在实施前列出具体链路，不视作已自动满足本方案。
+MCP 领域工具、上下文组装、标题生成、用量、输出图片和云端队列运行等当前仍有 TS 实现；删除共享 sidecar 时这些都迁到 Go，原生 UI 操作只由 Desktop 执行。Claude 适配器只保留 §4.4 列出的 SDK 调用，不能把核心上下文与状态放回 Node；其他例外需在实施前列出具体链路，不视作已自动满足本方案。
 
 ## 10. 旧数据与回退
 
@@ -620,13 +649,13 @@ MCP 领域工具、上下文组装、标题生成、用量、输出图片和云�
 | --- | --- | --- |
 | P0：固定协议与能力清单 | v2 JSON Schema 与代码生成工具链（§5.6）、两个 provider 的事件映射、provider 接口、状态机、资源上限、MCP 服务选型；Claude 技术验证与最低版本（§4.4、§4.5）；确认附录 A 改动面 | 覆盖现有能力，明确 SQLite schema 升级规范与 Claude 验证结论；无隐含双写 |
 | P1a：Go Codex 客户端 | 从 `codex.go` 拆出协议层，本地常驻会话、进程池、原生交互 | 用 fake app-server 覆盖乱序、超时、退出和取消；现有云端 backend 不回归 |
-| P1b：Go Claude 客户端 | 从 `claude.go` 拆出协议层，本地常驻会话、control 子命令、后台任务、transcript 与 fork | 用 fake CLI 覆盖握手、control 往返、中断、后台任务和退出；现有云端 backend 不回归 |
+| P1b：Claude 适配器与 Go Claude provider | `apps/desktop/src/claude-host/` 适配器（SDK 调用、背压写入、版本协议）；Go 侧进程监管、请求关联、原始 SDK 消息归一化、一次性操作 | 用 fake SDK 覆盖常驻 Query、运行中改参数、中断、后台任务、fork 与历史读取；Go 侧用 fake 适配器覆盖版本拒绝、进程退出、背压与乱序 |
 | P1c：Go Context MCP 与 host 请求 | MCP 服务与工具、每轮凭据绑定、`hostRequest` 定向投递 | 两个 provider 共用同一 MCP 服务；账号隔离与凭据不外泄测试通过 |
 | P2：Go 会话与 SQLite | 状态归并、最终事件合成、跨会话合并提交、快照与历史查询、命令受理、全局并发上限、启动时原生对账 | 故障注入验证提交边界与同步设置；消息与摘要可由事件重建 |
 | P3：HTTP 与 WS | 查询、scope 级与会话级订阅、追赶式回放、鉴权与限流 | 无订阅窗口丢事件，重复 / 缺口可恢复，慢客户端与追赶队列有界 |
 | P4：Desktop 增量接入 | main 代理、renderer 适配、GUI 增量更新、runtime 实例版本字段（附录 A） | 流式期间不反复读取整份历史；会话列表靠 scope 流更新；云端行为保持原样 |
 | P5：切换与验收 | 独立 profile 验证、macOS 压测（同步耗时、20 路并发）、产物检查 | 两个 provider 的所有必保能力验收后再切换真实 profile |
-| P6：删除 Node sidecar | 删除 sidecar 监管、协议、Electron Node 入口和被取代的 TS 模块及打包产物 | 打包产物不再包含 sidecar 入口；仅 Desktop 安装的 daemon 提供本地对话 |
+| P6：删除共享 sidecar | 删除共享 sidecar 监管、协议、被取代的 TS 模块及打包产物 | 打包产物只包含 Claude 适配器入口；仅 Desktop 安装的 daemon 提供本地对话 |
 
 P1a、P1b、P1c 可并行。P1 至 P4 可以在测试夹具和独立 profile 中演进，正式 profile 在两个 provider 的完整链路都就绪后一次切换所有者，不按 provider 分批切换。阶段交付不引入同一会话的长期双引擎运行。
 
@@ -639,7 +668,7 @@ P1a、P1b、P1c 可并行。P1 至 P4 可以在测试夹具和独立 profile 中
 | 测试层 | 场景与通过条件 |
 | --- | --- |
 | 协议单测 | 两个 provider 的 JSONL 分片、短写、大帧、错误帧、pending 超时、进程退出、服务端请求 / control 请求；均有明确终态 |
-| Claude 专项 | 运行中改模型 / 权限、后台任务启动与停止、transcript 多版本样本解析、fork 结果、解析失败降级；不影响其他会话 |
+| Claude 专项 | 运行中改模型 / 权限、后台任务启动与停止、fork 与历史读取、适配器进程退出与重启续接、写入背压；一个会话的适配器失败不影响其他会话 |
 | 状态机单测 | start 前通知、重复完成、cancel / complete 竞争、工具最终校准；不重复追加或状态倒退 |
 | 合批单测 | 首条开始计时、不重置截止时间、字节阈值、关键事件前序提交、超限；用可控时钟验证 |
 | 存储测试 | COMMIT 前后崩溃、磁盘满、busy、消息与摘要可由事件重建、每个块恰有一条最终事件（含中断合成）、持久化序号、checkpoint、跨会话合并提交、启动时 PRAGMA（含 `fullfsync`）校验；不发布未提交事件 |
@@ -651,7 +680,7 @@ P1a、P1b、P1c 可并行。P1 至 P4 可以在测试夹具和独立 profile 中
 | Desktop 回归 | Codex 与 Claude 各自的发送、续接、取消、steer、问题、权限、图片、fork、Side、队列、模型与用量；Claude 后台任务与原生历史；功能无缺失 |
 | 压力与生命周期 | 20 路会话长时间输出、历史大、工具大、Desktop 关闭、daemon 重启；内存与队列受限，恢复符合 §8；记录 macOS 上每次提交的同步耗时 |
 
-默认测试使用 fake provider，不查找或调用用户安装的真实智能体。真实 Codex / Claude smoke test 需按仓库要求单独授权和启用集成开关；Claude transcript 样本以脱敏夹具形式提交，不读取开发者本机会话。
+默认测试使用 fake provider，不查找或调用用户安装的真实智能体。真实 Codex / Claude smoke test 需按仓库要求单独授权和启用集成开关；Claude 适配器默认测试注入 fake SDK，不启动真实 `claude` CLI，也不读取开发者本机会话。
 
 ### 12.2 可量化验收
 
@@ -684,8 +713,8 @@ git diff --check
 
 ```sh
 go test ./internal/daemon/localhost ./pkg/agent
-go test -race ./pkg/codexappserver/... ./pkg/claudecode/... ./internal/localconversation/...
-go vet ./pkg/codexappserver/... ./pkg/claudecode/... ./internal/localconversation/...
+go test -race ./pkg/codexappserver/... ./internal/localconversation/...
+go vet ./pkg/codexappserver/... ./internal/localconversation/...
 ```
 
 GUI host 的验证使用其实际 package scripts，接口新增同时补齐 schema 与畸形响应测试；协议生成命令在 P0 确定后加入此处。以上是后续实施验证清单，不表示本次已运行这些测试。
@@ -694,7 +723,7 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 
 | 事项 | 建议默认值 | 影响 |
 | --- | --- | --- |
-| Claude 技术验证（第 2、3 项） | 静态核对已完成：control 子命令在 Go 实现，fork 改用 CLI 延迟 fork，原生历史由 Go 只读解析（§4.4）；运行验证待授权真实 CLI 冒烟测试 | 若延迟 fork 或 transcript 解析在真实 CLI 上不成立，再评审按需启动的 Node 工具进程例外 |
+| Claude 适配器协议 | 带版本号的 NDJSON；只上报原始 SDK 消息；写入等待 drain；空闲超时起点 10 分钟 | 决定 Go Claude provider 的解析与适配器生命周期 |
 | Go MCP 服务实现 | P0 选型，替代 TS `@modelcontextprotocol/sdk` | 决定 Context MCP 工具迁移方式与协议版本支持 |
 | 协议代码生成工具 | JSON Schema 为定义源；工具按 §5.6 的兼容要求选型 | 决定生成命令、产物目录与 CI 检查方式 |
 | provider 最低版本 | §4.4 技术验证后确定 | 决定版本不满足时的提示内容 |
@@ -703,9 +732,9 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 | 混合版本支持 | 明确能力检查，默认不新增内部旧协议适配 | 如要同时支持旧 Desktop，需要单独约定协议和降级行为 |
 | SQLite 访问与查询默认值 | sqlc sqlite engine；快照最近 20 个轮次并按字节封顶；搜索沿用现有匹配，不做全文检索（§7.2、§7.4） | 如改为手写 SQL 或需要全文搜索，调整 store 包与索引 |
 
-已定、不再讨论：Claude 迁入 Go；不做方案 B；不导入旧 JSON；本轮不验收 Windows；全部流式事件持久化且 macOS 开启 `fullfsync`；全局并发上限 20。
+已定、不再讨论：Codex 由 Go 直连，Claude 使用 SDK + 每会话 Node 适配器；不做方案 B；不导入旧 JSON；本轮不验收 Windows；全部流式事件持久化且 macOS 开启 `fullfsync`；全局并发上限 20。
 
-主方向已经可以用于拆分实施。Go 直连 Codex 与 Claude、SQLite 会话库、新 HTTP / WS 协议和 sidecar 删除均未实施。
+主方向已经可以用于拆分实施。已完成 Codex 协议传输层拆分（#75）；Claude 适配器、SQLite 会话库、新 HTTP / WS 协议和共享 sidecar 删除均未实施。
 
 ## 附录 A：改动面清单
 
@@ -715,10 +744,10 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 
 | 位置 | 内容 |
 | --- | --- |
-| `apps/desktop/src/local-host/`（约 5.9k 行实现 + 测试） | sidecar 全部模块；能力迁到 Go 后删除 |
-| `apps/desktop/resources/local-conversation-host/index.cjs` | 打包的 sidecar 入口 |
-| `apps/desktop/electron.vite.config.ts`、`eslint.config.mjs`、`tsconfig.node.json` | `local-conversation-host` 构建入口、分块规则和 `src/local-host` 包含项 |
-| `server/internal/daemon/localhost/sidecar.go` 及 `fake_sidecar_test.go`、`real_sidecar_test.go` | sidecar 进程监管与测试 |
+| `apps/desktop/src/local-host/`（约 5.9k 行实现 + 测试） | 共享 sidecar 模块；状态、存储、Codex、MCP、上下文与工具迁到 Go 后删除；Claude 的 SDK 调用部分移入 `src/claude-host/` |
+| `apps/desktop/resources/local-conversation-host/index.cjs` | 共享 sidecar 入口，替换为 Claude 适配器入口 |
+| `apps/desktop/electron.vite.config.ts`、`eslint.config.mjs`、`tsconfig.node.json` | `local-conversation-host` 构建入口、分块规则和 `src/local-host` 包含项，改为 Claude 适配器入口与 `src/claude-host` |
+| `server/internal/daemon/localhost/sidecar.go` 及 `fake_sidecar_test.go`、`real_sidecar_test.go` | 共享 sidecar 监管与测试；每会话适配器的监管在 `localconversation/provider/claude` 中重写 |
 | `server/internal/daemon/localhost/testdata/protocol/daemon-to-sidecar/`、`sidecar-to-daemon/` | sidecar 协议黄金样例 |
 | `packages/tutti-agent-gui-host` 中的 `invalidate` 后重新读取会话路径 | 改为增量应用后删除 |
 
@@ -726,13 +755,14 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 
 | 位置 | 改动 |
 | --- | --- |
-| `server/pkg/codexappserver/`、`server/pkg/claudecode/`（新增） | 从 `pkg/agent/codex.go`、`claude.go` 拆出的协议层 |
+| `server/pkg/codexappserver/`（#75 已新增） | 从 `pkg/agent/codex.go` 拆出的协议层；后续补充由上游 schema 生成的原生类型 |
+| `apps/desktop/src/claude-host/`（新增） | Claude 适配器：SDK 调用、版本协议、背压写入 |
 | `server/pkg/agent/codex.go`、`claude.go`、`claude_supplement.go`、`claude_models.go` | 改为使用共用协议层；云端行为不变 |
 | `server/internal/localconversation/`（新增） | 会话服务、provider、Context MCP、SQLite 存储 |
 | `server/internal/daemon/localhost/server.go`、`protocol.go`、`rpc.go`、`transport.go`、`auth.go` | 增加 v2 HTTP / WS 与两层订阅；删除内存事件环形缓冲和 sidecar 转发；`hostRequest` 改由 Go 发起 |
-| `server/internal/daemon/localhost/manifest.go` | 去掉 Electron Node 入口，只保留能力开关所需字段 |
+| `server/internal/daemon/localhost/manifest.go` | 入口改为 Claude 适配器，协议版本改为适配器协议版本 |
 | `server/internal/daemon/daemon.go`、`config.go`、`server/cmd/multica/cmd_daemon.go` | 本地对话服务初始化；`LocalHost` 配置与 manifest 发现改造；runtime 实例记录字段 |
-| `server/internal/runtimeinstance/registry.go` | `apiVersion` 提升，删除 `sidecarProtocolVersion` 校验 |
+| `server/internal/runtimeinstance/registry.go` | `apiVersion` 提升；`sidecarProtocolVersion` 改为 Claude 适配器协议版本 |
 | `server/go.mod` | 新增 MCP 服务实现依赖、协议生成相关依赖 |
 
 ### A.3 Desktop main 与 preload
@@ -741,7 +771,7 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 | --- | --- |
 | `src/main/local-conversation-proxy.ts` | 重写：v2 能力协商、HTTP、两层订阅、追赶与重订阅、批量 IPC |
 | `src/main/runtime-instance.ts`、`desktop-runtime-instance.ts` | 与 Go 同步修改版本字段校验 |
-| `src/main/daemon-manager.ts` | 去掉 sidecar manifest / Electron Node 启动相关配置 |
+| `src/main/daemon-manager.ts` | manifest 指向 Claude 适配器入口 |
 | `src/main/index.ts` | 本地对话代理与 host 请求接线调整 |
 | `src/main/side-workspace-control.ts`、`desktop-settings-host.ts`、`developer-log-export.ts` | host 请求来源从 sidecar 改为 Go，载荷按 v2 schema |
 | `src/main/local-provider-env.ts`、`local-file-context-menu.ts` | 待确认：provider 环境变量由 Go 读取后可能删除或简化 |
@@ -756,7 +786,7 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 | `src/renderer/src/pages/local-conversation-flow.tsx`、`local-conversation-import.tsx`、`local-runtime-notice.tsx` | 修改：订阅生命周期、原生导入入口、版本与并发错误展示 |
 | `src/renderer/src/pages/local-side-*.ts(x)`、`local-resource-preview.tsx`、`local-resource-resolution.ts`、`chrome-profile-import.tsx` | 仅类型（待确认） |
 | `src/renderer/src/stores/local-conversation-project-visibility.ts`、`routes.tsx` | 仅类型（待确认） |
-| `src/shared/local-host-availability.ts`、`side-workspace.ts`、`developer-logs.ts`、`resource-preview.ts`、`local-file-context-menu.ts` | 仅类型；`local-host-availability.ts` 需去掉 sidecar 状态 |
+| `src/shared/local-host-availability.ts`、`side-workspace.ts`、`developer-logs.ts`、`resource-preview.ts`、`local-file-context-menu.ts` | 仅类型；`local-host-availability.ts` 需去掉共享 sidecar 状态 |
 
 ### A.5 共享包
 
