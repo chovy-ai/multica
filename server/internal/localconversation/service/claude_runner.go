@@ -644,3 +644,10 @@ func (r *ClaudeRunner) startNativeTurn() *claudeTurn {
 	_ = r.batcher.Append(r.rec.startBatch(SendRequest{TurnID: turn.id, RequestID: turn.id, Hidden: true}), true)
 	return turn
 }
+
+// Running reports whether a turn is in progress.
+func (r *ClaudeRunner) Running() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.turn != nil
+}

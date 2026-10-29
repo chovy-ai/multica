@@ -273,6 +273,8 @@ func merge(dst *store.Batch, part store.Batch) {
 	if part.Queue != nil {
 		dst.Queue = part.Queue
 	}
+	dst.MoreTurns = append(dst.MoreTurns, part.MoreTurns...)
+	dst.Remotes = append(dst.Remotes, part.Remotes...)
 	dst.Interactions = append(dst.Interactions, part.Interactions...)
 	dst.Resolutions = append(dst.Resolutions, part.Resolutions...)
 	if part.Summary != nil {
@@ -308,7 +310,7 @@ func mergeSummary(dst, src *store.SummaryPatch) {
 }
 
 func isEmpty(b store.Batch) bool {
-	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil && b.Settings == nil && len(b.Interactions) == 0 && len(b.Resolutions) == 0 && b.Metadata == nil && b.Queue == nil
+	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil && b.Settings == nil && len(b.Interactions) == 0 && len(b.Resolutions) == 0 && b.Metadata == nil && b.Queue == nil && len(b.Remotes) == 0
 }
 
 // batchBytes estimates a part's size for the batch and backlog budgets.

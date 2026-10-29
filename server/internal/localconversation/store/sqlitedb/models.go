@@ -144,6 +144,7 @@ type Turn struct {
 	TurnIndex      int64
 	RequestID      string
 	ProviderTurnID string
+	Remote         string
 	Status         string
 	ErrorKind      string
 	Error          string

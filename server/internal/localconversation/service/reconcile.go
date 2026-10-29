@@ -18,7 +18,12 @@ func ReconcileInterruptedTurns(ctx context.Context, s *store.Store, committer Co
 	if err != nil {
 		return 0, err
 	}
+	closed := 0
 	for i, turn := range turns {
+		if turn.Remote != "" {
+			continue // cloud agent executions are resumed, not failed
+		}
+		closed++
 		events, err := s.TurnEvents(ctx, turn.ConversationID, turn.ID)
 		if err != nil {
 			return i, err
@@ -47,7 +52,7 @@ func ReconcileInterruptedTurns(ctx context.Context, s *store.Store, committer Co
 			return i, err
 		}
 	}
-	return len(turns), nil
+	return closed, nil
 }
 
 type synthesizedFinal struct {

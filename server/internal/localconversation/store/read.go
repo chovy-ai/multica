@@ -277,3 +277,8 @@ func (s *Store) OpenBackgroundTaskItems(ctx context.Context, conversationID stri
 	}
 	return open, nil
 }
+
+// ConversationTurns lists a conversation's turns in order.
+func (s *Store) ConversationTurns(ctx context.Context, conversationID string) ([]sqlitedb.Turn, error) {
+	return sqlitedb.New(s.read).ListConversationTurns(ctx, conversationID)
+}

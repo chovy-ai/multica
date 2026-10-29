@@ -424,7 +424,7 @@ func (q *Queries) GetScopeSeq(ctx context.Context, id int64) (int64, error) {
 }
 
 const getTurn = `-- name: GetTurn :one
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn WHERE id = ?
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn WHERE id = ?
 `
 
 func (q *Queries) GetTurn(ctx context.Context, id string) (Turn, error) {
@@ -436,6 +436,7 @@ func (q *Queries) GetTurn(ctx context.Context, id string) (Turn, error) {
 		&i.TurnIndex,
 		&i.RequestID,
 		&i.ProviderTurnID,
+		&i.Remote,
 		&i.Status,
 		&i.ErrorKind,
 		&i.Error,
@@ -728,8 +729,8 @@ func (q *Queries) InsertScope(ctx context.Context, arg InsertScopeParams) (int64
 }
 
 const insertTurn = `-- name: InsertTurn :exec
-INSERT INTO turn (id, conversation_id, turn_index, request_id, status, started_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO turn (id, conversation_id, turn_index, request_id, remote, status, started_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertTurnParams struct {
@@ -737,6 +738,7 @@ type InsertTurnParams struct {
 	ConversationID string
 	TurnIndex      int64
 	RequestID      string
+	Remote         string
 	Status         string
 	StartedAt      string
 }
@@ -747,6 +749,7 @@ func (q *Queries) InsertTurn(ctx context.Context, arg InsertTurnParams) error {
 		arg.ConversationID,
 		arg.TurnIndex,
 		arg.RequestID,
+		arg.Remote,
 		arg.Status,
 		arg.StartedAt,
 	)
@@ -815,6 +818,47 @@ func (q *Queries) ListConversationMessages(ctx context.Context, conversationID s
 			&i.Steered,
 			&i.Failed,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConversationTurns = `-- name: ListConversationTurns :many
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn WHERE conversation_id = ? ORDER BY turn_index
+`
+
+func (q *Queries) ListConversationTurns(ctx context.Context, conversationID string) ([]Turn, error) {
+	rows, err := q.db.QueryContext(ctx, listConversationTurns, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Turn{}
+	for rows.Next() {
+		var i Turn
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.TurnIndex,
+			&i.RequestID,
+			&i.ProviderTurnID,
+			&i.Remote,
+			&i.Status,
+			&i.ErrorKind,
+			&i.Error,
+			&i.Reconciled,
+			&i.LastTurnSeq,
+			&i.StartedAt,
+			&i.CompletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1132,7 +1176,7 @@ func (q *Queries) ListQueuedConversations(ctx context.Context) ([]string, error)
 }
 
 const listRecentTurns = `-- name: ListRecentTurns :many
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn
 WHERE conversation_id = ?1
 ORDER BY turn_index DESC
 LIMIT ?2
@@ -1158,6 +1202,7 @@ func (q *Queries) ListRecentTurns(ctx context.Context, arg ListRecentTurnsParams
 			&i.TurnIndex,
 			&i.RequestID,
 			&i.ProviderTurnID,
+			&i.Remote,
 			&i.Status,
 			&i.ErrorKind,
 			&i.Error,
@@ -1180,7 +1225,7 @@ func (q *Queries) ListRecentTurns(ctx context.Context, arg ListRecentTurnsParams
 }
 
 const listRunningTurns = `-- name: ListRunningTurns :many
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn WHERE status = 'running' ORDER BY conversation_id, turn_index
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn WHERE status = 'running' ORDER BY conversation_id, turn_index
 `
 
 func (q *Queries) ListRunningTurns(ctx context.Context) ([]Turn, error) {
@@ -1198,6 +1243,7 @@ func (q *Queries) ListRunningTurns(ctx context.Context) ([]Turn, error) {
 			&i.TurnIndex,
 			&i.RequestID,
 			&i.ProviderTurnID,
+			&i.Remote,
 			&i.Status,
 			&i.ErrorKind,
 			&i.Error,
@@ -1473,7 +1519,7 @@ func (q *Queries) ListTurnMessages(ctx context.Context, arg ListTurnMessagesPara
 }
 
 const listTurnsBefore = `-- name: ListTurnsBefore :many
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn
 WHERE conversation_id = ?1 AND turn_index < ?2
 ORDER BY turn_index DESC
 LIMIT ?3
@@ -1500,6 +1546,7 @@ func (q *Queries) ListTurnsBefore(ctx context.Context, arg ListTurnsBeforeParams
 			&i.TurnIndex,
 			&i.RequestID,
 			&i.ProviderTurnID,
+			&i.Remote,
 			&i.Status,
 			&i.ErrorKind,
 			&i.Error,
@@ -1665,6 +1712,20 @@ type SetProviderTurnIDParams struct {
 
 func (q *Queries) SetProviderTurnID(ctx context.Context, arg SetProviderTurnIDParams) error {
 	_, err := q.db.ExecContext(ctx, setProviderTurnID, arg.ProviderTurnID, arg.ID)
+	return err
+}
+
+const setTurnRemote = `-- name: SetTurnRemote :exec
+UPDATE turn SET remote = ? WHERE id = ?
+`
+
+type SetTurnRemoteParams struct {
+	Remote string
+	ID     string
+}
+
+func (q *Queries) SetTurnRemote(ctx context.Context, arg SetTurnRemoteParams) error {
+	_, err := q.db.ExecContext(ctx, setTurnRemote, arg.Remote, arg.ID)
 	return err
 }
 

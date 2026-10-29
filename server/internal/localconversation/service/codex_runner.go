@@ -636,3 +636,10 @@ func (r *CodexRunner) currentContext() map[string]any {
 
 // StopTasks is a no-op: Codex reports no background tasks.
 func (r *CodexRunner) StopTasks(context.Context, []string) error { return nil }
+
+// Running reports whether a turn is in progress.
+func (r *CodexRunner) Running() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.turn != nil
+}

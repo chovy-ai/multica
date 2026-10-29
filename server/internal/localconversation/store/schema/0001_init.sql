@@ -55,6 +55,7 @@ CREATE TABLE turn (
     turn_index INTEGER NOT NULL,
     request_id TEXT NOT NULL DEFAULT '',
     provider_turn_id TEXT NOT NULL DEFAULT '',
+    remote TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL,
     error_kind TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '',

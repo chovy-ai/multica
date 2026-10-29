@@ -54,8 +54,8 @@ ORDER BY summary_seq
 LIMIT sqlc.arg(row_limit);
 
 -- name: InsertTurn :exec
-INSERT INTO turn (id, conversation_id, turn_index, request_id, status, started_at)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO turn (id, conversation_id, turn_index, request_id, remote, status, started_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetTurn :one
 SELECT * FROM turn WHERE id = ?;
@@ -238,3 +238,9 @@ UPDATE command_receipt SET result = ? WHERE scope_id = ? AND request_id = ?;
 SELECT * FROM conversation
 WHERE scope_id = ? AND provider = ? AND (provider_session_id = sqlc.arg(session_id) OR imported_from_session_id = sqlc.arg(session_id))
 LIMIT 1;
+
+-- name: SetTurnRemote :exec
+UPDATE turn SET remote = ? WHERE id = ?;
+
+-- name: ListConversationTurns :many
+SELECT * FROM turn WHERE conversation_id = ? ORDER BY turn_index;

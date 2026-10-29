@@ -7,7 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"os"
 	"strings"
 	"time"
 )
@@ -119,4 +123,64 @@ func redact(s, token string) string {
 		return s
 	}
 	return strings.ReplaceAll(s, token, "[redacted]")
+}
+
+const uploadTimeout = 60 * time.Second
+
+// Upload sends a local file to the workspace and returns its attachment
+// id. An upload whose response cannot be read is unconfirmed.
+func (c *CloudClient) Upload(ctx context.Context, path, name, mediaType string) (string, error) {
+	token := c.Token()
+	if token == "" {
+		return "", errCloudUnavailable
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	ctx, cancel := context.WithTimeout(ctx, uploadTimeout)
+	defer cancel()
+	body, writer := io.Pipe()
+	form := multipart.NewWriter(writer)
+	go func() {
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": name}))
+		header.Set("Content-Type", mediaType)
+		part, err := form.CreatePart(header)
+		if err == nil {
+			_, err = io.Copy(part, f)
+		}
+		if err == nil {
+			err = form.Close()
+		}
+		writer.CloseWithError(err)
+	}()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.APIURL, "/")+"/api/upload-file", body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Workspace-ID", c.WorkspaceID)
+	req.Header.Set("Content-Type", form.FormDataContentType())
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", errUnconfirmed
+	}
+	defer res.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(res.Body, maxCloudBody))
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return "", operationError(res.StatusCode, data, token)
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(data, &out) != nil || out.ID == "" {
+		return "", errors.New("Cloud attachment upload was not confirmed")
+	}
+	return out.ID, nil
 }

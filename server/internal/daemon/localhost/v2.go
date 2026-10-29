@@ -271,6 +271,9 @@ type commandBody struct {
 	Text          string              `json:"text"`
 	AttachmentIDs []string            `json:"attachment_ids"`
 	References    []service.Reference `json:"references"`
+	// Agents, when set, sends the message to these defined agents' cloud
+	// chats instead of the local provider.
+	Agents []service.RemoteAgent `json:"agents"`
 	// answer: the question and the user's answers by question id.
 	InteractionID string          `json:"interaction_id"`
 	Answer        json.RawMessage `json:"answer"`
@@ -327,6 +330,15 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 	case "send":
 		if body.RequestID == "" {
 			writeV2Error(w, AppError("invalid_request", "request_id is required"))
+			return
+		}
+		if len(body.Agents) > 0 {
+			result, err := v.svc.SendToAgents(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, Prompt: body.Prompt, AttachmentIDs: body.AttachmentIDs}, body.Agents)
+			if err != nil {
+				writeV2Error(w, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, result)
 			return
 		}
 		result, err := v.svc.Send(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, Prompt: body.Prompt, AttachmentIDs: body.AttachmentIDs, References: body.References})
@@ -721,6 +733,8 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusForbidden, "outside_folder"
 	case errors.Is(err, store.ErrUploadTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "file_too_large"
+	case errors.Is(err, service.ErrCloudUnavailable):
+		status, code = http.StatusServiceUnavailable, "cloud_unavailable"
 	case errors.Is(err, service.ErrImportRunning):
 		status, code = http.StatusConflict, "import_running"
 	case errors.Is(err, service.ErrForkUnavailable):

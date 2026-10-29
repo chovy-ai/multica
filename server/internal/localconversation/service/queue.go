@@ -37,7 +37,7 @@ type queueItem struct {
 	PermissionMode  *string         `json:"permissionMode"`
 	AttachmentIDs   []string        `json:"attachmentIds"`
 	References      []Reference     `json:"references"`
-	Agents          []any           `json:"agents"`
+	Agents          []RemoteAgent   `json:"agents"`
 	Display         struct {
 		ID             string `json:"id"`
 		ClientSubmitID string `json:"clientSubmitId"`
@@ -63,8 +63,8 @@ func parseQueueItem(raw json.RawMessage) (queueItem, error) {
 		return item, fmt.Errorf("%w: attach up to %d files per message", ErrInvalidRequest, maxMessageAttachments)
 	case validReferences(item.References) != nil:
 		return item, validReferences(item.References)
-	case len(item.Agents) > 0:
-		return item, fmt.Errorf("%w: queued agent invocations are not supported by this daemon", ErrInvalidRequest)
+	case !referencedAgents(item):
+		return item, fmt.Errorf("%w: invalid queued agents", ErrInvalidRequest)
 	case item.PermissionMode != nil && !validPermissionModes[*item.PermissionMode]:
 		return item, fmt.Errorf("%w: permission mode", ErrInvalidSettings)
 	}
@@ -361,6 +361,10 @@ func (s *Service) sendQueued(ctx context.Context, conv sqlitedb.Conversation, it
 	if item.Prompt != nil {
 		cmd.Prompt = *item.Prompt
 	}
+	if len(item.Agents) > 0 {
+		_, err = s.SendToAgents(ctx, cmd, item.Agents)
+		return err
+	}
 	_, err = s.Send(ctx, cmd)
 	return err
 }
@@ -385,4 +389,22 @@ func (s *Service) isClosing() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.closing
+}
+
+// referencedAgents checks a queued item's agents: at most five, each also
+// an @ agent reference of the message.
+func referencedAgents(item queueItem) bool {
+	if len(item.Agents) > maxReferences {
+		return false
+	}
+	for _, a := range item.Agents {
+		found := false
+		for _, r := range item.References {
+			found = found || (r.Kind == "agent" && r.ID == a.ID)
+		}
+		if !found || !nativeID.MatchString(a.ID) || a.Name == "" || len(a.Name) > 256 {
+			return false
+		}
+	}
+	return true
 }

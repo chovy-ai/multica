@@ -56,6 +56,8 @@ type runner interface {
 	Send(ctx context.Context, req SendRequest) error
 	Interrupt(ctx context.Context) error
 	ApplySettings(ctx context.Context, st store.ConversationSettings) error
+	// Running reports whether a turn is in progress.
+	Running() bool
 	// StopTasks stops the provider's background tasks with these ids.
 	StopTasks(ctx context.Context, taskIDs []string) error
 	Close(ctx context.Context) error
@@ -101,6 +103,8 @@ type Service struct {
 	host      Host
 	side      sideWorkspaces
 	imports   imports
+	// closed is closed when Close begins.
+	closed chan struct{}
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -143,7 +147,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		titles:    titleRuns{cancel: map[string]context.CancelFunc{}},
 		delivery:  deliveries{timers: map[string]*time.Timer{}},
 		side:      sideWorkspaces{entries: map[string]SideWorkspace{}},
-		imports:   imports{busy: map[int64]context.CancelFunc{}}}
+		imports:   imports{busy: map[int64]context.CancelFunc{}},
+		closed:    make(chan struct{})}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {
@@ -160,12 +165,16 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	for _, id := range queued {
 		go s.dispatchQueue(id)
 	}
+	s.resumeRemote(ctx)
 	return s, nil
 }
 
 // Close stops every runner, commits pending output and closes the store.
 func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
+	if !s.closing {
+		close(s.closed)
+	}
 	s.closing = true
 	runners := s.runners
 	s.titles.mu.Lock()
@@ -276,6 +285,19 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 	if side := sideOf(conv); side != nil && conv.ProviderSessionID == "" {
 		prompt = sidePrompt(side, prompt)
 	}
+	turns, err := s.store.ConversationTurns(ctx, conv.ID)
+	if err != nil {
+		return SendResult{}, err
+	}
+	for _, t := range turns {
+		if t.Status == "running" && t.Remote != "" {
+			return SendResult{}, ErrTurnRunning
+		}
+	}
+	// Agents' replies are not in the provider's own session.
+	if d, _, err := s.dialogueFor(ctx, conv, turns, "", nil); err == nil {
+		prompt = withDialogue(d, prompt)
+	}
 	if ambient := s.sideAmbient(ctx, cmd.ScopeID, conv.ID); ambient != "" {
 		prompt += "\n\n" + ambient
 	}
@@ -307,6 +329,9 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 // Interrupt stops the conversation's running turn, if any.
 func (s *Service) Interrupt(ctx context.Context, scopeID int64, conversationID string) error {
 	if _, err := s.scopedConversation(ctx, scopeID, conversationID); err != nil {
+		return err
+	}
+	if found, err := s.cancelRemote(ctx, scopeID, conversationID); found || err != nil {
 		return err
 	}
 	s.mu.Lock()

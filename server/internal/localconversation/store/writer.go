@@ -29,7 +29,15 @@ type NewEvent struct {
 type NewTurn struct {
 	ID        string
 	RequestID string
+	// Remote, for a cloud agent's turn, is its execution state as JSON.
+	Remote    string
 	StartedAt time.Time
+}
+
+// TurnRemote replaces a cloud agent turn's execution state.
+type TurnRemote struct {
+	TurnID string
+	Remote string
 }
 
 // NewMessage is a message projection row written with its final event.
@@ -90,6 +98,11 @@ type Batch struct {
 	Settings *ConversationSettings
 	// Interactions and Resolutions open and close interaction requests; the
 	// conversation's pending count in its summary follows them.
+	// MoreTurns start after StartTurn in the same batch, such as one turn
+	// per agent a message invokes.
+	MoreTurns []NewTurn
+	// Remotes update cloud agent turns.
+	Remotes      []TurnRemote
 	Interactions []NewInteraction
 	Resolutions  []InteractionResolution
 	// Metadata replaces the conversation's list metadata; the summary
@@ -317,18 +330,24 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 	}
 
 	turnSeqs := map[string]int64{}
-	if t := b.StartTurn; t != nil {
+	var started []NewTurn
+	if b.StartTurn != nil {
+		started = append([]NewTurn{*b.StartTurn}, b.MoreTurns...)
+	}
+	for i, t := range started {
 		err := q.InsertTurn(ctx, sqlitedb.InsertTurnParams{
-			ID: t.ID, ConversationID: conv.ID, TurnIndex: conv.TurnCount, RequestID: t.RequestID,
-			Status: "running", StartedAt: formatTime(t.StartedAt),
+			ID: t.ID, ConversationID: conv.ID, TurnIndex: conv.TurnCount + int64(i), RequestID: t.RequestID,
+			Remote: t.Remote, Status: "running", StartedAt: formatTime(t.StartedAt),
 		})
 		if err != nil {
 			return Committed{}, fmt.Errorf("start turn %s: %w", t.ID, err)
 		}
-		if err := q.SetConversationTurnCount(ctx, sqlitedb.SetConversationTurnCountParams{TurnCount: conv.TurnCount + 1, ID: conv.ID}); err != nil {
+		turnSeqs[t.ID] = 0
+	}
+	if len(started) > 0 {
+		if err := q.SetConversationTurnCount(ctx, sqlitedb.SetConversationTurnCountParams{TurnCount: conv.TurnCount + int64(len(started)), ID: conv.ID}); err != nil {
 			return Committed{}, err
 		}
-		turnSeqs[t.ID] = 0
 	}
 	turnSeq := func(turnID string) (int64, error) {
 		if seq, ok := turnSeqs[turnID]; ok {
@@ -343,6 +362,15 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		}
 		turnSeqs[turnID] = turn.LastTurnSeq
 		return turn.LastTurnSeq, nil
+	}
+
+	for _, r := range b.Remotes {
+		if _, err := turnSeq(r.TurnID); err != nil {
+			return Committed{}, err
+		}
+		if err := q.SetTurnRemote(ctx, sqlitedb.SetTurnRemoteParams{Remote: r.Remote, ID: r.TurnID}); err != nil {
+			return Committed{}, err
+		}
 	}
 
 	for _, a := range b.Attachments {
@@ -510,7 +538,7 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 			next.Pinned, next.Archived = boolInt(m.Pinned), boolInt(m.Archived)
 		}
 		if b.StartTurn != nil {
-			next.TurnCount = conv.TurnCount + 1
+			next.TurnCount = conv.TurnCount + int64(len(started))
 		}
 		err = q.UpdateConversationSummary(ctx, sqlitedb.UpdateConversationSummaryParams{
 			Status: next.Status, Title: next.Title, LastMessagePreview: next.LastMessagePreview,
