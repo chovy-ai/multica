@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/pkg/codexappserver"
@@ -24,8 +25,12 @@ type CodexServer interface {
 }
 
 // StartCodexServer launches app-server delivering notifications and server
-// requests to handler.
-type StartCodexServer func(ctx context.Context, handler codex.Handler) (CodexServer, error)
+// requests to handler, with env added to its environment.
+type StartCodexServer func(ctx context.Context, handler codex.Handler, env []string) (CodexServer, error)
+
+// ContextTokenEnv carries the context MCP route token to app-server, which
+// sends it as the bearer token; Codex configuration never holds the value.
+const ContextTokenEnv = "MULTICA_CONTEXT_MCP_TOKEN"
 
 // CodexSession is how the conversation runs Codex.
 type CodexSession struct {
@@ -59,12 +64,16 @@ type CodexRunner struct {
 	batcher *Batcher
 	limiter *Limiter
 	context string
+	bind    ContextBinder
 
 	mu      sync.Mutex
 	session CodexSession
 	server  CodexServer
 	native  *codexNative
 	turn    *codexTurn
+	// contextURL is the running server's context route; empty without one.
+	contextURL     string
+	releaseContext func()
 }
 
 type codexTurn struct {
@@ -98,6 +107,8 @@ type CodexRunnerOptions struct {
 	Limiter        *Limiter
 	ContextMCPName string
 	Now            func() time.Time
+	// Context, when set, gives app-server Multica's context tools.
+	Context ContextBinder
 }
 
 // NewCodexRunner returns a runner for one conversation.
@@ -107,7 +118,8 @@ func NewCodexRunner(opts CodexRunnerOptions) *CodexRunner {
 	}
 	return &CodexRunner{
 		rec:   turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
-		start: opts.Start, batcher: opts.Batcher, limiter: opts.Limiter, context: opts.ContextMCPName, session: opts.Session,
+		start: opts.Start, batcher: opts.Batcher, limiter: opts.Limiter, context: contextName(opts.ContextMCPName), session: opts.Session,
+		bind: opts.Context,
 	}
 }
 
@@ -252,14 +264,17 @@ func (r *CodexRunner) ApplySettings(_ context.Context, st store.ConversationSett
 // Close stops app-server, failing a running turn.
 func (r *CodexRunner) Close(context.Context) error {
 	r.mu.Lock()
-	server, turn := r.server, r.turn
-	r.server = nil
+	server, turn, release := r.server, r.turn, r.releaseContext
+	r.server, r.releaseContext = nil, nil
 	r.mu.Unlock()
 	if turn != nil {
 		r.finish(turn, "failed", &turnError{kind: "provider_exited", message: "the conversation was closed"})
 	}
 	if server != nil {
 		server.Stop()
+	}
+	if release != nil {
+		release()
 	}
 	return nil
 }
@@ -274,7 +289,16 @@ func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNati
 	cwd := r.session.Cwd
 	r.mu.Unlock()
 
-	server, err := r.start(ctx, r.handle)
+	var env []string
+	token := ""
+	if r.bind != nil {
+		var err error
+		if token, err = contextmcp.NewToken(); err != nil {
+			return nil, nil, err
+		}
+		env = []string{ContextTokenEnv + "=" + token}
+	}
+	server, err := r.start(ctx, r.handle, env)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -290,8 +314,21 @@ func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNati
 		server.Stop()
 		return nil, nil, errors.New("invalid Codex configuration response")
 	}
+	if _, reserved := result.Config.MCPServers[r.context]; reserved {
+		server.Stop()
+		return nil, nil, fmt.Errorf("native Codex settings use the reserved Multica MCP name %s", r.context)
+	}
+	contextURL, release := "", func() {}
+	if r.bind != nil {
+		binding, rel, err := r.bind(context.Background(), token, r.currentContext)
+		if err != nil {
+			server.Stop()
+			return nil, nil, err
+		}
+		contextURL, release = binding.URL, rel
+	}
 	r.mu.Lock()
-	r.server, r.native = server, &result.Config
+	r.server, r.native, r.contextURL, r.releaseContext = server, &result.Config, contextURL, release
 	r.mu.Unlock()
 	go r.watch(server)
 	return server, &result.Config, nil
@@ -319,6 +356,13 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 	mcp := map[string]any{}
 	for name := range native.MCPServers {
 		mcp[name] = map[string]any{"enabled": false}
+	}
+	r.mu.Lock()
+	contextURL := r.contextURL
+	r.mu.Unlock()
+	if contextURL != "" {
+		mcp[r.context] = map[string]any{"url": contextURL, "bearer_token_env_var": ContextTokenEnv, "enabled": true, "required": true,
+			"default_tools_approval_mode": "approve", "tool_timeout_sec": 3600}
 	}
 	config := map[string]any{"mcp_servers": mcp}
 	if session.ReasoningEffort != nil {
@@ -499,9 +543,13 @@ func (r *CodexRunner) watch(server CodexServer) {
 		r.mu.Unlock()
 		return
 	}
-	r.server, r.native = nil, nil
-	turn := r.turn
+	r.server, r.native, r.contextURL = nil, nil, ""
+	turn, release := r.turn, r.releaseContext
+	r.releaseContext = nil
 	r.mu.Unlock()
+	if release != nil {
+		release()
+	}
 	if turn != nil {
 		message := "Codex app-server exited"
 		if err := server.Err(); err != nil {
@@ -554,4 +602,15 @@ func codexOutput(e codex.Event) outputEvent {
 		out.ImageMime, out.ImageData = e.Image.MimeType, e.Image.Data
 	}
 	return out
+}
+
+// currentContext is what current_context reports while app-server runs.
+func (r *CodexRunner) currentContext() map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := map[string]any{"conversation_id": r.rec.conversationID}
+	if r.turn != nil {
+		current["turn_id"] = r.turn.id
+	}
+	return current
 }

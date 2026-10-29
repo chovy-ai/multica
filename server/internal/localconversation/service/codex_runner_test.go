@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
@@ -101,7 +102,7 @@ func newCodexFixture(t *testing.T, session CodexSession, setup func(*fakeCodex))
 	r := NewCodexRunner(CodexRunnerOptions{
 		ConversationID: "conv-1", ScopeID: f.scopeID, Files: f.store, Session: session,
 		Batcher: f.batcher, Limiter: f.limiter, ContextMCPName: "multica",
-		Start: func(_ context.Context, h codex.Handler) (CodexServer, error) {
+		Start: func(_ context.Context, h codex.Handler, _ []string) (CodexServer, error) {
 			server.handler = h
 			return server, nil
 		},
@@ -241,9 +242,12 @@ func TestServiceRunsCodexConversations(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "c.sqlite")
 	server := &fakeCodex{params: map[string]map[string]any{}, done: make(chan struct{})}
-	svc, err := Open(context.Background(), Options{Path: path, ContextMCPName: "multica",
+	svc, err := Open(context.Background(), Options{Path: path,
 		Codex: func(context.Context, sqlitedb.Conversation) (CodexSession, StartCodexServer, error) {
-			return CodexSession{}, func(_ context.Context, h codex.Handler) (CodexServer, error) { server.handler = h; return server, nil }, nil
+			return CodexSession{}, func(_ context.Context, h codex.Handler, _ []string) (CodexServer, error) {
+				server.handler = h
+				return server, nil
+			}, nil
 		}})
 	if err != nil {
 		t.Fatal(err)
@@ -260,5 +264,40 @@ func TestServiceRunsCodexConversations(t *testing.T) {
 	}
 	if p := server.paramsOf("thread/start"); p["cwd"] != "/repo" {
 		t.Fatalf("thread/start params = %v", p)
+	}
+}
+
+func TestCodexRunnerConfiguresTheContextServer(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	server := &fakeCodex{params: map[string]map[string]any{}, done: make(chan struct{})}
+	var env []string
+	released := make(chan struct{})
+	r := NewCodexRunner(CodexRunnerOptions{
+		ConversationID: "conv-1", ScopeID: f.scopeID, Files: f.store, Session: CodexSession{Cwd: "/repo"},
+		Batcher: f.batcher, Limiter: f.limiter,
+		Start: func(_ context.Context, h codex.Handler, e []string) (CodexServer, error) {
+			server.handler, env = h, e
+			return server, nil
+		},
+		Context: func(_ context.Context, token string, _ func() map[string]any) (contextmcp.Binding, func(), error) {
+			if fmt.Sprint(env) != "["+ContextTokenEnv+"="+token+"]" {
+				t.Errorf("app-server env %v does not carry the route token", env)
+			}
+			return contextmcp.Binding{URL: "http://127.0.0.1:1/mcp/route", Token: token}, func() { close(released) }, nil
+		},
+	})
+	codexSend(t, r, "t1")
+	mcp := server.paramsOf("thread/start")["config"].(map[string]any)["mcp_servers"].(map[string]any)
+	entry := mcp[contextmcp.Name].(map[string]any)
+	if entry["url"] != "http://127.0.0.1:1/mcp/route" || entry["bearer_token_env_var"] != ContextTokenEnv || entry["required"] != true {
+		t.Fatalf("context entry = %v", entry)
+	}
+	server.Stop()
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("context route not released when app-server exited")
 	}
 }

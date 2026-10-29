@@ -153,3 +153,6 @@ SELECT * FROM conversation WHERE scope_id = ? ORDER BY updated_at DESC, id;
 
 -- name: ListConversationMessages :many
 SELECT * FROM message WHERE conversation_id = ? ORDER BY created_at, id;
+
+-- name: GetScope :one
+SELECT * FROM scope WHERE id = ?;

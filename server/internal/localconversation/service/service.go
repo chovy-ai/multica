@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
@@ -51,12 +52,11 @@ type runner interface {
 
 // Options configures Open.
 type Options struct {
-	Path           string
-	Claude         ClaudeLauncher
-	Codex          CodexLauncher
-	ContextMCPName string
-	Logger         *slog.Logger
-	Now            func() time.Time
+	Path   string
+	Claude ClaudeLauncher
+	Codex  CodexLauncher
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // Service is the Go-owned local conversation service: one store, one
@@ -68,6 +68,7 @@ type Service struct {
 	batcher *Batcher
 	hub     *Hub
 	limiter *Limiter
+	context *contextmcp.Server
 	opts    Options
 
 	mu      sync.Mutex
@@ -102,7 +103,13 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	} else if removed > 0 {
 		opts.Logger.Info("local conversations: removed unreferenced attachment files", "files", removed)
 	}
-	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), opts: opts, runners: map[string]runner{}}
+	contextServer, err := contextmcp.Start()
+	if err != nil {
+		writer.Close()
+		_ = st.Close()
+		return nil, err
+	}
+	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), context: contextServer, opts: opts, runners: map[string]runner{}}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {
@@ -126,6 +133,7 @@ func (s *Service) Close(ctx context.Context) error {
 		errs = append(errs, r.Close(closeCtx))
 		cancel()
 	}
+	errs = append(errs, s.context.Close())
 	s.batcher.Close()
 	s.writer.Close()
 	errs = append(errs, s.store.Close())
@@ -288,7 +296,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 	session.Fields = fields
 	return s.keepRunner(conv.ID, NewClaudeRunner(ClaudeRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
-		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: s.opts.ContextMCPName, Now: s.opts.Now,
+		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv),
 	})), nil
 }
 
@@ -310,7 +318,7 @@ func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (
 	session.PermissionMode = conv.PermissionMode
 	return NewCodexRunner(CodexRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
-		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: s.opts.ContextMCPName, Now: s.opts.Now,
+		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv),
 	}), nil
 }
 
@@ -399,4 +407,28 @@ func (s *Service) UpdateSettings(ctx context.Context, scopeID int64, conversatio
 		return nil
 	}
 	return r.ApplySettings(ctx, st)
+}
+
+// contextBinder binds the read-only context tools of conv's scope to one
+// provider process. current_context also reports the selected workspace.
+func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
+	return func(ctx context.Context, token string, current func() map[string]any) (contextmcp.Binding, func(), error) {
+		scope, err := s.store.ScopeByID(ctx, conv.ScopeID)
+		if err != nil {
+			return contextmcp.Binding{}, nil, err
+		}
+		withWorkspace := func() map[string]any {
+			c := current()
+			c["workspace_id"] = scope.WorkspaceID
+			return c
+		}
+		binding, err := s.context.Bind(context.Background(), contextmcp.Execution{
+			Instructions: contextmcp.ReadOnlyInstructions, Token: token,
+			Tools: contextmcp.ContextTools(s.store, nil, conv.ScopeID, withWorkspace),
+		})
+		if err != nil {
+			return contextmcp.Binding{}, nil, err
+		}
+		return binding, func() { s.context.Release(binding) }, nil
+	}
 }

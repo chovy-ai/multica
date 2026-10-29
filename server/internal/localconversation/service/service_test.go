@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
@@ -26,7 +29,7 @@ type serviceFixture struct {
 func newServiceFixture(t *testing.T, path string) *serviceFixture {
 	t.Helper()
 	f := &serviceFixture{path: path}
-	svc, err := Open(context.Background(), Options{Path: path, ContextMCPName: "multica", Claude: f.launch})
+	svc, err := Open(context.Background(), Options{Path: path, Claude: f.launch})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -230,5 +233,57 @@ func TestServiceUpdateSettingsPersistsAndAppliesToTheLiveAdapter(t *testing.T) {
 	}
 	if err := f.svc.UpdateSettings(ctx, f.scopeID+1, "conv-1", SettingsUpdate{Model: &opus}); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("update from another scope = %v", err)
+	}
+}
+
+func TestServiceGivesAdaptersTheContextTools(t *testing.T) {
+	t.Parallel()
+
+	f := newServiceFixture(t, filepath.Join(t.TempDir(), "c.sqlite"))
+	f.create(t, "conv-1", "claude")
+	ctx := context.Background()
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	start := f.adapters[0].fields[0]
+	entry := start["mcp_servers"].(map[string]any)[contextmcp.Name].(map[string]any)
+	if fmt.Sprint(start["allowed_tools"]) != "[mcp__"+contextmcp.Name+"__*]" || entry["type"] != "http" {
+		t.Fatalf("start fields = %v", start)
+	}
+	url := entry["url"].(string)
+	auth := entry["headers"].(map[string]any)["Authorization"].(string)
+
+	call := func() map[string]any {
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"current_context"}}`
+		req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+		req.Header.Set("Authorization", auth)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		return out
+	}
+	out := call()
+	text := out["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var current map[string]any
+	_ = json.Unmarshal([]byte(text), &current)
+	if current["conversation_id"] != "conv-1" || current["turn_id"] != "turn-r1" || current["workspace_id"] != "w" {
+		t.Fatalf("current_context = %v", current)
+	}
+
+	// The route ends with the adapter.
+	f.adapters[0].exit(errors.New("gone"))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if res := call(); res["result"] == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("context route still served after the adapter exited")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

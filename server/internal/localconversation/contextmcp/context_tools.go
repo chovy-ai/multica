@@ -44,14 +44,14 @@ type Cloud interface {
 	Attachment(ctx context.Context, id string) (any, error)
 }
 
-// ContextTools returns the six read-only context tools for one execution in
-// scopeID. current is returned verbatim by current_context.
-func ContextTools(local LocalStore, cloud Cloud, scopeID int64, current map[string]any) []Tool {
+// ContextTools returns the six read-only context tools for scopeID. current
+// is called by current_context, so it reflects the running turn.
+func ContextTools(local LocalStore, cloud Cloud, scopeID int64, current func() map[string]any) []Tool {
 	d := &contextData{local: local, cloud: cloud, scopeID: scopeID}
 	return []Tool{
 		{Name: "current_context", ReadOnly: true, Description: "Read the current workspace, conversation and @ reference IDs. Does not call a model.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-			Call:        func(context.Context, json.RawMessage) (Result, error) { return Result{Value: current}, nil }},
+			Call:        func(context.Context, json.RawMessage) (Result, error) { return Result{Value: current()}, nil }},
 		{Name: "search_context", ReadOnly: true, Description: "Find conversations by title or Multica conversation ID, or find tasks and defined agents in this workspace. Results are metadata; use read_context for their actual contents. Narrow the query when limited is true.",
 			InputSchema: schema(`{"kind":{"enum":["conversation","task","agent"]},"source":{"enum":["local","cloud"],"default":"local"},"query":{"type":"string","maxLength":200,"default":""},"limit":{"type":"integer","minimum":1,"maximum":50,"default":20}}`, "kind"),
 			Call:        d.search},

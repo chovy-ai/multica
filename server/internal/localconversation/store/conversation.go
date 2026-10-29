@@ -109,3 +109,12 @@ func nullString(v *string) sql.NullString {
 	}
 	return sql.NullString{String: *v, Valid: true}
 }
+
+// ScopeByID returns a scope's identity.
+func (s *Store) ScopeByID(ctx context.Context, id int64) (Scope, error) {
+	row, err := sqlitedb.New(s.read).GetScope(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Scope{}, ErrNotFound
+	}
+	return Scope{APIOrigin: row.ApiOrigin, UserID: row.UserID, WorkspaceID: row.WorkspaceID}, err
+}

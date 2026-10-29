@@ -13,20 +13,15 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
 
-// contextMCPName is the MCP server name Multica's context tools use in
-// provider configuration.
-const contextMCPName = "multica"
-
 // openLocalConversations opens the Go-owned local conversation service and
 // its /local/v2 API. The shared sidecar keeps serving /local/v1 until Desktop
 // switches over; the two use separate storage.
 func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.Sidecar) error {
 	svc, err := service.Open(ctx, service.Options{
-		Path:           filepath.Join(d.cfg.ProfileDir, "local-conversations", "conversations.sqlite"),
-		ContextMCPName: contextMCPName,
-		Claude:         d.claudeLauncher(sidecar),
-		Codex:          d.codexLauncher(),
-		Logger:         d.logger.With("component", "local-conversations"),
+		Path:   filepath.Join(d.cfg.ProfileDir, "local-conversations", "conversations.sqlite"),
+		Claude: d.claudeLauncher(sidecar),
+		Codex:  d.codexLauncher(),
+		Logger: d.logger.With("component", "local-conversations"),
 	})
 	if err != nil {
 		return err
@@ -75,8 +70,8 @@ func (d *Daemon) codexLauncher() service.CodexLauncher {
 			return service.CodexSession{}, nil, err
 		}
 		logger := d.logger.With("component", "codex-app-server", "conversation_id", conv.ID)
-		start := func(ctx context.Context, handler codex.Handler) (service.CodexServer, error) {
-			s, err := codex.Start(ctx, codex.Command{Path: resolved.Path, Dir: conv.Cwd, Env: os.Environ()}, handler, logger)
+		start := func(ctx context.Context, handler codex.Handler, env []string) (service.CodexServer, error) {
+			s, err := codex.Start(ctx, codex.Command{Path: resolved.Path, Dir: conv.Cwd, Env: append(os.Environ(), env...)}, handler, logger)
 			if err != nil {
 				return nil, err
 			}

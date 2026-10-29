@@ -52,7 +52,7 @@ func newV2Server(t *testing.T) (*httptest.Server, *service.Service) {
 		t.Fatal(err)
 	}
 	svc, err := service.Open(context.Background(), service.Options{
-		Path: filepath.Join(dir, "local-conversations", "conversations.sqlite"), ContextMCPName: "multica",
+		Path: filepath.Join(dir, "local-conversations", "conversations.sqlite"),
 		Claude: func(context.Context, sqlitedb.Conversation) (service.ClaudeSession, service.StartClaudeAdapter, error) {
 			return service.ClaudeSession{Fields: map[string]any{"executable": "/bin/claude"}}, func(_ context.Context, h claude.Handler) (service.ClaudeAdapter, error) {
 				return &autoAdapter{handler: h, done: make(chan struct{})}, nil

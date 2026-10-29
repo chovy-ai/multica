@@ -174,6 +174,23 @@ func (q *Queries) GetMeta(ctx context.Context, key string) (string, error) {
 	return value, err
 }
 
+const getScope = `-- name: GetScope :one
+SELECT id, api_origin, user_id, workspace_id, scope_seq FROM scope WHERE id = ?
+`
+
+func (q *Queries) GetScope(ctx context.Context, id int64) (Scope, error) {
+	row := q.db.QueryRowContext(ctx, getScope, id)
+	var i Scope
+	err := row.Scan(
+		&i.ID,
+		&i.ApiOrigin,
+		&i.UserID,
+		&i.WorkspaceID,
+		&i.ScopeSeq,
+	)
+	return i, err
+}
+
 const getScopeID = `-- name: GetScopeID :one
 SELECT id FROM scope WHERE api_origin = ? AND user_id = ? AND workspace_id = ?
 `

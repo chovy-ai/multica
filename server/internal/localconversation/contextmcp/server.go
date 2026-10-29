@@ -58,10 +58,13 @@ type Image struct {
 	Data     string
 }
 
-// Execution is the tool set of one running turn.
+// Execution is the tool set of one provider process.
 type Execution struct {
 	Instructions string
 	Tools        []Tool
+	// Token, when set, is the route's bearer token; providers that read it
+	// from their environment need it before the route exists.
+	Token string
 }
 
 type route struct {
@@ -109,9 +112,11 @@ func (s *Server) Bind(parent context.Context, exec Execution) (Binding, error) {
 	if err != nil {
 		return Binding{}, err
 	}
-	token, err := randomHex(32)
-	if err != nil {
-		return Binding{}, err
+	token := exec.Token
+	if token == "" {
+		if token, err = randomHex(32); err != nil {
+			return Binding{}, err
+		}
 	}
 	ctx, cancel := context.WithCancel(parent)
 	r := &route{token: token, exec: exec, byName: map[string]Tool{}, ctx: ctx, cancel: cancel}
@@ -328,3 +333,9 @@ func randomHex(n int) (string, error) {
 	}
 	return hex.EncodeToString(buf), nil
 }
+
+// NewToken returns a random route token.
+func NewToken() (string, error) { return randomHex(32) }
+
+// ReadOnlyInstructions describes a route that only has the context tools.
+const ReadOnlyInstructions = "This server only reads data. " + ContextInstructions

@@ -60,7 +60,8 @@ func newToolFixture(t *testing.T) *toolFixture {
 		t.Fatal(err)
 	}
 	f := &toolFixture{store: s, scopeID: scopeID, tools: map[string]Tool{}, attachmentID: attachment.ID}
-	for _, tool := range ContextTools(s, nil, scopeID, map[string]any{"workspace_id": "w", "conversation_id": "conv-1"}) {
+	current := func() map[string]any { return map[string]any{"workspace_id": "w", "conversation_id": "conv-1"} }
+	for _, tool := range ContextTools(s, nil, scopeID, current) {
 		f.tools[tool.Name] = tool
 	}
 	return f

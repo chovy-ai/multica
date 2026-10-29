@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 )
@@ -73,6 +74,9 @@ type ClaudeRunner struct {
 	batcher        *Batcher
 	limiter        *Limiter
 	now            func() time.Time
+	bindContext    ContextBinder
+	// releaseContext ends the context route of the running adapter.
+	releaseContext func()
 
 	mu sync.Mutex
 	// normMu serializes the normalizer between the adapter reader and
@@ -103,6 +107,8 @@ type ClaudeRunnerOptions struct {
 	Limiter        *Limiter
 	ContextMCPName string
 	Now            func() time.Time
+	// Context, when set, gives the adapter Multica's context tools.
+	Context ContextBinder
 }
 
 // NewClaudeRunner returns a runner for one conversation.
@@ -113,7 +119,7 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 	return &ClaudeRunner{
 		rec:            turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		conversationID: opts.ConversationID, start: opts.Start, session: opts.Session,
-		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName,
+		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName, bindContext: opts.Context,
 	}
 }
 
@@ -195,11 +201,14 @@ func (r *ClaudeRunner) Interrupt(ctx context.Context) error {
 // Close stops the adapter, failing a running turn.
 func (r *ClaudeRunner) Close(ctx context.Context) error {
 	r.mu.Lock()
-	adapter, turn := r.adapter, r.turn
-	r.adapter = nil
+	adapter, turn, release := r.adapter, r.turn, r.releaseContext
+	r.adapter, r.releaseContext = nil, nil
 	r.mu.Unlock()
 	if turn != nil {
 		r.finish(turn, "failed", &turnError{kind: "provider_exited", message: "the conversation was closed"})
+	}
+	if release != nil {
+		release()
 	}
 	if adapter == nil {
 		return nil
@@ -230,12 +239,24 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context) (ClaudeAdapter, error)
 		fields["resume"] = id
 	}
 	r.mu.Unlock()
+	release := func() {}
+	if r.bindContext != nil {
+		binding, rel, err := r.bindContext(context.Background(), "", r.currentContext)
+		if err != nil {
+			_ = adapter.Close(ctx)
+			return nil, err
+		}
+		release = rel
+		fields["mcp_servers"] = contextServerEntry(contextName(r.contextName), binding)
+		fields["allowed_tools"] = []string{"mcp__" + contextName(r.contextName) + "__*"}
+	}
 	if _, err := adapter.Request(ctx, "start", fields); err != nil {
+		release()
 		_ = adapter.Close(ctx)
 		return nil, err
 	}
 	r.mu.Lock()
-	r.adapter, r.norm = adapter, norm
+	r.adapter, r.norm, r.releaseContext = adapter, norm, release
 	r.mu.Unlock()
 	go r.watch(adapter)
 	return adapter, nil
@@ -250,8 +271,12 @@ func (r *ClaudeRunner) watch(adapter ClaudeAdapter) {
 		return
 	}
 	r.adapter = nil
-	turn := r.turn
+	turn, release := r.turn, r.releaseContext
+	r.releaseContext = nil
 	r.mu.Unlock()
+	if release != nil {
+		release()
+	}
 	if turn != nil {
 		message := "Claude adapter exited"
 		if err := adapter.Err(); err != nil {
@@ -415,4 +440,23 @@ func claudeOutput(e claude.Event) outputEvent {
 		out.ImageMime, out.ImageData = e.Image.MimeType, e.Image.Data
 	}
 	return out
+}
+
+// currentContext is what current_context reports while the adapter runs.
+func (r *ClaudeRunner) currentContext() map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := map[string]any{"conversation_id": r.rec.conversationID}
+	if r.turn != nil {
+		current["turn_id"] = r.turn.id
+	}
+	return current
+}
+
+// contextName is the context MCP server name, defaulting to Multica's.
+func contextName(name string) string {
+	if name == "" {
+		return contextmcp.Name
+	}
+	return name
 }
