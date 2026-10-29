@@ -25,6 +25,8 @@ export default defineConfig({
           "developer-logs-mcp": resolve("src/main/developer-logs-mcp.ts"),
           // Local conversation host the daemon runs with ELECTRON_RUN_AS_NODE=1.
           "local-conversation-host": resolve("src/local-host/entry.ts"),
+          // One-conversation Claude Agent SDK adapter the daemon runs with ELECTRON_RUN_AS_NODE=1.
+          "claude-host": resolve("src/claude-host/entry.ts"),
         },
       },
       rolldownOptions: {
@@ -38,6 +40,7 @@ export default defineConfig({
             { name: "developer-logs", test: /src\/main\/(developer-log-export|developer-runtime-logs|developer-logs-mcp-server|local-timing-log)\.ts$|tutti-agent-gui-host\/src\/local-timing\.ts$/ },
             // The entry itself stays out: grouping it would merge this chunk into the entry chunk.
             { name: "local-host", test: (id: string) => /src\/(local-host|shared)\/|packages\/core\//.test(id) && !/src\/local-host\/entry\.ts$/.test(id) },
+            { name: "claude-host", test: (id: string) => /src\/claude-host\//.test(id) && !/src\/claude-host\/entry\.ts$/.test(id) },
           ] },
         },
       },

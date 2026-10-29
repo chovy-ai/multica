@@ -47,12 +47,12 @@ export default [
       "no-restricted-syntax": "off",
     },
   },
-  // The local conversation host runs as a daemon-launched sidecar, so it must
-  // stay free of Electron and of the desktop main process; host capabilities
-  // are injected by whoever constructs it.
+  // The local conversation host and the Claude adapter run as daemon-launched
+  // processes, so they must stay free of Electron and of the desktop main
+  // process; host capabilities are injected by whoever constructs them.
   {
-    files: ["src/local-host/**/*.ts"],
-    ignores: ["src/local-host/**/*.test.ts"],
+    files: ["src/local-host/**/*.ts", "src/claude-host/**/*.ts"],
+    ignores: ["src/local-host/**/*.test.ts", "src/claude-host/**/*.test.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
