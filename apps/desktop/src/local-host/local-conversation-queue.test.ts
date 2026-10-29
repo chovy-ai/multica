@@ -37,7 +37,7 @@ describe("Electron-owned conversation queue", () => {
     const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId); cleanup.unshift(() => reopened.stop());
     expect((await reopened.request(scope, "read", { id: entry.id })).promptQueue?.items.map((item) => item.requestId)).toEqual(["keep"]);
   });
-  it("does not interrupt or replay a prompt when removal races with dispatch or arrives after it starts", async () => {
+  it("rejects removal without interrupting or replaying a prompt during or after dispatch", async () => {
     let allowAdmission!: () => void;
     let finish!: () => void;
     const admission = new Promise<void>((resolve) => { allowAdmission = resolve; });
@@ -49,9 +49,9 @@ describe("Electron-owned conversation queue", () => {
       await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("started") });
       const duringDispatch = service.request(scope, "queueUpdate", { id: entry.id, action: "remove", requestId: "started" });
       allowAdmission();
-      await expect(duringDispatch).resolves.toMatchObject({ items: [], paused: false });
+      await expect(duringDispatch).rejects.toThrow("This queued message has already started");
       await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
-      await expect(service.request(scope, "queueUpdate", { id: entry.id, action: "remove", requestId: "started" })).resolves.toMatchObject({ items: [], paused: false });
+      await expect(service.request(scope, "queueUpdate", { id: entry.id, action: "remove", requestId: "started" })).rejects.toThrow("This queued message has already started");
       expect(options.run.mock.calls[0]?.[2].aborted).toBe(false);
       finish();
       await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));

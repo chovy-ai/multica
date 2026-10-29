@@ -674,10 +674,18 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         pendingIdentities.delete(input.agentSessionId);
       }
     }
-    if (input.initialContent?.length) {
-      if (workspace.queueOwner === "desktop") await enqueueDesktop({ agentSessionId: input.agentSessionId, clientSubmitId: input.clientSubmitId, content: input.initialContent });
-      else await send({ workspaceId, agentSessionId: input.agentSessionId, clientSubmitId: input.clientSubmitId, content: input.initialContent }, signal);
+    if (workspace.queueOwner === "desktop") {
+      const session = await loadSession(input.agentSessionId, signal);
+      // Creation is complete. The queue owns admission failures and explicit
+      // retries, including the first prompt's content and stable submit ID.
+      if (input.initialContent?.length) engine.submitPrompt({
+        agentSessionId: input.agentSessionId, clientSubmitId: input.clientSubmitId,
+        content: input.initialContent,
+        displayPrompt: input.initialDisplayPrompt,
+      });
+      return { activation: { mode: "new" as const, status: "attached" as const }, session };
     }
+    if (input.initialContent?.length) await send({ workspaceId, agentSessionId: input.agentSessionId, clientSubmitId: input.clientSubmitId, content: input.initialContent }, signal);
     const session = await loadSession(input.agentSessionId, signal);
     return { activation: { mode: "new" as const, status: "attached" as const }, session };
   }

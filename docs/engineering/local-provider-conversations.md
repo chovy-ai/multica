@@ -47,8 +47,6 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 
 桌面确认接收前，提交内容和原提交编号同步保存在同作用域的窗口会话状态中。GUI 文档重建时只恢复为可操作的排队条目，不自动重发；用户显式重试沿用原编号，主进程按编号去重。收到接收回执或包含该编号的主进程队列快照后清除检查点；明确删除成功也清除，拒收和结果不明时继续保留。
 
-删除队列条目由宿主串行确认，重复删除、不存在的编号和已经派发的编号均返回当前队列快照，不取消或重放执行。GUI 收到删除成功回执后清除对应的未确认提交及操作错误；删除失败保留原文和编号，供用户显式重试。空队列快照本身不证明入队失败，也不会清除未确认提交。
-
 每个本机会话最多排队 100 条消息。GUI 在清空草稿之前同步计入主进程快照中的队列项（包括正在派发但尚未移出的项）及未确认提交，满额时提示用户等待或移除消息，保留原输入，不创建第 101 条恢复项；恢复内容计入容量，其他会话独立计数。主进程继续在串行入队时执行同一上限，约束其他窗口并发提交。GUI 快照可能滞后，因此提交后的拒收或结果不明仍沿用原检查点处理；本限制不改变这些条目的删除契约。
 
 该机制只保存文字及换行，不保存附件上传状态，不保证应用退出后恢复，也不改会话历史文件或消息队列协议。回归见宿主的 `composer-draft-store.test.ts`、`composer-drafts.test.tsx`，以及 `e2e/local-conversation-drafts.spec.ts`；浏览器用例实际移除并重建 iframe，覆盖会话隔离、多次往返、清空和发送结算。
@@ -266,7 +264,9 @@ git diff --check
 左侧项目代表用户引入的本地文件夹。点击“新建项目”通过 `folderProjectAdd` 打开原生目录选择器，校验目录、按真实路径去重，将 `LocalFolderProject` 保存到当前账号、API 环境和工作区隔离的本机文件 `conversations.json` 的 `folderProjects` 中。取消选择不新增记录，不创建云端项目、任务或会话。
 
 - `folderProjects` 读取本机目录清单。分组通过会话 `cwd` 匹配已引入目录；未匹配的会话归入“未分配项目”。已有云端 `projectId` 仍仅表示任务关联，不参与本地目录分组。
-- 组内“＋”调用 `create` 并传入 `folderProjectId`。主进程查找本工作区的目录记录、重新校验路径后，将其作为 Codex / Claude Code 的工作目录；未指定目录的会话仍使用独立临时工作目录。失效目录会明确报错，不会悄悄换成其他目录。
+- 顶部和组内“＋”只打开 GUI 首页草稿，不调用本机会话 `create`，不分配正式会话 ID 或工作目录。桌面通过可选的 `newConversationRequest`（请求序号及项目路径）传入目录；GUI 等旧会话退出后才应用到活动的首页输入器，同一请求只应用一次，普通刷新不覆盖用户后来选择的目录。
+- 首次有效发送沿用 GUI 的 `session.create.cwd` 流程，桌面适配将目录解析为 `folderProjectId` 或已有会话的 `directorySourceId`。主进程查找当前作用域的目录记录并重新校验路径；未指定目录时才建立独立临时工作目录。失效目录明确报错，不会悄悄换成其他目录。新建入口不改输入、附件上传状态、模型或权限，已有的身份绑定、队列接收及显式重试继续使用原有机制。
+- 旧版已保存的空记录不删除或迁移。桌面向 GUI 投影可引用会话时，只收录已有消息、轮次或待发送队列的记录，不按标题判断。带有内容但仍名为“新会话”的记录可正常引用。本机 IPC 和历史文件格式不变。
 - 顶部新建继承当前会话匹配的本地目录，分叉继续继承原工作目录。搜索支持目录名称与路径。空目录分组会保留，重启后仍可见。
 - GUI 的 `AgentGuiSession.localDirectory` 独立携带实际 `cwd` 与可选的项目路径；自动生成的工作目录显示为“不使用项目”，显式选择的目录显示对应项目。该字段只在桌面 GUI 适配边界生成，不写入云端 `ChatSession` 或本机会话文件。
 - 同一运行器切换模型保留目录；Codex / Claude Code 之间切换时，宿主跨输入器挂载保留草稿和项目路径。首次发送才通过 GUI `session.create.cwd` 创建新会话。桌面适配把已引入目录解析为 `folderProjectId`，手动选择过的其他目录解析为当前作用域会话的 `directorySourceId`；主进程重新校验目录及真实路径。目录失效或来源不属于当前工作区时明确失败；无项目的新会话仍创建自己的独立工作目录。
@@ -279,6 +279,9 @@ git diff --check
 pnpm --filter @multica/desktop test src/local-host/local-folder-projects.test.ts src/local-host/local-conversation-service.test.ts src/local-host/local-conversation-import.test.ts src/renderer/src/platform/local-conversation-projects.test.ts src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/stores/local-conversation-project-visibility.test.ts
 pnpm --filter @multica/desktop exec vitest run src/renderer/src/platform/local-conversation-service.test.ts
 pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/runtime/runtime.test.ts
+pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/composer-footer-controls.test.tsx
+pnpm --filter @multica/views exec vitest run tutti-agent-gui/tutti-agent-gui-panel.test.tsx
+pnpm exec playwright test e2e/local-new-conversation.spec.ts --project=chromium
 pnpm exec playwright test e2e/local-project-context.spec.ts e2e/local-provider-gui.spec.ts --project=chromium
 pnpm --filter @multica/desktop typecheck
 pnpm --filter @multica/desktop exec eslint src/local-host/local-conversation-service.ts src/local-host/local-conversation-service.test.ts src/renderer/src/pages/local-conversation-flow.tsx src/renderer/src/pages/local-conversation-flow.test.tsx src/renderer/src/platform/local-conversation-projects.ts src/renderer/src/platform/local-conversation-projects.test.ts src/renderer/src/platform/local-conversation-service.ts src/renderer/src/platform/local-conversation-service.test.ts

@@ -120,6 +120,21 @@ describe("isolated Agent GUI document lifetime", () => {
     expect(screen.getByTitle("Agent GUI")).toBe(document);
     expect(channels).toHaveLength(1);
   });
+  it("forwards repeated home project requests without creating a session or replacing the document", async () => {
+    const view = render(<TuttiAgentGuiPanel {...props} />, { wrapper: TestProvider });
+    await ready();
+    const frame = screen.getByTitle("Agent GUI");
+    for (const sequence of [1, 2]) {
+      const request = { sequence, projectPath: sequence === 1 ? "/project" : null };
+      await act(async () => { view.rerender(<TuttiAgentGuiPanel {...props} selectedAgentId="local:codex" newConversationRequest={request} />); });
+      expect(mock.services[0]!.publish).toHaveBeenLastCalledWith(expect.objectContaining({
+        type: "init", snapshot: expect.objectContaining({ activeSessionId: null, newConversationRequest: request }),
+      }));
+    }
+    expect(mock.services[0]!.request).not.toHaveBeenCalled();
+    expect(screen.getByTitle("Agent GUI")).toBe(frame);
+    expect(channels).toHaveLength(1);
+  });
   it("checks actual focus for a command arriving before the foreground hook refreshes", async () => {
     mock.foreground = false;
     render(<TuttiAgentGuiPanel {...props} />, { wrapper: TestProvider });
