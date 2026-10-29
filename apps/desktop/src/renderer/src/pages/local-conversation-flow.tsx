@@ -26,7 +26,8 @@ import type { ParentServiceOptions } from "@multica/views/conversation-flow/serv
 import type { LocalConversation, LocalConversationMethods, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { localMessageDisplayContent } from "@multica/core/local-conversation/protocol";
 import { createLocalConversationParentService, localConversationKey, localTargetId } from "../platform/local-conversation-service";
-import { groupLocalConversations, projectForDirectory } from "../platform/local-conversation-projects";
+import { useLocalConversationPages } from "../platform/local-conversation-pages";
+import { projectForDirectory } from "../platform/local-conversation-projects";
 import { LocalConversationImportButton } from "./local-conversation-import";
 import { LocalSideWorkspace, type SideWorkspaceHandle } from "./local-side-workspace";
 import { PanelRightOpen } from "lucide-react";
@@ -102,7 +103,6 @@ export function LocalConversationFlowPage() {
   const [contextSelection, setContextSelection] = useState("");
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const [focusSequence, setFocusSequence] = useState(0);
-  const sessions = useQuery({ queryKey: localConversationKey(scope), queryFn: () => client.request(scope, "list", {}), enabled: !!workspace && !!userId, refetchOnMount: "always" });
   const providers = useQuery({ queryKey: [...localConversationKey(scope), "providers"], queryFn: () => client.request(scope, "providers", {}), enabled: !!workspace && !!userId });
   const projectQuery = useQuery({ ...projectListOptions(scope.workspaceId), enabled: !!workspace && !!userId });
   const projects = (projectQuery.data ?? []).filter((project) => project.workspace_id === scope.workspaceId);
@@ -111,7 +111,10 @@ export function LocalConversationFlowPage() {
   const folderProjects = folderQuery.data ?? [];
   const hiddenProjectIds = hiddenProjectPreferences.filter((id) => folderProjects.some((project) => project.id === id));
   const selectedId = searchParams.get("session");
-  const selected = sessions.data?.find((entry) => entry.id === selectedId);
+  const sessions = useLocalConversationPages(client, scope, folderProjects, hiddenProjectIds, archived, search, !!workspace && !!userId && folderQuery.isSuccess);
+  const selectedQuery = useQuery({ queryKey: [...localConversationKey(scope), "selected", selectedId], queryFn: () => client.request(scope, "read", { id: selectedId! }), enabled: !!workspace && !!userId && !!selectedId, retry: false, refetchOnMount: "always" });
+  const selected = selectedQuery.data;
+  const selectedRef = useRef(selectedId); selectedRef.current = selectedId;
   const provider = selected?.provider ?? (searchParams.get("provider") === "claude" ? "claude" : "codex");
   const active = pathname === paths.conversationFlow() && getCurrentSlug() === slug;
   const intent = `${userId}:${workspace?.id}:${selectedId}:${provider}`;
@@ -124,20 +127,28 @@ export function LocalConversationFlowPage() {
   };
   latest.current.select = select;
   latest.current.locate = (id, turnId, quote) => {
-    const source = sessions.data?.find((entry) => entry.id === id);
-    setSearch(""); setArchived(source?.archived ?? false);
-    setCollapsedProjects((previous) => { const next = new Set(previous); next.delete(source?.projectId ?? "unassigned"); return next; });
-    select(id, source?.provider); setLocateRequest({ sessionId: id, turnId, quote, sequence: Date.now() });
+    const source = sessions.data?.find((entry) => entry.id === id) ?? (selected?.id === id ? selected : undefined);
+    const sequence = ++focusIntentSequence.current;
+    const startedIntent = currentIntent.current;
+    const locate = (entry: LocalConversation) => {
+      if (sequence !== focusIntentSequence.current || currentIntent.current !== startedIntent) return;
+      setSearch(""); setArchived(entry.archived);
+      const project = projectForDirectory(folderProjects, entry.cwd);
+      setCollapsedProjects((previous) => { const next = new Set(previous); next.delete(project?.id ?? "unassigned"); return next; });
+      select(id, entry.provider); setLocateRequest({ sessionId: id, turnId, quote, sequence });
+    };
+    if (source) locate(source);
+    else void qc.fetchQuery({ queryKey: [...localConversationKey(scope), "selected", id], queryFn: () => client.request(scope, "read", { id }) }).then(locate).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
   };
-  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: chinese ? "zh-CN" : "en", getSelectionIntent: () => currentIntent.current, onLocalSelect: (id, choice) => latest.current.select(id, choice), onOpenSide: (id, sourceId) => sideWorkspace.current?.openSide(id, sourceId), onOpenResource: (id, url) => { void sideWorkspace.current?.openResource(id, url, id).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error))); }, onLocateSource: (sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote) }, client), [client, chinese]);
+  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: chinese ? "zh-CN" : "en", getSelectionIntent: () => currentIntent.current, getSelectedSessionId: () => selectedRef.current, onLocalSelect: (id, choice) => latest.current.select(id, choice), onOpenSide: (id, sourceId) => sideWorkspace.current?.openSide(id, sourceId), onOpenResource: (id, url) => { void sideWorkspace.current?.openResource(id, url, id).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error))); }, onLocateSource: (sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote) }, client), [client, chinese]);
   useEffect(() => client.subscribe((changed) => {
     if (changed.userId === scope.userId && changed.workspaceId === scope.workspaceId) void qc.invalidateQueries({ queryKey: localConversationKey(changed) });
   }), [client, qc, scope.userId, scope.workspaceId]);
   useEffect(() => {
     // Restored tabs may still contain an old cloud chat ID. Cloud history remains in Chat.
     // A stale list or the outgoing page must not clear another tab's selection.
-    if (active && sessions.isSuccess && sessions.fetchStatus === "idle" && selectedId && !sessions.data.some((entry) => entry.id === selectedId)) latest.current.select(null, provider);
-  }, [active, sessions.isSuccess, sessions.fetchStatus, sessions.data, selectedId, provider]);
+    if (active && selectedQuery.isError && selectedQuery.error.message.includes("Local conversation not found") && selectedId) latest.current.select(null, provider);
+  }, [active, selectedQuery.isError, selectedQuery.error, selectedId, provider]);
   if (!workspace || !userId) return null;
   const labels = chinese ? {
     sessions: "本机会话", new: "新建会话", search: "搜索会话", empty: "还没有本机会话", noResults: "没有匹配的会话", retry: "重试", loading: "正在加载…", archive: "归档", history: "返回会话", pinned: "置顶", unpin: "取消置顶", directory: "选择工作目录", newTitle: "新建会话", storage: "历史保存在本机", directoryLocked: "工作目录在首次发送后固定；如需更换，请新建会话。", unavailable: "请先在本机安装 Codex 或 Claude Code", failed: "操作失败，请重试", fork: "分叉", forking: "正在分叉…", forkHint: "从当前历史创建独立会话", forkWaiting: "执行结束后可分叉", forkEmpty: "发送消息后可分叉",
@@ -150,8 +161,7 @@ export function LocalConversationFlowPage() {
   const projectLabels = chinese ? { unassigned: "未分配项目", unavailable: "项目不可用", actions: "会话操作", move: "关联工作区项目", noWorkspaceProject: "不关联工作区项目", create: "新建项目会话", new: "新建项目", empty: "暂无会话", loadFailed: "项目加载失败", folderLoadFailed: "本地项目加载失败", manage: "项目操作", remove: "从列表移除", removed: "已移除项目", restore: "恢复项目", removedNotice: "已从列表移除", undo: "撤销" }
     : { unassigned: "No project", unavailable: "Unavailable project", actions: "Conversation actions", move: "Link workspace project", noWorkspaceProject: "No workspace project", create: "New conversation in project", new: "New project", empty: "No conversations", loadFailed: "Could not load projects", folderLoadFailed: "Could not load local projects", manage: "Project actions", remove: "Remove from list", removed: "Removed projects", restore: "Restore project", removedNotice: "Project removed from list", undo: "Undo" };
   const folderRestartMessage = chinese ? "本地项目功能已更新，请重启桌面应用" : "Local projects have been updated. Restart the desktop app.";
-  const mainSessions = (sessions.data ?? []).filter((entry) => !entry.side && entry.messages.length > 0);
-  const groups = groupLocalConversations(mainSessions, folderProjects, archived, search).filter((group) => group.id === null || !hiddenProjectIds.includes(group.id));
+  const groups = sessions.groups;
   const addProject = async () => {
     if (addingProject) return;
     setAddingProject(true);
@@ -366,7 +376,10 @@ export function LocalConversationFlowPage() {
                     </DropdownMenu>}
                   </div>
                 </div>
-                {expanded && (group.sessions.length ? <div className="flex flex-col gap-1">{group.sessions.map(renderSession)}</div> : <p className="px-3 py-2 text-caption text-muted-foreground">{projectLabels.empty}</p>)}
+                {expanded && <>
+                  {group.sessions.length ? <div className="flex flex-col gap-1">{group.sessions.map(renderSession)}</div> : <p className="px-3 py-2 text-caption text-muted-foreground">{projectLabels.empty}</p>}
+                  {group.nextCursor && <Button variant="ghost" size="sm" className="mx-2" disabled={sessions.loading.has(group.id) || sessions.isFetching} aria-busy={sessions.loading.has(group.id)} onClick={() => { void sessions.loadMore(group).catch(report); }}>{sessions.loading.has(group.id) ? labels.loading : chinese ? "加载更多" : "Load more"}</Button>}
+                </>}
               </section>;
             }) : <p className="px-3 py-8 text-center text-body text-muted-foreground">{search ? labels.noResults : labels.empty}</p>}
           </div>

@@ -40,6 +40,7 @@ export function projectLocalTurn(entry: LocalConversation, turn: LocalConversati
 export function createLocalConversationParentService(options: ParentServiceOptions & {
   onLocalSelect(id: string | null, provider?: LocalProviderId): void;
   getSelectionIntent?: () => string;
+  getSelectedSessionId?: () => string | null;
   onOpenSide?: (id: string, sourceId: string) => void;
   onOpenResource?: (sessionId: string, url: string) => void;
   onLocateSource?: (sessionId: string, turnId?: string, quote?: string) => void;
@@ -76,12 +77,22 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   };
 
   async function load(): Promise<AgentGuiWorkspaceState> {
-    const [remote, providers, sessions, folderProjects] = await Promise.all([remoteWorkspace(), local("providers", {}), local("list", {}), local("folderProjects", {})]);
+    const [remote, providers, runtime, folderProjects] = await Promise.all([remoteWorkspace(), local("providers", {}), local("runtimeState", {}), local("folderProjects", {})]);
+    const loaded = options.queryClient.getQueriesData<import("./local-conversation-pages").ConversationPageGroup[]>({ queryKey: [...localConversationKey(scope), "pages"] });
+    const summaries = loaded.flatMap(([, groups]) => groups?.flatMap((group) => group.sessions) ?? []);
+    // Standalone hosts (e.g. Side panes) share the page cache. They never request later pages.
+    if (!loaded.length) {
+      const pages = await Promise.all([...folderProjects.map((project) => project.id), null].map((folderProjectId) => local("listPage", { folderProjectId })));
+      summaries.push(...pages.flatMap((page) => page.sessions));
+    }
+    const selectedId = options.getSelectedSessionId?.();
+    if (selectedId && !summaries.some((entry) => entry.id === selectedId)) summaries.push(await read(selectedId));
+    const sessions = [...new Map(summaries.map((entry) => [entry.id, entry])).values()];
     assertCurrent();
-    return { local: true, composerDraftScope: JSON.stringify([api.getBaseUrl(), options.storagePrefix ?? ""]), queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: remote.agents, movedQueueRequests: sessions.flatMap((entry) => entry.side ? [entry.side.requestId] : []),
+    return { local: true, composerDraftScope: JSON.stringify([api.getBaseUrl(), options.storagePrefix ?? ""]), queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: remote.agents, movedQueueRequests: runtime.movedQueueRequests,
       executionTargets: providers.map((entry) => ({ id: localTargetId(entry.id), name: entry.name, provider: entry.id, iconUrl: "", canInvoke: entry.available, canFork: true, runtimeBound: entry.available, runtimeOnline: entry.available, unavailableReason: entry.available ? undefined : "未在本机安装" })),
-      sessions: sessions.filter((entry) => entry.messages.length > 0 || entry.turns.length > 0 || (entry.promptQueue?.items.length ?? 0) > 0).map((entry) => projectLocalSession(entry, scope)), folderProjects,
-      pendingTasks: sessions.flatMap((entry) => entry.turns.filter((turn) => turn.status === "running").map((turn) => ({ task_id: turn.id, status: "running", chat_session_id: entry.id }))),
+      sessions: sessions.map((entry) => projectLocalSession(entry, scope)), folderProjects,
+      pendingTasks: runtime.pendingTasks,
     };
   }
   async function detail(id: string): Promise<AgentGuiSessionDetail> {
@@ -195,8 +206,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
           const folder = projectForDirectory(projects, params.cwd);
           if (folder) directory = { folderProjectId: folder.id };
           else {
-            const sessions = await local("list", {});
-            const source = sessions.find((entry) => entry.cwd === params.cwd && !isAutomaticLocalDirectory(entry.cwd));
+            const source = !isAutomaticLocalDirectory(params.cwd) ? await local("directorySource", { cwd: params.cwd }) : null;
             if (!source) throw new Error("Local project directory not found in this workspace");
             directory = { directorySourceId: source.id };
           }
@@ -281,9 +291,13 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     publish({ type: "invalidate", scope: "session", sessionId: id }); publish({ type: "invalidate", scope: "workspace" });
   });
   const unsubscribeCloud = cloud.subscribe((event) => { if (event.type === "invalidate" && event.scope === "workspace") { cloudDirty = true; publish(event); } });
+  const unsubscribePages = options.queryClient.getQueryCache().subscribe((event) => {
+    const key = event.query.queryKey;
+    if (event.type === "updated" && event.action.type === "success" && key[0] === "local-conversations" && key[1] === scope.userId && key[2] === scope.workspaceId && key[3] === "pages") publish({ type: "invalidate", scope: "workspace" });
+  });
   return { load, request: request as <M extends AgentGuiRpcMethod>(method: M, params: AgentGuiRpcMethods[M]["params"]) => Promise<AgentGuiRpcMethods[M]["result"]>,
     publish, subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     reconnect: () => { cloudDirty = true; cloud.reconnect(); publish({ type: "invalidate", scope: "workspace" }); },
-    dispose: () => { disposed = true; unsubscribe(); unsubscribeCloud(); cloud.dispose(); listeners.clear(); },
+    dispose: () => { disposed = true; unsubscribe(); unsubscribeCloud(); unsubscribePages(); cloud.dispose(); listeners.clear(); },
   };
 }

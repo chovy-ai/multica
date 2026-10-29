@@ -36,8 +36,9 @@ it("publishes completed Codex images even when a running-history read was alread
   await vi.waitFor(async () => expect((await service.request(scope, "list", {}))[0]!.turns).toHaveLength(0));
   finishScan(); await refresh; await service.stop();
   const [folder] = await readdir(options.root);
-  const saved = JSON.parse(await readFile(join(options.root, folder!, "conversations.json"), "utf8"));
-  expect(saved.sessions[0].turns[0].events.filter((event: { tool?: string }) => event.tool === "ImageGeneration")).toHaveLength(1);
+  const index = JSON.parse(await readFile(join(options.root, folder!, "index.json"), "utf8"));
+  const saved = JSON.parse(await readFile(join(options.root, folder!, "details", index.sessions[0].file), "utf8"));
+  expect(saved.turns[0].events.filter((event: { tool?: string }) => event.tool === "ImageGeneration")).toHaveLength(1);
   expect(options.notify).toHaveBeenCalledWith(scope, entry.id);
 });
 it.each(["codex", "claude"] as const)("persists %s output images, restores history and forks without exposing arbitrary local files", async (provider) => {
@@ -76,6 +77,8 @@ it.each(["codex", "claude"] as const)("persists %s output images, restores histo
   expect(restored.turns[0]!.events.filter((event) => event.tool === "ImageGeneration")).toHaveLength(1);
   expect(await granted(restarted, entry.id)).toMatchObject({ bytes: png });
   const folders = await readdir(options.root);
-  expect(await readFile(join(options.root, folders[0]!, "conversations.json"), "utf8")).not.toContain(png);
+  const index = JSON.parse(await readFile(join(options.root, folders[0]!, "index.json"), "utf8"));
+  const details = await Promise.all(index.sessions.map((item: { file: string }) => readFile(join(options.root, folders[0]!, "details", item.file), "utf8")));
+  expect(details.join("\n")).not.toContain(png);
   expect(run.mock.calls[0]![0].systemPrompt).toContain("Markdown image syntax");
 });

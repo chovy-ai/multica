@@ -340,7 +340,10 @@ process.stdin.on('end',async()=>{
       expect(metadata).not.toContain(secret); expect(run.systemPrompt).not.toContain(secret);
       await service.flush();
       const key = createHash("sha256").update(JSON.stringify([run.env.MULTICA_SERVER_URL, "user", "workspace"])).digest("hex");
-      expect(await readFile(join(root, "conversations", key, "conversations.json"), "utf8")).not.toContain(secret);
+      const dir = join(root, "conversations", key);
+      const index = await readFile(join(dir, "index.json"), "utf8");
+      expect(index).not.toContain(secret);
+      for (const item of JSON.parse(index).sessions) expect(await readFile(join(dir, "details", item.file), "utf8")).not.toContain(secret);
     }
     if (process.platform !== "win32") expect((await stat(run.mcp!.claudeConfigPath)).mode & 0o777).toBe(0o600);
   });

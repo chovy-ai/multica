@@ -313,10 +313,13 @@ describe("background results without a new user message", () => {
     await vi.waitFor(async () => expect((await f.read()).turns[0]?.backgroundTasks?.[0]?.delivery?.status).toBe(status), { timeout: 2500 });
     await f.service.flush();
     const directory = (await readdir(f.options.root)).find((name) => name.length === 64)!;
-    const path = join(f.options.root, directory, "conversations.json");
+    const dir = join(f.options.root, directory);
+    const path = join(dir, "index.json");
     const atCrash = await readFile(path, "utf8");
+    const details = await Promise.all(JSON.parse(atCrash).sessions.map(async (item: { file: string }) => ({ file: item.file, content: await readFile(join(dir, "details", item.file), "utf8") })));
     await f.service.stop();
-    // Restore the last atomic file from before shutdown to model a crashed app.
+    // Restore the committed index and its detail versions from before shutdown.
+    for (const detail of details) await writeFile(join(dir, "details", detail.file), detail.content);
     await writeFile(path, atCrash);
     const reopened = new LocalConversationService(f.options); reopened.setCurrentUser(scope.userId);
     cleanups.push(() => reopened.stop());

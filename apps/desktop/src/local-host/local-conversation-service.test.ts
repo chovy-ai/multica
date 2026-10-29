@@ -24,6 +24,13 @@ async function setup(run: typeof runLocalProvider = async () => ({ output: "Repl
   cleanups.push(async () => { await service.stop(); await rm(root, { recursive: true, force: true }); });
   return { service, options };
 }
+async function persisted(root: string): Promise<string> {
+  const folder = (await readdir(root)).find((folder) => folder.length === 64)!;
+  const dir = join(root, folder);
+  const index = await readFile(join(dir, "index.json"), "utf8");
+  const data = JSON.parse(index);
+  return index + (await Promise.all(data.sessions.map((item: { file: string }) => readFile(join(dir, "details", item.file), "utf8")))).join("\n");
+}
 describe("local conversation persistence and execution", () => {
   it("preserves Codex message paragraphs from live events through completion and reopening", async () => {
     let finish!: () => void;
@@ -143,6 +150,7 @@ describe("local conversation persistence and execution", () => {
     const fork = { ...history("fork", "2026-10-27T10:00:00Z", "2026-10-27T12:00:00Z"), forkedFrom: "source" };
     const empty = { ...template, id: "empty", createdAt: "2026-10-27T10:02:00Z", updatedAt: "2026-10-27T10:02:00Z" };
     const pinned = { ...history("pinned", "2026-10-27T08:00:00Z"), pinned: true };
+    await rm(join(options.root, folders.find((folder) => folder.length === 64)!, "index.json"));
     await writeFile(path, JSON.stringify({ schemaVersion: 1, sessions: [history("z", "2026-10-27T10:00:00Z"), imported, history("a", "2026-10-27T10:00:00Z"), fork, empty, pinned] }));
     const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId); cleanups.unshift(() => reopened.stop());
     const list = await reopened.request(scope, "list", {});
@@ -330,9 +338,11 @@ describe("local conversation persistence and execution", () => {
     await service.request(scope, "send", { id: entry.id, content: "Saved request" });
     await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
     await service.stop();
-    const folders = await readdir(options.root); const path = join(options.root, folders.find((folder) => folder.length === 64)!, "conversations.json");
+    const folders = await readdir(options.root); const dir = join(options.root, folders.find((folder) => folder.length === 64)!);
+    const index = JSON.parse(await readFile(join(dir, "index.json"), "utf8"));
+    const path = join(dir, "details", index.sessions[0].file);
     const saved = JSON.parse(await readFile(path, "utf8"));
-    saved.sessions[0].turns[0].backgroundTasks = [{ id: "old-watcher", description: "Old monitor", status: "running" }];
+    saved.turns[0].backgroundTasks = [{ id: "old-watcher", description: "Old monitor", status: "running" }];
     await writeFile(path, JSON.stringify(saved)); options.run.mockClear();
     const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId); cleanups.push(() => reopened.stop());
     const restored = await reopened.request(scope, "read", { id: entry.id });
@@ -370,10 +380,12 @@ describe("local conversation persistence and execution", () => {
     const { service, options } = await setup(); const source = await service.request(scope, "create", { provider: "codex" });
     const requestId = `side:${source.id}:recovery`;
     const side = await service.request(scope, "sideCreate", { id: source.id, requestId, pending: { requestId, content: "Recover this queued message" } });
-    const root = options.root; const blocked = join(root, "not-a-directory"); await writeFile(blocked, "blocked"); options.root = blocked;
+    const folder = (await readdir(options.root)).find((folder) => folder.length === 64)!;
+    const blocked = join(options.root, folder); const backup = `${blocked}-backup`;
+    await rename(blocked, backup); await writeFile(blocked, "blocked");
     await expect(service.request(scope, "send", { id: side.id, requestId, content: "Recover this queued message" })).rejects.toThrow();
     expect(options.run).not.toHaveBeenCalled(); expect((await service.request(scope, "read", { id: side.id })).turns).toHaveLength(0);
-    options.root = root;
+    await rm(blocked); await rename(backup, blocked);
     await service.request(scope, "send", { id: side.id, requestId, content: "Recover this queued message" });
     await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
   });
@@ -539,8 +551,7 @@ describe("local conversation persistence and execution", () => {
     expect(options.run.mock.calls[0]![0]).toMatchObject({ provider, content: "Show an interactive chart" });
     expect(options.run.mock.calls[1]![0]).toMatchObject({ resume: "native-thread", content: "Adjust its labels" });
     await service.flush();
-    const [folder] = await readdir(options.root);
-    expect(await readFile(join(options.root, folder!, "conversations.json"), "utf8")).not.toContain("Multica's conversation panel can render");
+    expect(await persisted(options.root)).not.toContain("Multica's conversation panel can render");
   });
   it("persists project moves and clearing without changing native history or working directory", async () => {
     const { service, options } = await setup();
@@ -627,9 +638,8 @@ describe("local conversation persistence and execution", () => {
     expect(options.run).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt: expect.stringContaining(context.systemPrompt), env: context.env, content: "Read a task" }), expect.any(Function), expect.any(AbortSignal));
     expect(context.dispose).toHaveBeenCalledOnce();
     await service.flush();
-    const [folder] = await readdir(options.root);
-    const persisted = await readFile(join(options.root, folder!, "conversations.json"), "utf8");
-    expect(persisted).not.toContain(context.systemPrompt); expect(persisted).not.toContain("test-secret");
+    const saved = await persisted(options.root);
+    expect(saved).not.toContain(context.systemPrompt); expect(saved).not.toContain("test-secret");
   });
   it("does not launch a provider when the account changes while query context is preparing", async () => {
     const context = { systemPrompt: "scoped query", env: {}, dispose: vi.fn(async () => {}) };

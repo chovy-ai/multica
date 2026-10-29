@@ -79,6 +79,27 @@ async function setup(getSelectionIntent?: () => string) {
   return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage, base, chooseDirectory };
 }
 describe("local providers and official agent invocation routing", () => {
+  it("initializes with one page of summaries and synchronizes off-page runs without reading their resources", async () => {
+    const { service, client, bridge } = await setup();
+    const scope = { userId: "user", workspaceId: "ws" };
+    const entries = [];
+    for (let index = 0; index < 9; index++) {
+      const entry = await service.request(scope, "create", { provider: "codex", title: `Session ${index}` });
+      await service.request(scope, "send", { id: entry.id, content: "Fixture message" });
+      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
+      if (index < 8) await service.request(scope, "update", { id: entry.id, pinned: true });
+      entries.push(entry);
+    }
+    const offPage = entries[8]!;
+    const started = await service.request(scope, "remoteBegin", { id: offPage.id, content: "Background review", agents: [{ id: "design", name: "Design" }] });
+    const request = vi.spyOn(client, "request");
+    const workspace = await bridge.load();
+    expect(workspace.sessions).toHaveLength(8);
+    expect(workspace.sessions.some((entry) => entry.id === offPage.id)).toBe(false);
+    expect(workspace.pendingTasks).toContainEqual({ task_id: started.turns[0]!.id, status: "running", chat_session_id: offPage.id });
+    expect(request.mock.calls.filter(([, method]) => method === "listPage")).toHaveLength(1);
+    expect(request.mock.calls.some(([, method]) => ["list", "read", "fileInfo", "fileRead", "imageRead"].includes(method))).toBe(false);
+  });
   it("omits old empty sessions from the reference catalog without deleting history or hiding submitted work", async () => {
     const { bridge, service } = await setup();
     const scope = { userId: "user", workspaceId: "ws" };

@@ -39,11 +39,32 @@ beforeEach(() => {
   mock.folderError = null;
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   source = { id: "source", title: "Original", provider: "codex", cwd: "/owned/work", providerSessionId: "native", model: null, pinned: false, archived: false, createdAt: "2026-01-01", updatedAt: "2026-01-01", messages: [{ id: "message", role: "assistant", content: "Result", turnId: "turn", createdAt: "2026-01-01" }], turns: [] };
-  mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source] : method === "providers" ? [{ id: "codex", available: true }] : undefined);
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localConversations: { request: (scope: unknown, method: string, params: unknown) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : method === "folderProjects" ? mock.folderError ? Promise.reject(mock.folderError) : Promise.resolve(mock.folders) : mock.request(scope, method, params), subscribe: () => () => {} } } });
+  mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source] : method === "providers" ? [{ id: "codex", available: true }] : undefined);
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localConversations: { request: async (scope: unknown, method: string, params: Record<string, unknown>) => {
+    if (method === "capabilities") return { protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) };
+    if (method === "folderProjects") { if (mock.folderError) throw mock.folderError; return mock.folders; }
+    const result = await mock.request(scope, method, params);
+    if (method === "read" && (!result || Array.isArray(result))) {
+      const rows = await mock.request(scope, "listPage", {});
+      const entry = (Array.isArray(rows) ? rows : rows.sessions).find((entry: LocalConversation) => entry.id === params.id);
+      if (!entry) throw new Error("Local conversation not found");
+      return entry;
+    }
+    if (method !== "listPage" || !Array.isArray(result)) return result;
+    const rows = result.filter((entry: LocalConversation) => {
+      const project = mock.folders.find((project) => project.path.replace(/\/$/, "") === entry.cwd.replace(/\/$/, ""));
+      const search = String(params.search ?? "").toLowerCase();
+      return !entry.side && !!entry.messages?.length && entry.archived === !!params.archived && (project?.id ?? null) === params.folderProjectId && (!search || [entry.title, entry.messages.at(-1)?.content, project?.title, project?.path].some((value) => value?.toLowerCase().includes(search)));
+    });
+    const offset = Number(params.cursor ?? 0);
+    return { sessions: rows.slice(offset, offset + 8), nextCursor: offset + 8 < rows.length ? String(offset + 8) : null };
+  }, subscribe: () => () => {} } } });
   qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
 });
 afterEach(() => { cleanup(); qc.clear(); useProjectVisibilityStore.setState({ hiddenByScope: {} }); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.removeItem("multica_local_conversation_width"); localStorage.clear(); });
+function cachedSessions() {
+  return qc.getQueriesData<{ sessions: LocalConversation[] }[]>({ queryKey: ["test-local-sessions", "pages"] }).flatMap(([, groups]) => groups?.flatMap((group) => group.sessions) ?? []);
+}
 const page = () => <QueryClientProvider client={qc}><LocalConversationFlowPage /></QueryClientProvider>;
 const folder = (id: string, title: string, path = "/owned/work"): LocalFolderProject => ({ id, title, path, createdAt: "2026-01-01T00:00:00Z" });
 function activateWithPointer(element: HTMLElement) {
@@ -53,6 +74,78 @@ function activateWithPointer(element: HTMLElement) {
   fireEvent.pointerUp(element, { pointerType: "mouse", button: 0 });
   fireEvent.click(element, { button: 0, detail: 1 });
 }
+
+describe("project conversation pagination", () => {
+  function rows(count = 17) { return Array.from({ length: count }, (_, index) => ({ ...source, id: `row-${index}`, title: `Paged conversation ${index}` })); }
+  const pageCalls = () => mock.request.mock.calls.filter((call) => call[1] === "listPage" && call[2].folderProjectId !== undefined);
+  it("loads 8 then 8 then 1 only on clicks, keeps loaded pages through refresh, and ignores scroll", async () => {
+    mock.selected = "";
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? rows() : []);
+    render(page());
+    const list = await screen.findByTestId("local-conversation-sessions");
+    await waitFor(() => expect(within(list).getAllByRole("link")).toHaveLength(8));
+    expect(pageCalls()).toHaveLength(1);
+    fireEvent.scroll(list, { target: { scrollTop: 10000 } });
+    expect(pageCalls()).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+    await waitFor(() => expect(within(list).getAllByRole("link")).toHaveLength(16));
+    await act(async () => { await qc.invalidateQueries({ queryKey: ["test-local-sessions", "pages"] }); });
+    expect(within(list).getAllByRole("link")).toHaveLength(16);
+    expect(pageCalls().map((call) => call[2].cursor)).toEqual([undefined, "8", undefined, "8"]);
+    fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+    await waitFor(() => expect(within(list).getAllByRole("link")).toHaveLength(17));
+    expect(screen.queryByRole("button", { name: "加载更多" })).not.toBeInTheDocument();
+    expect(mock.request.mock.calls.some((call) => ["list", "read", "fileInfo", "fileRead", "imageRead"].includes(call[1]))).toBe(false);
+  });
+  it("deduplicates rapid clicks and retries a failed page without dropping loaded rows", async () => {
+    mock.selected = "";
+    let reject!: (error: Error) => void;
+    let fail = true;
+    mock.request.mockImplementation(async (_scope, method, params) => {
+      if (method !== "listPage") return [];
+      if (params.cursor && fail) return new Promise((_resolve, failRequest) => { reject = failRequest; });
+      return rows(9);
+    });
+    render(page());
+    const more = await screen.findByRole("button", { name: "加载更多" });
+    fireEvent.click(more); fireEvent.click(more);
+    await waitFor(() => expect(more).toBeDisabled());
+    expect(pageCalls()).toHaveLength(2);
+    await act(async () => { reject(new Error("Page unavailable")); });
+    expect(mock.error).toHaveBeenCalledWith("Page unavailable");
+    expect(screen.getAllByRole("link")).toHaveLength(8);
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+    await waitFor(() => expect(screen.getAllByRole("link")).toHaveLength(9));
+    expect(pageCalls()).toHaveLength(3);
+  });
+  it("keeps project pagination independent and searches beyond the loaded page", async () => {
+    mock.selected = "";
+    mock.folders = [folder("a", "Project A"), folder("b", "Project B", "/other")];
+    const entries = [...rows(), ...rows(9).map((entry) => ({ ...entry, id: `b-${entry.id}`, cwd: "/other" }))];
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? entries : []);
+    render(page());
+    const a = within(await screen.findByRole("region", { name: "Project A" }));
+    const b = within(screen.getByRole("region", { name: "Project B" }));
+    expect(a.getAllByRole("link")).toHaveLength(8); expect(b.getAllByRole("link")).toHaveLength(8);
+    fireEvent.click(a.getByRole("button", { name: "加载更多" }));
+    await waitFor(() => expect(a.getAllByRole("link")).toHaveLength(16));
+    expect(b.getAllByRole("link")).toHaveLength(8);
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), { target: { value: "Paged conversation 16" } });
+    expect(await screen.findByRole("link", { name: /Paged conversation 16/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "加载更多" })).not.toBeInTheDocument();
+  });
+  it("opens a deep link outside the first page without loading intervening pages or clearing selection", async () => {
+    const entries = rows(); mock.selected = entries[16]!.id;
+    mock.request.mockImplementation(async (_scope, method, params) => method === "listPage" ? entries : method === "read" ? entries.find((entry) => entry.id === params.id) : []);
+    render(page());
+    expect(await screen.findByText("Paged conversation 16")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByRole("link")).toHaveLength(8));
+    expect(mock.replace).not.toHaveBeenCalled();
+    expect(pageCalls()).toHaveLength(1);
+    expect(mock.request).toHaveBeenCalledWith(expect.anything(), "read", { id: entries[16]!.id });
+  });
+});
 
 describe("restoring the selected conversation after a tab switch", () => {
   it("leaves image markers out of local session previews without changing saved history", async () => {
@@ -69,9 +162,9 @@ describe("restoring the selected conversation after a tab switch", () => {
     const restored = { ...source, id: "restored-session", title: "Previously selected conversation", provider: "claude" as const };
     mock.selected = restored.id;
     let resolve!: (entries: LocalConversation[]) => void;
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? new Promise<LocalConversation[]>((done) => { resolve = done; }) : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? new Promise<LocalConversation[]>((done) => { resolve = done; }) : []);
     render(page());
-    await waitFor(() => expect(mock.request).toHaveBeenCalledWith(expect.anything(), "list", {}));
+    await waitFor(() => expect(mock.request).toHaveBeenCalledWith(expect.anything(), "listPage", {}));
     expect(mock.replace).not.toHaveBeenCalled();
     await act(async () => { resolve([source, restored]); });
     expect(await screen.findByRole("link", { name: /Previously selected conversation/ })).toHaveAttribute("aria-current", "true");
@@ -104,7 +197,7 @@ describe("local conversation execution indicators", () => {
     source = { ...source, provider, turns: [{ id: "question-turn", status: "running", createdAt: "2026-01-01", events: [], questions: [question("first"), question("second")] }] };
     const other = { ...source, id: "other", title: "Other conversation", turns: [] };
     mock.selected = other.id;
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [other, source] : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [other, source] : []);
     let notify!: Parameters<typeof window.desktopAPI.localConversations.subscribe>[0];
     vi.spyOn(window.desktopAPI.localConversations, "subscribe").mockImplementation((listener) => { notify = listener; return () => {}; });
     const mounted = render(page());
@@ -119,7 +212,7 @@ describe("local conversation execution indicators", () => {
     const updateQuestions = async (statuses: LocalUserQuestion["status"][]) => {
       source = { ...source, turns: source.turns.map((turn) => ({ ...turn, questions: turn.questions!.map((item, index) => ({ ...item, status: statuses[index]! })) })) };
       act(() => notify({ userId: "user", workspaceId: "workspace" }, source.id));
-      await waitFor(() => expect(qc.getQueryData(["test-local-sessions"])).toEqual([other, source]));
+      await waitFor(() => expect(cachedSessions()).toEqual([other, source]));
     };
     await updateQuestions(["answered", "pending"]);
     expect(screen.getByRole("button", { name: "等待你的回答：Original" })).toBeVisible();
@@ -150,7 +243,7 @@ describe("local conversation execution indicators", () => {
     source = { ...source, provider: "claude", turns: [{ id: "finished-turn", status: "completed", createdAt: "2026-01-01", events: [], backgroundTasks: [{ id: "watcher", description: "Wait for PR to merge", status: "running" }] }] };
     mock.request.mockImplementation(async (_scope, method) => {
       if (method === "stopBackgroundTasks") { source = { ...source, turns: [] }; return undefined; }
-      return method === "list" ? [source] : [];
+      return method === "listPage" ? [source] : [];
     });
     render(page());
     expect(await screen.findByRole("status", { name: "后台运行中：Original（1）" })).toBeVisible();
@@ -185,7 +278,7 @@ describe("local conversation execution indicators", () => {
       { id: "first-agent", status: "running", createdAt: "2026-01-01", events: [], remote: { agentId: "a", agentName: "First agent" } },
       { id: "second-agent", status: "running", createdAt: "2026-01-01", events: [], remote: { agentId: "b", agentName: "Second agent" } },
     ] };
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, background] : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source, background] : []);
     let notify!: Parameters<typeof window.desktopAPI.localConversations.subscribe>[0];
     vi.spyOn(window.desktopAPI.localConversations, "subscribe").mockImplementation((listener) => { notify = listener; return () => {}; });
     render(page());
@@ -200,7 +293,7 @@ describe("local conversation execution indicators", () => {
 
     background = { ...background, turns: background.turns.slice(1) };
     act(() => notify({ userId: "user", workspaceId: "workspace" }, background.id));
-    await waitFor(() => expect(mock.request.mock.calls.filter((call) => call[1] === "list")).toHaveLength(2));
+    await waitFor(() => expect(mock.request.mock.calls.filter((call) => call[1] === "listPage" && call[2].folderProjectId !== undefined)).toHaveLength(2));
     expect(screen.getByRole("status", { name: "会话运行中：Background conversation" })).toBeVisible();
     background = { ...background, turns: [] };
     act(() => notify({ userId: "user", workspaceId: "workspace" }, background.id));
@@ -237,7 +330,7 @@ describe("removing projects from the local conversation list", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "从列表移除" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Removable project" })).not.toBeInTheDocument());
     expect(source).toEqual(original);
-    expect(mock.request.mock.calls.every((call) => ["list", "providers", "sideWorkspaceSync"].includes(call[1]))).toBe(true);
+    expect(mock.request.mock.calls.every((call) => ["listPage", "read", "providers", "sideWorkspaceSync"].includes(call[1]))).toBe(true);
     expect(mock.replace).not.toHaveBeenCalled();
     expect(draft).toHaveValue("Keep this draft");
     fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), { target: { value: "Original" } });
@@ -271,7 +364,7 @@ describe("local conversation project creation", () => {
     mock.folderError = error;
     mock.request.mockImplementation(async (_scope, method) => {
       if (method === "folderProjectAdd") throw error;
-      return method === "list" ? [source] : [{ id: "codex", available: true }];
+      return method === "listPage" ? [source] : [{ id: "codex", available: true }];
     });
     render(page());
     expect(await screen.findByText("本地项目功能已更新，请重启桌面应用")).toBeVisible();
@@ -284,7 +377,7 @@ describe("local conversation project creation", () => {
     mock.projects = [{ id: "cloud-project", workspace_id: "workspace", title: "Cloud task project" }] as Project[];
     mock.request.mockImplementation(async (_scope, method) => {
       if (method === "folderProjectAdd") { const project = folder("created-project", "local-repository", "/owned/local-repository"); mock.folders = [project]; return project; }
-      return method === "list" ? [source] : [{ id: "codex", available: true }];
+      return method === "listPage" ? [source] : [{ id: "codex", available: true }];
     });
     render(page());
     await screen.findByRole("link", { name: /Original/ });
@@ -306,7 +399,7 @@ describe("local conversation project creation", () => {
     expect(mock.request.mock.calls.some((call) => call[1] === "create")).toBe(false);
   });
   it("allows project creation when no local model runner is installed", async () => {
-    mock.request.mockImplementation(async (_scope, method) => method === "folderProjectAdd" ? null : method === "list" ? [source] : [{ id: "codex", available: false }]);
+    mock.request.mockImplementation(async (_scope, method) => method === "folderProjectAdd" ? null : method === "listPage" ? [source] : [{ id: "codex", available: false }]);
     render(page());
     await screen.findByRole("link", { name: /Original/ });
     expect(screen.getByRole("button", { name: "新建项目" })).toBeEnabled();
@@ -316,7 +409,7 @@ describe("local conversation project creation", () => {
   it.each([false, true])("keeps the current search and conversation when folder selection fails=%s or is cancelled", async (failed) => {
     mock.request.mockImplementation(async (_scope, method) => {
       if (method === "folderProjectAdd") { if (failed) throw new Error("Could not open folder picker"); return null; }
-      return method === "list" ? [source] : [{ id: "codex", available: true }];
+      return method === "listPage" ? [source] : [{ id: "codex", available: true }];
     });
     render(page());
     await screen.findByRole("link", { name: /Original/ });
@@ -334,7 +427,7 @@ describe("local conversation context menu", () => {
   afterEach(() => { window.getSelection()?.removeAllRanges(); });
   it.each(["context", "dropdown"])("copies the targeted Multica conversation ID from the %s menu", async (menu) => {
     const other = { ...source, id: "copied-multica-id", providerSessionId: "private-native-id", title: "Other conversation" };
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, other] : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source, other] : []);
     mock.copyText.mockResolvedValue(true);
     render(page());
     const row = await screen.findByRole("link", { name: /Other conversation/ });
@@ -343,7 +436,7 @@ describe("local conversation context menu", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "复制会话 ID" }));
     await waitFor(() => expect(mock.success).toHaveBeenCalledWith("已复制会话 ID"));
     expect(mock.copyText).toHaveBeenCalledExactlyOnceWith("copied-multica-id");
-    expect(mock.request.mock.calls.every((call) => call[1] === "sideWorkspaceSync" || call[1] === "list" || call[1] === "providers")).toBe(true);
+    expect(mock.request.mock.calls.every((call) => call[1] === "sideWorkspaceSync" || call[1] === "listPage" || call[1] === "read" || call[1] === "providers")).toBe(true);
     expect(mock.replace).not.toHaveBeenCalled();
   });
   it("reports clipboard failure without reporting success", async () => {
@@ -358,7 +451,7 @@ describe("local conversation context menu", () => {
     let other = { ...source, id: "other", title: "Other conversation" };
     mock.request.mockImplementation(async (_scope, method, params) => {
       if (method === "update") { other = { ...other, title: params.title }; return other; }
-      return method === "list" ? [source, other] : [];
+      return method === "listPage" ? [source, other] : [];
     });
     render(page());
     const draft = screen.getByRole("textbox", { name: "Conversation draft" });
@@ -382,7 +475,7 @@ describe("local conversation context menu", () => {
   });
   it("keeps a failed rename editable and only closes after a successful retry", async () => {
     let reject!: (error: Error) => void;
-    mock.request.mockImplementation(async (_scope, method) => method === "update" ? new Promise((_resolve, fail) => { reject = fail; }) : method === "list" ? [source] : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "update" ? new Promise((_resolve, fail) => { reject = fail; }) : method === "listPage" ? [source] : []);
     render(page());
     fireEvent.contextMenu(await screen.findByRole("link", { name: /Original/ }), { button: 2 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "重命名" }));
@@ -399,7 +492,7 @@ describe("local conversation context menu", () => {
     expect(input).toBeEnabled();
     mock.request.mockImplementation(async (_scope, method, params) => {
       if (method === "update") { source = { ...source, title: params.title }; return source; }
-      return method === "list" ? [source] : [];
+      return method === "listPage" ? [source] : [];
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -410,7 +503,7 @@ describe("local conversation context menu", () => {
     const branch = { ...other, id: "branch", title: "Fork this conversation · Fork", forkedFrom: other.id };
     let rows = [source, other];
     let release!: (entry: LocalConversation) => void;
-    mock.request.mockImplementation(async (_scope, method) => method === "fork" ? new Promise((resolve) => { release = resolve; }) : method === "list" ? rows : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "fork" ? new Promise((resolve) => { release = resolve; }) : method === "listPage" ? rows : []);
     render(page());
     fireEvent.contextMenu(await screen.findByRole("link", { name: /Fork this conversation/ }), { button: 2 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "分叉" }));
@@ -436,7 +529,7 @@ describe("local conversation context menu", () => {
   it("persists pin and unpin through the context menu", async () => {
     mock.request.mockImplementation(async (_scope, method, params) => {
       if (method === "update") { source = { ...source, pinned: params.pinned }; return source; }
-      return method === "list" ? [source] : [];
+      return method === "listPage" ? [source] : [];
     });
     render(page());
     fireEvent.contextMenu(await screen.findByRole("link", { name: /Original/ }), { button: 2 });
@@ -449,7 +542,7 @@ describe("local conversation context menu", () => {
   });
   it("takes over right-click on an inactive row without navigating or replacing the draft", async () => {
     const other = { ...source, id: "other", title: "Other conversation" };
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, other] : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source, other] : []);
     render(page());
     const draft = screen.getByRole("textbox", { name: "Conversation draft" });
     fireEvent.change(draft, { target: { value: "Keep my draft" } });
@@ -498,7 +591,7 @@ describe("Side conversations in the main session list", () => {
     const fork = { ...source, id: "fork", title: "Independent fork", cwd: "/other", forkedFrom: source.id };
     const archived = { ...source, id: "archived", title: "Archived main", archived: true };
     const rows = [source, fork, archived, side, { ...side, id: "side-draft", title: "Side draft", messages: [] }, { ...side, id: "side-archive", title: "Side archive", archived: true }];
-    mock.request.mockImplementation(async (_scope, method, params) => method === "list" ? rows : method === "read" ? rows.find((entry) => entry.id === params.id) : [{ id: provider, available: true }]);
+    mock.request.mockImplementation(async (_scope, method, params) => method === "listPage" ? rows : method === "read" ? rows.find((entry) => entry.id === params.id) : [{ id: provider, available: true }]);
     localStorage.setItem("multica-side-workspace:user:workspace:session:source", JSON.stringify({ tabs: [{ id: "side-tab", kind: "side", sessionId: side.id }], selected: "side-tab", open: true }));
     render(page());
     const list = within(screen.getByTestId("local-conversation-sessions"));
@@ -510,15 +603,15 @@ describe("Side conversations in the main session list", () => {
     expect(screen.getByRole("tab", { name: /旁支 · Side exploration ·/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Quoted source text")).toBeVisible();
     fireEvent.change(list.getByRole("textbox", { name: "搜索会话" }), { target: { value: "Side" } });
-    expect(list.getByText("没有匹配的会话")).toBeVisible();
+    expect(await list.findByText("没有匹配的会话")).toBeVisible();
     fireEvent.change(list.getByRole("textbox", { name: "搜索会话" }), { target: { value: "" } });
     fireEvent.click(list.getByRole("button", { name: "归档" }));
-    expect(list.getByRole("link", { name: /Archived main/ })).toBeVisible();
+    expect(await list.findByRole("link", { name: /Archived main/ })).toBeVisible();
     expect(list.queryAllByRole("link", { name: /Side/ })).toHaveLength(0);
-    expect(qc.getQueryData(["test-local-sessions"])).toEqual(rows);
+    expect(cachedSessions()).not.toContainEqual(expect.objectContaining({ side: expect.anything() }));
     fireEvent.click(screen.getByRole("button", { name: "定位来源" }));
     expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex&session=source");
-    expect(list.getByRole("link", { name: /Original/ })).toBeVisible();
+    expect(await list.findByRole("link", { name: /Original/ })).toBeVisible();
     expect(list.queryAllByRole("link", { name: /Side/ })).toHaveLength(0);
   });
 });
@@ -533,7 +626,7 @@ describe("local conversation fork entry", () => {
       source.forkedFrom = "parent"; source.forkedFromTurnId = "parent-turn"; source.forkMode = "saved-context";
     }
     const parent = { ...source, id: "parent", title: "Parent", archived: true, forkedFrom: undefined };
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, parent] : [{ id: "codex", available: true }]);
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source, parent] : [{ id: "codex", available: true }]);
     render(page());
     await screen.findByRole("button", { name: locale === "en" ? "Choose working directory" : "选择工作目录" });
     expect(screen.queryByRole("button", { name: /来源会话|Source conversation|分叉会话|Fork conversation/ })).not.toBeInTheDocument();
@@ -545,7 +638,7 @@ describe("local conversation fork entry", () => {
     const draft = { ...source, id: "draft", title: "Unsent draft", provider, providerSessionId: undefined, messages: [], turns: [] };
     let rows: LocalConversation[] = [source, { ...draft, id: "old-draft", title: "Older unsent draft" }];
     mock.request.mockImplementation(async (_scope, method) => {
-      return method === "list" ? rows : [{ id: provider, available: true }];
+      return method === "listPage" ? rows : [{ id: provider, available: true }];
     });
     const view = render(page());
     await screen.findByRole("link", { name: /Original/ });
@@ -553,7 +646,7 @@ describe("local conversation fork entry", () => {
     fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
     await waitFor(() => expect(mock.replace).toHaveBeenCalledWith(`/test/conversations?provider=${provider}`));
     expect(mock.request.mock.calls.some((call) => call[1] === "create")).toBe(false);
-    expect(qc.getQueryData<LocalConversation[]>(["test-local-sessions"])).toHaveLength(2);
+    expect(cachedSessions()).toHaveLength(1);
     mock.selected = "";
     view.rerender(page());
     const firstRequest = JSON.parse(screen.getByRole("textbox", { name: "Conversation draft" }).getAttribute("data-new-conversation")!);
@@ -577,7 +670,7 @@ describe("local conversation fork entry", () => {
     mock.folders = [folder("project-a", "Multica Project")];
     const rows = [source];
     mock.request.mockImplementation(async (_scope, method) => {
-      return method === "list" ? rows : [{ id: "codex", available: true }];
+      return method === "listPage" ? rows : [{ id: "codex", available: true }];
     });
     render(page());
     const group = await screen.findByRole("button", { name: "Multica Project" });
@@ -585,7 +678,7 @@ describe("local conversation fork entry", () => {
     expect(group).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("link", { name: /Original/ })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), { target: { value: "Multica Project" } });
-    expect(group).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Multica Project" })).toHaveAttribute("aria-expanded", "true"));
     expect(screen.getByRole("link", { name: /Original/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "新建项目会话：Multica Project" }));
     expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex");
@@ -598,7 +691,7 @@ describe("local conversation fork entry", () => {
     mock.projects = [{ id: "project-a", workspace_id: "workspace", title: "Multica Project" }] as Project[];
     mock.request.mockImplementation(async (_scope, method) => {
       if (method === "update") throw new Error("Could not save project");
-      return method === "list" ? [source] : [];
+      return method === "listPage" ? [source] : [];
     });
     render(page());
     fireEvent.click(await screen.findByRole("button", { name: "会话操作：Original" }));
@@ -614,7 +707,7 @@ describe("local conversation fork entry", () => {
     mock.projects = [{ id: "project-a", workspace_id: "workspace", title: "Multica Project" }] as Project[];
     mock.request.mockImplementation(async (_scope, method, params) => {
       if (method === "update") { source = { ...source, projectId: params.projectId }; return source; }
-      return method === "list" ? [source] : [{ id: "codex", available: true }];
+      return method === "listPage" ? [source] : [{ id: "codex", available: true }];
     });
     render(page());
     const draft = screen.getByRole("textbox", { name: "Conversation draft" });
@@ -702,7 +795,7 @@ describe("local conversation fork entry", () => {
   });
   it("shows pending state and opens the persisted branch after a successful fork", async () => {
     let release!: (branch: LocalConversation) => void;
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source] : method === "fork" ? new Promise((resolve) => { release = resolve; }) : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source] : method === "fork" ? new Promise((resolve) => { release = resolve; }) : []);
     render(page());
     fireEvent.click(await screen.findByRole("button", { name: "会话操作：Original" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "分叉" }));
@@ -716,14 +809,14 @@ describe("local conversation fork entry", () => {
     expect(await screen.findByRole("menuitem", { name: "分叉" })).toHaveAttribute("aria-busy", "false");
   });
   it("keeps the current conversation on failure and does not redirect after the user selects another session", async () => {
-    mock.request.mockImplementation(async (_scope, method) => { if (method === "fork") throw new Error("Native fork failed"); return method === "list" ? [source] : []; });
+    mock.request.mockImplementation(async (_scope, method) => { if (method === "fork") throw new Error("Native fork failed"); return method === "listPage" ? [source] : []; });
     const view = render(page());
     fireEvent.click(await screen.findByRole("button", { name: "会话操作：Original" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "分叉" }));
     await waitFor(() => expect(mock.error).toHaveBeenCalledWith("Native fork failed"));
     expect(mock.replace).not.toHaveBeenCalled();
     let release!: (branch: LocalConversation) => void;
-    mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, { ...source, id: "other" }] : method === "fork" ? new Promise((resolve) => { release = resolve; }) : []);
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source, { ...source, id: "other" }] : method === "fork" ? new Promise((resolve) => { release = resolve; }) : []);
     fireEvent.click(screen.getByRole("button", { name: "会话操作：Original" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "分叉" }));
     fireEvent.click(screen.getByRole("button", { name: "会话操作：Original" }));
@@ -743,7 +836,7 @@ describe("local conversation fork entry", () => {
 
 it("restores each route's Side toggle without remounting the main editor", async () => {
   const b = { ...source, id: "second", title: "Second" };
-  mock.request.mockImplementation(async (_scope, method) => method === "list" ? [source, b] : []);
+  mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source, b] : []);
   const view = render(page());
   await screen.findByRole("link", { name: /Original/ });
   const main = screen.getByRole("textbox", { name: "Conversation draft" });

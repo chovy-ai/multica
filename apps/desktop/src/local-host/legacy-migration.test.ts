@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { migrateLegacyData, MIGRATED_MARKER } from "./legacy-migration";
+import { LocalConversationStore } from "./local-conversation-store";
 
 const scopeKey = "a".repeat(64);
 const roots: string[] = [];
@@ -25,6 +26,20 @@ async function legacyDir(sessions: { id: string; updatedAt: string; title: strin
 const read = async (path: string) => JSON.parse(await readFile(path, "utf8"));
 
 describe("legacy local conversation migration", () => {
+  it("merges another channel into an already paginated store without replacing newer history", async () => {
+    const data = await mkdtemp(join(tmpdir(), "multica-data-")); roots.push(data);
+    const dir = join(data, scopeKey);
+    const store = new LocalConversationStore(dir, () => {}); await store.open();
+    const entry = { id: "shared", title: "New paginated history", provider: "codex" as const, cwd: "/project", pinned: false, archived: false, model: null, createdAt: "2026-01-01", updatedAt: "2026-04-01", messages: [], turns: [] };
+    store.rows.set(entry.id, entry); await store.save();
+    const legacy = await legacyDir([], { "f.attachment": "copied bytes" });
+    await writeFile(join(legacy, scopeKey, "conversations.json"), JSON.stringify({ schemaVersion: 1, sessions: [{ ...entry, title: "Old history", updatedAt: "2026-01-01" }, { ...entry, id: "only-canary", title: "Canary history" }], folderProjects: [] }));
+    await migrateLegacyData(legacy, data);
+    const reopened = new LocalConversationStore(dir, () => {}); await reopened.open();
+    expect((await reopened.read("shared")).title).toBe("New paginated history");
+    expect((await reopened.read("only-canary")).title).toBe("Canary history");
+    expect(await readFile(join(dir, "files", "f.attachment"), "utf8")).toBe("copied bytes");
+  });
   it("copies once per source, keeps the source and leaves working directories in place", async () => {
     const legacy = await legacyDir([{ id: "c1", updatedAt: "2026-01-01", title: "One" }], { "f1.attachment": "bytes" });
     const data = await mkdtemp(join(tmpdir(), "multica-data-")); roots.push(data);

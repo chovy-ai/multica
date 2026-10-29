@@ -84,6 +84,11 @@ export interface LocalImportCandidate {
   createdAt: string; updatedAt: string; importedId?: string;
 }
 export interface LocalImportPage { sessions: LocalImportCandidate[]; nextCursor: string | null }
+export interface LocalConversationPage { sessions: LocalConversation[]; nextCursor: string | null }
+export interface LocalConversationRuntimeState {
+  pendingTasks: { task_id: string; status: "running"; chat_session_id: string }[];
+  movedQueueRequests: string[];
+}
 export interface LocalImportResult {
   imported: { sourceId: string; conversationId: string }[];
   skipped: { sourceId: string; conversationId: string }[];
@@ -178,6 +183,9 @@ export interface LocalConversationMethods {
   importCancel: { params: Record<string, never>; result: void };
   providers: { params: Record<string, never>; result: LocalProvider[] };
   list: { params: Record<string, never>; result: LocalConversation[] };
+  listPage: { params: { folderProjectId: string | null; archived?: boolean; search?: string; cursor?: string }; result: LocalConversationPage };
+  runtimeState: { params: Record<string, never>; result: LocalConversationRuntimeState };
+  directorySource: { params: { cwd: string }; result: { id: string } | null };
   read: { params: { id: string }; result: LocalConversation };
   create: { params: { provider: LocalProviderId; title?: string; projectId?: string | null; folderProjectId?: string | null; directorySourceId?: string }; result: LocalConversation };
   fork: { params: { id: string; turnId?: string; requestId?: string }; result: LocalConversation };
@@ -235,6 +243,9 @@ export const LOCAL_CONVERSATION_METHODS = {
   importCancel: true,
   providers: true,
   list: true,
+  listPage: true,
+  runtimeState: true,
+  directorySource: true,
   read: true,
   create: true,
   fork: true,

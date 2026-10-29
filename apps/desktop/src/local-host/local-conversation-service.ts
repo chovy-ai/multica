@@ -28,6 +28,7 @@ import { parseWithFallback } from "@multica/core/api/schema";
 import { CancelTaskResponseSchema } from "@multica/core/api/schemas";
 import type { CancelTaskResponse } from "@multica/core/types";
 import { z } from "zod";
+import { LocalConversationStore, conversationSummary } from "./local-conversation-store";
 import { SideWorkspaceRegistry } from "./local-side-workspace";
 import type { SideWorkspaceControlRequest } from "../shared/side-workspace";
 const queueTaskSchema = z.object({ id: z.string(), workspace_id: z.string(), identifier: z.string(), title: z.string(), description: z.string().nullable().optional() });
@@ -39,10 +40,6 @@ function text(value: unknown, name: string, max = 2_000_000): string {
 function provider(value: unknown): LocalProviderId {
   if (value !== "codex" && value !== "claude") throw new Error("Unsupported local provider");
   return value;
-}
-
-function lastTurnStartedAt(entry: LocalConversation): string {
-  return entry.turns.at(-1)?.createdAt ?? entry.createdAt;
 }
 
 async function projectDirectory(path: string): Promise<string> {
@@ -82,6 +79,8 @@ interface ClaudeConversationSession {
 export class LocalConversationService {
   readonly sideWorkspace = new SideWorkspaceRegistry();
   private sideSubmissions = new Map<string, { fingerprint: string; result: Promise<SideSendResult> }>();
+  private stores = new Map<string, LocalConversationStore>();
+  private pages = new Map<string, { key: string; filter: string; ids: string[]; expires: number }>();
   private documents = new Map<string, Map<string, LocalConversation>>();
   private scopes = new Map<string, LocalConversationScope>();
   private folderProjects = new Map<string, LocalFolderProject[]>();
@@ -191,53 +190,81 @@ export class LocalConversationService {
     if (this.documents.has(key)) return this.documents.get(key)!;
     if (this.loads.has(key)) return this.loads.get(key)!;
     const operation = (async () => {
-      let sessions: LocalConversation[] = [];
-      let folderProjects: LocalFolderProject[] = [];
-      try {
-        const data = JSON.parse(await readFile(join(this.options.root, key, "conversations.json"), "utf8"));
-        if (data.schemaVersion !== 1 || !Array.isArray(data.sessions) || data.sessions.some((entry: LocalConversation) => !entry || typeof entry.id !== "string" || !["codex", "claude"].includes(entry.provider) || !Array.isArray(entry.messages) || !Array.isArray(entry.turns))) throw new Error("Invalid local conversation file; the original file was preserved.");
-        sessions = data.sessions;
-        for (const session of sessions) if (session.promptQueue) {
-          const queue = session.promptQueue;
-          if (!Array.isArray(queue.items) || typeof queue.paused !== "boolean" || !Number.isSafeInteger(queue.revision)) throw new Error("Invalid saved conversation queue");
-          queue.items = queue.items.map((item) => this.queueItem(item)).filter((item) => !session.turns.some((turn) => turn.requestId === item.requestId));
-          // Restarting the application never silently replays unsent model work.
-          if (queue.items.length) queue.paused = true;
-        }
-        if (data.folderProjects !== undefined) {
-          if (!Array.isArray(data.folderProjects) || data.folderProjects.some((project: LocalFolderProject) => !project || typeof project.id !== "string" || !project.id || typeof project.title !== "string" || typeof project.path !== "string" || !isAbsolute(project.path) || typeof project.createdAt !== "string")) throw new Error("Invalid local folder projects; the original file was preserved.");
-          folderProjects = data.folderProjects;
-        }
-        for (const session of sessions) for (const turn of session.turns) {
-          if (turn.remote) delete turn.remote.queueOwned;
-          for (const task of turn.backgroundTasks ?? []) {
-            if (task.status === "running") { task.status = "cancelled"; task.summary = "Background execution stopped when the application closed."; }
-            if (task.delivery && ["pending", "requested"].includes(task.delivery.status)) task.delivery.status = "interrupted";
-          }
-          for (const question of turn.questions ?? []) if (question.status === "pending") { question.status = "cancelled"; question.updatedAt = new Date().toISOString(); }
-          if (turn.status === "running" && !turn.remote) {
-            turn.status = "failed"; turn.error = "Local execution stopped when the application closed. Send a new message to continue."; turn.completedAt = new Date().toISOString();
-          }
-        }
-      } catch (error) {
-        if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
-      }
-      const value = new Map(sessions.map((session) => [session.id, session]));
-      this.folderProjects.set(key, folderProjects); this.documents.set(key, value);
-      void this.resumeCloudTurns(scope, value.values()).catch(() => console.warn("[local-conversations] Could not resume cloud agent turns"));
+      const store = new LocalConversationStore(join(this.options.root, key), (entry) => this.restore(entry));
+      await store.open();
+      const value = store.rows;
+      this.stores.set(key, store);
+      this.folderProjects.set(key, store.folderProjects); this.documents.set(key, value);
+      const remote = await Promise.all(store.remoteIds().map((id) => store.read(id)));
+      void this.resumeCloudTurns(scope, remote).catch(() => console.warn("[local-conversations] Could not resume cloud agent turns"));
       return value;
     })().finally(() => this.loads.delete(key));
     this.loads.set(key, operation); return operation;
   }
+  private restore(session: LocalConversation): void {
+    if (session.promptQueue) {
+      const queue = session.promptQueue;
+      if (!Array.isArray(queue.items) || typeof queue.paused !== "boolean" || !Number.isSafeInteger(queue.revision)) throw new Error("Invalid saved conversation queue");
+      queue.items = queue.items.map((item) => this.queueItem(item)).filter((item) => !session.turns.some((turn) => turn.requestId === item.requestId));
+      if (queue.items.length) queue.paused = true;
+    }
+    for (const turn of session.turns) {
+      if (turn.remote) delete turn.remote.queueOwned;
+      for (const task of turn.backgroundTasks ?? []) {
+        if (task.status === "running") { task.status = "cancelled"; task.summary = "Background execution stopped when the application closed."; }
+        if (task.delivery && ["pending", "requested"].includes(task.delivery.status)) task.delivery.status = "interrupted";
+      }
+      for (const question of turn.questions ?? []) if (question.status === "pending") { question.status = "cancelled"; question.updatedAt = new Date().toISOString(); }
+      if (turn.status === "running" && !turn.remote) {
+        turn.status = "failed"; turn.error = "Local execution stopped when the application closed. Send a new message to continue."; turn.completedAt = new Date().toISOString();
+      }
+    }
+    refreshGeneratedConversationTitle(session);
+  }
+  private async readEntry(scope: LocalConversationScope, id: string): Promise<LocalConversation> {
+    await this.load(scope); return this.stores.get(this.key(scope))!.read(id);
+  }
   private save(scope: LocalConversationScope): Promise<void> {
     const key = this.key(scope);
-    const value = JSON.stringify({ schemaVersion: 1, sessions: [...this.documents.get(key)!.values()], folderProjects: this.folderProjects.get(key) ?? [] });
-    const next = (this.writes.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
-      const dir = join(this.options.root, key); await mkdir(dir, { recursive: true, mode: 0o700 });
-      const temporary = join(dir, `${randomUUID()}.tmp`);
-      await writeFile(temporary, value, { mode: 0o600 }); await rename(temporary, join(dir, "conversations.json"));
-    });
-    this.writes.set(key, next); return next;
+    const next = this.stores.get(key)!.save(); this.writes.set(key, next); return next;
+  }
+  private sortedRows(scope: LocalConversationScope): LocalConversation[] {
+    const store = this.stores.get(this.key(scope))!;
+    return [...store.rows.values()].sort((a, b) => Number(b.pinned) - Number(a.pinned)
+      || store.recency(b).localeCompare(store.recency(a)) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+  }
+  private listPage(scope: LocalConversationScope, params: Record<string, unknown>): LocalConversationMethods["listPage"]["result"] {
+    const key = this.key(scope);
+    const projectId = params.folderProjectId === null ? null : text(params.folderProjectId, "local project", 128);
+    if (params.archived !== undefined && typeof params.archived !== "boolean") throw new Error("Invalid archive filter");
+    if (params.search !== undefined && (typeof params.search !== "string" || params.search.length > 4096)) throw new Error("Invalid search");
+    const search = typeof params.search === "string" ? params.search.trim().toLocaleLowerCase() : "";
+    const filter = JSON.stringify([projectId, params.archived === true, search]);
+    const now = Date.now();
+    for (const [id, page] of this.pages) if (page.expires < now) this.pages.delete(id);
+    let token: string; let offset = 0;
+    if (params.cursor !== undefined) {
+      const cursor = text(params.cursor, "list cursor", 256);
+      const match = /^([0-9a-f-]{36}):(\d+)$/.exec(cursor);
+      if (!match) throw new Error("Invalid list cursor");
+      token = match[1]!; offset = Number(match[2]);
+      const page = this.pages.get(token);
+      if (!page || page.key !== key || page.filter !== filter || !Number.isSafeInteger(offset) || offset < 0 || offset > page.ids.length) throw new Error("Conversation list changed or expired. Reload the list.");
+    } else {
+      const projects = this.folderProjects.get(key) ?? [];
+      const directoryKey = (path: string) => path.replace(/[/\\]+$/, "") || path;
+      const ids = this.sortedRows(scope).filter((entry) => {
+        const project = projects.find((folder) => directoryKey(folder.path) === directoryKey(entry.cwd));
+        return !entry.side && (entry.messages.length > 0 || entry.turns.length > 0 || this.stores.get(key)!.hasQueuedPrompts(entry)) && entry.archived === (params.archived === true) && (project?.id ?? null) === projectId
+          && (!search || [entry.title, entry.messages.at(-1)?.content, project?.title, project?.path].some((value) => value?.toLocaleLowerCase().includes(search)));
+      }).map((entry) => entry.id);
+      token = randomUUID(); this.pages.set(token, { key, filter, ids, expires: now + 30 * 60_000 });
+    }
+    const page = this.pages.get(token)!;
+    page.expires = now + 30 * 60_000;
+    const end = Math.min(offset + 8, page.ids.length);
+    const rows = this.documents.get(key)!;
+    return { sessions: page.ids.slice(offset, end).flatMap((id) => { const entry = rows.get(id); return entry ? [conversationSummary(entry)] : []; }), nextCursor: end < page.ids.length ? `${token}:${end}` : null };
   }
   private changed(scope: LocalConversationScope, session: LocalConversation): void {
     session.updatedAt = new Date().toISOString(); this.options.notify(scope, session.id);
@@ -291,9 +318,10 @@ export class LocalConversationService {
   }
   private async handleRequest<M extends LocalConversationMethod>(scope: LocalConversationScope, method: M, raw: LocalConversationMethods[M]["params"]): Promise<LocalConversationMethods[M]["result"]> {
     const rows = await this.load(scope);
-    for (const entry of rows.values()) refreshGeneratedConversationTitle(entry);
+    for (const entry of rows.values()) if (this.stores.get(this.key(scope))!.isLoaded(entry)) refreshGeneratedConversationTitle(entry);
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid local request");
     const params = raw as Record<string, unknown>;
+    if (typeof params.id === "string" && rows.has(params.id)) await this.readEntry(scope, params.id);
     const session = () => {
       const entry = rows.get(text(params.id, "conversation", 128));
       if (!entry) throw new Error("Local conversation not found");
@@ -354,7 +382,7 @@ export class LocalConversationService {
             const requestId = text(params.requestId, "queued request", 160);
             const sideRequest = `side:${entry.id}:${requestId}`;
             const existing = [...rows.values()].find((value) => value.side?.requestId === sideRequest);
-            if (existing) return existing;
+            if (existing) return this.readEntry(scope, existing.id);
             const item = queue.items.find((value) => value.requestId === requestId);
             if (!item || this.queueDispatches.get(`${this.key(scope)}:${entry.id}`) === requestId || entry.turns.some((turn) => turn.requestId === requestId)) throw new Error("This queued message has already started");
             queue.items = queue.items.filter((value) => value !== item);
@@ -425,10 +453,17 @@ export class LocalConversationService {
         const entry = session();
         await this.claudeConversations.get(`${this.key(scope)}:${entry.id}`)?.worker.stopBackground(); result = undefined; break;
       }
-      case "list": result = [...rows.values()].sort((a, b) => Number(b.pinned) - Number(a.pinned)
-        || lastTurnStartedAt(b).localeCompare(lastTurnStartedAt(a))
-        || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)
-      ).map((entry) => ({ ...entry, promptQueue: this.queueSnapshot(scope, entry), messages: entry.messages.slice(-1), turns: entry.turns.filter((turn) => turn.status === "running" || turn.backgroundTasks?.some((task) => task.status === "running")) })); break;
+      case "list": result = this.sortedRows(scope).map((entry) => ({ ...conversationSummary(entry), ...(entry.promptQueue ? { promptQueue: this.queueSnapshot(scope, entry) } : {}) })); break;
+      case "listPage": result = this.listPage(scope, params); break;
+      case "runtimeState": result = {
+        pendingTasks: [...rows.values()].flatMap((entry) => entry.turns.filter((turn) => turn.status === "running").map((turn) => ({ task_id: turn.id, status: "running", chat_session_id: entry.id }))),
+        movedQueueRequests: [...rows.values()].flatMap((entry) => entry.side ? [entry.side.requestId] : []),
+      }; break;
+      case "directorySource": {
+        const cwd = text(params.cwd, "working directory", 8192);
+        const source = [...rows.values()].find((entry) => entry.cwd === cwd);
+        result = source ? { id: source.id } : null; break;
+      }
       case "read": {
         const entry = session();
         await this.recoverOutputImages(scope, entry);
@@ -497,7 +532,7 @@ export class LocalConversationService {
         const queuedPrompt = params.queuedPrompt === undefined ? undefined : this.queueItem(params.queuedPrompt as LocalQueuedPrompt);
         if (queuedPrompt && queuedPrompt.requestId !== requestId) throw new Error("Queued request does not match its Side receipt");
         const existing = [...rows.values()].find((entry) => entry.side?.requestId === requestId);
-        if (existing) { if (existing.side!.sourceId !== source.id) throw new Error("Side request belongs to another conversation"); result = existing; break; }
+        if (existing) { if (existing.side!.sourceId !== source.id) throw new Error("Side request belongs to another conversation"); result = await this.readEntry(scope, existing.id); break; }
         const turnId = params.turnId === undefined ? undefined : text(params.turnId, "source turn", 128);
         if (turnId && !source.turns.some((turn) => turn.id === turnId)) throw new Error("Source turn not found");
         const end = turnId ? source.messages.findLastIndex((message) => message.turnId === turnId) + 1 : source.messages.length;
@@ -567,7 +602,7 @@ export class LocalConversationService {
         const existing = requestId && [...rows.values()].find((entry) => entry.forkRequestId === requestId);
         if (existing) {
           if (existing.forkedFrom !== source.id || existing.forkedFromTurnId !== turnId) throw new Error("Fork request belongs to another boundary");
-          result = existing; break;
+          result = await this.readEntry(scope, existing.id); break;
         }
         const boundary = turnId ? source.turns.find((turn) => turn.id === turnId) : undefined;
         if (turnId && !boundary) throw new Error("Fork turn not found in this conversation");
@@ -830,7 +865,7 @@ export class LocalConversationService {
     for (const reference of item.references ?? []) {
       if (isTaskCreationReference(reference)) continue;
       if (reference.kind === "session") {
-        const source = (await this.load(scope)).get(reference.id);
+        const source = await this.readEntry(scope, reference.id);
         if (!source) throw new Error("Referenced local conversation is unavailable in this workspace");
         const messages = source.messages.map((message) => `${message.role}: ${message.content}`).join("\n");
         excerpts.push(`Multica local conversation ${JSON.stringify(source.title)} (id: ${source.id}; workspace: ${scope.workspaceId})\n${messages.slice(-6000)}\n[Saved conversation snapshot. Use Multica MCP read_context(kind=conversation, source=local) for current messages and pagination.]`);
@@ -1251,7 +1286,7 @@ export class LocalConversationService {
   private async submitSide(scope: LocalConversationScope, sourceId: string, id: string, content: string, requestId: string): Promise<SideSendResult> {
     const tab = this.sideWorkspace.snapshot(scope, sourceId)?.tabs.find((tab) => tab.kind === "side" && tab.sessionId === id);
     if (!tab || id === sourceId) throw new Error("not_in_current_side: This conversation is not an open Side tab");
-    const entry = (await this.load(scope)).get(id);
+    const entry = await this.readEntry(scope, id);
     if (!entry || entry.archived) throw new Error("Side conversation is unavailable");
     const submissionId = `side:${createHash("sha256").update(JSON.stringify([sourceId, requestId])).digest("hex")}`;
     const delivered = entry.messages.find((message) => message.origin?.conversationId === sourceId && message.origin.requestId === requestId);
