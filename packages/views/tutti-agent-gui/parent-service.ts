@@ -57,7 +57,7 @@ export interface ParentServiceOptions {
   onOpenTask: (issueId: string) => void;
   getAppOrigin?: () => string | null;
   onOpenInternalResource?: (path: string, background: boolean) => void;
-  onShowMessage: (message: string, tone?: "info" | "warning" | "error") => void;
+  onShowMessage: (message: string, tone?: "success" | "info" | "warning" | "error") => void;
   onPromptApplied?: (sequence: number, restoreRequestId?: string) => void;
   storage?: StorageAdapter;
 }
@@ -508,7 +508,7 @@ export function createAgentGuiParentService(options: ParentServiceOptions) {
         break;
       }
       case "host.showMessage":
-        options.onShowMessage(stringField(params, "message"), params.tone === "warning" || params.tone === "error" ? params.tone : "info");
+        options.onShowMessage(stringField(params, "message"), params.tone === "success" || params.tone === "warning" || params.tone === "error" ? params.tone : "info");
         break;
       case "host.promptApplied":
         if (typeof params.sequence === "number") options.onPromptApplied?.(params.sequence, typeof params.restoreRequestId === "string" ? params.restoreRequestId : undefined);

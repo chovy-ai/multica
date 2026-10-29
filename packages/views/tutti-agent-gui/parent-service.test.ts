@@ -34,11 +34,12 @@ function setup() {
   const storage: StorageAdapter = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: (key) => { values.delete(key); } };
   const onSelectSession = vi.fn();
   const onOpenInternalResource = vi.fn();
+  const onShowMessage = vi.fn();
   const service = createAgentGuiParentService({ queryClient: qc, workspaceId: "ws", workspaceSlug: "acme", userId: "user",
     storage, isCurrent: () => active, resolveAvatar: (url) => url, onSelectSession,
-    onOpenTask: vi.fn(), onOpenInternalResource, getAppOrigin: () => "https://app.example.test", onShowMessage: vi.fn() });
+    onOpenTask: vi.fn(), onOpenInternalResource, getAppOrigin: () => "https://app.example.test", onShowMessage });
   cleanups.push(() => { service.dispose(); qc.clear(); });
-  return { service, qc, values, onSelectSession, onOpenInternalResource, leave: () => { active = false; } };
+  return { service, qc, values, onSelectSession, onOpenInternalResource, onShowMessage, leave: () => { active = false; } };
 }
 
 beforeEach(() => {
@@ -59,6 +60,15 @@ beforeEach(() => {
 afterEach(() => { cleanups.splice(0).forEach((fn) => fn()); });
 
 describe("Tutti GUI parent integration", () => {
+  it.each([
+    ["success", "success"], ["info", "info"], ["warning", "warning"], ["error", "error"],
+    [undefined, "info"], ["unknown", "info"],
+  ])("forwards message tone %s as %s", async (tone, expected) => {
+    const { service, onShowMessage } = setup();
+    await service.request("host.showMessage", { message: "Clipboard feedback", tone } as never);
+    expect(onShowMessage).toHaveBeenCalledExactlyOnceWith("Clipboard feedback", expected);
+  });
+
   it("opens validated internal resources without creating a conversation or calling a model", async () => {
     const { service, onOpenInternalResource } = setup();
     await service.request("host.openInternalResource", { href: `https://app.example.test/acme/agents/${sessionId}?view=general#avatar` });

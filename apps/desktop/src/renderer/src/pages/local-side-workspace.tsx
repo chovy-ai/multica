@@ -25,7 +25,7 @@ export interface SideWorkspaceHandle { openSide(id: string, sourceId?: string): 
 interface Props {
   scope: LocalConversationScope; slug: string; sessionId?: string | null; source?: LocalConversation; provider: LocalProviderId; sessions: LocalConversation[];
   chinese: boolean; active: boolean; onSelectSource(id: string, turnId?: string, quote?: string): void;
-  onShowMessage(message: string, tone?: "info" | "warning" | "error"): void;
+  onShowMessage(message: string, tone?: "success" | "info" | "warning" | "error"): void;
   onOpenTask(id: string): void; onReference(content: string): void;
   children: (visible: boolean) => ReactNode;
   onOpenChange?: (open: boolean) => void;

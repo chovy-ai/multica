@@ -407,7 +407,7 @@ export function LocalConversationFlowPage() {
         onPointerDown={(event) => { if (event.button === 0) rememberSessionResize("pointerup"); }}
         onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight", "Home", "End", "Enter"].includes(event.key)) rememberSessionResize("keyup"); }} />
       <ResizablePanel id="local-detail" minSize="40%" hidden={compact && showList}>
-        <LocalSideWorkspace key={`${workspace.id}:${userId}`} ref={sideWorkspace} onOpenChange={setSideOpen} sessionId={selectedId} scope={scope} slug={slug} source={selected} provider={provider} sessions={sessions.data ?? []} chinese={chinese} active={active && (!compact || !showList)} onSelectSource={(sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote)} onReference={(content) => setReferenceDraft({ id: crypto.randomUUID(), content, sessionId: selectedId ?? undefined })} onOpenTask={(id) => { if (openInNewTab) openInNewTab(paths.issueDetail(id), undefined, { activate: true }); else push(paths.issueDetail(id)); }} onShowMessage={(message, tone) => tone === "error" ? toast.error(message) : toast.info(message)}>
+        <LocalSideWorkspace key={`${workspace.id}:${userId}`} ref={sideWorkspace} onOpenChange={setSideOpen} sessionId={selectedId} scope={scope} slug={slug} source={selected} provider={provider} sessions={sessions.data ?? []} chinese={chinese} active={active && (!compact || !showList)} onSelectSource={(sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote)} onReference={(content) => setReferenceDraft({ id: crypto.randomUUID(), content, sessionId: selectedId ?? undefined })} onOpenTask={(id) => { if (openInNewTab) openInNewTab(paths.issueDetail(id), undefined, { activate: true }); else push(paths.issueDetail(id)); }} onShowMessage={(message, tone) => toast[tone ?? "info"](message)}>
         {(mainVisible) =>
         <div className="flex h-full min-h-0 min-w-0 flex-col">
           <div className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
@@ -425,7 +425,7 @@ export function LocalConversationFlowPage() {
             newConversationRequest={newConversationRequest}
             onRestoreDraftApplied={() => setReferenceDraft(null)} onSelectSession={(session) => select(session?.id ?? null)}
             onOpenTask={(id) => { if (openInNewTab) openInNewTab(paths.issueDetail(id), undefined, { activate: true }); else push(paths.issueDetail(id)); }}
-            onShowMessage={(message, tone) => tone === "error" ? toast.error(message) : toast.info(message)} />
+            onShowMessage={(message, tone) => toast[tone ?? "info"](message)} />
         </div>}
         </LocalSideWorkspace>
       </ResizablePanel>

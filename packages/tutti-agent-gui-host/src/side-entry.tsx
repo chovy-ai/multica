@@ -106,7 +106,7 @@ export function SideEntryProvider({ children, ...entry }: Entry & { children: Re
       await entry.client.request("host.showMessage", { message: entry.chinese ? "无法复制文字，请重试" : "Could not copy text. Try again.", tone: "error" });
       return;
     }
-    await entry.client.request("host.showMessage", { message: entry.chinese ? "复制成功" : "Copied successfully", tone: "info" });
+    await entry.client.request("host.showMessage", { message: entry.chinese ? "复制成功" : "Copied successfully", tone: "success" });
   };
   const start = async () => {
     if (!selection || !entry.sessionId || pending) return;
