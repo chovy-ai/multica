@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -32,7 +33,11 @@ func TestFetchP2PPeersDerivesIDsAndDropsMalformedKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/devices" || r.Header.Get("Authorization") != "Bearer tok" {
+		if r.URL.Path == "/v1/sessions" && r.Header.Get("Authorization") == "Bearer tok" {
+			json.NewEncoder(w).Encode(map[string]any{"session_token": "sess", "expires_at": time.Now().Add(time.Hour)})
+			return
+		}
+		if r.URL.Path != "/v1/devices" || r.Header.Get("Authorization") != "Bearer sess" {
 			http.NotFound(w, r)
 			return
 		}
@@ -51,6 +56,58 @@ func TestFetchP2PPeersDerivesIDsAndDropsMalformedKeys(t *testing.T) {
 	}
 	if len(peers) != 1 || peers[0].ID != want || peers[0].Profile != "work" || peers[0].DeviceName != "laptop" {
 		t.Fatalf("peers = %+v, want only the well-formed key as %s", peers, want)
+	}
+}
+
+func TestP2PRegistryClientUsesSessionAndRenewsOn401(t *testing.T) {
+	var sessions, loginTokenOnDevices int
+	issued := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/v1/sessions":
+			if auth != "Bearer mul_login" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			sessions++
+			issued = "sess-" + strconv.Itoa(sessions)
+			json.NewEncoder(w).Encode(map[string]any{"session_token": issued, "expires_at": time.Now().Add(24 * time.Hour)})
+		case "/v1/devices":
+			if auth == "Bearer mul_login" {
+				loginTokenOnDevices++
+			}
+			if auth != "Bearer "+issued {
+				http.Error(w, "expired", http.StatusUnauthorized)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"devices": []p2pDevice{}})
+		}
+	}))
+	defer srv.Close()
+	c := newP2PRegistryClient(srv.URL, func() string { return "mul_login" })
+	ctx := context.Background()
+	for range 3 {
+		if _, err := c.list(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sessions != 1 {
+		t.Fatalf("issued %d sessions for 3 calls, want 1", sessions)
+	}
+	// The registry forgets the session: the client renews once and retries.
+	issued = "rotated-server-side"
+	if _, err := c.list(ctx); err != nil {
+		t.Fatalf("after server-side expiry: %v", err)
+	}
+	if sessions != 2 || loginTokenOnDevices != 0 {
+		t.Fatalf("sessions=%d loginTokenOnDevices=%d", sessions, loginTokenOnDevices)
+	}
+	// A session close to expiry is renewed before use.
+	c.now = func() time.Time { return time.Now().Add(24*time.Hour - p2pSessionRenewMargin/2) }
+	c.list(ctx)
+	if sessions != 3 {
+		t.Fatalf("near-expiry session not renewed: sessions=%d", sessions)
 	}
 }
 

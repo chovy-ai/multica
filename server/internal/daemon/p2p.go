@@ -73,7 +73,7 @@ func (d *Daemon) p2pRegistrationLoop(ctx context.Context, registry *p2pRegistryC
 	publicKey := base64.StdEncoding.EncodeToString(raw)
 	for {
 		for attempt := 0; ; attempt++ {
-			err := registry.register(ctx, d.cfg.DaemonID, d.cfg.Profile, publicKey, d.cfg.DeviceName)
+			err := registry.register(ctx, d.cfg.DaemonID, d.cfg.Profile, publicKey, d.cfg.DeviceName, nil)
 			if err == nil {
 				d.logger.Info("p2p: identity registered", "peer_id", svc.ID().String())
 				if err := svc.Refresh(ctx); err != nil && ctx.Err() == nil {
