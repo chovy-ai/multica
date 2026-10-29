@@ -52,7 +52,11 @@ type frames struct {
 	got []codexappserver.Frame
 }
 
-func (f *frames) add(frame codexappserver.Frame) { f.mu.Lock(); f.got = append(f.got, frame); f.mu.Unlock() }
+func (f *frames) add(frame codexappserver.Frame) {
+	f.mu.Lock()
+	f.got = append(f.got, frame)
+	f.mu.Unlock()
+}
 
 func (f *frames) wait(t *testing.T, n int) []codexappserver.Frame {
 	t.Helper()
