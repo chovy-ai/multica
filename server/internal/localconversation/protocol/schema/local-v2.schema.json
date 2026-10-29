@@ -257,8 +257,22 @@
       "oneOf": [
         { "$ref": "#/$defs/subscribe_scope" },
         { "$ref": "#/$defs/subscribe" },
-        { "$ref": "#/$defs/unsubscribe" }
+        { "$ref": "#/$defs/unsubscribe" },
+        { "$ref": "#/$defs/host_reply" }
       ]
+    },
+    "host_reply": {
+      "description": "Desktop's answer to a host.request: a result, or an error.",
+      "type": "object",
+      "required": ["version", "type", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 2 },
+        "type": { "const": "host.reply" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "result": {},
+        "error": { "$ref": "#/$defs/error" }
+      }
     },
     "subscribe_scope": {
       "type": "object",
@@ -299,8 +313,22 @@
       "oneOf": [
         { "$ref": "#/$defs/conversation_events" },
         { "$ref": "#/$defs/scope_summaries" },
-        { "$ref": "#/$defs/subscription_status" }
+        { "$ref": "#/$defs/subscription_status" },
+        { "$ref": "#/$defs/host_request" }
       ]
+    },
+    "host_request": {
+      "description": "Asks the connected Desktop to act for an execution, such as confirming a setting or opening a Side tab. Desktop answers with host.reply.",
+      "type": "object",
+      "required": ["version", "type", "request_id", "kind", "payload"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 2 },
+        "type": { "const": "host.request" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "kind": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "payload": { "type": "object" }
+      }
     },
     "conversation_events": {
       "type": "object",

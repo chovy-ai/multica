@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "type": "host.request",
+  "request_id": "h-1",
+  "kind": "settings.confirm",
+  "payload": {
+    "operation": "settings_invite_member",
+    "input": {
+      "email": "a@example.com"
+    }
+  }
+}

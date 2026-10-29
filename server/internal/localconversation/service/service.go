@@ -21,6 +21,8 @@ import (
 )
 
 var (
+	// ErrHostUnavailable means no Desktop of the scope is connected.
+	ErrHostUnavailable = errors.New("local conversation: Multica Desktop is not connected")
 	// ErrClosing rejects new work while the service shuts down.
 	ErrClosing = errors.New("local conversation: the service is shutting down")
 	// ErrRequestConflict means a request id was reused for different content.
@@ -95,6 +97,7 @@ type Service struct {
 	queues    queues
 	titles    titleRuns
 	delivery  deliveries
+	host      Host
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -553,4 +556,33 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 			_ = os.RemoveAll(dir)
 		}, nil
 	}
+}
+
+// Host asks the scope's connected Desktop to act and returns its result.
+type Host func(ctx context.Context, scopeID int64, kind string, payload any) (json.RawMessage, error)
+
+// HostError is Desktop's refusal or failure of a host request.
+type HostError struct {
+	Kind    string
+	Message string
+}
+
+func (e *HostError) Error() string { return e.Message }
+
+// SetHost connects the service to the Desktop transport.
+func (s *Service) SetHost(h Host) {
+	s.mu.Lock()
+	s.host = h
+	s.mu.Unlock()
+}
+
+// askHost sends a host request, or fails when no transport is set.
+func (s *Service) askHost(ctx context.Context, scopeID int64, kind string, payload any) (json.RawMessage, error) {
+	s.mu.Lock()
+	h := s.host
+	s.mu.Unlock()
+	if h == nil {
+		return nil, ErrHostUnavailable
+	}
+	return h(ctx, scopeID, kind, payload)
 }

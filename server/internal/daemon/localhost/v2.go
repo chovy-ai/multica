@@ -45,14 +45,17 @@ type V2 struct {
 	token      string
 	profileDir string
 	upgrader   websocket.Upgrader
+	hosts      hosts
 }
 
 // NewV2 serves svc. Requests must carry token and the profile's account.
 func NewV2(svc *service.Service, token, profileDir string) *V2 {
-	return &V2{svc: svc, token: token, profileDir: profileDir, upgrader: websocket.Upgrader{
+	v := &V2{svc: svc, token: token, profileDir: profileDir, upgrader: websocket.Upgrader{
 		ReadBufferSize: 64 << 10, WriteBufferSize: 64 << 10,
 		CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == "" },
-	}}
+	}, hosts: hosts{byScope: map[int64][]*wsConn{}, pending: map[string]chan v2HostReply{}}}
+	svc.SetHost(v.hosts.request)
+	return v
 }
 
 // Register mounts the v2 routes.
@@ -387,6 +390,9 @@ type wsConn struct {
 	mu      sync.Mutex
 	subs    map[string]*service.Subscription
 	scope   *service.ScopeSubscription
+	// hostPending are host requests waiting for this Desktop's reply;
+	// guarded by hosts.mu.
+	hostPending map[string]chan v2HostReply
 }
 
 func (c *wsConn) send(v any) error {
@@ -403,6 +409,13 @@ type wsClientMessage struct {
 	AfterSeq        int64  `json:"after_seq"`
 	AfterScopeSeq   int64  `json:"after_scope_seq"`
 	StoreGeneration string `json:"store_generation"`
+	// host.reply
+	RequestID string          `json:"request_id"`
+	Result    json.RawMessage `json:"result"`
+	Error     *struct {
+		Kind    string `json:"kind"`
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 func (v *V2) serveWS(w http.ResponseWriter, r *http.Request, scopeID int64) {
@@ -410,9 +423,11 @@ func (v *V2) serveWS(w http.ResponseWriter, r *http.Request, scopeID int64) {
 	if err != nil {
 		return
 	}
-	c := &wsConn{conn: ws, subs: map[string]*service.Subscription{}}
+	c := &wsConn{conn: ws, subs: map[string]*service.Subscription{}, hostPending: map[string]chan v2HostReply{}}
+	detach := v.hosts.attach(scopeID, c)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
+		detach()
 		cancel()
 		c.mu.Lock()
 		for _, sub := range c.subs {
@@ -435,7 +450,10 @@ func (v *V2) serveWS(w http.ResponseWriter, r *http.Request, scopeID int64) {
 			return
 		}
 		switch msg.Type {
+		case "host.reply":
+			v.hosts.reply(c, msg)
 		case "subscribe":
+			v.hosts.touch(scopeID, c)
 			v.wsSubscribe(ctx, c, scopeID, msg)
 		case "unsubscribe":
 			c.mu.Lock()

@@ -56,6 +56,7 @@ export const localV2ServerMessageSchema = z.discriminatedUnion("type", [
     version: z.literal(LOCAL_V2_VERSION), type: z.literal("subscription.status"), conversation_id: z.string().optional(),
     status: z.string(), high_water: z.number().int().optional(), error: errorSchema.optional(),
   }),
+  z.object({ version: z.literal(LOCAL_V2_VERSION), type: z.literal("host.request"), request_id: z.string(), kind: z.string(), payload }),
 ]);
 export type LocalV2ServerMessage = z.infer<typeof localV2ServerMessageSchema>;
 
@@ -63,6 +64,7 @@ export const localV2ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ version: z.literal(LOCAL_V2_VERSION), type: z.literal("subscribe_scope"), after_scope_seq: z.number().int().min(0).optional(), store_generation: z.string().optional() }).strict(),
   z.object({ version: z.literal(LOCAL_V2_VERSION), type: z.literal("subscribe"), conversation_id: z.string(), after_seq: z.number().int().min(0), store_generation: z.string() }).strict(),
   z.object({ version: z.literal(LOCAL_V2_VERSION), type: z.literal("unsubscribe"), conversation_id: z.string() }).strict(),
+  z.object({ version: z.literal(LOCAL_V2_VERSION), type: z.literal("host.reply"), request_id: z.string(), result: z.unknown().optional(), error: errorSchema.optional() }).strict(),
 ]);
 export type LocalV2ClientMessage = z.infer<typeof localV2ClientMessageSchema>;
 

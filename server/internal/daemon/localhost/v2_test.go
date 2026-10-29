@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,6 +51,12 @@ func (a *autoAdapter) Err() error                  { return nil }
 
 func newV2Server(t *testing.T) (*httptest.Server, *service.Service) {
 	t.Helper()
+	srv, svc, _ := newV2Fixture(t)
+	return srv, svc
+}
+
+func newV2Fixture(t *testing.T) (*httptest.Server, *service.Service, *V2) {
+	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, desktopUserIDFile), []byte("user-1\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -67,10 +74,11 @@ func newV2Server(t *testing.T) (*httptest.Server, *service.Service) {
 	}
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	mux := http.NewServeMux()
-	NewV2(svc, v2Token, dir).Register(mux)
+	v := NewV2(svc, v2Token, dir)
+	v.Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv, svc
+	return srv, svc, v
 }
 
 func v2Headers(user string) http.Header {
@@ -468,5 +476,88 @@ func TestV2QueueCommands(t *testing.T) {
 	_, snap := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-1/snapshot", nil, h)
 	if snap["conversation"].(map[string]any)["queue_count"].(float64) != 0 {
 		t.Fatalf("summary = %v", snap["conversation"])
+	}
+}
+
+func TestV2HostRequestsReachTheConnectedDesktop(t *testing.T) {
+	t.Parallel()
+
+	srv, svc, v := newV2Fixture(t)
+	h := v2Headers("user-1")
+	scopeID, _ := svc.Store().EnsureScope(context.Background(), store.Scope{APIOrigin: "https://api.multica.ai", UserID: "user-1", WorkspaceID: "ws-1"})
+	if _, err := v.hosts.request(context.Background(), scopeID, "settings.confirm", map[string]any{}); !errors.Is(err, service.ErrHostUnavailable) {
+		t.Fatalf("without Desktop = %v", err)
+	}
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/local/v2/ws", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The scope is attached once the connection is served.
+	eventuallyV2(t, func() bool {
+		v.hosts.mu.Lock()
+		defer v.hosts.mu.Unlock()
+		return len(v.hosts.byScope[scopeID]) == 1
+	})
+	schema := serverMessageSchema(t)
+	answer := func(reply func(id string) map[string]any) chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			var raw json.RawMessage
+			_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if err := ws.ReadJSON(&raw); err != nil {
+				t.Error(err)
+				return
+			}
+			doc, _ := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+			if err := schema.Validate(doc); err != nil {
+				t.Errorf("host.request violates the schema: %v", err)
+			}
+			var msg struct {
+				RequestID string `json:"request_id"`
+			}
+			_ = json.Unmarshal(raw, &msg)
+			_ = ws.WriteJSON(reply(msg.RequestID))
+		}()
+		return done
+	}
+
+	done := answer(func(id string) map[string]any {
+		return map[string]any{"version": 2, "type": "host.reply", "request_id": id, "result": map[string]any{"approved": true}}
+	})
+	result, err := v.hosts.request(context.Background(), scopeID, "settings.confirm", map[string]any{"operation": "x"})
+	<-done
+	if err != nil || string(result) != `{"approved":true}` {
+		t.Fatalf("result = %s, %v", result, err)
+	}
+	done = answer(func(id string) map[string]any {
+		return map[string]any{"version": 2, "type": "host.reply", "request_id": id, "error": map[string]any{"kind": "declined", "message": "no"}}
+	})
+	var hostErr *service.HostError
+	_, err = v.hosts.request(context.Background(), scopeID, "settings.confirm", map[string]any{})
+	<-done
+	if !errors.As(err, &hostErr) || hostErr.Kind != "declined" {
+		t.Fatalf("declined = %v", err)
+	}
+
+	// A request pending when Desktop disconnects fails instead of hanging.
+	go func() {
+		var raw json.RawMessage
+		_ = ws.ReadJSON(&raw)
+		_ = ws.Close()
+	}()
+	if _, err := v.hosts.request(context.Background(), scopeID, "settings.confirm", map[string]any{}); !errors.Is(err, service.ErrHostUnavailable) {
+		t.Fatalf("after disconnect = %v", err)
+	}
+}
+
+func eventuallyV2(t *testing.T, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
