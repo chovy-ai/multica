@@ -4,7 +4,7 @@ import { DropdownMenuItem } from "@tutti-os/ui-system";
 import { Button } from "@multica/ui/components/ui/button";
 import type { AgentGuiRpcClient } from "./protocol";
 import type { createMulticaAgentGuiRuntime } from "./runtime";
-import { previewResourceHref } from "./message-resource-links";
+import { localResourceTarget, previewResourceHref } from "./message-resource-links";
 
 type Entry = { client: AgentGuiRpcClient; handle: ReturnType<typeof createMulticaAgentGuiRuntime>; sessionId: string | null; chinese: boolean; enabled: boolean; sidePane?: boolean };
 const SideEntryContext = createContext<Entry | null>(null);
@@ -44,8 +44,20 @@ export function SideEntryProvider({ children, ...entry }: Entry & { children: Re
       event.preventDefault(); event.stopPropagation();
       void current.current.client.request("host.openResource", { sessionId: current.current.sessionId, url }).catch(report);
     };
+    const contextMenu = (event: MouseEvent) => {
+      if (event.defaultPrevented || !current.current.sessionId || !(event.target instanceof Element) || event.target.closest('input,textarea,[contenteditable="true"],img')) return;
+      const link = event.target.closest("a[href]");
+      const url = link?.getAttribute("href");
+      if (!url || !localResourceTarget(url)) return;
+      event.preventDefault(); event.stopPropagation();
+      void current.current.client.request("host.showFileContextMenu", {
+        sessionId: current.current.sessionId, url,
+        hasSelection: Boolean(window.getSelection()?.toString().trim()),
+      }).catch(report);
+    };
+    document.addEventListener("contextmenu", contextMenu, true);
     document.addEventListener("pointerup", select); document.addEventListener("keyup", key); document.addEventListener("scroll", select, true); document.addEventListener("click", open, true); document.addEventListener("keydown", open, true); window.addEventListener("resize", select);
-    return () => { document.removeEventListener("pointerup", select); document.removeEventListener("keyup", key); document.removeEventListener("scroll", select, true); document.removeEventListener("click", open, true); document.removeEventListener("keydown", open, true); window.removeEventListener("resize", select); };
+    return () => { document.removeEventListener("contextmenu", contextMenu, true); document.removeEventListener("pointerup", select); document.removeEventListener("keyup", key); document.removeEventListener("scroll", select, true); document.removeEventListener("click", open, true); document.removeEventListener("keydown", open, true); window.removeEventListener("resize", select); };
   }, [entry.enabled]);
   useLayoutEffect(() => {
     if (!selection || !toolbar.current) return;

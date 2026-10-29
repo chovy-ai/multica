@@ -140,12 +140,34 @@ export function installContextMenu(webContents: WebContents): void {
   });
 }
 
+export function showLocalFileContextMenu(
+  webContents: WebContents,
+  input: { hasSelection: boolean },
+  actions: { copyPath(): Promise<void>; reveal(): Promise<void> },
+): void {
+  const labels = pickLabels();
+  const menu = new Menu();
+  if (input.hasSelection) {
+    menu.append(new MenuItem({ role: "copy" }));
+    menu.append(new MenuItem({ type: "separator" }));
+  }
+  const run = (action: () => Promise<void>) => {
+    void action().catch((error: unknown) => console.warn("[context-menu] local file action failed", error));
+  };
+  menu.append(new MenuItem({ label: labels.copyPath, click: () => run(actions.copyPath) }));
+  menu.append(new MenuItem({ label: process.platform === "darwin" ? labels.openInFinder : labels.showInFolder, click: () => run(actions.reveal) }));
+  menu.popup({ window: BrowserWindow.fromWebContents(webContents) ?? undefined });
+}
+
 // Labels for the custom menu items in the user's OS-preferred language,
 // with English as the fallback. Kept inline because the main process has
 // no shared i18n loader (the renderer's i18next is per-window and not
-// reachable from here), and pulling one in for three strings would be
+// reachable from here), and pulling one in for a few menu labels would be
 // more rope than payload. Matches the four locales the renderer ships.
 type ContextMenuLabels = {
+  copyPath: string;
+  openInFinder: string;
+  showInFolder: string;
   openLink: string;
   copyLinkAddress: string;
   copyImage: string;
@@ -154,30 +176,45 @@ type ContextMenuLabels = {
 
 const labelsByLocale: Record<string, ContextMenuLabels> = {
   en: {
+    copyPath: "Copy Path",
+    openInFinder: "Open in Finder",
+    showInFolder: "Show in Folder",
     openLink: "Open Link in Browser",
     copyLinkAddress: "Copy Link Address",
     copyImage: "Copy Image",
     addToDictionary: "Add to Dictionary",
   },
   "zh-Hans": {
+    copyPath: "复制路径",
+    openInFinder: "在 Finder 中显示",
+    showInFolder: "在文件夹中显示",
     openLink: "在浏览器中打开链接",
     copyLinkAddress: "复制链接地址",
     copyImage: "复制图片",
     addToDictionary: "添加到词典",
   },
   "zh-Hant": {
+    copyPath: "複製路徑",
+    openInFinder: "在 Finder 中顯示",
+    showInFolder: "在資料夾中顯示",
     openLink: "在瀏覽器中開啟連結",
     copyLinkAddress: "複製連結網址",
     copyImage: "複製圖片",
     addToDictionary: "加入字典",
   },
   ja: {
+    copyPath: "パスをコピー",
+    openInFinder: "Finder で表示",
+    showInFolder: "フォルダーに表示",
     openLink: "ブラウザでリンクを開く",
     copyLinkAddress: "リンクのアドレスをコピー",
     copyImage: "画像をコピー",
     addToDictionary: "辞書に追加",
   },
   ko: {
+    copyPath: "경로 복사",
+    openInFinder: "Finder에서 보기",
+    showInFolder: "폴더에서 보기",
     openLink: "브라우저에서 링크 열기",
     copyLinkAddress: "링크 주소 복사",
     copyImage: "이미지 복사",

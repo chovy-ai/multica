@@ -122,3 +122,48 @@ it.each(["resolve", "reject"] as const)("dismisses before a side request complet
   if (result === "reject") expect(request).toHaveBeenLastCalledWith("host.showMessage", { message: "Side unavailable", tone: "error" });
   else expect(request).toHaveBeenCalledTimes(1);
 });
+
+it("forwards the right-clicked local href and source session without using the selected text", async () => {
+  await mount();
+  await select();
+  const link = document.createElement("a");
+  link.href = "/tmp/测试%20build.dmg";
+  link.innerHTML = "<span>Download</span>";
+  container.querySelector("article")!.append(link);
+  const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 80 });
+  await act(async () => { link.firstElementChild!.dispatchEvent(event); });
+  expect(event.defaultPrevented).toBe(true);
+  expect(request).toHaveBeenCalledExactlyOnceWith("host.showFileContextMenu", {
+    sessionId: "session-a", url: "/tmp/测试%20build.dmg", hasSelection: true,
+  });
+});
+
+it.each(["https://example.com/download", "mention://issue/abc"])("leaves non-local context menus intact: %s", async (href) => {
+  await mount();
+  const link = document.createElement("a"); link.href = href; container.append(link);
+  const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => { link.dispatchEvent(event); });
+  expect(event.defaultPrevented).toBe(false);
+  expect(request).not.toHaveBeenCalled();
+});
+
+it("shows file actions without a selection and reports lookup failures", async () => {
+  request.mockRejectedValueOnce(new Error("File not found"));
+  await mount();
+  const link = document.createElement("a"); link.setAttribute("href", "./archive.zip"); container.append(link);
+  await act(async () => { link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
+  expect(request).toHaveBeenNthCalledWith(1, "host.showFileContextMenu", { sessionId: "session-a", url: "./archive.zip", hasSelection: false });
+  expect(request).toHaveBeenLastCalledWith("host.showMessage", { message: "File not found", tone: "error" });
+});
+
+it.each(["image", "editor"])("preserves the native %s context menu", async (kind) => {
+  await mount();
+  const wrapper = document.createElement("div");
+  if (kind === "editor") wrapper.setAttribute("contenteditable", "true");
+  wrapper.innerHTML = '<a href="/tmp/archive.zip">Download<img alt="preview" /></a>';
+  container.append(wrapper);
+  const target = kind === "image" ? wrapper.querySelector("img")! : wrapper.querySelector("a")!;
+  const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => { target.dispatchEvent(event); });
+  expect(event.defaultPrevented).toBe(false); expect(request).not.toHaveBeenCalled();
+});
