@@ -76,6 +76,8 @@ type Service struct {
 	context *contextmcp.Server
 	opts    Options
 
+	// metaMu serializes metadata read-modify-write updates.
+	metaMu    sync.Mutex
 	mu        sync.Mutex
 	runners   map[string]runner
 	questions interactions

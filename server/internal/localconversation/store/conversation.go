@@ -39,11 +39,13 @@ func (s *Store) EnsureScope(ctx context.Context, scope Scope) (int64, error) {
 
 // NewConversation describes a conversation to create.
 type NewConversation struct {
-	ID                    string
-	ScopeID               int64
-	Provider              string
-	ProviderSessionID     string
-	Title                 string
+	ID                string
+	ScopeID           int64
+	Provider          string
+	ProviderSessionID string
+	Title             string
+	// TitleMode is "auto" (generated titles may replace it) or "manual".
+	TitleMode             string
 	Cwd                   string
 	Model                 *string
 	ReasoningEffort       *string
@@ -72,6 +74,10 @@ func (s *Store) CreateConversation(ctx context.Context, c NewConversation) (int6
 	if err != nil {
 		return 0, err
 	}
+	titleMode := c.TitleMode
+	if titleMode == "" {
+		titleMode = "auto"
+	}
 	permission := c.PermissionMode
 	if permission == "" {
 		permission = "default"
@@ -83,7 +89,7 @@ func (s *Store) CreateConversation(ctx context.Context, c NewConversation) (int6
 		Provider:              c.Provider,
 		ProviderSessionID:     c.ProviderSessionID,
 		Title:                 c.Title,
-		TitleMode:             "auto",
+		TitleMode:             titleMode,
 		Cwd:                   c.Cwd,
 		Model:                 nullString(c.Model),
 		ReasoningEffort:       nullString(c.ReasoningEffort),

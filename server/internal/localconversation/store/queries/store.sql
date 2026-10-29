@@ -174,3 +174,21 @@ SELECT COUNT(*) FROM interaction_request WHERE conversation_id = ? AND status = 
 
 -- name: ListPendingTurnInteractions :many
 SELECT * FROM interaction_request WHERE conversation_id = ? AND turn_id = ? AND status = 'pending' ORDER BY created_at, id;
+
+-- name: UpdateConversationMetadata :exec
+UPDATE conversation SET title_mode = ?, cwd = ?, project_id = ?, pinned = ?, archived = ? WHERE id = ?;
+
+-- name: InsertFolderProject :exec
+INSERT INTO folder_project (id, scope_id, title, path, created_at) VALUES (?, ?, ?, ?, ?);
+
+-- name: ListFolderProjects :many
+SELECT * FROM folder_project WHERE scope_id = ? ORDER BY created_at, id;
+
+-- name: GetFolderProjectByPath :one
+SELECT * FROM folder_project WHERE scope_id = ? AND path = ?;
+
+-- name: GetFolderProject :one
+SELECT * FROM folder_project WHERE scope_id = ? AND id = ?;
+
+-- name: FindConversationByCwd :one
+SELECT * FROM conversation WHERE scope_id = ? AND cwd = ? ORDER BY created_at LIMIT 1;

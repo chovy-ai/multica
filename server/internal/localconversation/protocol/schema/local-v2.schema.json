@@ -212,6 +212,7 @@
         "reasoning_effort": { "type": ["string", "null"] },
         "permission_mode": { "enum": ["default", "auto", "full-access"] },
         "provider_session_id": { "type": "string" },
+        "cwd": { "type": "string" },
         "project_id": { "type": ["string", "null"] },
         "pinned": { "type": "boolean" },
         "archived": { "type": "boolean" }

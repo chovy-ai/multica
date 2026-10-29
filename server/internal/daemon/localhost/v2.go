@@ -78,6 +78,12 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		v.listSessions(w, r, scopeID)
 	case path == "/sessions" && r.Method == http.MethodPost:
 		v.createSession(w, r, scopeID)
+	case path == "/folder-projects" && r.Method == http.MethodGet:
+		v.listFolderProjects(w, r, scopeID)
+	case path == "/folder-projects" && r.Method == http.MethodPost:
+		v.addFolderProject(w, r, scopeID)
+	case path == "/directory-source" && r.Method == http.MethodGet:
+		v.directorySource(w, r, scopeID)
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "snapshot" && r.Method == http.MethodGet:
 		v.snapshot(w, r, scopeID, parts[1])
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "commands" && r.Method == http.MethodPost:
@@ -119,10 +125,12 @@ func (v *V2) listSessions(w http.ResponseWriter, r *http.Request, scopeID int64)
 }
 
 type createSessionBody struct {
-	ID       string `json:"id"`
-	Provider string `json:"provider"`
-	Title    string `json:"title"`
-	Cwd      string `json:"cwd"`
+	ID                string  `json:"id"`
+	Provider          string  `json:"provider"`
+	Title             string  `json:"title"`
+	ProjectID         *string `json:"project_id"`
+	FolderProjectID   string  `json:"folder_project_id"`
+	DirectorySourceID string  `json:"directory_source_id"`
 }
 
 func (v *V2) createSession(w http.ResponseWriter, r *http.Request, scopeID int64) {
@@ -131,18 +139,15 @@ func (v *V2) createSession(w http.ResponseWriter, r *http.Request, scopeID int64
 		writeV2Error(w, err)
 		return
 	}
-	if body.ID == "" || (body.Provider != "claude" && body.Provider != "codex") {
-		writeV2Error(w, AppError("invalid_request", "id and a supported provider are required"))
-		return
-	}
-	scopeSeq, err := v.svc.Store().CreateConversation(r.Context(), store.NewConversation{
-		ID: body.ID, ScopeID: scopeID, Provider: body.Provider, Title: body.Title, Cwd: body.Cwd, CreatedAt: time.Now(),
+	conv, err := v.svc.Create(r.Context(), service.CreateCommand{
+		ScopeID: scopeID, ID: body.ID, Provider: body.Provider, Title: body.Title, ProjectID: body.ProjectID,
+		FolderProjectID: body.FolderProjectID, DirectorySourceID: body.DirectorySourceID,
 	})
 	if err != nil {
 		writeV2Error(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": body.ID, "scope_seq": scopeSeq})
+	writeJSON(w, http.StatusCreated, summaryDTO(conv))
 }
 
 func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id string) {
@@ -196,6 +201,13 @@ type commandBody struct {
 	Model           json.RawMessage `json:"model"`
 	ReasoningEffort json.RawMessage `json:"reasoning_effort"`
 	PermissionMode  *string         `json:"permission_mode"`
+	// update: an absent field keeps its value; project_id null removes it.
+	Title     *string         `json:"title"`
+	Pinned    *bool           `json:"pinned"`
+	Archived  *bool           `json:"archived"`
+	ProjectID json.RawMessage `json:"project_id"`
+	// set_directory: the folder the conversation runs in.
+	Cwd string `json:"cwd"`
 }
 
 // optionalString decodes an update_settings field.
@@ -260,6 +272,27 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "applied"})
+	case "update":
+		project, clearProject, err := optionalString(body.ProjectID)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		conv, err := v.svc.UpdateMetadata(r.Context(), scopeID, id, service.MetadataUpdate{
+			Title: body.Title, Pinned: body.Pinned, Archived: body.Archived, SetProject: project != nil || clearProject, ProjectID: project,
+		})
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, summaryDTO(conv))
+	case "set_directory":
+		conv, err := v.svc.SetDirectory(r.Context(), scopeID, id, body.Cwd)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, summaryDTO(conv))
 	case "interrupt":
 		if err := v.svc.Interrupt(r.Context(), scopeID, id); err != nil {
 			writeV2Error(w, err)
@@ -516,6 +549,10 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "already_answered"
 	case errors.Is(err, service.ErrInteractionClosed):
 		status, code = http.StatusConflict, "interaction_closed"
+	case errors.Is(err, service.ErrInvalidRequest):
+		status, code = http.StatusBadRequest, "invalid_request"
+	case errors.Is(err, service.ErrConversationStarted):
+		status, code = http.StatusConflict, "conversation_started"
 	case errors.Is(err, service.ErrInvalidSettings):
 		status, code = http.StatusBadRequest, "invalid_settings"
 	case errors.Is(err, service.ErrUnsupportedProvider):
@@ -534,4 +571,51 @@ func appErrorCode(err error) string {
 	}
 	data, _ := rpcErr.Data.(map[string]string)
 	return data["code"]
+}
+
+func folderProjectDTO(p sqlitedb.FolderProject) map[string]any {
+	return map[string]any{"id": p.ID, "title": p.Title, "path": p.Path, "created_at": p.CreatedAt}
+}
+
+func (v *V2) listFolderProjects(w http.ResponseWriter, r *http.Request, scopeID int64) {
+	rows, err := v.svc.Store().FolderProjects(r.Context(), scopeID)
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	projects := make([]map[string]any, len(rows))
+	for i, row := range rows {
+		projects[i] = folderProjectDTO(row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
+}
+
+func (v *V2) addFolderProject(w http.ResponseWriter, r *http.Request, scopeID int64) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	project, err := v.svc.AddFolderProject(r.Context(), scopeID, body.Path)
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, folderProjectDTO(project))
+}
+
+// directorySource names the conversation a new one can share cwd with.
+func (v *V2) directorySource(w http.ResponseWriter, r *http.Request, scopeID int64) {
+	conv, err := v.svc.Store().ConversationByCwd(r.Context(), scopeID, r.URL.Query().Get("cwd"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{"id": nil})
+		return
+	}
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": conv.ID})
 }

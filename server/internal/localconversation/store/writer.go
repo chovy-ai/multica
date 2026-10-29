@@ -87,6 +87,19 @@ type Batch struct {
 	// conversation's pending count in its summary follows them.
 	Interactions []NewInteraction
 	Resolutions  []InteractionResolution
+	// Metadata replaces the conversation's list metadata; the summary
+	// always follows it.
+	Metadata *ConversationMetadata
+}
+
+// ConversationMetadata is how a conversation is listed and where it runs.
+type ConversationMetadata struct {
+	TitleMode string
+	Cwd       string
+	// ProjectID nil means the conversation belongs to no project.
+	ProjectID *string
+	Pinned    bool
+	Archived  bool
 }
 
 // ConversationSettings are the provider settings a conversation runs with.
@@ -408,6 +421,19 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		}
 	}
 
+	if m := b.Metadata; m != nil {
+		err := q.UpdateConversationMetadata(ctx, sqlitedb.UpdateConversationMetadataParams{
+			TitleMode: m.TitleMode, Cwd: m.Cwd, ProjectID: nullString(m.ProjectID),
+			Pinned: boolInt(m.Pinned), Archived: boolInt(m.Archived), ID: conv.ID,
+		})
+		if err != nil {
+			return Committed{}, err
+		}
+		if b.Summary == nil {
+			b.Summary = &SummaryPatch{UpdatedAt: metadataTime(b)}
+		}
+	}
+
 	if c := b.CompleteTurn; c != nil {
 		if _, err := turnSeq(c.TurnID); err != nil {
 			return Committed{}, err
@@ -456,6 +482,10 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		if p.QueueCount != nil {
 			next.QueueCount = *p.QueueCount
 		}
+		if m := b.Metadata; m != nil {
+			next.TitleMode, next.Cwd, next.ProjectID = m.TitleMode, m.Cwd, nullString(m.ProjectID)
+			next.Pinned, next.Archived = boolInt(m.Pinned), boolInt(m.Archived)
+		}
 		if b.StartTurn != nil {
 			next.TurnCount = conv.TurnCount + 1
 		}
@@ -485,4 +515,15 @@ func nonNil(ids []string) []string {
 		return []string{}
 	}
 	return ids
+}
+
+// metadataTime is when a metadata-only batch happened: its latest event.
+func metadataTime(b Batch) time.Time {
+	t := time.Now()
+	for i, e := range b.Events {
+		if i == 0 || e.CreatedAt.After(t) {
+			t = e.CreatedAt
+		}
+	}
+	return t
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -335,5 +336,44 @@ func TestV2AnswerCommandAndPendingQuestionsInSnapshot(t *testing.T) {
 	_, snap = v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-1/snapshot", nil, h)
 	if len(snap["pending_interactions"].([]any)) != 0 || snap["conversation"].(map[string]any)["pending_interactions"].(float64) != 0 {
 		t.Fatalf("snapshot after answer = %v", snap)
+	}
+}
+
+func TestV2ManagesConversationsAndFolderProjects(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newV2Server(t)
+	h := v2Headers("user-1")
+	folder := t.TempDir()
+	status, project := v2Do(t, srv, http.MethodPost, "/local/v2/folder-projects", map[string]any{"path": folder}, h)
+	if status != http.StatusOK || project["id"] == "" {
+		t.Fatalf("add folder = %d %v", status, project)
+	}
+	_, list := v2Do(t, srv, http.MethodGet, "/local/v2/folder-projects", nil, h)
+	if len(list["projects"].([]any)) != 1 {
+		t.Fatalf("folder projects = %v", list)
+	}
+	status, created := v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-1", "provider": "claude", "folder_project_id": project["id"]}, h)
+	if status != http.StatusCreated || created["cwd"] != project["path"] || created["title"] != service.DefaultTitle {
+		t.Fatalf("create = %d %v", status, created)
+	}
+	_, source := v2Do(t, srv, http.MethodGet, "/local/v2/directory-source?cwd="+url.QueryEscape(project["path"].(string)), nil, h)
+	if source["id"] != "conv-1" {
+		t.Fatalf("directory source = %v", source)
+	}
+	command := func(body map[string]any) (int, map[string]any) {
+		return v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", body, h)
+	}
+	if status, body := command(map[string]any{"type": "update", "title": "Plan", "pinned": true, "project_id": "p-1"}); status != http.StatusOK || body["title"] != "Plan" || body["pinned"] != true || body["project_id"] != "p-1" {
+		t.Fatalf("update = %d %v", status, body)
+	}
+	if status, body := command(map[string]any{"type": "update", "project_id": nil}); status != http.StatusOK || body["project_id"] != nil || body["pinned"] != true {
+		t.Fatalf("clear project = %d %v", status, body)
+	}
+	if status, body := command(map[string]any{"type": "set_directory", "cwd": "relative"}); status != http.StatusBadRequest || body["error"].(map[string]any)["kind"] != "invalid_request" {
+		t.Fatalf("bad directory = %d %v", status, body)
+	}
+	if status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-2", "provider": "gemini"}, h); status != http.StatusBadRequest {
+		t.Fatalf("unknown provider = %d %v", status, body)
 	}
 }

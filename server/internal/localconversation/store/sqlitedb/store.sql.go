@@ -94,6 +94,49 @@ func (q *Queries) CountPendingInteractions(ctx context.Context, conversationID s
 	return count, err
 }
 
+const findConversationByCwd = `-- name: FindConversationByCwd :one
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation WHERE scope_id = ? AND cwd = ? ORDER BY created_at LIMIT 1
+`
+
+type FindConversationByCwdParams struct {
+	ScopeID int64
+	Cwd     string
+}
+
+func (q *Queries) FindConversationByCwd(ctx context.Context, arg FindConversationByCwdParams) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, findConversationByCwd, arg.ScopeID, arg.Cwd)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ScopeID,
+		&i.Provider,
+		&i.ProviderSessionID,
+		&i.Title,
+		&i.TitleMode,
+		&i.Cwd,
+		&i.Model,
+		&i.ReasoningEffort,
+		&i.PermissionMode,
+		&i.ProjectID,
+		&i.SideSourceID,
+		&i.ForkedFromID,
+		&i.ForkedFromTurnID,
+		&i.ImportedFromSessionID,
+		&i.Pinned,
+		&i.Archived,
+		&i.Status,
+		&i.LastSeq,
+		&i.TurnCount,
+		&i.SummarySeq,
+		&i.LastMessagePreview,
+		&i.PendingInteractions,
+		&i.QueueCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAttachment = `-- name: GetAttachment :one
 SELECT id, scope_id, conversation_id, path, size, media_type, created_at FROM attachment WHERE id = ?
 `
@@ -170,6 +213,50 @@ func (q *Queries) GetConversation(ctx context.Context, id string) (Conversation,
 		&i.QueueCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getFolderProject = `-- name: GetFolderProject :one
+SELECT id, scope_id, title, path, created_at FROM folder_project WHERE scope_id = ? AND id = ?
+`
+
+type GetFolderProjectParams struct {
+	ScopeID int64
+	ID      string
+}
+
+func (q *Queries) GetFolderProject(ctx context.Context, arg GetFolderProjectParams) (FolderProject, error) {
+	row := q.db.QueryRowContext(ctx, getFolderProject, arg.ScopeID, arg.ID)
+	var i FolderProject
+	err := row.Scan(
+		&i.ID,
+		&i.ScopeID,
+		&i.Title,
+		&i.Path,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getFolderProjectByPath = `-- name: GetFolderProjectByPath :one
+SELECT id, scope_id, title, path, created_at FROM folder_project WHERE scope_id = ? AND path = ?
+`
+
+type GetFolderProjectByPathParams struct {
+	ScopeID int64
+	Path    string
+}
+
+func (q *Queries) GetFolderProjectByPath(ctx context.Context, arg GetFolderProjectByPathParams) (FolderProject, error) {
+	row := q.db.QueryRowContext(ctx, getFolderProjectByPath, arg.ScopeID, arg.Path)
+	var i FolderProject
+	err := row.Scan(
+		&i.ID,
+		&i.ScopeID,
+		&i.Title,
+		&i.Path,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -416,6 +503,29 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 	return err
 }
 
+const insertFolderProject = `-- name: InsertFolderProject :exec
+INSERT INTO folder_project (id, scope_id, title, path, created_at) VALUES (?, ?, ?, ?, ?)
+`
+
+type InsertFolderProjectParams struct {
+	ID        string
+	ScopeID   int64
+	Title     string
+	Path      string
+	CreatedAt string
+}
+
+func (q *Queries) InsertFolderProject(ctx context.Context, arg InsertFolderProjectParams) error {
+	_, err := q.db.ExecContext(ctx, insertFolderProject,
+		arg.ID,
+		arg.ScopeID,
+		arg.Title,
+		arg.Path,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const insertInteraction = `-- name: InsertInteraction :exec
 INSERT INTO interaction_request (id, conversation_id, turn_id, provider_request_id, kind, payload, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -595,6 +705,39 @@ func (q *Queries) ListEventsAfter(ctx context.Context, arg ListEventsAfterParams
 			&i.Type,
 			&i.Final,
 			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFolderProjects = `-- name: ListFolderProjects :many
+SELECT id, scope_id, title, path, created_at FROM folder_project WHERE scope_id = ? ORDER BY created_at, id
+`
+
+func (q *Queries) ListFolderProjects(ctx context.Context, scopeID int64) ([]FolderProject, error) {
+	rows, err := q.db.QueryContext(ctx, listFolderProjects, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FolderProject{}
+	for rows.Next() {
+		var i FolderProject
+		if err := rows.Scan(
+			&i.ID,
+			&i.ScopeID,
+			&i.Title,
+			&i.Path,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1221,6 +1364,31 @@ type SetProviderTurnIDParams struct {
 
 func (q *Queries) SetProviderTurnID(ctx context.Context, arg SetProviderTurnIDParams) error {
 	_, err := q.db.ExecContext(ctx, setProviderTurnID, arg.ProviderTurnID, arg.ID)
+	return err
+}
+
+const updateConversationMetadata = `-- name: UpdateConversationMetadata :exec
+UPDATE conversation SET title_mode = ?, cwd = ?, project_id = ?, pinned = ?, archived = ? WHERE id = ?
+`
+
+type UpdateConversationMetadataParams struct {
+	TitleMode string
+	Cwd       string
+	ProjectID sql.NullString
+	Pinned    int64
+	Archived  int64
+	ID        string
+}
+
+func (q *Queries) UpdateConversationMetadata(ctx context.Context, arg UpdateConversationMetadataParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationMetadata,
+		arg.TitleMode,
+		arg.Cwd,
+		arg.ProjectID,
+		arg.Pinned,
+		arg.Archived,
+		arg.ID,
+	)
 	return err
 }
 
