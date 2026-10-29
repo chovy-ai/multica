@@ -14,6 +14,7 @@ import { SideEntryProvider } from "./side-entry";
 import { ResourceLinkProvider } from "./resource-link";
 import { ComposerDraftProvider } from "./composer-drafts";
 import { InvokedAgentsProvider } from "./invoked-agent-reply";
+import { dispatchAgentGuiWorkbenchCommand } from "../../../vendor/tutti/packages/agent/gui/workbench/commands";
 
 type RuntimeHandle = ReturnType<typeof createMulticaAgentGuiRuntime>;
 type NodeState = AgentGUIProps["state"];
@@ -51,6 +52,8 @@ export function AgentGuiApplication({
   // The composer remounts between an existing conversation and its home.
   // Keep the requested target outside that composer until the old session exits.
   const [pendingTarget, setPendingTarget] = useState<{ target: ReturnType<typeof executionTargets>[number]; fromSession: string; draft?: ProviderDraft; projectPath?: string | null } | null>(null);
+  const [pendingNewConversation, setPendingNewConversation] = useState(() => initial.local && !initial.activeSessionId ? initial.newConversationRequest : undefined);
+  const lastNewConversation = useRef(initial.activeSessionId ? undefined : initial.newConversationRequest?.sequence);
   const nodeRef = useRef(node);
   nodeRef.current = node;
   const lastSelection = useRef({ sessionId: initial.activeSessionId, agentId: node.agentTargetId });
@@ -82,8 +85,16 @@ export function AgentGuiApplication({
         ? handle.toServerSessionId(nodeRef.current.lastActiveAgentSessionId)
         : null;
       const agentIntentChanged = event.snapshot.selectedAgentId !== previousInit.current.selectedAgentId;
+      const newConversationChanged = event.snapshot.local && !event.snapshot.activeSessionId
+        && event.snapshot.newConversationRequest?.sequence !== lastNewConversation.current;
+      if (event.snapshot.activeSessionId) setPendingNewConversation(undefined);
+      else if (newConversationChanged) {
+        lastNewConversation.current = event.snapshot.newConversationRequest?.sequence;
+        setPendingNewConversation(event.snapshot.newConversationRequest);
+        setPendingTarget(null);
+      }
       previousInit.current = event.snapshot;
-      if (event.snapshot.activeSessionId !== currentServerId || agentIntentChanged) {
+      if (event.snapshot.activeSessionId !== currentServerId || agentIntentChanged || newConversationChanged) {
         if (event.snapshot.activeSessionId) setPendingTarget(null);
         const external = initialNodeState(event.snapshot, handle);
         lastSelection.current = { sessionId: event.snapshot.activeSessionId, agentId: external.agentTargetId };
@@ -195,7 +206,7 @@ export function AgentGuiApplication({
     workspace={{ path: "", agentSettings: { avoidGroupingEdits: false }, prepareExternalPromptFiles: prepareFiles }}
     frame={{ position: { x: 0, y: 0 }, ...size, desktopSize: size, isActive: snapshot.hostActive ?? true, isVisible: snapshot.hostVisible ?? true, embedded: true }}
     state={node}
-    runtimeRequests={{ composerAppend: appends[0] ?? null, composerFocusSequence }}
+    runtimeRequests={{ composerAppend: appends[0] ?? null, composerFocusSequence, workbench: { instanceId: `multica-agent-gui:${initial.workspaceId}` } }}
     agentDirectory={agentDirectory}
     mentionAgentDirectory={mentionAgentDirectory}
     agentActivityRuntime={handle.runtime}
@@ -224,6 +235,8 @@ export function AgentGuiApplication({
       },
     }}
     renderSlots={{ composerFooterAccessory: (context) => <ComposerFooterControls context={context} client={client} handle={handle} targets={executionTargets(workspace)} snapshot={snapshot} onReadyForFocus={setComposerFocusSequence}
+      newConversationRequest={pendingNewConversation} onNewConversationApplied={() => setPendingNewConversation(undefined)}
+      onOpenNewConversation={() => dispatchAgentGuiWorkbenchCommand({ type: "new-conversation", instanceId: `multica-agent-gui:${initial.workspaceId}` })}
       pendingTarget={pendingTarget} onCancelTargetSwitch={() => setPendingTarget(null)}
       onLeaveSession={(target, fromSession, draft, projectPath) => { setPendingTarget({ target, fromSession, draft, projectPath }); setNode((current) => ({ ...current, lastActiveAgentSessionId: null })); }}
       onSelectAgent={(target) => { setPendingTarget(null); setNode((current) => current.agentTargetId === target.id ? current : { ...current, provider: target.provider, agentTargetId: target.id, lastActiveAgentSessionId: null }); }} /> }}

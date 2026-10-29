@@ -24,7 +24,7 @@ vi.mock("@multica/views/navigation", () => ({
 vi.mock("@multica/views/i18n", () => ({ useLocale: () => mock.locale, useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: { title: string }) => selector(chat).replace("{{title}}", options?.title ?? "") }) }));
 vi.mock("@multica/ui/hooks/use-mobile", () => ({ useIsCompact: () => mock.compact }));
 vi.mock("@multica/views/runtimes/provider-logo", () => ({ ProviderLogo: () => null }));
-vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: () => <textarea aria-label="Conversation draft" /> }));
+vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: (props: { newConversationRequest?: { sequence: number; projectPath: string | null } }) => <textarea aria-label="Conversation draft" data-new-conversation={JSON.stringify(props.newConversationRequest)} /> }));
 vi.mock("../platform/local-conversation-service", () => ({ localConversationKey: () => ["test-local-sessions"], localTargetId: (provider: string) => `local:${provider}`, createLocalConversationParentService: vi.fn() }));
 
 let qc: QueryClient;
@@ -284,7 +284,6 @@ describe("local conversation project creation", () => {
     mock.projects = [{ id: "cloud-project", workspace_id: "workspace", title: "Cloud task project" }] as Project[];
     mock.request.mockImplementation(async (_scope, method) => {
       if (method === "folderProjectAdd") { const project = folder("created-project", "local-repository", "/owned/local-repository"); mock.folders = [project]; return project; }
-      if (method === "create") return { ...source, id: "new-session", cwd: "/owned/local-repository", messages: [] };
       return method === "list" ? [source] : [{ id: "codex", available: true }];
     });
     render(page());
@@ -302,7 +301,9 @@ describe("local conversation project creation", () => {
     expect(within(group).getByRole("button", { name: "local-repository" })).toHaveAttribute("title", "/owned/local-repository");
     expect(screen.queryByRole("region", { name: "Cloud task project" })).not.toBeInTheDocument();
     fireEvent.click(within(group).getByRole("button", { name: "新建项目会话：local-repository" }));
-    await waitFor(() => expect(mock.request).toHaveBeenCalledWith({ userId: "user", workspaceId: "workspace" }, "create", { provider: "codex", folderProjectId: "created-project" }));
+    expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex");
+    expect(JSON.parse(draft.getAttribute("data-new-conversation")!)).toMatchObject({ projectPath: "/owned/local-repository" });
+    expect(mock.request.mock.calls.some((call) => call[1] === "create")).toBe(false);
   });
   it("allows project creation when no local model runner is installed", async () => {
     mock.request.mockImplementation(async (_scope, method) => method === "folderProjectAdd" ? null : method === "list" ? [source] : [{ id: "codex", available: false }]);
@@ -544,34 +545,38 @@ describe("local conversation fork entry", () => {
     const draft = { ...source, id: "draft", title: "Unsent draft", provider, providerSessionId: undefined, messages: [], turns: [] };
     let rows: LocalConversation[] = [source, { ...draft, id: "old-draft", title: "Older unsent draft" }];
     mock.request.mockImplementation(async (_scope, method) => {
-      if (method === "create") { rows = [...rows, draft]; return draft; }
       return method === "list" ? rows : [{ id: provider, available: true }];
     });
     const view = render(page());
     await screen.findByRole("link", { name: /Original/ });
     await waitFor(() => expect(screen.getByRole("button", { name: "新建会话" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
-    await waitFor(() => expect(mock.replace).toHaveBeenCalledWith(`/test/conversations?provider=${provider}&session=draft`));
-    await waitFor(() => expect(qc.getQueryData<LocalConversation[]>(["test-local-sessions"])).toHaveLength(3));
-    mock.selected = draft.id;
+    await waitFor(() => expect(mock.replace).toHaveBeenCalledWith(`/test/conversations?provider=${provider}`));
+    expect(mock.request.mock.calls.some((call) => call[1] === "create")).toBe(false);
+    expect(qc.getQueryData<LocalConversation[]>(["test-local-sessions"])).toHaveLength(2);
+    mock.selected = "";
     view.rerender(page());
+    const firstRequest = JSON.parse(screen.getByRole("textbox", { name: "Conversation draft" }).getAttribute("data-new-conversation")!);
+    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    expect(JSON.parse(screen.getByRole("textbox", { name: "Conversation draft" }).getAttribute("data-new-conversation")!).sequence).toBeGreaterThan(firstRequest.sequence);
+    expect(mock.request.mock.calls.some((call) => call[1] === "create")).toBe(false);
     fireEvent.change(screen.getByRole("textbox", { name: "Conversation draft" }), { target: { value: "Not sent yet" } });
     expect(screen.queryAllByRole("link", { name: /Unsent draft|Older unsent draft/ })).toHaveLength(0);
     expect(within(screen.getByRole("button", { name: "未分配项目" })).getByText("1")).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Conversation draft" })).toHaveValue("Not sent yet");
 
     const at = "2026-10-24T18:00:00Z";
-    rows = rows.map((entry) => entry.id === draft.id ? { ...entry, title: "First submitted message", messages: [{ id: "first-message", role: "user", content: "First submitted message", turnId: "first-turn", createdAt: at }], turns: [{ id: "first-turn", status: "running", createdAt: at, events: [] }] } : entry);
+    rows = [...rows, { ...draft, title: "First submitted message", messages: [{ id: "first-message", role: "user", content: "First submitted message", turnId: "first-turn", createdAt: at }], turns: [{ id: "first-turn", status: "running", createdAt: at, events: [] }] }];
     await act(async () => { await qc.invalidateQueries({ queryKey: ["test-local-sessions"] }); });
     expect(await screen.findByRole("link", { name: /First submitted message/ })).toBeInTheDocument();
     expect(within(screen.getByRole("button", { name: "未分配项目" })).getByText("2")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Older unsent draft/ })).not.toBeInTheDocument();
   });
-  it("collapses folder groups, reveals search matches, and creates directly inside the folder", async () => {
+  it("collapses folder groups, reveals search matches, and opens a draft inside the folder", async () => {
     mock.folders = [folder("project-a", "Multica Project")];
     const rows = [source];
-    mock.request.mockImplementation(async (_scope, method, params) => {
-      if (method === "create") { const created = { ...source, id: "new-project-session", cwd: mock.folders.find((project) => project.id === params.folderProjectId)!.path, providerSessionId: undefined, messages: [], turns: [] }; rows.push(created); return created; }
+    mock.request.mockImplementation(async (_scope, method) => {
       return method === "list" ? rows : [{ id: "codex", available: true }];
     });
     render(page());
@@ -583,8 +588,9 @@ describe("local conversation fork entry", () => {
     expect(group).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("link", { name: /Original/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "新建项目会话：Multica Project" }));
-    await waitFor(() => expect(mock.request).toHaveBeenCalledWith({ userId: "user", workspaceId: "workspace" }, "create", { provider: "codex", folderProjectId: "project-a" }));
-    await waitFor(() => expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex&session=new-project-session"));
+    expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex");
+    expect(JSON.parse(screen.getByRole("textbox", { name: "Conversation draft" }).getAttribute("data-new-conversation")!)).toMatchObject({ projectPath: "/owned/work" });
+    expect(mock.request.mock.calls.some((call) => call[1] === "create")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Multica Project" }));
     expect(screen.getAllByRole("link", { name: /Original/ })).toHaveLength(1);
   });

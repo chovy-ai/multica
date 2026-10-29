@@ -19,6 +19,36 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); handle?.dispose(); container.remove(); vi.unstubAllGlobals(); });
 
+it("applies a new conversation directory only to its active home composer, without submitting or changing the draft", async () => {
+  const target = { id: "local:codex", name: "Codex", provider: "codex", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true };
+  const snapshot: AgentGuiInitSnapshot = { workspaceId: "ws", workspaceSlug: "workspace", userId: "user", theme: "dark", locale: "en", local: true,
+    activeSessionId: null, selectedAgentId: target.id, agents: [], executionTargets: [target], sessions: [] };
+  const request = vi.fn(async (method: string) => method === "workspace.load" ? snapshot : null);
+  const client: AgentGuiRpcClient = { request: request as AgentGuiRpcClient["request"], subscribe: () => () => {} };
+  handle = createMulticaAgentGuiRuntime(client, snapshot); await handle.initialize();
+  const onProjectPathChange = vi.fn(); const onDraftContentChange = vi.fn(); const onReadyForFocus = vi.fn(); const onNewConversationApplied = vi.fn(); const onOpenNewConversation = vi.fn();
+  const renderFooter = (sessionId: string | null, sequence: number, projectPath: string | null, active = true) => act(async () => root.render(<ComposerFooterControls
+    context={{ agentSessionId: sessionId, isActive: active, selectedAgentTarget: { agentTargetId: target.id }, onProjectPathChange, onDraftContentChange } as unknown as ComponentProps<typeof ComposerFooterControls>["context"]}
+    client={client} handle={handle} targets={[target]} snapshot={snapshot} newConversationRequest={{ sequence, projectPath }} onNewConversationApplied={onNewConversationApplied}
+    onOpenNewConversation={onOpenNewConversation}
+    onLeaveSession={vi.fn()} onCancelTargetSwitch={vi.fn()} onSelectAgent={vi.fn()} onReadyForFocus={onReadyForFocus} />));
+  await renderFooter("outgoing-session", 1, "/project");
+  expect(onProjectPathChange).not.toHaveBeenCalled();
+  expect(onOpenNewConversation).toHaveBeenCalledOnce();
+  await renderFooter(null, 1, "/project", false);
+  expect(onProjectPathChange).not.toHaveBeenCalled();
+  await renderFooter(null, 1, "/project");
+  expect(onProjectPathChange.mock.calls).toEqual([["/project"]]);
+  expect(onReadyForFocus).toHaveBeenCalledWith(1);
+  await renderFooter(null, 1, "/project");
+  expect(onProjectPathChange).toHaveBeenCalledOnce();
+  await renderFooter(null, 2, null);
+  expect(onProjectPathChange.mock.calls).toEqual([["/project"], [null]]);
+  expect(onNewConversationApplied).toHaveBeenCalledTimes(2);
+  expect(onDraftContentChange).not.toHaveBeenCalled();
+  expect(request.mock.calls.some(([method]) => method === "session.create" || method === "session.send")).toBe(false);
+});
+
 it.each(["codex", "claude"] as const)("selects and displays %s thinking effort, then removes incompatible options on a model change", async (provider) => {
   const target = { id: `local:${provider}`, name: provider, provider, iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true };
   const snapshot: AgentGuiInitSnapshot = { workspaceId: "ws", workspaceSlug: "workspace", userId: "user", theme: "dark", locale: "en", local: true,

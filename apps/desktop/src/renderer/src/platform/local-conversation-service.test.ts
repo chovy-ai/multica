@@ -79,6 +79,24 @@ async function setup(getSelectionIntent?: () => string) {
   return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage, base, chooseDirectory };
 }
 describe("local providers and official agent invocation routing", () => {
+  it("omits old empty sessions from the reference catalog without deleting history or hiding submitted work", async () => {
+    const { bridge, service } = await setup();
+    const scope = { userId: "user", workspaceId: "ws" };
+    const empty = await service.request(scope, "create", { provider: "codex", title: "Named empty draft" });
+    const sent = await service.request(scope, "create", { provider: "codex" });
+    const queued = await service.request(scope, "create", { provider: "claude" });
+    expect((await bridge.load()).sessions).toEqual([]);
+    await bridge.request("session.send", { sessionId: sent.id, content: "First message" });
+    await service.request(scope, "update", { id: sent.id, title: "新会话" });
+    await service.request(scope, "queueEnqueue", { id: queued.id, paused: true, item: {
+      requestId: "pending-first", content: "Waiting for confirmation", display: { id: "pending-first", content: [{ type: "text", text: "Waiting for confirmation" }], createdAtUnixMs: 1 },
+    } });
+    const catalog = await bridge.load();
+    expect(catalog.sessions.map((entry) => entry.id).sort()).toEqual([sent.id, queued.id].sort());
+    expect(catalog.sessions.find((entry) => entry.id === sent.id)?.title).toBe("新会话");
+    expect((await service.request(scope, "list", {}))).toHaveLength(3);
+    expect((await bridge.request("session.load", { sessionId: empty.id })).messages).toEqual([]);
+  });
   it.each(["codex", "claude"] as const)("keeps the project directory through %s creation, execution and history reload", async (provider) => {
     const { bridge, service, run, base, chooseDirectory } = await setup();
     const cwd = join(base, "project"); await mkdir(cwd);
@@ -114,7 +132,7 @@ describe("local providers and official agent invocation routing", () => {
     await expect(service.request({ ...scope, workspaceId: "other" }, "create", { provider: "claude", directorySourceId: original.id })).rejects.toThrow("not found in this workspace");
     await rm(cwd, { recursive: true });
     await expect(bridge.request("session.create", { agentId: "local:codex", cwd })).rejects.toThrow();
-    expect((await bridge.load()).sessions).toHaveLength(2);
+    expect((await bridge.load()).sessions).toHaveLength(0);
   });
   it.each(["codex", "claude"] as const)("keeps %s thinking settings through the renderer bridge and a queued side conversation", async (provider) => {
     const { bridge, service, run } = await setup();
