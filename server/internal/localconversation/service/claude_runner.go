@@ -60,6 +60,9 @@ type SendRequest struct {
 	References    []Reference
 	// Title, when set, becomes the conversation title with the message.
 	Title *string
+	// Hidden turns have no user message: the prompt comes from Multica,
+	// such as a background result delivery.
+	Hidden bool
 }
 
 func (r SendRequest) prompt() string {
@@ -88,6 +91,17 @@ type ClaudeRunner struct {
 	now            func() time.Time
 	bindContext    ContextBinder
 	onTurnEnd      func(turnID string)
+	// onBackgroundEnded runs when background tasks end with no turn
+	// running and no native reply started.
+	onBackgroundEnded func(results []BackgroundResult)
+	// taskTurns maps a background task item to the turn that started it;
+	// later events of the task are recorded under that turn.
+	taskTurns map[string]string
+	// ended are background results waiting for delivery; a native reply
+	// supersedes them.
+	ended []BackgroundResult
+	// stopped are tasks the user stopped; their end needs no follow-up.
+	stopped map[string]bool
 	// releaseContext ends the context route of the running adapter.
 	releaseContext func()
 
@@ -111,6 +125,16 @@ type claudeTurn struct {
 	// a fork through this turn ends.
 	lastMessageID string
 	references    []Reference
+	// unlimited marks a native turn that started over the concurrency
+	// limit; it holds no limiter slot.
+	unlimited bool
+}
+
+// BackgroundResult is a background task that ended after its turn.
+type BackgroundResult struct {
+	SourceTurnID string
+	// State is the task's final item state.
+	State map[string]any
 }
 
 // ClaudeRunnerOptions configures a runner.
@@ -126,6 +150,9 @@ type ClaudeRunnerOptions struct {
 	Now            func() time.Time
 	// OnTurnEnd, when set, runs after a turn's completion is recorded.
 	OnTurnEnd func(turnID string)
+	// OnBackgroundEnded, when set, receives background tasks that ended
+	// while no turn ran.
+	OnBackgroundEnded func(results []BackgroundResult)
 	// Context, when set, gives the adapter Multica's context tools.
 	Context ContextBinder
 }
@@ -139,7 +166,8 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 		rec:            turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		conversationID: opts.ConversationID, start: opts.Start, session: opts.Session,
 		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName, bindContext: opts.Context,
-		onTurnEnd: opts.OnTurnEnd,
+		onTurnEnd: opts.OnTurnEnd, onBackgroundEnded: opts.OnBackgroundEnded,
+		taskTurns: map[string]string{}, stopped: map[string]bool{},
 	}
 }
 
@@ -197,6 +225,11 @@ func (r *ClaudeRunner) StopTasks(ctx context.Context, taskIDs []string) error {
 	if adapter == nil {
 		return nil
 	}
+	r.mu.Lock()
+	for _, id := range taskIDs {
+		r.stopped[id] = true
+	}
+	r.mu.Unlock()
 	var errs []error
 	for _, id := range taskIDs {
 		if _, err := adapter.Request(ctx, "stop_task", map[string]any{"task_id": id}); err != nil {
@@ -340,6 +373,12 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 		if sessionID != "" {
 			r.rememberSession(sessionID)
 		}
+		events = r.routeTaskEvents(turn, events)
+		if turn == nil && len(events) > 0 {
+			// Claude replied on its own, e.g. to a task notification. A
+			// bare result after a finished turn opens nothing.
+			turn = r.startNativeTurn()
+		}
 		if turn != nil {
 			if id := transcriptMessageID(out.Message); id != "" {
 				r.mu.Lock()
@@ -406,7 +445,9 @@ func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnErro
 	r.turn = nil
 	norm := r.norm
 	r.mu.Unlock()
-	defer r.limiter.Release()
+	if !turn.unlimited {
+		defer r.limiter.Release()
+	}
 
 	itemStatus := status
 	if itemStatus == "completed" {
@@ -521,4 +562,81 @@ func transcriptMessageID(raw json.RawMessage) string {
 		return ""
 	}
 	return m.UUID
+}
+
+// routeTaskEvents records events of background tasks started by another
+// turn under that turn and returns the rest. A task's start in the
+// current turn is remembered; a task's final event outside any turn is
+// queued for delivery.
+func (r *ClaudeRunner) routeTaskEvents(turn *claudeTurn, events []claude.Event) []claude.Event {
+	var rest []claude.Event
+	var ended []BackgroundResult
+	r.mu.Lock()
+	for _, e := range events {
+		if e.Payload["kind"] != "background_task" {
+			rest = append(rest, e)
+			continue
+		}
+		owner, known := r.taskTurns[e.ItemID]
+		if !known {
+			if turn == nil {
+				continue // a task this adapter never saw start
+			}
+			r.taskTurns[e.ItemID] = turn.id
+			rest = append(rest, e)
+			continue
+		}
+		if e.Final {
+			delete(r.taskTurns, e.ItemID)
+		}
+		if turn != nil && owner == turn.id {
+			rest = append(rest, e)
+			continue
+		}
+		_ = r.batcher.Append(r.rec.outputBatch(owner, []outputEvent{claudeOutput(e)}), e.Final)
+		if e.Final && turn == nil {
+			taskID, _ := e.Payload["task_id"].(string)
+			if !r.stopped[taskID] {
+				ended = append(ended, BackgroundResult{SourceTurnID: owner, State: e.Payload})
+			}
+		}
+	}
+	r.ended = append(r.ended, ended...)
+	pending := r.ended
+	r.mu.Unlock()
+	if len(ended) > 0 && r.onBackgroundEnded != nil {
+		r.onBackgroundEnded(pending)
+	}
+	return rest
+}
+
+// TakeBackgroundResults returns and clears the results waiting for
+// delivery.
+func (r *ClaudeRunner) TakeBackgroundResults() []BackgroundResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := r.ended
+	r.ended = nil
+	return out
+}
+
+// startNativeTurn records a turn Claude started without a prompt from
+// Multica. It answers any background results waiting for delivery.
+func (r *ClaudeRunner) startNativeTurn() *claudeTurn {
+	turn := &claudeTurn{id: "turn-native-" + newID()}
+	turn.unlimited = r.limiter.TryAcquire() != nil
+	r.mu.Lock()
+	if r.turn != nil {
+		existing := r.turn
+		r.mu.Unlock()
+		if !turn.unlimited {
+			r.limiter.Release()
+		}
+		return existing
+	}
+	r.turn = turn
+	r.ended = nil
+	r.mu.Unlock()
+	_ = r.batcher.Append(r.rec.startBatch(SendRequest{TurnID: turn.id, RequestID: turn.id, Hidden: true}), true)
+	return turn
 }

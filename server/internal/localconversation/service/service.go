@@ -93,6 +93,7 @@ type Service struct {
 	questions interactions
 	queues    queues
 	titles    titleRuns
+	delivery  deliveries
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -132,7 +133,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), context: contextServer, opts: opts, runners: map[string]runner{}, forking: map[string]bool{},
 		questions: interactions{waiting: map[string]*waitingQuestion{}},
 		queues:    queues{locks: map[string]*sync.Mutex{}, dispatching: map[string]string{}},
-		titles:    titleRuns{cancel: map[string]context.CancelFunc{}}}
+		titles:    titleRuns{cancel: map[string]context.CancelFunc{}},
+		delivery:  deliveries{timers: map[string]*time.Timer{}}}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {
@@ -387,6 +389,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 	return s.keepRunner(conv.ID, NewClaudeRunner(ClaudeRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
+		OnBackgroundEnded: func([]BackgroundResult) { s.scheduleDelivery(conv.ID) },
 	}))
 }
 

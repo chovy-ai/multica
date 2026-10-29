@@ -42,6 +42,18 @@ type turnRecorder struct {
 func (t *turnRecorder) startBatch(req SendRequest) store.Batch {
 	now := t.now()
 	running := "running"
+	if req.Hidden {
+		batch := store.Batch{
+			ConversationID: t.conversationID,
+			StartTurn:      &store.NewTurn{ID: req.TurnID, RequestID: req.RequestID, StartedAt: now},
+			Events:         []store.NewEvent{t.event(req.TurnID, "", "turn.started", false, map[string]any{"request_id": req.RequestID}, now)},
+			Summary:        &store.SummaryPatch{Status: &running, UpdatedAt: now},
+		}
+		if req.Fingerprint != "" {
+			batch.Receipt = &store.CommandReceipt{ScopeID: t.scopeID, RequestID: req.RequestID, Fingerprint: req.Fingerprint, Result: req.TurnID, CreatedAt: now}
+		}
+		return batch
+	}
 	preview := truncateRunes(req.Text, previewRunes)
 	return store.Batch{
 		ConversationID: t.conversationID,
