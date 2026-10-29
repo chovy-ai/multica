@@ -14,3 +14,11 @@ sql:
           - column: "issue_wakeup.condition"
             go_type: "encoding/json.RawMessage"
             nullable: true
+  - engine: "sqlite"
+    queries: "internal/localconversation/store/queries/"
+    schema: "internal/localconversation/store/schema/"
+    gen:
+      go:
+        package: "sqlitedb"
+        out: "internal/localconversation/store/sqlitedb"
+        emit_empty_slices: true
