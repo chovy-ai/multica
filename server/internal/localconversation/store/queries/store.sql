@@ -233,3 +233,8 @@ SELECT DISTINCT conversation_id FROM prompt_queue_item ORDER BY conversation_id;
 
 -- name: SetCommandReceiptResult :exec
 UPDATE command_receipt SET result = ? WHERE scope_id = ? AND request_id = ?;
+
+-- name: FindImportedConversation :one
+SELECT * FROM conversation
+WHERE scope_id = ? AND provider = ? AND (provider_session_id = sqlc.arg(session_id) OR imported_from_session_id = sqlc.arg(session_id))
+LIMIT 1;

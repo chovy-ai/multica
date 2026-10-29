@@ -27,6 +27,7 @@ export const daemonMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...request, type: z.literal("close") }),
   z.strictObject({ ...request, type: z.literal("fork_session"), session_id: z.string(), dir: z.string().optional(), title: z.string().optional(), up_to_message_id: z.string().optional() }),
   z.strictObject({ ...request, type: z.literal("list_sessions"), dir: z.string().optional(), limit: z.number().int().min(1).max(200).optional(), offset: z.number().int().min(0).optional() }),
+  z.strictObject({ ...request, type: z.literal("get_session_info"), session_id: z.string(), dir: z.string().optional() }),
   z.strictObject({ ...request, type: z.literal("get_session_messages"), session_id: z.string(), dir: z.string().optional(), limit: z.number().int().min(1).optional(), offset: z.number().int().min(0).optional() }),
   z.strictObject({ ...request, type: z.literal("supported_models"), executable: z.string().min(1) }),
 ]);

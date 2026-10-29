@@ -153,6 +153,54 @@ func (q *Queries) FindConversationByCwd(ctx context.Context, arg FindConversatio
 	return i, err
 }
 
+const findImportedConversation = `-- name: FindImportedConversation :one
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation
+WHERE scope_id = ? AND provider = ? AND (provider_session_id = ?3 OR imported_from_session_id = ?3)
+LIMIT 1
+`
+
+type FindImportedConversationParams struct {
+	ScopeID   int64
+	Provider  string
+	SessionID string
+}
+
+func (q *Queries) FindImportedConversation(ctx context.Context, arg FindImportedConversationParams) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, findImportedConversation, arg.ScopeID, arg.Provider, arg.SessionID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ScopeID,
+		&i.Provider,
+		&i.ProviderSessionID,
+		&i.Title,
+		&i.TitleMode,
+		&i.TitleGeneration,
+		&i.Cwd,
+		&i.Model,
+		&i.ReasoningEffort,
+		&i.PermissionMode,
+		&i.ProjectID,
+		&i.SideSourceID,
+		&i.Side,
+		&i.ForkedFromID,
+		&i.ForkedFromTurnID,
+		&i.ImportedFromSessionID,
+		&i.Pinned,
+		&i.Archived,
+		&i.Status,
+		&i.LastSeq,
+		&i.TurnCount,
+		&i.SummarySeq,
+		&i.LastMessagePreview,
+		&i.PendingInteractions,
+		&i.QueueCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAttachment = `-- name: GetAttachment :one
 SELECT id, scope_id, conversation_id, path, file_name, size, media_type, created_at FROM attachment WHERE id = ?
 `

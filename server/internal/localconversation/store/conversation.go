@@ -65,12 +65,33 @@ type NewConversation struct {
 // CreateConversation inserts a conversation and publishes it in the scope's
 // summary stream. It returns the new scope sequence.
 func (s *Store) CreateConversation(ctx context.Context, c NewConversation) (int64, error) {
+	return s.ImportConversation(ctx, c, nil)
+}
+
+// ImportConversation creates a conversation with history in one
+// transaction: the conversation, then each batch in order. It returns the
+// scope sequence of the creation.
+func (s *Store) ImportConversation(ctx context.Context, c NewConversation, history []Batch) (int64, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
 	q := sqlitedb.New(tx)
+	scopeSeq, err := insertConversation(ctx, q, c)
+	if err != nil {
+		return 0, err
+	}
+	for _, b := range history {
+		b.ConversationID = c.ID
+		if _, err := applyBatch(ctx, q, b); err != nil {
+			return 0, err
+		}
+	}
+	return scopeSeq, tx.Commit()
+}
+
+func insertConversation(ctx context.Context, q *sqlitedb.Queries, c NewConversation) (int64, error) {
 	scopeSeq, err := q.BumpScopeSeq(ctx, c.ScopeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
@@ -116,7 +137,7 @@ func (s *Store) CreateConversation(ctx context.Context, c NewConversation) (int6
 			return 0, err
 		}
 	}
-	return scopeSeq, tx.Commit()
+	return scopeSeq, nil
 }
 
 func nullString(v *string) sql.NullString {
@@ -133,4 +154,14 @@ func (s *Store) ScopeByID(ctx context.Context, id int64) (Scope, error) {
 		return Scope{}, ErrNotFound
 	}
 	return Scope{APIOrigin: row.ApiOrigin, UserID: row.UserID, WorkspaceID: row.WorkspaceID}, err
+}
+
+// ImportedConversation returns the scope's conversation that already
+// holds a native session of provider, by its own or its source session.
+func (s *Store) ImportedConversation(ctx context.Context, scopeID int64, provider, sessionID string) (sqlitedb.Conversation, error) {
+	c, err := sqlitedb.New(s.read).FindImportedConversation(ctx, sqlitedb.FindImportedConversationParams{ScopeID: scopeID, Provider: provider, SessionID: sessionID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, ErrNotFound
+	}
+	return c, err
 }

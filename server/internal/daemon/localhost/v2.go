@@ -88,6 +88,32 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		v.listFolderProjects(w, r, scopeID)
 	case path == "/folder-projects" && r.Method == http.MethodPost:
 		v.addFolderProject(w, r, scopeID)
+	case path == "/imports" && r.Method == http.MethodGet:
+		page, err := v.svc.ImportList(r.Context(), scopeID, r.URL.Query().Get("provider"), r.URL.Query().Get("cursor"))
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page)
+	case path == "/imports" && r.Method == http.MethodPost:
+		var body struct {
+			Provider  string   `json:"provider"`
+			IDs       []string `json:"ids"`
+			ProjectID *string  `json:"project_id"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		result, err := v.svc.Import(r.Context(), scopeID, body.Provider, body.IDs, body.ProjectID)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	case path == "/imports/cancel" && r.Method == http.MethodPost:
+		v.svc.CancelImport(scopeID)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "cancelled"})
 	case path == "/providers" && r.Method == http.MethodGet:
 		writeJSON(w, http.StatusOK, map[string]any{"providers": v.svc.Providers(r.Context())})
 	case path == "/models" && r.Method == http.MethodGet:
@@ -695,6 +721,8 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusForbidden, "outside_folder"
 	case errors.Is(err, store.ErrUploadTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "file_too_large"
+	case errors.Is(err, service.ErrImportRunning):
+		status, code = http.StatusConflict, "import_running"
 	case errors.Is(err, service.ErrForkUnavailable):
 		status, code = http.StatusConflict, "fork_unavailable"
 	case errors.Is(err, service.ErrForking):

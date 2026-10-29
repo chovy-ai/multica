@@ -49,6 +49,7 @@ function harness() {
     forkSession: vi.fn(async () => ({ sessionId: "child-session" })),
     listSessions: vi.fn(async () => [{ sessionId: "s1" }]),
     getSessionMessages: vi.fn(async () => [{ uuid: "u1", type: "user" }]),
+    getSessionInfo: vi.fn(async (id: string) => id === "src" ? { sessionId: "src", cwd: "/repo" } : undefined),
   };
   const exit = vi.fn();
   runClaudeHost({ input, output, sdk: async () => sdk as unknown as ClaudeSdk, exit });
@@ -147,11 +148,15 @@ describe("Claude host", () => {
     h.send({ id: "l", type: "list_sessions", limit: 50 });
     h.send({ id: "g", type: "get_session_messages", session_id: "src", dir: "/repo" });
     h.send({ id: "m", type: "supported_models", executable: "/bin/claude" });
+    h.send({ id: "i", type: "get_session_info", session_id: "src" });
+    h.send({ id: "i2", type: "get_session_info", session_id: "gone" });
     expect((await h.waitFor((f) => f.id === "f")).data).toEqual({ session_id: "child-session" });
     expect(h.sdk.forkSession).toHaveBeenCalledWith("src", { dir: "/repo", title: "Fork", upToMessageId: "u9" });
     expect((await h.waitFor((f) => f.id === "l")).data).toEqual([{ sessionId: "s1" }]);
     expect((await h.waitFor((f) => f.id === "g")).data).toEqual([{ uuid: "u1", type: "user" }]);
     expect((await h.waitFor((f) => f.id === "m")).data).toEqual({ models: [{ value: "claude-opus-5-5" }] });
+    expect((await h.waitFor((f) => f.id === "i")).data).toEqual({ sessionId: "src", cwd: "/repo" });
+    expect((await h.waitFor((f) => f.id === "i2")).data).toBeNull();
     expect(h.sdk.query.mock.calls[0]![0].options).toMatchObject({ persistSession: false, mcpServers: {}, tools: [] });
   });
 

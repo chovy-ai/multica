@@ -100,6 +100,7 @@ type Service struct {
 	delivery  deliveries
 	host      Host
 	side      sideWorkspaces
+	imports   imports
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -141,7 +142,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		queues:    queues{locks: map[string]*sync.Mutex{}, dispatching: map[string]string{}},
 		titles:    titleRuns{cancel: map[string]context.CancelFunc{}},
 		delivery:  deliveries{timers: map[string]*time.Timer{}},
-		side:      sideWorkspaces{entries: map[string]SideWorkspace{}}}
+		side:      sideWorkspaces{entries: map[string]SideWorkspace{}},
+		imports:   imports{busy: map[int64]context.CancelFunc{}}}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {

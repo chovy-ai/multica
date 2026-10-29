@@ -3,7 +3,7 @@ import { AdapterError, CLAUDE_ADAPTER_PROTOCOL_VERSION, type AdapterMessage, typ
 
 type Sdk = typeof import("@anthropic-ai/claude-agent-sdk");
 /** The SDK calls the adapter makes; tests inject a fake. */
-export type ClaudeSdk = Pick<Sdk, "query" | "forkSession" | "listSessions" | "getSessionMessages">;
+export type ClaudeSdk = Pick<Sdk, "query" | "forkSession" | "listSessions" | "getSessionMessages" | "getSessionInfo">;
 
 export interface AdapterOutput { write(frame: AdapterMessage): Promise<void> }
 
@@ -76,6 +76,8 @@ export class ClaudeAdapter {
       }
       case "list_sessions":
         return (await this.sdk()).listSessions({ ...(message.dir ? { dir: message.dir } : {}), ...(message.limit ? { limit: message.limit } : {}), ...(message.offset ? { offset: message.offset } : {}) });
+      case "get_session_info":
+        return (await (await this.sdk()).getSessionInfo(message.session_id, { ...(message.dir ? { dir: message.dir } : {}) })) ?? null;
       case "get_session_messages":
         return (await this.sdk()).getSessionMessages(message.session_id, { ...(message.dir ? { dir: message.dir } : {}), ...(message.limit ? { limit: message.limit } : {}), ...(message.offset ? { offset: message.offset } : {}) });
       case "supported_models": return this.supportedModels(message);

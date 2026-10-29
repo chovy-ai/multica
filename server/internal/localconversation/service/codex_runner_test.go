@@ -27,8 +27,10 @@ type fakeCodex struct {
 	// beforeTurnStart runs inside turn/start before it returns, to emit
 	// notifications that race the response.
 	beforeTurnStart func()
-	done            chan struct{}
-	once            sync.Once
+	// reply, when set, answers a method before the defaults.
+	reply func(method string, params map[string]any) (json.RawMessage, bool)
+	done  chan struct{}
+	once  sync.Once
 }
 
 func (f *fakeCodex) Request(_ context.Context, method string, params any) (json.RawMessage, error) {
@@ -38,8 +40,13 @@ func (f *fakeCodex) Request(_ context.Context, method string, params any) (json.
 	var p map[string]any
 	_ = json.Unmarshal(data, &p)
 	f.params[method] = p
-	hook := f.beforeTurnStart
+	hook, reply := f.beforeTurnStart, f.reply
 	f.mu.Unlock()
+	if reply != nil {
+		if out, ok := reply(method, p); ok {
+			return out, nil
+		}
+	}
 	switch method {
 	case "config/read":
 		return json.RawMessage(`{"config":{"developer_instructions":"native","mcp_servers":{"github":{}}}}`), nil
