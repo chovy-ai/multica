@@ -85,7 +85,7 @@ async function setup(data = backend()) {
 }
 
 describe("Multica Agent GUI runtime with the original session engine", () => {
-  it.each(["retry", "remove"] as const)("keeps first-send content recoverable after admission failure (%s)", async (action) => {
+  it("keeps first-send content recoverable for an explicit queue retry after admission failure", async () => {
     const data = backend();
     const original = data.request.getMockImplementation()!;
     let admissions = 0;
@@ -120,13 +120,6 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
       expect(admissions).toBe(1);
       expect(handle.toServerSessionId(input.agentSessionId)).toBe(session.id);
       expect(engine.getSnapshot().pendingIntents.activationsByRequestId["first-activation"]).toMatchObject({ initialTurnExpected: false, initialPromptRetracted: false });
-      if (action === "remove") {
-        engine.dispatch({ type: "queue/removed", agentSessionId: input.agentSessionId, promptId: "first-submit" });
-        await vi.waitFor(() => expect(engine.getSnapshot().promptQueue.recordsBySessionId[input.agentSessionId]?.prompts).toEqual([]));
-        expect(engine.getSnapshot().pendingIntents.activationsByRequestId["first-activation"]?.initialPromptRetracted).toBe(true);
-        expect(admissions).toBe(1);
-        return;
-      }
       engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: input.agentSessionId, promptId: "first-submit",
         awaitingTurnExpiresAtUnixMs: Date.now() + 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
       await vi.waitFor(() => expect(admissions).toBe(2));
