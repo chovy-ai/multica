@@ -30,6 +30,7 @@ CREATE TABLE conversation (
     permission_mode TEXT NOT NULL DEFAULT 'default',
     project_id TEXT,
     side_source_id TEXT NOT NULL DEFAULT '',
+    side TEXT NOT NULL DEFAULT '',
     forked_from_id TEXT NOT NULL DEFAULT '',
     forked_from_turn_id TEXT NOT NULL DEFAULT '',
     imported_from_session_id TEXT NOT NULL DEFAULT '',

@@ -257,8 +257,10 @@ type commandBody struct {
 	Action string          `json:"action"`
 	// send: provider text replacing Text, such as Text with context.
 	Prompt string `json:"prompt"`
-	// fork: the turn the fork ends after; empty forks everything.
+	// fork and create_side: the turn the copy ends after; empty takes
+	// everything. create_side also quotes a selection.
 	TurnID string `json:"turn_id"`
+	Quote  string `json:"quote"`
 }
 
 // optionalString decodes an update_settings field.
@@ -344,6 +346,20 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			return
 		}
 		writeJSON(w, http.StatusOK, summaryDTO(conv))
+	case "create_side":
+		conv, err := v.svc.CreateSide(r.Context(), service.SideCommand{ScopeID: scopeID, SourceID: id, TurnID: body.TurnID, Quote: body.Quote, RequestID: body.RequestID, QueuedItem: body.Item})
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, summaryDTO(conv))
+	case "queue_side":
+		conv, err := v.svc.QueueToSide(r.Context(), scopeID, id, body.RequestID)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, summaryDTO(conv))
 	case "fork":
 		conv, err := v.svc.Fork(r.Context(), service.ForkCommand{ScopeID: scopeID, SourceID: id, TurnID: body.TurnID, RequestID: body.RequestID})
 		if err != nil {
@@ -588,6 +604,13 @@ func summaryDTO(c sqlitedb.Conversation) map[string]any {
 	}
 	if c.SideSourceID != "" {
 		dto["side_source_id"] = c.SideSourceID
+		var side struct {
+			TurnID string `json:"turn_id"`
+			Quote  string `json:"quote"`
+		}
+		if json.Unmarshal([]byte(c.Side), &side) == nil {
+			dto["side_source_turn_id"], dto["side_quote"] = side.TurnID, side.Quote
+		}
 	}
 	return dto
 }

@@ -45,17 +45,21 @@ type NewConversation struct {
 	ProviderSessionID string
 	Title             string
 	// TitleMode is "auto" (generated titles may replace it) or "manual".
-	TitleMode             string
-	Cwd                   string
-	Model                 *string
-	ReasoningEffort       *string
-	PermissionMode        string
-	ProjectID             *string
-	SideSourceID          string
+	TitleMode       string
+	Cwd             string
+	Model           *string
+	ReasoningEffort *string
+	PermissionMode  string
+	ProjectID       *string
+	SideSourceID    string
+	// Side is the side conversation's source context, as JSON.
+	Side                  string
 	ForkedFromID          string
 	ForkedFromTurnID      string
 	ImportedFromSessionID string
-	CreatedAt             time.Time
+	// Receipt, when set, commits with the conversation.
+	Receipt   *CommandReceipt
+	CreatedAt time.Time
 }
 
 // CreateConversation inserts a conversation and publishes it in the scope's
@@ -96,6 +100,7 @@ func (s *Store) CreateConversation(ctx context.Context, c NewConversation) (int6
 		PermissionMode:        permission,
 		ProjectID:             nullString(c.ProjectID),
 		SideSourceID:          c.SideSourceID,
+		Side:                  c.Side,
 		ForkedFromID:          c.ForkedFromID,
 		ForkedFromTurnID:      c.ForkedFromTurnID,
 		ImportedFromSessionID: c.ImportedFromSessionID,
@@ -105,6 +110,11 @@ func (s *Store) CreateConversation(ctx context.Context, c NewConversation) (int6
 	})
 	if err != nil {
 		return 0, err
+	}
+	if c.Receipt != nil {
+		if err := insertReceipt(ctx, q, *c.Receipt); err != nil {
+			return 0, err
+		}
 	}
 	return scopeSeq, tx.Commit()
 }

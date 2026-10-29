@@ -248,6 +248,8 @@
         "pending_interactions": { "type": "integer", "minimum": 0 },
         "queue_count": { "type": "integer", "minimum": 0 },
         "side_source_id": { "type": "string" },
+        "side_source_turn_id": { "type": "string" },
+        "side_quote": { "type": "string" },
         "updated_at": { "$ref": "#/$defs/timestamp" }
       }
     },

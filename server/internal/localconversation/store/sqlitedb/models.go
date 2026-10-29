@@ -42,6 +42,7 @@ type Conversation struct {
 	PermissionMode        string
 	ProjectID             sql.NullString
 	SideSourceID          string
+	Side                  string
 	ForkedFromID          string
 	ForkedFromTurnID      string
 	ImportedFromSessionID string

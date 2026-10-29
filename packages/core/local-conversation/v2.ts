@@ -40,6 +40,8 @@ export const localV2SummarySchema = z.object({
   pending_interactions: z.number().int().default(0),
   queue_count: z.number().int().default(0),
   side_source_id: z.string().optional(),
+  side_source_turn_id: z.string().optional(),
+  side_quote: z.string().optional(),
   updated_at: z.string(),
 });
 export type LocalV2Summary = z.infer<typeof localV2SummarySchema>;

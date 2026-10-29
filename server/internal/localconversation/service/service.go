@@ -269,6 +269,9 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 	if err != nil {
 		return SendResult{}, err
 	}
+	if side := sideOf(conv); side != nil && conv.ProviderSessionID == "" {
+		prompt = sidePrompt(side, prompt)
+	}
 	runner, err := s.runner(ctx, conv)
 	if err != nil {
 		return SendResult{}, err
