@@ -371,3 +371,33 @@ func eventSeqs(v TurnView) []int64 {
 	}
 	return seqs
 }
+
+func TestLastSeqAndCommittedFromRow(t *testing.T) {
+	t.Parallel()
+
+	s, _ := openTestStore(t)
+	createConversation(t, s, "conv-1")
+	w := s.NewWriter(WriterOptions{})
+	defer w.Close()
+	ctx := context.Background()
+	committed, err := w.Submit(ctx, Batch{ConversationID: "conv-1", StartTurn: &NewTurn{ID: "turn-1", StartedAt: testTime},
+		Events: []NewEvent{event("turn-1", "it-1", "item.completed", true, `{"kind":"assistant_text"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq, err := s.LastSeq(ctx, "conv-1"); err != nil || seq != 1 {
+		t.Fatalf("LastSeq = %d, %v", seq, err)
+	}
+	if _, err := s.LastSeq(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LastSeq(missing) = %v", err)
+	}
+	rows, err := s.EventsAfter(ctx, "conv-1", 0, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, want := CommittedFromRow(rows[0]), committed.Events[0]
+	if got.Seq != want.Seq || got.TurnID != want.TurnID || got.TurnSeq != want.TurnSeq || got.ItemID != want.ItemID ||
+		got.Final != want.Final || string(got.Payload) != string(want.Payload) || !got.CreatedAt.Equal(want.CreatedAt) {
+		t.Fatalf("row %+v does not match committed %+v", got, want)
+	}
+}

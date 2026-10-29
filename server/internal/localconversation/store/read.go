@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
@@ -172,4 +174,22 @@ func reverseTurns(turns []sqlitedb.Turn) []sqlitedb.Turn {
 		out[len(turns)-1-i] = t
 	}
 	return out
+}
+
+// LastSeq returns the conversation's last committed event sequence.
+func (s *Store) LastSeq(ctx context.Context, conversationID string) (int64, error) {
+	conv, err := sqlitedb.New(s.read).GetConversation(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("%w: conversation %s", ErrNotFound, conversationID)
+	}
+	return conv.LastSeq, err
+}
+
+// CommittedFromRow converts a stored event to the form the writer publishes.
+func CommittedFromRow(e sqlitedb.Event) CommittedEvent {
+	created, _ := time.Parse(time.RFC3339Nano, e.CreatedAt)
+	return CommittedEvent{
+		ConversationID: e.ConversationID, Seq: e.Seq, TurnID: e.TurnID.String, TurnSeq: e.TurnSeq.Int64,
+		ItemID: e.ItemID.String, Type: e.Type, Final: e.Final == 1, Payload: json.RawMessage(e.Payload), CreatedAt: created,
+	}
 }
