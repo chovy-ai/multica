@@ -60,6 +60,8 @@ type SendRequest struct {
 	References    []Reference
 	// Title, when set, becomes the conversation title with the message.
 	Title *string
+	// CreateTask is set when the message carries the New task mention.
+	CreateTask bool
 	// Hidden turns have no user message: the prompt comes from Multica,
 	// such as a background result delivery.
 	Hidden bool
@@ -125,6 +127,7 @@ type claudeTurn struct {
 	// a fork through this turn ends.
 	lastMessageID string
 	references    []Reference
+	createTask    bool
 	// unlimited marks a native turn that started over the concurrency
 	// limit; it holds no limiter slot.
 	unlimited bool
@@ -184,7 +187,7 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		r.mu.Unlock()
 		return err
 	}
-	turn := &claudeTurn{id: req.TurnID, references: req.References}
+	turn := &claudeTurn{id: req.TurnID, references: req.References, createTask: req.CreateTask}
 	r.turn = turn
 	r.mu.Unlock()
 
@@ -539,6 +542,7 @@ func (r *ClaudeRunner) currentContext() map[string]any {
 	current := map[string]any{"conversation_id": r.rec.conversationID, "references": []Reference{}}
 	if r.turn != nil {
 		current["turn_id"], current["references"] = r.turn.id, r.turn.references
+		current["create_task_requested"] = r.turn.createTask
 	}
 	return current
 }

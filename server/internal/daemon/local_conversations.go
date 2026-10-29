@@ -62,7 +62,7 @@ func (d *Daemon) claudeLauncher(sidecar localhost.Sidecar) service.ClaudeLaunche
 		if err != nil {
 			return service.ClaudeSession{}, nil, err
 		}
-		fields := map[string]any{"executable": resolved.Path, "cwd": conv.Cwd}
+		fields := map[string]any{"executable": resolved.Path, "cwd": conv.Cwd, "env": service.ClaudeEnv(os.Environ())}
 		logger := d.logger.With("component", "claude-adapter", "conversation_id", conv.ID)
 		start := func(ctx context.Context, handler claude.Handler) (service.ClaudeAdapter, error) {
 			p, err := claude.Start(ctx, claude.AdapterCommand(sidecar.Electron, sidecar.ClaudeEntry, os.Environ()), handler, logger)

@@ -93,6 +93,7 @@ type codexTurn struct {
 	cancelRequested bool
 	storageFailed   bool
 	references      []Reference
+	createTask      bool
 }
 
 type codexNative struct {
@@ -143,7 +144,7 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		r.mu.Unlock()
 		return err
 	}
-	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References}
+	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References, createTask: req.CreateTask}
 	r.turn = turn
 	r.mu.Unlock()
 
@@ -628,6 +629,7 @@ func (r *CodexRunner) currentContext() map[string]any {
 	current := map[string]any{"conversation_id": r.rec.conversationID, "references": []Reference{}}
 	if r.turn != nil {
 		current["turn_id"], current["references"] = r.turn.id, r.turn.references
+		current["create_task_requested"] = r.turn.createTask
 	}
 	return current
 }

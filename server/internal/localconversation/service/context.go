@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 )
@@ -19,9 +20,24 @@ type BoundContext struct {
 	SystemPrompt string
 }
 
-// contextServerEntry is Claude's MCP configuration for a bound route.
+// contextServerEntry is Claude's MCP configuration for a bound route. An
+// hour-long call timeout keeps ask_user_question waiting for the user.
 func contextServerEntry(name string, b contextmcp.Binding) map[string]any {
 	return map[string]any{name: map[string]any{
-		"type": "http", "url": b.URL, "headers": map[string]any{"Authorization": "Bearer " + b.Token},
+		"type": "http", "url": b.URL, "headers": map[string]any{"Authorization": "Bearer " + b.Token}, "timeout": 3600000,
 	}}
+}
+
+// ClaudeEnv is the environment of Claude Code in a local conversation:
+// the daemon's, with MCP calls kept in the foreground so a question to the
+// user stays attached to its turn.
+func ClaudeEnv(environ []string) map[string]string {
+	env := map[string]string{}
+	for _, kv := range environ {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			env[k] = v
+		}
+	}
+	env["CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS"] = "0"
+	return env
 }

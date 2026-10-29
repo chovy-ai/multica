@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
+	"github.com/multica-ai/multica/server/internal/localconversation/workspace"
 )
 
 var (
@@ -269,7 +270,7 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 		return SendResult{}, err
 	}
 	turnID := "turn-" + cmd.RequestID
-	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Prompt: prompt, AttachmentIDs: cmd.AttachmentIDs, References: readableReferences(cmd.References),
+	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Prompt: prompt, AttachmentIDs: cmd.AttachmentIDs, References: readableReferences(cmd.References), CreateTask: len(readableReferences(cmd.References)) < len(cmd.References),
 		Title: firstTitle(conv.TurnCount, conv.TitleMode, conv.Title, cmd.Text)})
 	switch {
 	case errors.Is(err, store.ErrDuplicateRequest):
@@ -535,6 +536,11 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 			cloud = s.opts.Cloud(scope, dir)
 		}
 		tools := append(contextmcp.ContextTools(s.store, cloud, conv.ScopeID, withWorkspace), s.questionToolFor(conv, current))
+		requester, _ := cloud.(workspace.Requester)
+		tools = append(tools, workspace.Tools(workspace.Options{
+			WorkspaceID: scope.WorkspaceID, UserID: scope.UserID, ConversationID: conv.ID,
+			Request: requester, Local: localActions{s: s, scopeID: conv.ScopeID},
+		})...)
 		binding, err := s.context.Bind(context.Background(), contextmcp.Execution{
 			Instructions: contextmcp.ContextInstructions, Token: token, Tools: tools,
 		})
