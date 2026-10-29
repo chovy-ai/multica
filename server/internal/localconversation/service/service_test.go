@@ -31,8 +31,16 @@ type serviceFixture struct {
 
 func newServiceFixture(t *testing.T, path string) *serviceFixture {
 	t.Helper()
+	return newServiceFixtureWith(t, path, Options{})
+}
+
+// newServiceFixtureWith opens the service with opts plus the fixture's
+// path and Claude launcher.
+func newServiceFixtureWith(t *testing.T, path string, opts Options) *serviceFixture {
+	t.Helper()
 	f := &serviceFixture{path: path}
-	svc, err := Open(context.Background(), Options{Path: path, Claude: f.launch})
+	opts.Path, opts.Claude = path, f.launch
+	svc, err := Open(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

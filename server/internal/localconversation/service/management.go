@@ -125,6 +125,7 @@ func (s *Service) UpdateMetadata(ctx context.Context, scopeID int64, conversatio
 			return conv, err
 		}
 		meta.TitleMode = "manual"
+		s.cancelTitle(conversationID)
 		batch.Summary = &store.SummaryPatch{Title: &title, UpdatedAt: s.opts.Now()}
 		changed["title"], changed["title_mode"] = title, "manual"
 	}
@@ -198,7 +199,7 @@ func (s *Service) AddFolderProject(ctx context.Context, scopeID int64, dir strin
 }
 
 func metadataOf(c sqlitedb.Conversation) store.ConversationMetadata {
-	m := store.ConversationMetadata{TitleMode: c.TitleMode, Cwd: c.Cwd, Pinned: c.Pinned == 1, Archived: c.Archived == 1}
+	m := store.ConversationMetadata{TitleMode: c.TitleMode, TitleGeneration: c.TitleGeneration, Cwd: c.Cwd, Pinned: c.Pinned == 1, Archived: c.Archived == 1}
 	if c.ProjectID.Valid {
 		id := c.ProjectID.String
 		m.ProjectID = &id

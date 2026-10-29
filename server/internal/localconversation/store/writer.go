@@ -65,6 +65,8 @@ type SummaryPatch struct {
 	PendingInteractions *int64
 	QueueCount          *int64
 	UpdatedAt           time.Time
+	// KeepRecency leaves updated_at, which orders the list, unchanged.
+	KeepRecency bool
 }
 
 // Batch is everything one conversation commits at once. All of it lands in
@@ -100,7 +102,10 @@ type Batch struct {
 // ConversationMetadata is how a conversation is listed and where it runs.
 type ConversationMetadata struct {
 	TitleMode string
-	Cwd       string
+	// TitleGeneration is "", "pending", "complete" or "failed" for the
+	// model-generated title.
+	TitleGeneration string
+	Cwd             string
 	// ProjectID nil means the conversation belongs to no project.
 	ProjectID *string
 	Pinned    bool
@@ -428,7 +433,7 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 
 	if m := b.Metadata; m != nil {
 		err := q.UpdateConversationMetadata(ctx, sqlitedb.UpdateConversationMetadataParams{
-			TitleMode: m.TitleMode, Cwd: m.Cwd, ProjectID: nullString(m.ProjectID),
+			TitleMode: m.TitleMode, TitleGeneration: m.TitleGeneration, Cwd: m.Cwd, ProjectID: nullString(m.ProjectID),
 			Pinned: boolInt(m.Pinned), Archived: boolInt(m.Archived), ID: conv.ID,
 		})
 		if err != nil {
@@ -482,7 +487,9 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		next := conv
 		next.LastSeq = seq
 		next.SummarySeq = scopeSeq
-		next.UpdatedAt = formatTime(p.UpdatedAt)
+		if !p.KeepRecency {
+			next.UpdatedAt = formatTime(p.UpdatedAt)
+		}
 		if p.Status != nil {
 			next.Status = *p.Status
 		}
@@ -499,7 +506,7 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 			next.QueueCount = *p.QueueCount
 		}
 		if m := b.Metadata; m != nil {
-			next.TitleMode, next.Cwd, next.ProjectID = m.TitleMode, m.Cwd, nullString(m.ProjectID)
+			next.TitleMode, next.TitleGeneration, next.Cwd, next.ProjectID = m.TitleMode, m.TitleGeneration, m.Cwd, nullString(m.ProjectID)
 			next.Pinned, next.Archived = boolInt(m.Pinned), boolInt(m.Archived)
 		}
 		if b.StartTurn != nil {

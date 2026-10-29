@@ -58,6 +58,8 @@ type SendRequest struct {
 	Prompt        string
 	AttachmentIDs []string
 	References    []Reference
+	// Title, when set, becomes the conversation title with the message.
+	Title *string
 }
 
 func (r SendRequest) prompt() string {

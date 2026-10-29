@@ -35,6 +35,7 @@ type Conversation struct {
 	ProviderSessionID     string
 	Title                 string
 	TitleMode             string
+	TitleGeneration       string
 	Cwd                   string
 	Model                 sql.NullString
 	ReasoningEffort       sql.NullString

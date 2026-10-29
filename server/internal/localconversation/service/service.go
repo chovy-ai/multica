@@ -92,6 +92,7 @@ type Service struct {
 	runners   map[string]runner
 	questions interactions
 	queues    queues
+	titles    titleRuns
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -130,7 +131,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	}
 	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), context: contextServer, opts: opts, runners: map[string]runner{}, forking: map[string]bool{},
 		questions: interactions{waiting: map[string]*waitingQuestion{}},
-		queues:    queues{locks: map[string]*sync.Mutex{}, dispatching: map[string]string{}}}
+		queues:    queues{locks: map[string]*sync.Mutex{}, dispatching: map[string]string{}},
+		titles:    titleRuns{cancel: map[string]context.CancelFunc{}}}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {
@@ -155,6 +157,11 @@ func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.closing = true
 	runners := s.runners
+	s.titles.mu.Lock()
+	for _, cancel := range s.titles.cancel {
+		cancel()
+	}
+	s.titles.mu.Unlock()
 	s.runners = map[string]runner{}
 	s.mu.Unlock()
 	var errs []error
@@ -260,7 +267,8 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 		return SendResult{}, err
 	}
 	turnID := "turn-" + cmd.RequestID
-	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Prompt: prompt, AttachmentIDs: cmd.AttachmentIDs, References: readableReferences(cmd.References)})
+	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Prompt: prompt, AttachmentIDs: cmd.AttachmentIDs, References: readableReferences(cmd.References),
+		Title: firstTitle(conv.TurnCount, conv.TitleMode, conv.Title, cmd.Text)})
 	switch {
 	case errors.Is(err, store.ErrDuplicateRequest):
 		// A concurrent retry committed first.

@@ -176,7 +176,7 @@ SELECT COUNT(*) FROM interaction_request WHERE conversation_id = ? AND status = 
 SELECT * FROM interaction_request WHERE conversation_id = ? AND turn_id = ? AND status = 'pending' ORDER BY created_at, id;
 
 -- name: UpdateConversationMetadata :exec
-UPDATE conversation SET title_mode = ?, cwd = ?, project_id = ?, pinned = ?, archived = ? WHERE id = ?;
+UPDATE conversation SET title_mode = ?, title_generation = ?, cwd = ?, project_id = ?, pinned = ?, archived = ? WHERE id = ?;
 
 -- name: InsertFolderProject :exec
 INSERT INTO folder_project (id, scope_id, title, path, created_at) VALUES (?, ?, ?, ?, ?);

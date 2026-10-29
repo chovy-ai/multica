@@ -330,3 +330,8 @@ func envOr(name, fallback string) string {
 	}
 	return fallback
 }
+
+// Executable resolves a provider's executable.
+func (c *Catalog) Executable(ctx context.Context, provider string) (string, error) {
+	return c.find(ctx, provider)
+}

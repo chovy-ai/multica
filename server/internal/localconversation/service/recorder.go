@@ -52,7 +52,7 @@ func (t *turnRecorder) startBatch(req SendRequest) store.Batch {
 			t.event(req.TurnID, "", "turn.started", false, map[string]any{"request_id": req.RequestID, "input_message_id": req.MessageID}, now),
 		},
 		Messages: []store.NewMessage{{ID: req.MessageID, TurnID: req.TurnID, Role: "user", Content: req.Text, AttachmentIDs: req.AttachmentIDs, CreatedAt: now}},
-		Summary:  &store.SummaryPatch{Status: &running, LastMessagePreview: &preview, UpdatedAt: now},
+		Summary:  &store.SummaryPatch{Status: &running, LastMessagePreview: &preview, Title: req.Title, UpdatedAt: now},
 	}
 }
 

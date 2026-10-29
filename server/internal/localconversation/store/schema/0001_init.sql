@@ -23,6 +23,7 @@ CREATE TABLE conversation (
     provider_session_id TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL DEFAULT '',
     title_mode TEXT NOT NULL DEFAULT 'auto',
+    title_generation TEXT NOT NULL DEFAULT '',
     cwd TEXT NOT NULL DEFAULT '',
     model TEXT,
     reasoning_effort TEXT,

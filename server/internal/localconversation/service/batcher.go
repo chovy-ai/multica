@@ -301,7 +301,10 @@ func mergeSummary(dst, src *store.SummaryPatch) {
 	if src.QueueCount != nil {
 		dst.QueueCount = src.QueueCount
 	}
-	dst.UpdatedAt = src.UpdatedAt
+	if !src.KeepRecency {
+		dst.UpdatedAt = src.UpdatedAt
+		dst.KeepRecency = false
+	}
 }
 
 func isEmpty(b store.Batch) bool {
