@@ -195,17 +195,39 @@ Go 以 `--input-format stream-json --output-format stream-json` 启动用户配�
 | SDK 能力 | 本质 | Go 实现 |
 | --- | --- | --- |
 | `query()` 常驻会话、多轮消息推送 | stream-json 输入流 | 新写常驻会话；云端现有为单次运行 |
-| `supportedModels` | control 请求 | 复用 `list_models` 实现 |
-| `setModel`、`setPermissionMode`、`applyFlagSettings`、`setMcpServers`、`stopTask` | 运行中 control 子命令 | 对照 SDK 源码确定子类型与字段，按 CLI 版本测试 |
+| `supportedModels` | `initialize` 响应字段 | 读取 `initialize` 响应；无会话时复用 `list_models` |
+| `setModel`、`setPermissionMode`、`applyFlagSettings`、`setMcpServers`、`stopTask` | 运行中 control 子命令 | 子类型与字段见下方第 1 项结果，按 CLI 版本测试 |
 | 后台任务 system 事件（`task_started`、`task_progress`、`task_updated`、`background_tasks_changed`、`task_notification`） | 输出事件 | 按 `local-claude-conversation.ts` 的现有语义归一化 |
 | `listSessions`、`getSessionInfo`、`getSessionMessages` | SDK 在 TS 内解析 `~/.claude` transcript 文件 | Go 解析 transcript；格式未公开，按版本建立样本夹具 |
-| `forkSession` | SDK 文件级操作 | 优先验证 CLI `--resume <id> --fork-session` 与 SDK 结果等价；否则 Go 实现文件级 fork |
+| `forkSession` | SDK 文件级操作 | 不移植；改用 CLI `--resume <id> --fork-session [--resume-session-at <uuid>]` 延迟 fork（见下方结论） |
 
 P1 前完成 1–2 天技术验证：
 
 1. 把上表每项 SDK 调用映射到 control 子类型或 CLI 参数，记录依据的 SDK 版本。
 2. 用 Go 跑通常驻会话：多轮推送、`setModel`、`setPermissionMode`、`stopTask`。
 3. 用两个 CLI 版本的 transcript 验证 Go 解析结果，并比较 `--fork-session` 与 SDK `forkSession`。
+
+**第 1 项结果（静态核对，2026-10-29）。** 依据仓库当前锁定的 `@anthropic-ai/claude-agent-sdk` 0.3.310（对应 Claude Code 2.1.310）的打包源码：
+
+| SDK 调用 | 协议映射 |
+| --- | --- |
+| `setModel(model)` | control `set_model`，字段 `model` |
+| `setPermissionMode(mode)` | control `set_permission_mode`，字段 `mode` |
+| `applyFlagSettings(settings)` | control `apply_flag_settings`，字段 `settings`（本地用于修改推理强度 `effortLevel`） |
+| `setMcpServers(servers)` | control `mcp_set_servers`，字段 `servers` |
+| `stopTask(id)` | control `stop_task`，字段 `task_id` |
+| `interrupt()` | control `interrupt`，可选 `cancel_queued` |
+| `supportedModels()` | 不单独请求，取 `initialize` 响应中的 `models`；Go 云端路径的 `list_models` 仍可用于不建立会话时的模型发现 |
+| `systemPrompt` 追加、hooks | 不走 CLI 参数，随 `initialize` control 请求下发（`appendSystemPrompt`、`hooks` 等字段） |
+| `resume`、`forkSession` 选项、`resumeSessionAt`、`effort`、`settingSources`、partial messages、MCP 配置、`allowedTools` | CLI 参数 `--resume`、`--fork-session`、`--resume-session-at`、`--effort`、`--setting-sources`、`--include-partial-messages`、`--mcp-config`、`--allowedTools` |
+
+结论：
+
+- **control 子命令可在 Go 实现**，均为单字段请求，复用 Go 现有 control 帧收发即可。
+- **SDK 的 `forkSession()` 不宜移植**：它在 TS 内重写 transcript 文件，处理 compaction 元数据、sidechain、progress 条目、UUID 重映射、标题和多种 transcript 存储后端，与 CLI 内部格式强耦合。
+- **fork 改用 CLI 原生参数**：`--resume <源会话> --fork-session`，需要截断到某条消息时加 `--resume-session-at <uuid>`。差异是新会话 ID 在第一次运行时才产生（延迟 fork）：fork 操作先只在库中记录来源会话与截断点，首个轮次启动时由 CLI 完成分叉，并把新原生会话 ID 写回会话。导入（完整复制）同样处理。
+- **原生历史读取（`listSessions` / `getSessionMessages`）仍需 Go 解析 transcript**，但只读、可降级；截断点 UUID 由同一解析得到。该解析的格式样本与多版本夹具是 P1b 的主要风险项。
+- 第 2、3 项需要运行真实 `claude` CLI，按仓库规则在单独授权后以 `agentintegration` 冒烟测试执行。
 
 transcript 解析失败时，对应会话降级为"不可导入 / 不可读取原生历史"并给出可诊断错误，不影响其他会话或进程。如果验证表明 transcript 读取或 fork 无法在 Go 中可靠实现，可评审一个按需启动、执行完即退出的 Node 工具进程，仅处理这两类低频操作；它不持有状态、不写存储、不常驻，也不恢复 sidecar 协议。
 
@@ -672,7 +694,7 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 
 | 事项 | 建议默认值 | 影响 |
 | --- | --- | --- |
-| Claude 技术验证结论 | control 子命令与 transcript / fork 均在 Go 实现 | 若 transcript / fork 无法可靠实现，评审按需启动的 Node 工具进程例外（§4.4） |
+| Claude 技术验证（第 2、3 项） | 静态核对已完成：control 子命令在 Go 实现，fork 改用 CLI 延迟 fork，原生历史由 Go 只读解析（§4.4）；运行验证待授权真实 CLI 冒烟测试 | 若延迟 fork 或 transcript 解析在真实 CLI 上不成立，再评审按需启动的 Node 工具进程例外 |
 | Go MCP 服务实现 | P0 选型，替代 TS `@modelcontextprotocol/sdk` | 决定 Context MCP 工具迁移方式与协议版本支持 |
 | 协议代码生成工具 | JSON Schema 为定义源；工具按 §5.6 的兼容要求选型 | 决定生成命令、产物目录与 CI 检查方式 |
 | provider 最低版本 | §4.4 技术验证后确定 | 决定版本不满足时的提示内容 |
