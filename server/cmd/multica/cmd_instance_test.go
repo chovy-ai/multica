@@ -34,7 +34,7 @@ func runtimeStoreFixture(t *testing.T) (runtimeinstance.Store, runtimeinstance.L
 	if err := os.WriteFile(entry, []byte("test-owned"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l := runtimeinstance.Launch{SchemaVersion: 1, InstanceID: "desktop", OwnerID: strings.Repeat("1", 32), Kind: "development", AppPath: filepath.Dir(entry), CLIPath: exe, ElectronPath: exe, EntryPath: entry, CLIVersion: "0.7.0", CLICommit: "bcdfa010e", Profile: "desktop-runtime", APIURL: "https://api.example.test", ProtocolVersion: 2}
+	l := runtimeinstance.Launch{SchemaVersion: 1, InstanceID: "desktop", OwnerID: strings.Repeat("1", 32), Kind: "development", AppPath: filepath.Dir(entry), CLIPath: exe, ElectronPath: exe, ClaudeEntryPath: entry, CLIVersion: "0.7.0", CLICommit: "bcdfa010e", Profile: "desktop-runtime", APIURL: "https://api.example.test", ProtocolVersion: 2}
 	if err := store.PublishLaunch(l); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestRuntimeInstanceSelectionHonorsSingleDesktopAndTaskBoundary(t *testing.T
 		t.Fatal("accepted superseded Desktop")
 	}
 	t.Setenv(runtimeinstance.OwnerEnv, "")
-	launch.CLIPath = launch.EntryPath
+	launch.CLIPath = launch.ClaudeEntryPath
 	if err := store.PublishLaunch(launch); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestRuntimeInstanceSelectionHonorsSingleDesktopAndTaskBoundary(t *testing.T
 
 func TestRuntimeInstanceHealthRejectsStaleRunsAndPortReuse(t *testing.T) {
 	store, l := runtimeStoreFixture(t)
-	r := runtimeinstance.Runtime{SchemaVersion: 1, InstanceID: "desktop", OwnerID: l.OwnerID, RunID: strings.Repeat("2", 32), PID: 1234, Profile: l.Profile, APIURL: l.APIURL, CLIVersion: l.CLIVersion, CLICommit: l.CLICommit, APIVersion: 1, SidecarProtocolVersion: 2, LocalConversations: true, StartedAt: "2026-10-28T10:00:00Z"}
+	r := runtimeinstance.Runtime{SchemaVersion: 1, InstanceID: "desktop", OwnerID: l.OwnerID, RunID: strings.Repeat("2", 32), PID: 1234, Profile: l.Profile, APIURL: l.APIURL, CLIVersion: l.CLIVersion, CLICommit: l.CLICommit, APIVersion: 2, SidecarProtocolVersion: 2, LocalConversations: true, StartedAt: "2026-10-28T10:00:00Z"}
 	response := map[string]any{"instance_id": r.InstanceID, "instance_owner_id": r.OwnerID, "instance_run_id": r.RunID, "pid": r.PID, "profile": r.Profile, "cli_version": r.CLIVersion, "cli_commit": r.CLICommit, "server_url": r.APIURL, "status": "running"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path != "/health" {

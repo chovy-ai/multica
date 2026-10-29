@@ -165,6 +165,33 @@ func TestQueueRejectsInvalidItems(t *testing.T) {
 	}
 }
 
+func TestQueueRejectsAnItemPastCapacity(t *testing.T) {
+	t.Parallel()
+
+	f := newServiceFixture(t, filepath.Join(t.TempDir(), "c.sqlite"))
+	f.create(t, "conv-1", "claude")
+	ctx := context.Background()
+	item := func(id string) json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(`{"requestId":%q,"content":"x","display":{"id":%q}}`, id, id))
+	}
+	for i := 0; i < maxQueueItems; i++ {
+		if _, err := f.svc.Enqueue(ctx, f.scopeID, "conv-1", item(fmt.Sprintf("q%d", i)), true); err != nil {
+			t.Fatalf("item %d: %v", i, err)
+		}
+	}
+	if _, err := f.svc.Enqueue(ctx, f.scopeID, "conv-1", item("over"), true); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("over capacity = %v", err)
+	}
+	// A retry of a queued item is not a new item.
+	if _, err := f.svc.Enqueue(ctx, f.scopeID, "conv-1", item("q0"), true); err != nil {
+		t.Fatalf("retry of a queued item = %v", err)
+	}
+	view, err := f.svc.Queue(ctx, f.scopeID, "conv-1")
+	if err != nil || len(view.Items) != maxQueueItems {
+		t.Fatalf("queue = %d items, %v", len(view.Items), err)
+	}
+}
+
 func TestQueueResumesAfterRestart(t *testing.T) {
 	t.Parallel()
 

@@ -378,9 +378,11 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			ReloadPendingReason: d.reloadPending(),
 			Workspaces:          wsList,
 		}
-		if d.local != nil && d.local.Supported() {
+		if d.conversations != nil {
 			resp.LocalConversations = "supported"
-			resp.LocalBusyCount = d.local.Busy()
+			if busy, err := d.conversations.Busy(r.Context()); err == nil {
+				resp.LocalBusyCount = busy
+			}
 		}
 		if reporter, ok := d.repoCache.(interface{ Activity() repocache.Activity }); ok {
 			activity := reporter.Activity()
@@ -434,9 +436,6 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
-	if d.local != nil {
-		d.local.Register(mux)
-	}
 	if d.localV2 != nil {
 		d.localV2.Register(mux)
 	}

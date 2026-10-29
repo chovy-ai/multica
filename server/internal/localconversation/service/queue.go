@@ -330,7 +330,7 @@ func (s *Service) dispatchQueue(conversationID string) {
 	change := store.QueueChange{Revision: state.Revision + 1, Paused: state.Paused}
 	count := len(state.Items)
 	switch {
-	case errors.Is(err, ErrTurnRunning) || errors.Is(err, ErrClosing):
+	case errors.Is(err, ErrTurnRunning) || errors.Is(err, ErrClosing) || errors.Is(err, ErrDraining):
 		return
 	case err != nil && !errors.Is(err, ErrOutcomeUnknown):
 		change.Paused, change.Error = true, err.Error()

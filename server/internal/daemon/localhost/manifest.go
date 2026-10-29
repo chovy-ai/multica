@@ -24,20 +24,16 @@ const ManifestOverrideEnv = "MULTICA_LOCAL_HOST_MANIFEST"
 // executable name differs per platform.
 type Manifest struct {
 	ProtocolVersion int               `json:"protocolVersion"`
-	Entry           string            `json:"entry"`
 	Electron        map[string]string `json:"electron"`
-	// ClaudeEntry is the per-conversation Claude adapter entry. Desktop
-	// builds that ship it enable the Go-owned /local/v2 service.
-	ClaudeEntry string `json:"claudeEntry,omitempty"`
+	// ClaudeEntry is the per-conversation Claude adapter entry.
+	ClaudeEntry string `json:"claudeEntry"`
 }
 
 // Sidecar is a resolved, validated manifest.
 type Sidecar struct {
 	ProtocolVersion int
 	Electron        string
-	Entry           string
-	// ClaudeEntry is empty when the install has no Claude adapter.
-	ClaudeEntry string
+	ClaudeEntry     string
 }
 
 // ErrNoManifest means this daemon binary was not installed by Desktop, so it
@@ -97,7 +93,7 @@ func load(path, root string) (Sidecar, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Sidecar{}, fmt.Errorf("parse local host manifest: %w", err)
 	}
-	if m.ProtocolVersion < 1 || m.Entry == "" {
+	if m.ProtocolVersion < 1 || m.ClaudeEntry == "" {
 		return Sidecar{}, errors.New("local host manifest is incomplete")
 	}
 	electronRel := m.Electron[runtime.GOOS]
@@ -109,17 +105,11 @@ func load(path, root string) (Sidecar, error) {
 	if err != nil {
 		return Sidecar{}, fmt.Errorf("local host electron: %w", err)
 	}
-	entry, err := resolveFile(dir, m.Entry, root)
+	claudeEntry, err := resolveFile(dir, m.ClaudeEntry, root)
 	if err != nil {
-		return Sidecar{}, fmt.Errorf("local host entry: %w", err)
+		return Sidecar{}, fmt.Errorf("local host claude entry: %w", err)
 	}
-	sidecar := Sidecar{ProtocolVersion: m.ProtocolVersion, Electron: electron, Entry: entry}
-	if m.ClaudeEntry != "" {
-		if sidecar.ClaudeEntry, err = resolveFile(dir, m.ClaudeEntry, root); err != nil {
-			return Sidecar{}, fmt.Errorf("local host claude entry: %w", err)
-		}
-	}
-	return sidecar, nil
+	return Sidecar{ProtocolVersion: m.ProtocolVersion, Electron: electron, ClaudeEntry: claudeEntry}, nil
 }
 
 func resolveFile(dir, rel, root string) (string, error) {

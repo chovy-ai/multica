@@ -19,9 +19,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
 
-// openLocalConversations opens the Go-owned local conversation service and
-// its /local/v2 API. The shared sidecar keeps serving /local/v1 until Desktop
-// switches over; the two use separate storage.
+// openLocalConversations opens the local conversation service and its
+// /local/v2 API. Claude conversations run Desktop's Claude adapter with
+// Desktop's Electron in Node mode.
 func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.Sidecar) error {
 	svc, err := service.Open(ctx, service.Options{
 		Path:   filepath.Join(d.cfg.ProfileDir, "local-conversations", "conversations.sqlite"),

@@ -119,6 +119,9 @@ func (s *Service) SendToAgents(ctx context.Context, cmd SendCommand, agents []Re
 	if len(agents) == 0 || len(agents) > maxInvokedAgents {
 		return RemoteResult{}, fmt.Errorf("%w: mention between 1 and %d agents", ErrInvalidRequest, maxInvokedAgents)
 	}
+	if err := s.acceptTurn(); err != nil {
+		return RemoteResult{}, err
+	}
 	for _, a := range agents {
 		if !nativeID.MatchString(a.ID) || a.Name == "" || len(a.Name) > 256 {
 			return RemoteResult{}, fmt.Errorf("%w: invalid mentioned agent", ErrInvalidRequest)

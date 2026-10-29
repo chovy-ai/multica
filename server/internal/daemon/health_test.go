@@ -19,7 +19,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 
-	"github.com/multica-ai/multica/server/internal/daemon/localhost"
+	"github.com/multica-ai/multica/server/internal/localconversation/service"
 )
 
 func TestHealthHandlerReportsEmptyCLICommitWithoutFallback(t *testing.T) {
@@ -1068,17 +1068,21 @@ func TestShutdownHandlerRejectsUnauthorizedRequests(t *testing.T) {
 func TestHealthHandlerReportsLocalConversationSupport(t *testing.T) {
 	t.Parallel()
 
+	svc, err := service.Open(context.Background(), service.Options{Path: filepath.Join(t.TempDir(), "conversations.sqlite")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	for _, tc := range []struct {
 		name string
-		srv  *localhost.Server
+		svc  *service.Service
 		want string
 	}{
-		{name: "no server", want: "unsupported"},
-		{name: "not bundled", srv: localhost.NewServer(localhost.Config{Token: "t"}), want: "unsupported"},
-		{name: "bundled", srv: localhost.NewServer(localhost.Config{Token: "t", Sidecar: &localhost.Sidecar{ProtocolVersion: 2}}), want: "supported"},
+		{name: "not bundled", want: "unsupported"},
+		{name: "bundled", svc: svc, want: "supported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &Daemon{cfg: Config{CLIVersion: "v1.0.0"}, workspaces: map[string]*workspaceState{}, logger: slog.Default(), local: tc.srv}
+			d := &Daemon{cfg: Config{CLIVersion: "v1.0.0"}, workspaces: map[string]*workspaceState{}, logger: slog.Default(), conversations: tc.svc}
 			rec := httptest.NewRecorder()
 			d.healthHandler(time.Now()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
 			var resp HealthResponse

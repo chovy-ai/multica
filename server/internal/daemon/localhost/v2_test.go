@@ -152,6 +152,33 @@ func TestV2RejectsUnauthorizedAndUnscopedRequests(t *testing.T) {
 	}
 }
 
+func TestV2DrainAndUndrain(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newV2Server(t)
+	tokenOnly := http.Header{"Authorization": {"Bearer " + v2Token}}
+	if status, _ := v2Do(t, srv, http.MethodPost, "/local/v2/drain", nil, http.Header{}); status != http.StatusForbidden {
+		t.Fatalf("drain without token = %d", status)
+	}
+	if status, body := v2Do(t, srv, http.MethodPost, "/local/v2/drain", nil, tokenOnly); status != http.StatusOK || body["busy"] != float64(0) {
+		t.Fatalf("drain = %d %v", status, body)
+	}
+	create := map[string]any{"id": "conv-1", "provider": "claude"}
+	if status, _ := v2Do(t, srv, http.MethodPost, "/local/v2/sessions", create, v2Headers("user-1")); status != http.StatusCreated {
+		t.Fatalf("create = %d", status)
+	}
+	send := map[string]any{"type": "send", "request_id": "r1", "text": "hi"}
+	if status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", send, v2Headers("user-1")); status != http.StatusServiceUnavailable || body["error"].(map[string]any)["kind"] != "draining" {
+		t.Fatalf("send while draining = %d %v", status, body)
+	}
+	if status, _ := v2Do(t, srv, http.MethodPost, "/local/v2/stop-providers", nil, tokenOnly); status != http.StatusOK {
+		t.Fatalf("stop providers = %d", status)
+	}
+	if status, _ := v2Do(t, srv, http.MethodPost, "/local/v2/undrain", nil, tokenOnly); status != http.StatusOK {
+		t.Fatalf("undrain = %d", status)
+	}
+}
+
 func TestV2SendSnapshotAndCatchUpOverWebSocket(t *testing.T) {
 	t.Parallel()
 

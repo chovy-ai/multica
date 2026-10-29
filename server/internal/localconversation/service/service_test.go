@@ -97,6 +97,31 @@ func TestServiceSendIsIdempotentPerRequestID(t *testing.T) {
 	}
 }
 
+func TestDrainRefusesNewTurnsAndReportsRunningOnes(t *testing.T) {
+	t.Parallel()
+
+	f := newServiceFixture(t, filepath.Join(t.TempDir(), "c.sqlite"))
+	f.create(t, "conv-1", "claude")
+	f.create(t, "conv-2", "claude")
+	ctx := context.Background()
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	busy, err := f.svc.Drain(ctx)
+	if err != nil || busy != 1 {
+		t.Fatalf("Drain = %d, %v; want the running turn", busy, err)
+	}
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-2", RequestID: "r2", Text: "hi"}); !errors.Is(err, ErrDraining) {
+		t.Fatalf("send while draining = %v", err)
+	}
+	if err := f.svc.Undrain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-2", RequestID: "r2", Text: "hi"}); err != nil {
+		t.Fatalf("send after undrain = %v", err)
+	}
+}
+
 func TestServiceChecksScopeAndProvider(t *testing.T) {
 	t.Parallel()
 

@@ -26,6 +26,8 @@ var (
 	ErrHostUnavailable = errors.New("local conversation: Multica Desktop is not connected")
 	// ErrClosing rejects new work while the service shuts down.
 	ErrClosing = errors.New("local conversation: the service is shutting down")
+	// ErrDraining rejects new turns while the daemon waits to restart.
+	ErrDraining = errors.New("local conversation: the service is updating; send again shortly")
 	// ErrRequestConflict means a request id was reused for different content.
 	ErrRequestConflict = errors.New("local conversation: request id reused with different content")
 	// ErrUnsupportedProvider means no runner serves the conversation's provider.
@@ -94,6 +96,7 @@ type Service struct {
 	metaMu    sync.Mutex
 	mu        sync.Mutex
 	closing   bool
+	draining  bool
 	forking   map[string]bool
 	runners   map[string]runner
 	questions interactions
@@ -195,6 +198,76 @@ func (s *Service) Close(ctx context.Context) error {
 	s.writer.Close()
 	errs = append(errs, s.store.Close())
 	return errors.Join(errs...)
+}
+
+// Drain refuses new turns so the daemon can restart once running ones end,
+// and reports how many are still running. Queued messages wait.
+func (s *Service) Drain(ctx context.Context) (int64, error) {
+	s.mu.Lock()
+	s.draining = true
+	s.mu.Unlock()
+	return s.Busy(ctx)
+}
+
+// Undrain accepts turns again after a restart was called off and resumes
+// the queues that waited.
+func (s *Service) Undrain(ctx context.Context) error {
+	s.mu.Lock()
+	was := s.draining
+	s.draining = false
+	s.mu.Unlock()
+	if !was {
+		return nil
+	}
+	queued, err := s.store.QueuedConversations(ctx)
+	for _, id := range queued {
+		go s.dispatchQueue(id)
+	}
+	s.mu.Lock()
+	for id, r := range s.runners {
+		if _, ok := r.(*ClaudeRunner); ok {
+			go s.deliverBackground(id)
+		}
+	}
+	s.mu.Unlock()
+	return err
+}
+
+// StopProviders drains the service and closes every provider process; their
+// running turns end interrupted. Desktop calls it before an update replaces
+// the executable the processes run.
+func (s *Service) StopProviders(ctx context.Context) error {
+	s.mu.Lock()
+	s.draining = true
+	runners := s.runners
+	s.runners = map[string]runner{}
+	s.mu.Unlock()
+	var errs []error
+	for _, r := range runners {
+		closeCtx, cancel := context.WithTimeout(ctx, closeTimeout)
+		errs = append(errs, r.Close(closeCtx))
+		cancel()
+	}
+	return errors.Join(errs...)
+}
+
+// Busy counts running turns, local and remote.
+func (s *Service) Busy(ctx context.Context) (int64, error) {
+	turns, err := s.store.RunningTurns(ctx)
+	return int64(len(turns)), err
+}
+
+// acceptTurn reports why a new turn cannot start now.
+func (s *Service) acceptTurn() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.closing:
+		return ErrClosing
+	case s.draining:
+		return ErrDraining
+	}
+	return nil
 }
 
 // Store exposes reads for the HTTP layer.
@@ -300,6 +373,9 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 	}
 	if ambient := s.sideAmbient(ctx, cmd.ScopeID, conv.ID); ambient != "" {
 		prompt += "\n\n" + ambient
+	}
+	if err := s.acceptTurn(); err != nil {
+		return SendResult{}, err
 	}
 	runner, err := s.runner(ctx, conv)
 	if err != nil {

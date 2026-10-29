@@ -71,6 +71,33 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": []string{"claude", "codex"}})
 		return
 	}
+	// Desktop stops provider processes before an update replaces the app.
+	if path == "/stop-providers" && r.Method == http.MethodPost {
+		if err := v.svc.StopProviders(r.Context()); err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "stopped"})
+		return
+	}
+	// Desktop drains before restarting the daemon for a version change.
+	if (path == "/drain" || path == "/undrain") && r.Method == http.MethodPost {
+		if path == "/undrain" {
+			if err := v.svc.Undrain(r.Context()); err != nil {
+				writeV2Error(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"busy": 0})
+			return
+		}
+		busy, err := v.svc.Drain(r.Context())
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"busy": busy})
+		return
+	}
 	scopeID, err := v.scope(r)
 	if err != nil {
 		writeV2Error(w, err)
@@ -741,6 +768,8 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusForbidden, "outside_folder"
 	case errors.Is(err, store.ErrUploadTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "file_too_large"
+	case errors.Is(err, service.ErrDraining) || errors.Is(err, service.ErrClosing):
+		status, code = http.StatusServiceUnavailable, "draining"
 	case errors.Is(err, service.ErrCloudUnavailable):
 		status, code = http.StatusServiceUnavailable, "cloud_unavailable"
 	case errors.Is(err, service.ErrImportRunning):
@@ -771,14 +800,13 @@ func writeV2Error(w http.ResponseWriter, err error) {
 	writeJSON(w, status, map[string]any{"error": map[string]any{"kind": code, "message": err.Error()}})
 }
 
-// appErrorCode returns the stable code of an AppError, or "".
+// appErrorCode returns the stable kind of an AppError, or "".
 func appErrorCode(err error) string {
-	var rpcErr *RPCError
-	if !errors.As(err, &rpcErr) {
+	var app *appError
+	if !errors.As(err, &app) {
 		return ""
 	}
-	data, _ := rpcErr.Data.(map[string]string)
-	return data["code"]
+	return app.kind
 }
 
 func folderProjectDTO(p sqlitedb.FolderProject) map[string]any {

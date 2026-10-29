@@ -1185,7 +1185,7 @@ func runDaemonForeground(cmd *cobra.Command) error {
 			if normalizeAPIBaseURL(cfg.ServerBaseURL) != normalizeAPIBaseURL(registered.launch.APIURL) {
 				return fmt.Errorf("runtime instance and configured backend disagree")
 			}
-			sidecar = localhost.Sidecar{ProtocolVersion: registered.launch.ProtocolVersion, Electron: registered.launch.ElectronPath, Entry: registered.launch.EntryPath, ClaudeEntry: registered.launch.ClaudeEntryPath}
+			sidecar = localhost.Sidecar{ProtocolVersion: registered.launch.ProtocolVersion, Electron: registered.launch.ElectronPath, ClaudeEntry: registered.launch.ClaudeEntryPath}
 		} else {
 			sidecar, err = localhost.Locate(exe, os.Getenv)
 		}

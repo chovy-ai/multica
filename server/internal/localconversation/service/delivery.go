@@ -41,7 +41,8 @@ func (s *Service) scheduleDelivery(conversationID string) {
 // of tasks, never while a turn runs or queued messages wait, and not for
 // a paused queue, an archived conversation, or tasks the user stopped.
 func (s *Service) deliverBackground(conversationID string) {
-	if s.isClosing() {
+	// A draining service delivers after it resumes or restarts.
+	if s.acceptTurn() != nil {
 		return
 	}
 	s.mu.Lock()

@@ -34,7 +34,7 @@ func launchFixture(t *testing.T, r Runtime) Launch {
 			t.Fatal(err)
 		}
 	}
-	return Launch{SchemaVersion: 1, InstanceID: InstanceID, OwnerID: r.OwnerID, Kind: "development", AppPath: dir, CLIPath: paths[0], ElectronPath: paths[1], EntryPath: paths[2], CLIVersion: r.CLIVersion, CLICommit: r.CLICommit[:9], Profile: ProfileName, APIURL: r.APIURL, ProtocolVersion: 2}
+	return Launch{SchemaVersion: 1, InstanceID: InstanceID, OwnerID: r.OwnerID, Kind: "development", AppPath: dir, CLIPath: paths[0], ElectronPath: paths[1], ClaudeEntryPath: paths[2], CLIVersion: r.CLIVersion, CLICommit: r.CLICommit[:9], Profile: ProfileName, APIURL: r.APIURL, ProtocolVersion: 2}
 }
 
 func TestRuntimeInstanceSingleRegistrationAndOwnedCleanup(t *testing.T) {
@@ -104,7 +104,7 @@ func TestRuntimeInstanceRejectsInvalidRegistration(t *testing.T) {
 		t.Fatal("accepted path traversal")
 	}
 	for _, change := range []func(*Launch){
-		func(v *Launch) { v.ProtocolVersion = 99 }, func(v *Launch) { v.EntryPath = "relative.js" },
+		func(v *Launch) { v.ProtocolVersion = 99 }, func(v *Launch) { v.ClaudeEntryPath = "relative.js" },
 		func(v *Launch) { v.Profile = "another" }, func(v *Launch) { v.OwnerID = "invalid" },
 		func(v *Launch) { v.APIURL = "https://user:secret@example.test" },
 	} {
@@ -120,7 +120,7 @@ func TestRuntimeInstanceRejectsInvalidRegistration(t *testing.T) {
 	for _, change := range []func(*Runtime){
 		func(v *Runtime) { v.Port = 65536 }, func(v *Runtime) { v.RunID = "invalid" },
 		func(v *Runtime) { v.CLICommit = "unknown" }, func(v *Runtime) { v.APIURL = "https://other.test" },
-		func(v *Runtime) { v.CLIVersion = "old" }, func(v *Runtime) { v.APIVersion = 2 },
+		func(v *Runtime) { v.CLIVersion = "old" }, func(v *Runtime) { v.APIVersion = 1 },
 	} {
 		bad := r
 		change(&bad)
@@ -160,16 +160,13 @@ func TestRuntimeInstanceRejectsInvalidRegistration(t *testing.T) {
 	}
 }
 
-func TestLaunchValidatesOptionalClaudeEntry(t *testing.T) {
+func TestLaunchRequiresThePresentClaudeEntry(t *testing.T) {
 	t.Parallel()
 
 	launch := launchFixture(t, fixture(t))
-	if err := launch.Validate(); err != nil {
-		t.Fatalf("launch without claude entry: %v", err)
-	}
-	launch.ClaudeEntryPath = "relative/claude-host.js"
+	launch.ClaudeEntryPath = ""
 	if err := launch.Validate(); err == nil {
-		t.Fatal("relative claude entry accepted")
+		t.Fatal("launch without claude entry accepted")
 	}
 	launch.ClaudeEntryPath = filepath.Join(launch.AppPath, "missing-claude-host.js")
 	if err := launch.Validate(); err != nil {
