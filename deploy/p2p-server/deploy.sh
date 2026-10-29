@@ -36,7 +36,9 @@ net.core.wmem_max=7500000
 SYSCTL
 sysctl -q -p /etc/sysctl.d/90-multica-p2p.conf || true
 
-install -d -m 0700 -o "$APP_UID" -g "$APP_UID" "$DATA"
+# The uid has no account on the host, so set ownership numerically.
+install -d -m 0700 "$DATA"
+chown "$APP_UID:$APP_UID" "$DATA"
 install -d -m 0755 /etc/multica-p2p
 install -d -m 0700 "$STATE"
 if [[ ! -f "$CONF" ]]; then
