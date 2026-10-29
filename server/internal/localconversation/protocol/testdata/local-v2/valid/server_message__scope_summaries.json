@@ -16,6 +16,7 @@
       "last_message_preview": "测试全部通过。",
       "pending_interactions": 1,
       "queue_count": 0,
+      "background_tasks": 1,
       "updated_at": "2026-10-29T12:00:00Z"
     }
   ]

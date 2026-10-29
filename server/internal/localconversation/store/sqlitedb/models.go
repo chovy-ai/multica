@@ -57,6 +57,7 @@ type Conversation struct {
 	QueueCount            int64
 	CreatedAt             string
 	UpdatedAt             string
+	BackgroundTasks       int64
 }
 
 type Event struct {

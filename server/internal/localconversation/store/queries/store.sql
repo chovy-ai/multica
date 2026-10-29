@@ -37,6 +37,7 @@ UPDATE conversation SET
     last_message_preview = ?,
     pending_interactions = ?,
     queue_count = ?,
+    background_tasks = ?,
     summary_seq = ?,
     updated_at = ?
 WHERE id = ?;
@@ -199,6 +200,11 @@ ON CONFLICT (scope_id, path) DO NOTHING;
 
 -- name: ListPreviewRoots :many
 SELECT path FROM preview_root WHERE scope_id = ? ORDER BY created_at, path;
+
+-- name: CountOpenBackgroundTasks :one
+SELECT COUNT(DISTINCT e.item_id) FROM event e
+WHERE e.conversation_id = ? AND e.item_id IS NOT NULL AND json_extract(e.payload, '$.kind') = 'background_task'
+  AND NOT EXISTS (SELECT 1 FROM event f WHERE f.conversation_id = e.conversation_id AND f.item_id = e.item_id AND f.final = 1);
 
 -- name: ListBackgroundTaskEvents :many
 SELECT * FROM event

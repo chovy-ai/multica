@@ -83,6 +83,19 @@ func (q *Queries) CountAttachmentsAtPath(ctx context.Context, path string) (int6
 	return count, err
 }
 
+const countOpenBackgroundTasks = `-- name: CountOpenBackgroundTasks :one
+SELECT COUNT(DISTINCT e.item_id) FROM event e
+WHERE e.conversation_id = ? AND e.item_id IS NOT NULL AND json_extract(e.payload, '$.kind') = 'background_task'
+  AND NOT EXISTS (SELECT 1 FROM event f WHERE f.conversation_id = e.conversation_id AND f.item_id = e.item_id AND f.final = 1)
+`
+
+func (q *Queries) CountOpenBackgroundTasks(ctx context.Context, conversationID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOpenBackgroundTasks, conversationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countPendingInteractions = `-- name: CountPendingInteractions :one
 SELECT COUNT(*) FROM interaction_request WHERE conversation_id = ? AND status = 'pending'
 `
@@ -109,7 +122,7 @@ func (q *Queries) DeletePromptQueueItem(ctx context.Context, arg DeletePromptQue
 }
 
 const findConversationByCwd = `-- name: FindConversationByCwd :one
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation WHERE scope_id = ? AND cwd = ? ORDER BY created_at LIMIT 1
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks FROM conversation WHERE scope_id = ? AND cwd = ? ORDER BY created_at LIMIT 1
 `
 
 type FindConversationByCwdParams struct {
@@ -149,12 +162,13 @@ func (q *Queries) FindConversationByCwd(ctx context.Context, arg FindConversatio
 		&i.QueueCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BackgroundTasks,
 	)
 	return i, err
 }
 
 const findImportedConversation = `-- name: FindImportedConversation :one
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks FROM conversation
 WHERE scope_id = ? AND provider = ? AND (provider_session_id = ?3 OR imported_from_session_id = ?3)
 LIMIT 1
 `
@@ -197,6 +211,7 @@ func (q *Queries) FindImportedConversation(ctx context.Context, arg FindImported
 		&i.QueueCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BackgroundTasks,
 	)
 	return i, err
 }
@@ -245,7 +260,7 @@ func (q *Queries) GetCommandReceipt(ctx context.Context, arg GetCommandReceiptPa
 }
 
 const getConversation = `-- name: GetConversation :one
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation WHERE id = ?
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks FROM conversation WHERE id = ?
 `
 
 func (q *Queries) GetConversation(ctx context.Context, id string) (Conversation, error) {
@@ -280,6 +295,7 @@ func (q *Queries) GetConversation(ctx context.Context, id string) (Conversation,
 		&i.QueueCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BackgroundTasks,
 	)
 	return i, err
 }
@@ -1266,7 +1282,7 @@ func (q *Queries) ListRunningTurns(ctx context.Context) ([]Turn, error) {
 }
 
 const listScopeConversations = `-- name: ListScopeConversations :many
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation WHERE scope_id = ? ORDER BY updated_at DESC, id
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks FROM conversation WHERE scope_id = ? ORDER BY updated_at DESC, id
 `
 
 func (q *Queries) ListScopeConversations(ctx context.Context, scopeID int64) ([]Conversation, error) {
@@ -1307,6 +1323,7 @@ func (q *Queries) ListScopeConversations(ctx context.Context, scopeID int64) ([]
 			&i.QueueCount,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.BackgroundTasks,
 		); err != nil {
 			return nil, err
 		}
@@ -1322,7 +1339,7 @@ func (q *Queries) ListScopeConversations(ctx context.Context, scopeID int64) ([]
 }
 
 const listSummariesAfter = `-- name: ListSummariesAfter :many
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks FROM conversation
 WHERE scope_id = ?1 AND summary_seq > ?2
 ORDER BY summary_seq
 LIMIT ?3
@@ -1372,6 +1389,7 @@ func (q *Queries) ListSummariesAfter(ctx context.Context, arg ListSummariesAfter
 			&i.QueueCount,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.BackgroundTasks,
 		); err != nil {
 			return nil, err
 		}
@@ -1784,6 +1802,7 @@ UPDATE conversation SET
     last_message_preview = ?,
     pending_interactions = ?,
     queue_count = ?,
+    background_tasks = ?,
     summary_seq = ?,
     updated_at = ?
 WHERE id = ?
@@ -1795,6 +1814,7 @@ type UpdateConversationSummaryParams struct {
 	LastMessagePreview  string
 	PendingInteractions int64
 	QueueCount          int64
+	BackgroundTasks     int64
 	SummarySeq          int64
 	UpdatedAt           string
 	ID                  string
@@ -1807,6 +1827,7 @@ func (q *Queries) UpdateConversationSummary(ctx context.Context, arg UpdateConve
 		arg.LastMessagePreview,
 		arg.PendingInteractions,
 		arg.QueueCount,
+		arg.BackgroundTasks,
 		arg.SummarySeq,
 		arg.UpdatedAt,
 		arg.ID,

@@ -243,6 +243,41 @@ func TestSummaryPatchAdvancesScopeStream(t *testing.T) {
 	}
 }
 
+func TestSummaryCountsRunningBackgroundTasks(t *testing.T) {
+	t.Parallel()
+
+	s, _ := openTestStore(t)
+	createConversation(t, s, "conv-1")
+	w := s.NewWriter(WriterOptions{})
+	defer w.Close()
+	ctx := context.Background()
+	submit := func(b Batch) Committed {
+		t.Helper()
+		got, err := w.Submit(ctx, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	submit(Batch{ConversationID: "conv-1", StartTurn: &NewTurn{ID: "turn-1", StartedAt: testTime}})
+	got := submit(Batch{ConversationID: "conv-1", Events: []NewEvent{
+		event("turn-1", "bg-1", "item.started", false, `{"kind":"background_task","task_id":"a"}`),
+		event("turn-1", "bg-2", "item.started", false, `{"kind":"background_task","task_id":"b"}`),
+	}})
+	if got.Summary == nil || got.Summary.BackgroundTasks != 2 {
+		t.Fatalf("summary after two tasks started = %+v", got.Summary)
+	}
+	// Progress leaves the count alone, so it publishes no summary.
+	if got := submit(Batch{ConversationID: "conv-1", Events: []NewEvent{event("turn-1", "bg-1", "item.updated", false, `{"kind":"background_task","task_id":"a","progress_summary":"half"}`)}}); got.Summary != nil {
+		t.Fatalf("progress published summary %+v", got.Summary)
+	}
+	got = submit(Batch{ConversationID: "conv-1", Events: []NewEvent{event("turn-1", "bg-1", "item.completed", true, `{"kind":"background_task","task_id":"a","status":"completed"}`)}})
+	if got.Summary == nil || got.Summary.BackgroundTasks != 1 {
+		t.Fatalf("summary after one task ended = %+v", got.Summary)
+	}
+}
+
 func TestSnapshotUsesFinalEventsForFinishedItems(t *testing.T) {
 	t.Parallel()
 

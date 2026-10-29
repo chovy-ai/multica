@@ -247,6 +247,7 @@
         "last_message_preview": { "type": "string" },
         "pending_interactions": { "type": "integer", "minimum": 0 },
         "queue_count": { "type": "integer", "minimum": 0 },
+        "background_tasks": { "type": "integer", "minimum": 0 },
         "side_source_id": { "type": "string" },
         "side_source_turn_id": { "type": "string" },
         "side_quote": { "type": "string" },

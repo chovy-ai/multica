@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
 
@@ -103,11 +106,15 @@ func (s *Service) LocatePreview(ctx context.Context, scopeID int64, conversation
 	if !filepath.IsAbs(path) {
 		return PreviewLocation{}, fmt.Errorf("%w: use an absolute file path", ErrInvalidRequest)
 	}
-	canonical, info, err := canonicalPath(path)
+	roots, err := s.readableRoots(ctx, scopeID, conversationID)
 	if err != nil {
 		return PreviewLocation{}, err
 	}
-	roots, err := s.readableRoots(ctx, scopeID, conversationID)
+	canonical, info, err := canonicalPath(path)
+	if errors.Is(err, store.ErrNotFound) && !slices.ContainsFunc(roots, func(root string) bool { return within(root, filepath.Clean(path)) }) {
+		// Missing and existing files outside the folders look the same.
+		return PreviewLocation{}, ErrOutsideFolder
+	}
 	if err != nil {
 		return PreviewLocation{}, err
 	}
@@ -255,6 +262,9 @@ func canonicalPath(path string) (string, os.FileInfo, error) {
 		return "", nil, fmt.Errorf("%w: use an absolute path", ErrInvalidRequest)
 	}
 	canonical, err := filepath.EvalSymlinks(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil, fmt.Errorf("%w: %s does not exist", store.ErrNotFound, path)
+	}
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: %s is not available", ErrInvalidRequest, path)
 	}

@@ -72,6 +72,7 @@ type SummaryPatch struct {
 	LastMessagePreview  *string
 	PendingInteractions *int64
 	QueueCount          *int64
+	BackgroundTasks     *int64
 	UpdatedAt           time.Time
 	// KeepRecency leaves updated_at, which orders the list, unchanged.
 	KeepRecency bool
@@ -506,6 +507,18 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		}
 		b.Summary.PendingInteractions = &pending
 	}
+	if touchesBackgroundTasks(&b) {
+		count, err := q.CountOpenBackgroundTasks(ctx, conv.ID)
+		if err != nil {
+			return Committed{}, err
+		}
+		if count != conv.BackgroundTasks {
+			if b.Summary == nil {
+				b.Summary = &SummaryPatch{KeepRecency: true}
+			}
+			b.Summary.BackgroundTasks = &count
+		}
+	}
 
 	if p := b.Summary; p != nil {
 		scopeSeq, err := q.BumpScopeSeq(ctx, conv.ScopeID)
@@ -533,6 +546,9 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		if p.QueueCount != nil {
 			next.QueueCount = *p.QueueCount
 		}
+		if p.BackgroundTasks != nil {
+			next.BackgroundTasks = *p.BackgroundTasks
+		}
 		if m := b.Metadata; m != nil {
 			next.TitleMode, next.TitleGeneration, next.Cwd, next.ProjectID = m.TitleMode, m.TitleGeneration, m.Cwd, nullString(m.ProjectID)
 			next.Pinned, next.Archived = boolInt(m.Pinned), boolInt(m.Archived)
@@ -542,7 +558,7 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		}
 		err = q.UpdateConversationSummary(ctx, sqlitedb.UpdateConversationSummaryParams{
 			Status: next.Status, Title: next.Title, LastMessagePreview: next.LastMessagePreview,
-			PendingInteractions: next.PendingInteractions, QueueCount: next.QueueCount,
+			PendingInteractions: next.PendingInteractions, QueueCount: next.QueueCount, BackgroundTasks: next.BackgroundTasks,
 			SummarySeq: next.SummarySeq, UpdatedAt: next.UpdatedAt, ID: conv.ID,
 		})
 		if err != nil {
@@ -552,6 +568,23 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		committed.Summary = &next
 	}
 	return committed, nil
+}
+
+// touchesBackgroundTasks reports whether the batch starts, updates or ends a
+// background task item.
+func touchesBackgroundTasks(b *Batch) bool {
+	for _, e := range b.Events {
+		if e.ItemID == "" {
+			continue
+		}
+		var payload struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(e.Payload, &payload) == nil && payload.Kind == "background_task" {
+			return true
+		}
+	}
+	return false
 }
 
 func boolInt(v bool) int64 {
