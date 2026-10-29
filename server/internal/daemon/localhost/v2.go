@@ -120,6 +120,17 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, queue)
+	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "side-workspace" && r.Method == http.MethodGet:
+		if _, err := v.svc.Snapshot(r.Context(), scopeID, parts[1]); err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		state, ok := v.svc.SideWorkspaceState(scopeID, parts[1])
+		if !ok {
+			writeJSON(w, http.StatusOK, map[string]any{"workspace": nil})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"workspace": state})
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "image" && r.Method == http.MethodGet:
 		v.conversationImage(w, r, scopeID, parts[1])
 	case path == "/directory-source" && r.Method == http.MethodGet:
@@ -261,6 +272,8 @@ type commandBody struct {
 	// everything. create_side also quotes a selection.
 	TurnID string `json:"turn_id"`
 	Quote  string `json:"quote"`
+	// side_workspace_sync: the renderer's Side workspace of the conversation.
+	Workspace json.RawMessage `json:"workspace"`
 }
 
 // optionalString decodes an update_settings field.
@@ -346,6 +359,19 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			return
 		}
 		writeJSON(w, http.StatusOK, summaryDTO(conv))
+	case "side_workspace_sync":
+		var ws service.SideWorkspace
+		if err := json.Unmarshal(body.Workspace, &ws); err != nil {
+			writeV2Error(w, AppError("invalid_request", "workspace must be a Side workspace snapshot"))
+			return
+		}
+		ws.ConversationID = id
+		revision, err := v.svc.SyncSideWorkspace(r.Context(), scopeID, ws)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"revision": revision})
 	case "create_side":
 		conv, err := v.svc.CreateSide(r.Context(), service.SideCommand{ScopeID: scopeID, SourceID: id, TurnID: body.TurnID, Quote: body.Quote, RequestID: body.RequestID, QueuedItem: body.Item})
 		if err != nil {

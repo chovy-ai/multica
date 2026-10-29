@@ -41,6 +41,7 @@ func systemPrompt(workspaceID string, cloud bool) string {
 		"Use project_id and project resources to discover repository information. A repository URL does not mean its code exists in the current working directory. Inspect the selected directory before discussing implementation; ask for the correct directory when necessary. Do not automatically clone or change directories.",
 		"Keep all queries in the selected workspace. Do not run login, config show, switch profiles, print credentials, or modify server data for a context lookup. On 401/403 report the access error and stop that query. Report network failures and missing context rather than inventing results. Respect native CLI sandbox and permission settings; never remove daemon task markers or bypass their checks.",
 		settings.Instructions,
+		SideInstructions,
 		protocol.HTMLPreviewInstructions,
 		imageInstructions,
 	}, "\n\n")

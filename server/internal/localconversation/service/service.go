@@ -99,6 +99,7 @@ type Service struct {
 	titles    titleRuns
 	delivery  deliveries
 	host      Host
+	side      sideWorkspaces
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -139,7 +140,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		questions: interactions{waiting: map[string]*waitingQuestion{}},
 		queues:    queues{locks: map[string]*sync.Mutex{}, dispatching: map[string]string{}},
 		titles:    titleRuns{cancel: map[string]context.CancelFunc{}},
-		delivery:  deliveries{timers: map[string]*time.Timer{}}}
+		delivery:  deliveries{timers: map[string]*time.Timer{}},
+		side:      sideWorkspaces{entries: map[string]SideWorkspace{}}}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {
@@ -271,6 +273,9 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 	}
 	if side := sideOf(conv); side != nil && conv.ProviderSessionID == "" {
 		prompt = sidePrompt(side, prompt)
+	}
+	if ambient := s.sideAmbient(ctx, cmd.ScopeID, conv.ID); ambient != "" {
+		prompt += "\n\n" + ambient
 	}
 	runner, err := s.runner(ctx, conv)
 	if err != nil {
@@ -543,6 +548,13 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 			cloud = s.opts.Cloud(scope, dir)
 		}
 		tools := append(contextmcp.ContextTools(s.store, cloud, conv.ScopeID, withWorkspace), s.questionToolFor(conv, current))
+		var readContext func(context.Context, json.RawMessage) (contextmcp.Result, error)
+		for _, tool := range tools {
+			if tool.Name == "read_context" {
+				readContext = tool.Call
+			}
+		}
+		tools = append(tools, s.sideToolsFor(conv, current, readContext)...)
 		requester, _ := cloud.(workspace.Requester)
 		tools = append(tools, workspace.Tools(workspace.Options{
 			WorkspaceID: scope.WorkspaceID, UserID: scope.UserID, ConversationID: conv.ID,
