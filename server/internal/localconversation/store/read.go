@@ -207,3 +207,23 @@ func (s *Store) Conversation(ctx context.Context, conversationID string) (sqlite
 	}
 	return conv, err
 }
+
+// ScopeConversations lists a scope's conversations, most recently updated
+// first.
+func (s *Store) ScopeConversations(ctx context.Context, scopeID int64) ([]sqlitedb.Conversation, error) {
+	return sqlitedb.New(s.read).ListScopeConversations(ctx, scopeID)
+}
+
+// Messages returns a conversation's messages in chronological order.
+func (s *Store) Messages(ctx context.Context, conversationID string) ([]sqlitedb.Message, error) {
+	return sqlitedb.New(s.read).ListConversationMessages(ctx, conversationID)
+}
+
+// Turn returns one turn of a conversation.
+func (s *Store) Turn(ctx context.Context, conversationID, turnID string) (sqlitedb.Turn, error) {
+	turn, err := sqlitedb.New(s.read).GetTurn(ctx, turnID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && turn.ConversationID != conversationID) {
+		return sqlitedb.Turn{}, fmt.Errorf("%w: turn %s", ErrNotFound, turnID)
+	}
+	return turn, err
+}

@@ -147,3 +147,9 @@ UPDATE command_receipt SET uncertain = 1 WHERE scope_id = ? AND request_id = ?;
 
 -- name: UpdateConversationSettings :exec
 UPDATE conversation SET model = ?, reasoning_effort = ?, permission_mode = ? WHERE id = ?;
+
+-- name: ListScopeConversations :many
+SELECT * FROM conversation WHERE scope_id = ? ORDER BY updated_at DESC, id;
+
+-- name: ListConversationMessages :many
+SELECT * FROM message WHERE conversation_id = ? ORDER BY created_at, id;

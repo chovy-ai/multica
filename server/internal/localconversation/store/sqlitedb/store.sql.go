@@ -440,6 +440,43 @@ func (q *Queries) InsertTurn(ctx context.Context, arg InsertTurnParams) error {
 	return err
 }
 
+const listConversationMessages = `-- name: ListConversationMessages :many
+SELECT id, conversation_id, turn_id, role, content, attachment_ids, steered, failed, created_at FROM message WHERE conversation_id = ? ORDER BY created_at, id
+`
+
+func (q *Queries) ListConversationMessages(ctx context.Context, conversationID string) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, listConversationMessages, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.TurnID,
+			&i.Role,
+			&i.Content,
+			&i.AttachmentIds,
+			&i.Steered,
+			&i.Failed,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventsAfter = `-- name: ListEventsAfter :many
 SELECT conversation_id, seq, turn_id, turn_seq, item_id, type, final, payload, created_at FROM event
 WHERE conversation_id = ?1
@@ -653,6 +690,60 @@ func (q *Queries) ListRunningTurns(ctx context.Context) ([]Turn, error) {
 			&i.LastTurnSeq,
 			&i.StartedAt,
 			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listScopeConversations = `-- name: ListScopeConversations :many
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation WHERE scope_id = ? ORDER BY updated_at DESC, id
+`
+
+func (q *Queries) ListScopeConversations(ctx context.Context, scopeID int64) ([]Conversation, error) {
+	rows, err := q.db.QueryContext(ctx, listScopeConversations, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Conversation{}
+	for rows.Next() {
+		var i Conversation
+		if err := rows.Scan(
+			&i.ID,
+			&i.ScopeID,
+			&i.Provider,
+			&i.ProviderSessionID,
+			&i.Title,
+			&i.TitleMode,
+			&i.Cwd,
+			&i.Model,
+			&i.ReasoningEffort,
+			&i.PermissionMode,
+			&i.ProjectID,
+			&i.SideSourceID,
+			&i.ForkedFromID,
+			&i.ForkedFromTurnID,
+			&i.ImportedFromSessionID,
+			&i.Pinned,
+			&i.Archived,
+			&i.Status,
+			&i.LastSeq,
+			&i.TurnCount,
+			&i.SummarySeq,
+			&i.LastMessagePreview,
+			&i.PendingInteractions,
+			&i.QueueCount,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
