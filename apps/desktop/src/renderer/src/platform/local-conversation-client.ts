@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { parseWithFallback } from "@multica/core/api/schema";
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION, type LocalConversationCapabilities, type LocalConversationClient, type LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION, type LocalConversationCapabilities, type LocalConversationClient, type LocalConversationScope, type LocalConversationMethod, type LocalConversationMethods } from "@multica/core/local-conversation/protocol";
 
 export function localRuntimeRestartMessage(chinese: boolean): string {
   return chinese ? "桌面后台需要更新，请在运行中的任务结束后完全退出并重新打开 Multica。刷新页面无法完成更新。" : "The desktop runtime needs updating. After running tasks finish, fully quit and reopen Multica. Reloading the page does not update it.";
@@ -17,6 +17,20 @@ function unknownMethod(error: unknown): boolean {
 }
 
 const capabilitiesSchema = z.object({ protocolVersion: z.number().int().positive(), methods: z.array(z.string()) });
+const summarySchema = z.object({
+  id: z.string(), title: z.string(), provider: z.enum(["codex", "claude"]), cwd: z.string(), pinned: z.boolean().default(false), archived: z.boolean().default(false), model: z.string().nullable().default(null), createdAt: z.string(), updatedAt: z.string(),
+  messages: z.array(z.object({ id: z.string(), role: z.enum(["user", "assistant"]), content: z.string(), turnId: z.string(), createdAt: z.string() }).passthrough()),
+  turns: z.array(z.object({ id: z.string(), status: z.enum(["running", "completed", "failed", "cancelled"]).catch("failed"), createdAt: z.string(), events: z.array(z.unknown()) }).passthrough()),
+}).passthrough();
+const pageSchema = z.object({ sessions: z.array(summarySchema).max(8), nextCursor: z.string().nullable() });
+const runtimeSchema = z.object({ pendingTasks: z.array(z.object({ task_id: z.string(), status: z.literal("running"), chat_session_id: z.string() })), movedQueueRequests: z.array(z.string()) });
+function localResult<M extends LocalConversationMethod>(method: M, raw: LocalConversationMethods[M]["result"]): LocalConversationMethods[M]["result"] {
+  const schema = method === "listPage" ? pageSchema : method === "runtimeState" ? runtimeSchema : method === "directorySource" ? z.object({ id: z.string().min(1) }).nullable() : undefined;
+  if (!schema) return raw;
+  const result = parseWithFallback<LocalConversationMethods[M]["result"] | undefined>(raw, schema, undefined, { endpoint: `local-conversation.${method}` });
+  if (result === undefined) throw new Error("Invalid local conversation response. Reload and retry.");
+  return result;
+}
 interface CompatibleClient extends LocalConversationClient {
   check(scope: LocalConversationScope): Promise<LocalConversationCapabilities | null>;
   needsRestart(scope: LocalConversationScope): boolean;
@@ -66,7 +80,7 @@ export function getLocalConversationClient(raw: LocalConversationClient): Compat
       // Legacy runtimes can still handle their existing methods. Never replay a
       // rejected mutation or fall back to transferring entire attachment bytes.
       if ((!capabilities && method === "capabilities") || unsupported.get(key(scope))?.has(method)) throw new LocalRuntimeUpdateRequired();
-      try { return await raw.request(scope, method, params); }
+      try { return localResult(method, await raw.request(scope, method, params)); }
       catch (error) {
         if (!unknownMethod(error)) throw error;
         const methods = unsupported.get(key(scope)) ?? new Set<string>();

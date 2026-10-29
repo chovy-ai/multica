@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import type { LocalConversation, LocalFolderProject } from "@multica/core/local-conversation/protocol";
+import { LocalConversationStore } from "./local-conversation-store";
 
 const SCOPE_DIR = /^[0-9a-f]{64}$/;
 const SHARED_DIRS = ["settings-operation-receipts", "avatar-operation-receipts"];
@@ -50,7 +52,16 @@ async function readDocument(path: string): Promise<Document | null> {
 async function migrateScope(from: string, to: string): Promise<void> {
   await mkdir(to, { recursive: true, mode: 0o700 });
   const legacy = await readDocument(join(from, "conversations.json"));
-  if (legacy) {
+  if (legacy && await exists(join(to, "index.json"))) {
+    const store = new LocalConversationStore(to, () => {});
+    await store.open();
+    for (const incoming of legacy.sessions) {
+      const current = store.rows.get(incoming.id);
+      if (!current || (incoming.updatedAt ?? "") > current.updatedAt) store.rows.set(incoming.id, incoming as LocalConversation);
+    }
+    store.folderProjects = mergeById(store.folderProjects, (legacy.folderProjects ?? []) as LocalFolderProject[], () => false);
+    await store.save();
+  } else if (legacy) {
     const current = await readDocument(join(to, "conversations.json"));
     const document: Document = current ? {
       schemaVersion: 1,

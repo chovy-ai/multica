@@ -10,6 +10,25 @@ function setup(response: unknown = capabilities) {
   return { raw, request, client: getLocalConversationClient(raw) };
 }
 describe("desktop runtime capability checks", () => {
+  it.each([null, [], { sessions: [], nextCursor: 8 }, { sessions: [{ id: "incomplete" }], nextCursor: null }])("rejects a malformed conversation page without treating it as an empty final page: %j", async (page) => {
+    const { client, request } = setup();
+    request.mockImplementation(async (_scope, method) => method === "capabilities" ? capabilities : page);
+    await expect(client.request(scope, "listPage", { folderProjectId: null })).rejects.toThrow("Invalid local conversation response");
+    expect(client.needsRestart(scope)).toBe(false);
+  });
+  it("accepts an empty final page", async () => {
+    const { client, request } = setup();
+    request.mockImplementation(async (_scope, method) => method === "capabilities" ? capabilities : { sessions: [], nextCursor: null });
+    await expect(client.request(scope, "listPage", { folderProjectId: null })).resolves.toEqual({ sessions: [], nextCursor: null });
+  });
+  it("validates runtime and directory responses while allowing a missing directory source", async () => {
+    const { client, request } = setup();
+    request.mockImplementation(async (_scope, method) => method === "capabilities" ? capabilities : {});
+    await expect(client.request(scope, "runtimeState", {})).rejects.toThrow("Invalid local conversation response");
+    await expect(client.request(scope, "directorySource", { cwd: "/project" })).rejects.toThrow("Invalid local conversation response");
+    request.mockResolvedValueOnce(null);
+    await expect(client.request(scope, "directorySource", { cwd: "/project" })).resolves.toBeNull();
+  });
   it("shares one check across concurrent requests and keeps workspace boundaries", async () => {
     const { raw, client, request } = setup();
     expect(getLocalConversationClient(raw)).toBe(client);

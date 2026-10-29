@@ -4,7 +4,7 @@ import { SideActivityIcon, SideActivitySummary, sideActivityKey, useSideActivity
 import { LocalRuntimeNotice } from "./local-runtime-notice";
 import { getLocalConversationClient } from "../platform/local-conversation-client";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type ReactNode, type SetStateAction } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { getCurrentWsId } from "@multica/core/platform";
 import { ArrowLeft, File, FolderOpen, Globe, Loader2, Maximize2, MessagesSquare, Minimize2, PanelRightOpen, Plus, X } from "lucide-react";
@@ -18,7 +18,7 @@ import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
 import type { LocalConversation, LocalConversationScope, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { FileLinkPreviewError, fileLinkErrorMessage, resolveConversationFile } from "./local-resource-resolution";
-import { createLocalConversationParentService, localTargetId } from "../platform/local-conversation-service";
+import { createLocalConversationParentService, localConversationKey, localTargetId } from "../platform/local-conversation-service";
 import { LocalFilePreview, PreviewFolder, WebResourcePreview } from "./local-resource-preview";
 
 export interface SideWorkspaceHandle { openSide(id: string, sourceId?: string): void; openResource(sessionId: string, url: string, sourceId?: string): Promise<void>; toggle(): void }
@@ -41,6 +41,11 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
   const [layouts, setLayouts] = useState<Record<string, Layout>>(() => ({ [key]: sessionId ? readLayout(key) : emptyLayout() }));
   const layoutsRef = useRef(layouts); layoutsRef.current = layouts;
   const layout = layouts[key] ?? (sessionId ? readLayout(key) : emptyLayout());
+  const sideQueries = useQueries({ queries: layout.tabs.filter((tab) => tab.kind === "side").map((tab) => ({
+    queryKey: [...localConversationKey(props.scope), "selected", tab.sessionId],
+    queryFn: () => getLocalConversationClient(window.desktopAPI.localConversations).request(props.scope, "read", { id: tab.sessionId }),
+  })) });
+  const sessions = [...props.sessions, ...sideQueries.flatMap((query) => query.data ? [query.data] : [])];
   const updateLayout = useCallback((owner: string, update: SetStateAction<Layout>) => {
     const current = layoutsRef.current;
     const previous = current[owner] ?? (owner === "new" ? emptyLayout() : readLayout(owner));
@@ -219,7 +224,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     setLayout(next); if (key !== "new") void sync(key, next, props.active).catch(() => {});
   };
   const sideVisible = layout.open, mainVisible = !(sideVisible && (maximized || narrow));
-  const title = (tab: Tab) => tab.kind === "side" ? `${props.chinese ? "旁支" : "Side"} · ${props.sessions.find((entry) => entry.id === tab.sessionId)?.title.replace(/ · Side$/, "") ?? (props.chinese ? "新对话" : "New chat")}` : tab.kind === "web" ? tab.title || new URL(tab.url).hostname : (tab.selected ?? tab.location).name;
+  const title = (tab: Tab) => tab.kind === "side" ? `${props.chinese ? "旁支" : "Side"} · ${sessions.find((entry) => entry.id === tab.sessionId)?.title.replace(/ · Side$/, "") ?? (props.chinese ? "新对话" : "New chat")}` : tab.kind === "web" ? tab.title || new URL(tab.url).hostname : (tab.selected ?? tab.location).name;
   const activeTab = layout.tabs.find((tab) => tab.id === layout.selected);
   return <div ref={root} className="flex h-full min-h-0 min-w-0 flex-col [&_[data-panel][hidden]]:hidden!" data-testid="local-side-workspace">
     <ResizablePanelGroup orientation="horizontal" defaultLayout={defaultLayout} onLayoutChanged={onLayoutChanged}>
@@ -231,7 +236,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
             {!mainVisible && <IconButton label={props.chinese ? "返回主对话" : "Return to main chat"} onClick={() => { setMaximized(false); if (narrow) setLayout((current) => ({ ...current, open: false })); }}><ArrowLeft /></IconButton>}
             <div role="tablist" aria-label={props.chinese ? "右侧内容" : "Workspace tabs"} className="flex min-w-0 flex-1 overflow-x-auto">
               {layout.tabs.map((tab) => <div key={tab.id} className={`flex min-w-24 max-w-48 shrink-0 items-center rounded-t-md border-b-2 ${tab.id === layout.selected ? "border-foreground bg-surface-selected" : "border-transparent"}`}>
-                <WorkspaceTab tab={tab} chinese={props.chinese} scope={props.scope} session={tab.kind === "side" ? props.sessions.find((entry) => entry.id === tab.sessionId) : undefined} active={props.active && sideVisible} title={title(tab)} role="tab" id={`resource-tab-${tab.id}`} aria-selected={tab.id === layout.selected} aria-controls={`resource-content-${tab.id}`} tabIndex={tab.id === layout.selected ? 0 : -1} variant="ghost" size="sm" className="min-w-0 flex-1 justify-start rounded-none px-2 text-label" onClick={() => setLayout((current) => ({ ...current, selected: tab.id }))} onKeyDown={(event) => {
+                <WorkspaceTab tab={tab} chinese={props.chinese} scope={props.scope} session={tab.kind === "side" ? sessions.find((entry) => entry.id === tab.sessionId) : undefined} active={props.active && sideVisible} title={title(tab)} role="tab" id={`resource-tab-${tab.id}`} aria-selected={tab.id === layout.selected} aria-controls={`resource-content-${tab.id}`} tabIndex={tab.id === layout.selected ? 0 : -1} variant="ghost" size="sm" className="min-w-0 flex-1 justify-start rounded-none px-2 text-label" onClick={() => setLayout((current) => ({ ...current, selected: tab.id }))} onKeyDown={(event) => {
                   const index = layout.tabs.findIndex((item) => item.id === tab.id); const next = event.key === "ArrowRight" ? layout.tabs[(index + 1) % layout.tabs.length] : event.key === "ArrowLeft" ? layout.tabs[(index + layout.tabs.length - 1) % layout.tabs.length] : event.key === "Home" ? layout.tabs[0] : event.key === "End" ? layout.tabs.at(-1) : undefined;
                   if (next) { event.preventDefault(); setLayout((current) => ({ ...current, selected: next.id })); document.getElementById(`resource-tab-${next.id}`)?.focus(); }
                 }} />
@@ -254,7 +259,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
           {!activeTab && <div className="flex flex-1 flex-col items-center justify-center gap-4 text-body text-muted-foreground"><PanelRightOpen className="size-8" /><span>{props.chinese ? "在这里继续旁支对话，或查看文件和网页" : "Continue a side chat or inspect files and webpages here"}</span><Button variant="outline" disabled={creating} onClick={() => { void createSide(); }}><Plus className="size-4" />{props.chinese ? "新建旁支" : "New side conversation"}</Button></div>}
           {/* Keep Side composers mounted across conversation switches; native previews are released. */}
           {Object.entries(layouts).flatMap(([owner, saved]) => saved.tabs.filter((tab) => owner === key || tab.kind === "side").map((tab) => <section key={`${owner}:${tab.id}`} role="tabpanel" id={`resource-content-${tab.id}`} aria-labelledby={`resource-tab-${tab.id}`} hidden={owner !== key || layout.selected !== tab.id} className="min-h-0 flex-1 overflow-hidden">
-            {tab.kind === "side" ? <SideConversation {...props} sessionId={tab.sessionId} onSelectSource={(id, turnId, quote) => { setMaximized(false); if (narrow) setLayout((current) => ({ ...current, open: false })); props.onSelectSource(id, turnId, quote); }} onSide={(id) => addTo(owner, { id: `side:${id}`, kind: "side", sessionId: id })} onResource={(id, url) => openResourceFor(owner, id, url)} visible={owner === key && props.active && sideVisible && layout.selected === tab.id} /> : tab.kind === "web" ? <WebResourcePreview id={tab.id} url={tab.url} scope={props.scope} active={props.active && sideVisible && layout.selected === tab.id} chinese={props.chinese} onChange={(url, title, loading) => setLayout((current) => ({ ...current, tabs: current.tabs.map((item) => item.id === tab.id && item.kind === "web" ? { ...item, url, title, loading } : item) }))} onReference={(url, title) => { props.onReference(`[${title}](${url})`); if (narrow) setLayout((current) => ({ ...current, open: false })); }} /> : <div className="flex h-full min-h-0 min-w-0">
+            {tab.kind === "side" ? <SideConversation {...props} sessions={sessions} sessionId={tab.sessionId} onSelectSource={(id, turnId, quote) => { setMaximized(false); if (narrow) setLayout((current) => ({ ...current, open: false })); props.onSelectSource(id, turnId, quote); }} onSide={(id) => addTo(owner, { id: `side:${id}`, kind: "side", sessionId: id })} onResource={(id, url) => openResourceFor(owner, id, url)} visible={owner === key && props.active && sideVisible && layout.selected === tab.id} /> : tab.kind === "web" ? <WebResourcePreview id={tab.id} url={tab.url} scope={props.scope} active={props.active && sideVisible && layout.selected === tab.id} chinese={props.chinese} onChange={(url, title, loading) => setLayout((current) => ({ ...current, tabs: current.tabs.map((item) => item.id === tab.id && item.kind === "web" ? { ...item, url, title, loading } : item) }))} onReference={(url, title) => { props.onReference(`[${title}](${url})`); if (narrow) setLayout((current) => ({ ...current, open: false })); }} /> : <div className="flex h-full min-h-0 min-w-0">
               {tab.location.kind === "directory" && <div className="w-40 shrink-0 overflow-auto border-r p-1 text-label"><PreviewFolder location={tab.location} selected={tab.selected?.path} scope={props.scope} sessionId={tab.sourceId} chinese={props.chinese} onSelect={(selected) => setLayout((current) => ({ ...current, tabs: current.tabs.map((item) => item.id === tab.id && item.kind === "file" ? { ...item, selected, line: undefined } : item) }))} /></div>}
               <div className="min-w-0 flex-1">{tab.selected || tab.location.kind === "file" ? <LocalFilePreview key={(tab.selected ?? tab.location).path} location={tab.selected ?? tab.location} scope={props.scope} sessionId={tab.sourceId} chinese={props.chinese} line={tab.line} /> : <div className="flex h-full items-center justify-center text-body text-muted-foreground">{props.chinese ? "选择文件进行预览" : "Choose a file to preview"}</div>}</div>
             </div>}
@@ -269,10 +274,14 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
 function SideConversation(props: Props & { sessionId: string; onSide(id: string): void; onResource(id: string, url: string): Promise<void>; visible: boolean }) {
   const queryClient = useQueryClient();
   const latest = useRef(props); latest.current = props;
-  const session = props.sessions.find((entry) => entry.id === props.sessionId);
+  const sessionQuery = useQuery({ queryKey: [...localConversationKey(props.scope), "selected", props.sessionId],
+    queryFn: () => getLocalConversationClient(window.desktopAPI.localConversations).request(props.scope, "read", { id: props.sessionId }),
+    initialData: props.sessions.find((entry) => entry.id === props.sessionId),
+  });
+  const session = sessionQuery.data;
   const [starting, setStarting] = useState(false);
   const activity = useSideActivity(props.scope, props.sessionId, session, props.visible);
-  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: props.chinese ? "zh-CN" : "en", storagePrefix: `side:${props.sessionId}:`, onLocalSelect: (id) => { if (id && id !== props.sessionId) latest.current.onSide(id); }, onOpenSide: (id) => latest.current.onSide(id), onOpenResource: (id, url) => { void latest.current.onResource(id, url).catch((error: unknown) => latest.current.onShowMessage(error instanceof Error ? error.message : String(error), "error")); }, onLocateSource: (id, turnId, quote) => latest.current.onSelectSource(id, turnId, quote) }, window.desktopAPI.localConversations), [props.sessionId, props.chinese]);
+  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: props.chinese ? "zh-CN" : "en", storagePrefix: `side:${props.sessionId}:`, getSelectedSessionId: () => props.sessionId, onLocalSelect: (id) => { if (id && id !== props.sessionId) latest.current.onSide(id); }, onOpenSide: (id) => latest.current.onSide(id), onOpenResource: (id, url) => { void latest.current.onResource(id, url).catch((error: unknown) => latest.current.onShowMessage(error instanceof Error ? error.message : String(error), "error")); }, onLocateSource: (id, turnId, quote) => latest.current.onSelectSource(id, turnId, quote) }, window.desktopAPI.localConversations), [props.sessionId, props.chinese]);
   return <div className="flex h-full min-h-0 flex-col">
     <LocalRuntimeNotice scope={props.scope} chinese={props.chinese} />
     {session?.side && <div className="shrink-0 border-b px-3 py-3 text-caption text-muted-foreground"><div className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{props.chinese ? "来自主对话" : "From main chat"} · {props.sessions.find((entry) => entry.id === session.side!.sourceId)?.title}</span><Button variant="link" size="xs" onClick={() => props.onSelectSource(session.side!.sourceId, session.side!.turnId, session.side!.quote)}><ArrowLeft className="size-3.5" />{props.chinese ? "定位来源" : "Locate source"}</Button></div>{session.side.quote && <blockquote className="mt-2 max-h-28 overflow-auto border-l-2 pl-3 text-body text-foreground">{session.side.quote}</blockquote>}{session.side.pending && <Button className="mt-2" variant="outline" size="sm" disabled={starting} onClick={() => {

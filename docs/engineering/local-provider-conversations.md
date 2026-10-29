@@ -22,7 +22,7 @@
 | --- | --- |
 | 主执行目标 | `AgentGuiExecutionTarget`，桌面只提供 `local:codex`、`local:claude` |
 | @ 智能体目录 | 官方工作区 `Agent`，继续遵循权限、归档和运行时绑定检查 |
-| 普通历史 | Electron userData 下 `local-conversations/<scope hash>/conversations.json` |
+| 普通历史 | Electron userData 下 `local-conversations/<scope hash>/index.json`（摘要）和 `details/<内容哈希>.json`（详情） |
 | 本机执行记录 | 中性 `LocalConversationTurn`，只在 GUI 适配边界投影为已有 DTO |
 | 云端 @ 执行 | 每个本机会话、每个智能体单独关联官方会话，后续引用复用关联 |
 | 官方聊天历史 | 保留在原“聊天”；旧对话流云端标签页回到本机新会话首页 |
@@ -32,6 +32,24 @@
 GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，再异步读取历史。读取完成后，仅最新请求且宿主意图未改变时才能导航；旧读取可以完成，但不能把用户刚选中的会话切回去。页面通过现有会话、运行器、账号和工作区组成的意图键识别外部导航，不改会话协议或历史内容。
 
 本机会话列表保留置顶优先级，组内按最后一轮的 `createdAt` 倒序排列；无轮次时使用会话创建时间。同一时刻先按会话创建时间倒序，再按 ID 升序确定顺序。排序在主进程裁剪列表历史之前完成，使用已保存的轮次开始时间，重启后规则一致。流式输出、工具事件、执行结束、标题和归档操作不改变排序依据；排队消息仅在出队并建立轮次时更新排序。导入和分叉使用保留历史中的最后一轮开始时间，Side 尚无轮次时使用自身创建时间。
+
+### 按项目点击加载会话
+
+每个本地文件夹项目及“未分配项目”分别通过 `listPage` 拉取摘要：`folderProjectId`、`archived`、`search` 和可选 `cursor`。每批固定 8 条，返回 `sessions` 和可空的 `nextCursor`。只有点击“加载更多”才请求下一批；滚动不请求。重复点击共享同一次请求，失败保留已加载条目并可再次点击。搜索与归档在宿主摘要索引中筛选，能查到尚未加载的会话。
+
+续页游标绑定账号、工作区及筛选条件，使用创建游标时的排序快照；会话置顶或新轮次不会使当前续页重复或漏项。游标闲置 30 分钟后失效；点击过期游标会刷新已加载批次，再次点击可继续。实时事件只失效 Query 缓存，刷新最多重取用户已加载的批数。切换搜索、归档或项目显示偏好使用独立缓存键。
+
+列表及 GUI 初始化不再调用全量 `list`。GUI 引用目录复用已加载摘要，`runtimeState` 单独返回全局运行中轮次和 Side 队列回执；目录继承使用 `directorySource`。深链、分叉来源、已打开的 Side 与选中会话按 ID 读取，不要求它们位于首批中。显式上下文工具的 `list` 仍提供摘要目录，不读取详情或附件。
+
+### 存储迁移与恢复
+
+宿主启动只读 `index.json` 的摘要、排序字段、详情版本引用和本地目录清单。`read` 及对特定会话的操作才打开该会话的详情；附件、图片和预览仍使用独立文件接口。重启时本地运行状态在摘要中标为中断；详情在打开时恢复并暂停待发送队列，不自动执行。已确认的运行中云端轮次需要恢复轮询，因此会读取对应详情。
+
+旧作用域第一次打开时，允许一次完整读取 `conversations.json`：校验旧数据，写入内容寻址的详情文件，最后原子替换新索引。失败不会启用半成品索引，原文件保留，可解除磁盘或权限故障后重试。后续会话保存先写详情新版本，索引 rename 一次提交包括队列转 Side 在内的全部更新，成功后删除替换掉的旧版本。Stable/Canary 的旧目录合并也识别新索引，只导入缺失或时间更新的记录。
+
+升级前可备份整个作用域目录。恢复时应在宿主停止后恢复 `index.json`、`details/` 和 `files/` 的同一份备份。保留的 `conversations.json` 是升级时的恢复副本，不包含升级后的新消息；旧版应用不能读取新格式，不应将这个副本视为最新历史。
+
+回归见 `local-conversation-pagination.test.ts`、`legacy-migration.test.ts`、`local-conversation-flow.test.tsx` 和 `local-conversation-client.test.ts`，覆盖分页边界、稳定续页、按需读取、迁移失败重试、跨渠道合并、连续点击、搜索、刷新和异常响应。
 
 ## 代码边界
 
@@ -263,7 +281,7 @@ git diff --check
 
 参考 Tutti 的 `packages/agent/gui/agent-gui/agentGuiNode/model/agentGuiConversationRail.ts`、`agentGuiConversationRailOrganization.ts`、`agentGuiConversationRailProjectSorting.ts` 和 `view/AgentGUIConversationMove.tsx`：按明确的项目标识组织会话，未关联会话单列，项目顺序稳定，支持折叠和移动，保存失败时保留原归属。
 
-左侧项目代表用户引入的本地文件夹。点击“新建项目”通过 `folderProjectAdd` 打开原生目录选择器，校验目录、按真实路径去重，将 `LocalFolderProject` 保存到当前账号、API 环境和工作区隔离的本机文件 `conversations.json` 的 `folderProjects` 中。取消选择不新增记录，不创建云端项目、任务或会话。
+左侧项目代表用户引入的本地文件夹。点击“新建项目”通过 `folderProjectAdd` 打开原生目录选择器，校验目录、按真实路径去重，将 `LocalFolderProject` 保存到当前账号、API 环境和工作区隔离的本机文件 `index.json` 的 `folderProjects` 中。取消选择不新增记录，不创建云端项目、任务或会话。
 
 - `folderProjects` 读取本机目录清单。分组通过会话 `cwd` 匹配已引入目录；未匹配的会话归入“未分配项目”。已有云端 `projectId` 仍仅表示任务关联，不参与本地目录分组。
 - 顶部和组内“＋”只打开 GUI 首页草稿，不调用本机会话 `create`，不分配正式会话 ID 或工作目录。桌面通过可选的 `newConversationRequest`（请求序号及项目路径）传入目录；GUI 等旧会话退出后才应用到活动的首页输入器，同一请求只应用一次，普通刷新不覆盖用户后来选择的目录。
