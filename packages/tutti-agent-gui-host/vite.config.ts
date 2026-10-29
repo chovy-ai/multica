@@ -8,6 +8,22 @@ import tailwindcss from "@tailwindcss/vite";
 
 const hostPresentationAdaptations = [
   {
+    path: "/controller/useAgentGUISubmitInteractionActions.ts",
+    original: 'import { translate } from "../../../i18n/index";',
+    replacement: 'import { getActiveUiLanguage, translate } from "../../../i18n/index";\nimport { promptHasAgentMention, promptSubmissionError } from "@multica-prompt-submission-policy";',
+  },
+  {
+    path: "/controller/useAgentGUISubmitInteractionActions.ts",
+    original: '      const targetIsActiveConversation =\n        activeConversationIdRef.current === agentSessionId;',
+    replacement: '      const submissionError = promptSubmissionError(options ?? {}, getActiveUiLanguage());\n      if (submissionError) {\n        setDetailError(submissionError);\n        return;\n      }\n      const targetIsActiveConversation =\n        activeConversationIdRef.current === agentSessionId;',
+  },
+  {
+    path: "/controller/useAgentGUISubmitInteractionActions.ts",
+    original: '      const pendingQuestionResponse = resolvePendingQuestionComposerResponse({',
+    // Explicit agent invocations must reach the queue, not answer a local question.
+    replacement: '      const pendingQuestionResponse = promptHasAgentMention(normalizedContent) ? null : resolvePendingQuestionComposerResponse({',
+  },
+  {
     path: "/agentConversation/components/AgentMessageBlock.tsx",
     original: 'import { AgentSystemNoticeMessage } from "./AgentSystemNoticeMessage";',
     replacement: 'import { AgentSystemNoticeMessage } from "./AgentSystemNoticeMessage";\nimport { InvokedAgentReply } from "@multica-invoked-agent-reply";',
@@ -557,6 +573,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      "@multica-prompt-submission-policy": fileURLToPath(new URL("./src/runtime/prompt-submission-policy.ts", import.meta.url)),
       "@multica-invoked-agent-reply": fileURLToPath(new URL("./src/invoked-agent-reply.tsx", import.meta.url)),
       "@multica-composer-drafts": fileURLToPath(new URL("./src/composer-drafts.tsx", import.meta.url)),
       "@multica-message-image-clipboard": fileURLToPath(new URL("./src/message-image-clipboard.ts", import.meta.url)),

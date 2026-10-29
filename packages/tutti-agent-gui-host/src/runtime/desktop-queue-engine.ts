@@ -2,6 +2,7 @@ import type { AgentSessionEngine, EngineQueuedPrompt, PromptQueueRecord } from "
 import { selectEngineSubmitWouldBeVisibleInQueue } from "@tutti-os/agent-activity-core";
 import type { LocalPromptQueue } from "@multica/core/local-conversation/protocol";
 import type { DesktopPendingStore } from "./desktop-pending-store";
+import { promptSubmissionError } from "./prompt-submission-policy";
 const MAX_QUEUED_PROMPTS = 100;
 type SubmitInput = Parameters<AgentSessionEngine["submitPrompt"]>[0];
 interface PendingPrompt {
@@ -184,6 +185,11 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
     submitPrompt(input) {
       if (!options.enabled()) return base.submitPrompt(input);
       if (!input.content.length || !input.clientSubmitId) return { accepted: false, queued: false };
+      const submissionError = promptSubmissionError(input, options.locale?.() ?? "en");
+      if (submissionError) {
+        options.error(new Error(submissionError));
+        return { accepted: false, queued: false };
+      }
       const id = input.agentSessionId;
       const state = snapshot();
       // Include unanswered admissions and dispatching items, which still occupy
