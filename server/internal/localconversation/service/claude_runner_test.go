@@ -362,7 +362,7 @@ func TestClaudeRunnerRecordsAFailedImageWriteAsAnErrorItem(t *testing.T) {
 	t.Parallel()
 
 	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
-	f.runner.files = failingFiles{}
+	f.runner.rec.files = failingFiles{}
 	send(t, f, "t1")
 	f.adapter(0).emit(t,
 		`{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"tu-1","name":"Screenshot","input":{}}]}}`,

@@ -2,13 +2,11 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
@@ -68,9 +66,8 @@ const (
 // into events, and completes the turn when Claude reports its result or the
 // adapter goes away. Output handling never blocks the adapter reader.
 type ClaudeRunner struct {
+	rec            turnRecorder
 	conversationID string
-	scopeID        int64
-	files          AttachmentFiles
 	start          StartClaudeAdapter
 	session        ClaudeSession
 	batcher        *Batcher
@@ -111,7 +108,8 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 		opts.Now = time.Now
 	}
 	return &ClaudeRunner{
-		conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, start: opts.Start, session: opts.Session,
+		rec:            turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
+		conversationID: opts.ConversationID, start: opts.Start, session: opts.Session,
 		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName,
 	}
 }
@@ -133,20 +131,7 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 	r.turn = turn
 	r.mu.Unlock()
 
-	now := r.now()
-	running := "running"
-	preview := truncateRunes(req.Text, previewRunes)
-	_, err := r.batcher.AppendWait(ctx, store.Batch{
-		ConversationID: r.conversationID,
-		Receipt:        &store.CommandReceipt{ScopeID: r.scopeID, RequestID: req.RequestID, Fingerprint: req.Fingerprint, Result: req.TurnID, CreatedAt: now},
-		StartTurn:      &store.NewTurn{ID: req.TurnID, RequestID: req.RequestID, StartedAt: now},
-		Events: []store.NewEvent{
-			r.event(req.TurnID, "", "user.message", true, map[string]any{"message_id": req.MessageID, "request_id": req.RequestID, "content": req.Text}, now),
-			r.event(req.TurnID, "", "turn.started", false, map[string]any{"request_id": req.RequestID, "input_message_id": req.MessageID}, now),
-		},
-		Messages: []store.NewMessage{{ID: req.MessageID, TurnID: req.TurnID, Role: "user", Content: req.Text, CreatedAt: now}},
-		Summary:  &store.SummaryPatch{Status: &running, LastMessagePreview: &preview, UpdatedAt: now},
-	})
+	_, err := r.batcher.AppendWait(ctx, r.rec.startBatch(req))
 	if err != nil {
 		r.mu.Lock()
 		r.turn = nil
@@ -315,24 +300,11 @@ func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
 	if turn.storageFailed || len(events) == 0 {
 		return
 	}
-	now := r.now()
-	batch := store.Batch{ConversationID: r.conversationID}
-	var preview *string
-	for _, e := range events {
-		if e.Image != nil {
-			e = r.storeImage(&batch, e, now)
-		}
-		batch.Events = append(batch.Events, r.event(turn.id, e.ItemID, e.Type, e.Final, e.Payload, now))
-		if e.Final && e.Payload["kind"] == "assistant_text" {
-			text, _ := e.Payload["text"].(string)
-			batch.Messages = append(batch.Messages, store.NewMessage{ID: e.ItemID, TurnID: turn.id, Role: "assistant", Content: text, CreatedAt: now})
-			p := truncateRunes(text, previewRunes)
-			preview = &p
-		}
+	out := make([]outputEvent, len(events))
+	for i, e := range events {
+		out[i] = claudeOutput(e)
 	}
-	if preview != nil {
-		batch.Summary = &store.SummaryPatch{LastMessagePreview: preview, UpdatedAt: now}
-	}
+	batch := r.rec.outputBatch(turn.id, out)
 	if err := r.batcher.Append(batch, false); err != nil {
 		r.mu.Lock()
 		turn.storageFailed = true
@@ -348,33 +320,6 @@ func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
 	}
 }
 
-// storeImage writes an inline tool image as an attachment committed with the
-// batch, and points the image event at it. A failed write becomes an error
-// item, so the image's absence is visible instead of silent.
-func (r *ClaudeRunner) storeImage(batch *store.Batch, e claude.Event, now time.Time) claude.Event {
-	data, err := base64.StdEncoding.DecodeString(e.Image.Data)
-	var attachment store.NewAttachment
-	if err == nil {
-		attachment, err = r.files.WriteAttachmentFile(r.scopeID, r.conversationID, e.Image.MimeType, data, now)
-	}
-	if err != nil {
-		return claude.Event{ItemID: e.ItemID, Type: "item.completed", Final: true, Payload: map[string]any{
-			"kind": "error", "status": "failed", "error": map[string]any{"kind": "attachment_failed", "message": err.Error()},
-		}}
-	}
-	batch.Attachments = append(batch.Attachments, attachment)
-	payload := map[string]any{"attachment_id": attachment.ID}
-	for k, v := range e.Payload {
-		payload[k] = v
-	}
-	return claude.Event{ItemID: e.ItemID, Type: e.Type, Final: e.Final, Payload: payload}
-}
-
-type turnError struct {
-	kind    string
-	message string
-}
-
 // finish completes turn once: open items get final events, then
 // turn.completed and the turn row are committed together.
 func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnError) {
@@ -388,34 +333,20 @@ func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnErro
 	r.mu.Unlock()
 	defer r.limiter.Release()
 
-	now := r.now()
 	itemStatus := status
 	if itemStatus == "completed" {
 		// A completed turn still closes items Claude never finished.
 		itemStatus = "cancelled"
 	}
-	batch := store.Batch{ConversationID: r.conversationID}
+	var finals []outputEvent
 	if norm != nil {
 		for _, e := range norm.Close(itemStatus) {
-			batch.Events = append(batch.Events, r.event(turn.id, e.ItemID, e.Type, e.Final, e.Payload, now))
+			finals = append(finals, claudeOutput(e))
 		}
 	}
-	payload := map[string]any{"status": status}
-	completion := &store.TurnCompletion{TurnID: turn.id, Status: status, CompletedAt: now}
-	if failure != nil {
-		payload["error"] = map[string]any{"kind": failure.kind, "message": failure.message}
-		completion.ErrorKind, completion.Error = failure.kind, failure.message
-	}
-	batch.Events = append(batch.Events, r.event(turn.id, "", "turn.completed", true, payload, now))
-	batch.CompleteTurn = completion
-	conversationStatus := "idle"
-	if status == "failed" {
-		conversationStatus = "failed"
-	}
-	batch.Summary = &store.SummaryPatch{Status: &conversationStatus, UpdatedAt: now}
 	// Critical: committed with the output before it, never rejected by the
 	// pending budget.
-	_ = r.batcher.Append(batch, true)
+	_ = r.batcher.Append(r.rec.completionBatch(turn.id, status, failure, finals), true)
 }
 
 func (r *ClaudeRunner) rememberSession(id string) {
@@ -424,27 +355,8 @@ func (r *ClaudeRunner) rememberSession(id string) {
 	r.session.ProviderSessionID = id
 	r.mu.Unlock()
 	if changed {
-		now := r.now()
-		_ = r.batcher.Append(store.Batch{ConversationID: r.conversationID, ProviderSessionID: &id, Events: []store.NewEvent{
-			r.event("", "", "conversation.updated", false, map[string]any{"provider_session_id": id}, now),
-		}}, true)
+		_ = r.batcher.Append(r.rec.sessionBatch(id), true)
 	}
-}
-
-func (r *ClaudeRunner) event(turnID, itemID, typ string, final bool, payload map[string]any, at time.Time) store.NewEvent {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		data = []byte(fmt.Sprintf(`{"error":{"kind":"encoding","message":%q}}`, err.Error()))
-	}
-	return store.NewEvent{TurnID: turnID, ItemID: itemID, Type: typ, Final: final, Payload: data, CreatedAt: at}
-}
-
-func truncateRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	runes := []rune(s)
-	return string(runes[:n])
 }
 
 // ApplySettings changes the provider settings. A live adapter is updated in
@@ -486,4 +398,12 @@ func (r *ClaudeRunner) ApplySettings(ctx context.Context, st store.ConversationS
 	}
 	_, err := adapter.Request(ctx, "set_permission_mode", map[string]any{"mode": st.PermissionMode})
 	return err
+}
+
+func claudeOutput(e claude.Event) outputEvent {
+	out := outputEvent{ItemID: e.ItemID, Type: e.Type, Final: e.Final, Payload: e.Payload}
+	if e.Image != nil {
+		out.ImageMime, out.ImageData = e.Image.MimeType, e.Image.Data
+	}
+	return out
 }
