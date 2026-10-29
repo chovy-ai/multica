@@ -8,7 +8,7 @@ const executionToolNames = new Set(["codex", "claudecode"]);
 export function createMulticaContextMentions(
   client: AgentGuiRpcClient,
   initial: Pick<AgentGuiInitSnapshot, "workspaceId"> & Partial<Pick<AgentGuiInitSnapshot, "locale" | "local">>,
-  source: { getWorkspaceState(): AgentGuiWorkspaceState },
+  source: { getWorkspaceState(): AgentGuiWorkspaceState; subscribeWorkspace(listener: () => void): () => void },
 ) {
   const itemLabel = (item: AgentGuiContextItem) => item.id === CREATE_TASK_MENTION_ID && item.description ? `${item.label}${initial.locale === "en" ? ": " : "："}${item.description}` : item.label;
   const providers = ["agent-session", "workspace-issue", "agent-target"].map((id): AgentContextMentionProvider<AgentGuiContextItem> => ({
@@ -48,7 +48,35 @@ export function createMulticaContextMentions(
       scope: { workspaceId: initial.workspaceId, ...(item.userId ? { userId: item.userId } : {}), ...(item.agentId ? { agentTargetId: item.agentId } : {}) },
       presentation: { description: item.description, subtitle: item.description, agentProviderId: item.provider, iconUrl: item.iconUrl, status: item.status, statusLabel: item.statusLabel, multicaStatusCategory: item.statusCategory },
     } }),
-    resolveMention: (identity) => ({ label: identity.label }),
+    resolveMention: (identity) => {
+      if (identity.scope?.workspaceId && identity.scope.workspaceId !== initial.workspaceId) return { label: identity.label };
+      if (id !== "agent-target" && id !== "agent-session") return { label: identity.label };
+      const state = source.getWorkspaceState();
+      const session = id === "agent-session" ? state.sessions.find((entry) => entry.id === identity.entityId) : undefined;
+      const agentId = id === "agent-target" ? identity.entityId : session?.agent_id;
+      const descriptor = state.agents.find((entry) => entry.agent.id === agentId);
+      if (!descriptor) return { label: session?.title ?? identity.label };
+      const { agent, provider, iconUrl } = descriptor;
+      return {
+        label: session?.title ?? agent.name,
+        presentation: {
+          description: session ? agent.name : agent.description ?? undefined,
+          subtitle: session ? agent.name : agent.description ?? undefined,
+          agentProviderId: provider,
+          iconUrl,
+        },
+      };
+    },
   }));
-  return createRichTextMentionService({ providers });
+  const service = createRichTextMentionService({ providers });
+  let previous = source.getWorkspaceState();
+  const unsubscribe = source.subscribeWorkspace(() => {
+    const next = source.getWorkspaceState();
+    const agentsChanged = next.agents !== previous.agents;
+    const sessionsChanged = next.sessions !== previous.sessions;
+    previous = next;
+    if (agentsChanged) service.invalidate({ providerId: "agent-target" });
+    if (agentsChanged || sessionsChanged) service.invalidate({ providerId: "agent-session" });
+  });
+  return { ...service, dispose() { unsubscribe(); service.dispose(); } };
 }
