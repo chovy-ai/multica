@@ -249,3 +249,42 @@ func waitLive(t *testing.T, sub interface{ Live() bool }) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestScopeSubscriptionRecoversALatePublish(t *testing.T) {
+	t.Parallel()
+
+	f := newHubFixture(t, HubOptions{})
+	ctx := context.Background()
+	sub, _, err := f.hub.SubscribeScope(ctx, f.scopeID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	deadline, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if _, err := sub.Next(deadline); err != nil { // conv-1's catch-up
+		t.Fatal(err)
+	}
+	for !sub.Live() {
+		time.Sleep(time.Millisecond)
+	}
+	// conv-2 is created (scope seq N) but announced only after conv-1's
+	// next commit (N+1) was published.
+	if _, err := f.store.CreateConversation(ctx, store.NewConversation{ID: "conv-2", ScopeID: f.scopeID, Provider: "codex", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	f.commit(t, 1, true)
+	conv2, _ := f.store.Conversation(ctx, "conv-2")
+	f.hub.Publish("conv-2", store.Committed{Summary: &conv2})
+
+	seen := map[string]bool{}
+	for !(seen["conv-1"] && seen["conv-2"]) {
+		rows, err := sub.Next(deadline)
+		if err != nil {
+			t.Fatalf("Next: %v (seen %v)", err, seen)
+		}
+		for _, r := range rows {
+			seen[r.ID] = true
+		}
+	}
+}

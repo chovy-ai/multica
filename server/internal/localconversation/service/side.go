@@ -133,6 +133,9 @@ func (s *Service) CreateSide(ctx context.Context, cmd SideCommand) (sqlitedb.Con
 		}
 		return source, err
 	}
+	if _, err := s.publishCreated(ctx, id); err != nil {
+		return source, err
+	}
 	if len(cmd.QueuedItem) > 0 {
 		if _, err := s.Enqueue(ctx, cmd.ScopeID, id, cmd.QueuedItem, false); err != nil {
 			return source, err

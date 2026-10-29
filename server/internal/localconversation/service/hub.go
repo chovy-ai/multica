@@ -120,6 +120,10 @@ func (h *Hub) SubscribeScope(ctx context.Context, scopeID, afterScopeSeq int64) 
 		return nil, 0, ErrSnapshotRequired
 	}
 	sub.init(afterScopeSeq, high, h.opts.MaxBufferedBytes, func(c sqlitedb.Conversation) (int64, int) { return c.SummarySeq, 512 })
+	sub.reload = func(after int64) ([]sqlitedb.Conversation, error) {
+		rows, _, err := h.source.SummariesAfter(context.Background(), scopeID, after, h.opts.PageSize)
+		return rows, err
+	}
 	if h.scopes[scopeID] == nil {
 		h.scopes[scopeID] = map[*ScopeSubscription]bool{}
 	}
@@ -202,6 +206,11 @@ type stream[T any] struct {
 	held     []T // live items that arrived during catch-up
 	heldSize int
 	err      error
+	// reload, when set, re-reads committed items after a sequence. Streams
+	// whose commits can be published out of order (scope summaries, from
+	// one goroutine per conversation) catch up from it on a gap instead
+	// of dropping the late item.
+	reload func(after int64) ([]T, error)
 }
 
 func (s *stream[T]) init(afterSeq, highSeq int64, limit int, measure func(T) (int64, int)) {
@@ -297,6 +306,11 @@ func (s *stream[T]) live(items []T) {
 		seq, size := s.measure(item)
 		if seq <= s.highSeq {
 			continue
+		}
+		if !s.catching && s.reload != nil && seq > s.lastSeq+1 {
+			// An earlier commit is published late: read it from the store.
+			s.catching, s.highSeq = true, seq
+			go s.catchUp(s.reload)
 		}
 		if s.catching {
 			s.held = append(s.held, item)

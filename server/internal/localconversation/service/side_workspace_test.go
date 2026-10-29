@@ -50,7 +50,9 @@ func newSideFixture(t *testing.T) *sideFixture {
 		t.Fatal(err)
 	}
 	conv, _ := f.svc.Store().Conversation(ctx, "conv-1")
-	read := func(context.Context, json.RawMessage) (contextmcp.Result, error) { return contextmcp.Result{Value: "read"}, nil }
+	read := func(context.Context, json.RawMessage) (contextmcp.Result, error) {
+		return contextmcp.Result{Value: "read"}, nil
+	}
 	f.tools = map[string]contextmcp.Tool{}
 	for _, tool := range f.svc.sideToolsFor(conv, func() map[string]any { return map[string]any{"turn_id": "turn-x"} }, read) {
 		f.tools[tool.Name] = tool

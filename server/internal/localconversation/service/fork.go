@@ -88,7 +88,7 @@ func (s *Service) Fork(ctx context.Context, cmd ForkCommand) (sqlitedb.Conversat
 		return src, err
 	}
 	s.closeCopiedTasks(ctx, id)
-	return s.store.Conversation(ctx, id)
+	return s.publishCreated(ctx, id)
 }
 
 // forkBoundary checks the fork can be served and returns where it ends in
