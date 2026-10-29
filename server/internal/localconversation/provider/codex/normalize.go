@@ -39,9 +39,9 @@ type openItem struct {
 // filtered before this point.
 type Normalizer struct {
 	contextServer string
-	open         map[string]*openItem
-	order        []string
-	completed    map[string]bool
+	open          map[string]*openItem
+	order         []string
+	completed     map[string]bool
 }
 
 // NewNormalizer returns a normalizer. Calls to contextMCPName's
