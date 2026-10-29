@@ -28,16 +28,16 @@ var validID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 var validCommit = regexp.MustCompile(`^[a-f0-9]{7,40}$`)
 
 type Launch struct {
-	SchemaVersion   int    `json:"schemaVersion"`
-	InstanceID      string `json:"instanceId"`
-	OwnerID         string `json:"ownerId"`
-	Kind            string `json:"kind"`
-	AppPath         string `json:"appPath"`
-	CLIPath         string `json:"cliPath"`
-	CLIVersion      string `json:"cliVersion"`
-	CLICommit       string `json:"cliCommit"`
-	ElectronPath    string `json:"electronPath"`
-	EntryPath       string `json:"entryPath"`
+	SchemaVersion int    `json:"schemaVersion"`
+	InstanceID    string `json:"instanceId"`
+	OwnerID       string `json:"ownerId"`
+	Kind          string `json:"kind"`
+	AppPath       string `json:"appPath"`
+	CLIPath       string `json:"cliPath"`
+	CLIVersion    string `json:"cliVersion"`
+	CLICommit     string `json:"cliCommit"`
+	ElectronPath  string `json:"electronPath"`
+	EntryPath     string `json:"entryPath"`
 	// ClaudeEntryPath is the per-conversation Claude adapter; empty for
 	// Desktop builds without the Go-owned local conversation service.
 	ClaudeEntryPath string `json:"claudeEntryPath,omitempty"`
