@@ -334,3 +334,42 @@ func TestServiceGivesCloudContextAPrivateDirectory(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestSystemPromptDescribesTheExecution(t *testing.T) {
+	t.Parallel()
+
+	withCloud, offline := systemPrompt("ws-1", true), systemPrompt("ws-1", false)
+	for _, want := range []string{`workspace ID is "ws-1"`, "ask_user_question", "fenced svg code block", "Markdown image syntax"} {
+		if !strings.Contains(withCloud, want) {
+			t.Errorf("prompt lacks %q", want)
+		}
+	}
+	if !strings.Contains(offline, "currently unavailable") || strings.Contains(withCloud, "currently unavailable") {
+		t.Fatal("cloud availability is not described")
+	}
+}
+
+func TestReferencesAreCurrentContextWhileTheTurnRuns(t *testing.T) {
+	t.Parallel()
+
+	f := newServiceFixture(t, filepath.Join(t.TempDir(), "c.sqlite"))
+	ctx := context.Background()
+	f.create(t, "conv-1", "claude")
+	refs := []Reference{{Kind: "session", ID: "conv-2"}, {Kind: "issue", ID: createTaskMention}}
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi", References: refs}); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.mu.Lock()
+	r := f.svc.runners["conv-1"].(*ClaudeRunner)
+	f.svc.mu.Unlock()
+	if got := fmt.Sprint(r.currentContext()["references"]); got != "[{session conv-2}]" {
+		t.Fatalf("current references = %s", got)
+	}
+	bad := make([]Reference, 6)
+	for i := range bad {
+		bad[i] = Reference{Kind: "agent", ID: "a"}
+	}
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r2", Text: "x", References: bad}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("too many references = %v", err)
+	}
+}

@@ -190,6 +190,44 @@ type SendCommand struct {
 	// Prompt, when set, is what the provider receives instead of Text,
 	// such as Text with resolved context.
 	Prompt string
+	// References are the message's @ references, reported by
+	// current_context while its turn runs.
+	References []Reference
+}
+
+// Reference is an @ reference: a local conversation, task or agent.
+type Reference struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+// createTaskMention is the "New task" mention: an action request rather
+// than a reference to read.
+const createTaskMention = "multica:create-task"
+
+const maxReferences = 5
+
+func validReferences(refs []Reference) error {
+	if len(refs) > maxReferences {
+		return fmt.Errorf("%w: reference up to %d items per message", ErrInvalidRequest, maxReferences)
+	}
+	for _, r := range refs {
+		if (r.Kind != "session" && r.Kind != "issue" && r.Kind != "agent") || r.ID == "" || len(r.ID) > 200 {
+			return fmt.Errorf("%w: invalid context reference", ErrInvalidRequest)
+		}
+	}
+	return nil
+}
+
+// readableReferences drops the New task mention.
+func readableReferences(refs []Reference) []Reference {
+	out := []Reference{}
+	for _, r := range refs {
+		if !(r.Kind == "issue" && r.ID == createTaskMention) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // SendResult reports the accepted turn. Replayed is set when the request id
@@ -210,6 +248,9 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 	if result, done, err := s.replay(ctx, cmd.ScopeID, cmd.RequestID, fingerprint); done || err != nil {
 		return result, err
 	}
+	if err := validReferences(cmd.References); err != nil {
+		return SendResult{}, err
+	}
 	prompt, err := s.promptWithAttachments(ctx, cmd)
 	if err != nil {
 		return SendResult{}, err
@@ -219,7 +260,7 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 		return SendResult{}, err
 	}
 	turnID := "turn-" + cmd.RequestID
-	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Prompt: prompt, AttachmentIDs: cmd.AttachmentIDs})
+	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Prompt: prompt, AttachmentIDs: cmd.AttachmentIDs, References: readableReferences(cmd.References)})
 	switch {
 	case errors.Is(err, store.ErrDuplicateRequest):
 		// A concurrent retry committed first.
@@ -460,10 +501,10 @@ func (s *Service) UpdateSettings(ctx context.Context, scopeID int64, conversatio
 // contextBinder binds the read-only context tools of conv's scope to one
 // provider process. current_context also reports the selected workspace.
 func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
-	return func(ctx context.Context, token string, current func() map[string]any) (contextmcp.Binding, func(), error) {
+	return func(ctx context.Context, token string, current func() map[string]any) (BoundContext, func(), error) {
 		scope, err := s.store.ScopeByID(ctx, conv.ScopeID)
 		if err != nil {
-			return contextmcp.Binding{}, nil, err
+			return BoundContext{}, nil, err
 		}
 		withWorkspace := func() map[string]any {
 			c := current()
@@ -472,11 +513,11 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 		}
 		runs := filepath.Join(filepath.Dir(s.opts.Path), "runs")
 		if err := os.MkdirAll(runs, 0o700); err != nil {
-			return contextmcp.Binding{}, nil, err
+			return BoundContext{}, nil, err
 		}
 		dir, err := os.MkdirTemp(runs, "run-")
 		if err != nil {
-			return contextmcp.Binding{}, nil, err
+			return BoundContext{}, nil, err
 		}
 		var cloud contextmcp.Cloud
 		if s.opts.Cloud != nil {
@@ -488,9 +529,9 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 		})
 		if err != nil {
 			_ = os.RemoveAll(dir)
-			return contextmcp.Binding{}, nil, err
+			return BoundContext{}, nil, err
 		}
-		return binding, func() {
+		return BoundContext{Binding: binding, SystemPrompt: systemPrompt(scope.WorkspaceID, cloud != nil)}, func() {
 			s.context.Release(binding)
 			_ = os.RemoveAll(dir)
 		}, nil

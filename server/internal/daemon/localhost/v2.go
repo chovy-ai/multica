@@ -226,10 +226,11 @@ func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id 
 }
 
 type commandBody struct {
-	Type          string   `json:"type"`
-	RequestID     string   `json:"request_id"`
-	Text          string   `json:"text"`
-	AttachmentIDs []string `json:"attachment_ids"`
+	Type          string              `json:"type"`
+	RequestID     string              `json:"request_id"`
+	Text          string              `json:"text"`
+	AttachmentIDs []string            `json:"attachment_ids"`
+	References    []service.Reference `json:"references"`
 	// answer: the question and the user's answers by question id.
 	InteractionID string          `json:"interaction_id"`
 	Answer        json.RawMessage `json:"answer"`
@@ -284,7 +285,7 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			writeV2Error(w, AppError("invalid_request", "request_id is required"))
 			return
 		}
-		result, err := v.svc.Send(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, Prompt: body.Prompt, AttachmentIDs: body.AttachmentIDs})
+		result, err := v.svc.Send(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, Prompt: body.Prompt, AttachmentIDs: body.AttachmentIDs, References: body.References})
 		if err != nil {
 			writeV2Error(w, err)
 			return

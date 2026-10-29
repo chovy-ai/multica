@@ -10,7 +10,14 @@ import (
 // token, when set, is the route's bearer token. current reports the
 // conversation and turn the process is working on. The returned release
 // ends the route.
-type ContextBinder func(ctx context.Context, token string, current func() map[string]any) (contextmcp.Binding, func(), error)
+type ContextBinder func(ctx context.Context, token string, current func() map[string]any) (BoundContext, func(), error)
+
+// BoundContext is a provider process's context route and the system prompt
+// that describes it.
+type BoundContext struct {
+	contextmcp.Binding
+	SystemPrompt string
+}
 
 // contextServerEntry is Claude's MCP configuration for a bound route.
 func contextServerEntry(name string, b contextmcp.Binding) map[string]any {

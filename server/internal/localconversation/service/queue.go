@@ -36,6 +36,7 @@ type queueItem struct {
 	ReasoningEffort json.RawMessage `json:"reasoningEffort"`
 	PermissionMode  *string         `json:"permissionMode"`
 	AttachmentIDs   []string        `json:"attachmentIds"`
+	References      []Reference     `json:"references"`
 	Agents          []any           `json:"agents"`
 	Display         struct {
 		ID             string `json:"id"`
@@ -60,6 +61,8 @@ func parseQueueItem(raw json.RawMessage) (queueItem, error) {
 		return item, fmt.Errorf("%w: invalid queued message display", ErrInvalidRequest)
 	case len(item.AttachmentIDs) > maxMessageAttachments:
 		return item, fmt.Errorf("%w: attach up to %d files per message", ErrInvalidRequest, maxMessageAttachments)
+	case validReferences(item.References) != nil:
+		return item, validReferences(item.References)
 	case len(item.Agents) > 0:
 		return item, fmt.Errorf("%w: queued agent invocations are not supported by this daemon", ErrInvalidRequest)
 	case item.PermissionMode != nil && !validPermissionModes[*item.PermissionMode]:
@@ -354,7 +357,7 @@ func (s *Service) sendQueued(ctx context.Context, conv sqlitedb.Conversation, it
 			return err
 		}
 	}
-	cmd := SendCommand{ScopeID: conv.ScopeID, ConversationID: conv.ID, RequestID: item.RequestID, Text: item.Content, AttachmentIDs: item.AttachmentIDs}
+	cmd := SendCommand{ScopeID: conv.ScopeID, ConversationID: conv.ID, RequestID: item.RequestID, Text: item.Content, AttachmentIDs: item.AttachmentIDs, References: item.References}
 	if item.Prompt != nil {
 		cmd.Prompt = *item.Prompt
 	}

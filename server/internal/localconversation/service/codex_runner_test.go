@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -283,11 +284,11 @@ func TestCodexRunnerConfiguresTheContextServer(t *testing.T) {
 			server.handler, env = h, e
 			return server, nil
 		},
-		Context: func(_ context.Context, token string, _ func() map[string]any) (contextmcp.Binding, func(), error) {
+		Context: func(_ context.Context, token string, _ func() map[string]any) (BoundContext, func(), error) {
 			if fmt.Sprint(env) != "["+ContextTokenEnv+"="+token+"]" {
 				t.Errorf("app-server env %v does not carry the route token", env)
 			}
-			return contextmcp.Binding{URL: "http://127.0.0.1:1/mcp/route", Token: token}, func() { close(released) }, nil
+			return BoundContext{Binding: contextmcp.Binding{URL: "http://127.0.0.1:1/mcp/route", Token: token}, SystemPrompt: "multica prompt"}, func() { close(released) }, nil
 		},
 	})
 	codexSend(t, r, "t1")
@@ -295,6 +296,9 @@ func TestCodexRunnerConfiguresTheContextServer(t *testing.T) {
 	entry := mcp[contextmcp.Name].(map[string]any)
 	if entry["url"] != "http://127.0.0.1:1/mcp/route" || entry["bearer_token_env_var"] != ContextTokenEnv || entry["required"] != true {
 		t.Fatalf("context entry = %v", entry)
+	}
+	if instructions, _ := server.paramsOf("thread/start")["developerInstructions"].(string); !strings.HasSuffix(instructions, "multica prompt") {
+		t.Fatalf("developer instructions = %q", instructions)
 	}
 	server.Stop()
 	select {

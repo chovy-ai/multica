@@ -57,6 +57,7 @@ type SendRequest struct {
 	// Prompt is what the provider receives: Text plus attachment metadata.
 	Prompt        string
 	AttachmentIDs []string
+	References    []Reference
 }
 
 func (r SendRequest) prompt() string {
@@ -107,6 +108,7 @@ type claudeTurn struct {
 	// lastMessageID is the uuid of the turn's last transcript message, where
 	// a fork through this turn ends.
 	lastMessageID string
+	references    []Reference
 }
 
 // ClaudeRunnerOptions configures a runner.
@@ -152,7 +154,7 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		r.mu.Unlock()
 		return err
 	}
-	turn := &claudeTurn{id: req.TurnID}
+	turn := &claudeTurn{id: req.TurnID, references: req.References}
 	r.turn = turn
 	r.mu.Unlock()
 
@@ -278,7 +280,10 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context) (ClaudeAdapter, error)
 			return nil, err
 		}
 		release = rel
-		fields["mcp_servers"] = contextServerEntry(contextName(r.contextName), binding)
+		fields["mcp_servers"] = contextServerEntry(contextName(r.contextName), binding.Binding)
+		if binding.SystemPrompt != "" {
+			fields["append_system_prompt"] = binding.SystemPrompt
+		}
 		fields["allowed_tools"] = []string{"mcp__" + contextName(r.contextName) + "__*"}
 	}
 	if _, err := adapter.Request(ctx, "start", fields); err != nil {
@@ -488,9 +493,9 @@ func claudeOutput(e claude.Event) outputEvent {
 func (r *ClaudeRunner) currentContext() map[string]any {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	current := map[string]any{"conversation_id": r.rec.conversationID}
+	current := map[string]any{"conversation_id": r.rec.conversationID, "references": []Reference{}}
 	if r.turn != nil {
-		current["turn_id"] = r.turn.id
+		current["turn_id"], current["references"] = r.turn.id, r.turn.references
 	}
 	return current
 }

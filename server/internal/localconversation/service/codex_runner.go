@@ -74,7 +74,10 @@ type CodexRunner struct {
 	native  *codexNative
 	turn    *codexTurn
 	// contextURL is the running server's context route; empty without one.
-	contextURL     string
+	contextURL string
+	// systemPrompt is the bound context's prompt, added to Codex's
+	// developer instructions.
+	systemPrompt   string
 	releaseContext func()
 }
 
@@ -89,6 +92,7 @@ type codexTurn struct {
 	buffered        []codexappserver.Frame
 	cancelRequested bool
 	storageFailed   bool
+	references      []Reference
 }
 
 type codexNative struct {
@@ -139,7 +143,7 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		r.mu.Unlock()
 		return err
 	}
-	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context)}
+	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References}
 	r.turn = turn
 	r.mu.Unlock()
 
@@ -322,17 +326,17 @@ func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNati
 		server.Stop()
 		return nil, nil, fmt.Errorf("native Codex settings use the reserved Multica MCP name %s", r.context)
 	}
-	contextURL, release := "", func() {}
+	contextURL, release, systemPrompt := "", func() {}, ""
 	if r.bind != nil {
 		binding, rel, err := r.bind(context.Background(), token, r.currentContext)
 		if err != nil {
 			server.Stop()
 			return nil, nil, err
 		}
-		contextURL, release = binding.URL, rel
+		contextURL, release, systemPrompt = binding.URL, rel, binding.SystemPrompt
 	}
 	r.mu.Lock()
-	r.server, r.native, r.contextURL, r.releaseContext = server, &result.Config, contextURL, release
+	r.server, r.native, r.contextURL, r.releaseContext, r.systemPrompt = server, &result.Config, contextURL, release, systemPrompt
 	r.mu.Unlock()
 	go r.watch(server)
 	return server, &result.Config, nil
@@ -379,11 +383,17 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 		params["model"] = nil
 	}
 	instructions := native.DeveloperInstructions
-	if session.DeveloperInstructions != "" {
+	r.mu.Lock()
+	extra := []string{session.DeveloperInstructions, r.systemPrompt}
+	r.mu.Unlock()
+	for _, part := range extra {
+		if part == "" {
+			continue
+		}
 		if instructions != "" {
 			instructions += "\n\n"
 		}
-		instructions += session.DeveloperInstructions
+		instructions += part
 	}
 	if instructions != "" {
 		params["developerInstructions"] = instructions
@@ -615,9 +625,9 @@ func codexOutput(e codex.Event) outputEvent {
 func (r *CodexRunner) currentContext() map[string]any {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	current := map[string]any{"conversation_id": r.rec.conversationID}
+	current := map[string]any{"conversation_id": r.rec.conversationID, "references": []Reference{}}
 	if r.turn != nil {
-		current["turn_id"] = r.turn.id
+		current["turn_id"], current["references"] = r.turn.id, r.turn.references
 	}
 	return current
 }
