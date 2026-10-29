@@ -181,6 +181,24 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 	return nil
 }
 
+// StopTasks asks Claude to stop background tasks. Without a running
+// adapter there is nothing left to stop.
+func (r *ClaudeRunner) StopTasks(ctx context.Context, taskIDs []string) error {
+	r.mu.Lock()
+	adapter := r.adapter
+	r.mu.Unlock()
+	if adapter == nil {
+		return nil
+	}
+	var errs []error
+	for _, id := range taskIDs {
+		if _, err := adapter.Request(ctx, "stop_task", map[string]any{"task_id": id}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Interrupt asks Claude to stop the running turn. The turn completes as
 // cancelled when the adapter confirms or the Query ends.
 func (r *ClaudeRunner) Interrupt(ctx context.Context) error {

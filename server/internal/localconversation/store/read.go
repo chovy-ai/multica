@@ -227,3 +227,37 @@ func (s *Store) Turn(ctx context.Context, conversationID, turnID string) (sqlite
 	}
 	return turn, err
 }
+
+// OpenBackgroundTasks returns the provider task ids of the conversation's
+// background tasks that have no final event yet.
+func (s *Store) OpenBackgroundTasks(ctx context.Context, conversationID string) ([]string, error) {
+	rows, err := sqlitedb.New(s.read).ListBackgroundTaskEvents(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	open := map[string]string{}
+	var order []string
+	for _, e := range rows {
+		if e.Final == 1 {
+			delete(open, e.ItemID.String)
+			continue
+		}
+		var payload struct {
+			TaskID string `json:"task_id"`
+		}
+		_ = json.Unmarshal([]byte(e.Payload), &payload)
+		if _, seen := open[e.ItemID.String]; !seen && payload.TaskID != "" {
+			order = append(order, e.ItemID.String)
+		}
+		if payload.TaskID != "" {
+			open[e.ItemID.String] = payload.TaskID
+		}
+	}
+	var ids []string
+	for _, item := range order {
+		if id, ok := open[item]; ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}

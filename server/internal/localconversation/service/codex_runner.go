@@ -621,3 +621,6 @@ func (r *CodexRunner) currentContext() map[string]any {
 	}
 	return current
 }
+
+// StopTasks is a no-op: Codex reports no background tasks.
+func (r *CodexRunner) StopTasks(context.Context, []string) error { return nil }

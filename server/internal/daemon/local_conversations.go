@@ -3,12 +3,14 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/localhost"
+	"github.com/multica-ai/multica/server/internal/localconversation/catalog"
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
@@ -26,6 +28,17 @@ func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.S
 		Claude: d.claudeLauncher(sidecar),
 		Codex:  d.codexLauncher(),
 		Cloud:  d.contextCloud,
+		Catalog: catalog.New(func(ctx context.Context, provider string) (string, error) {
+			entry, ok := d.cfg.Agents[provider]
+			if !ok {
+				return "", fmt.Errorf("%s is not installed on this computer", provider)
+			}
+			resolved, _, err := d.resolveAgentEntryForLaunch(ctx, provider, entry)
+			if err != nil {
+				return "", err
+			}
+			return resolved.Path, nil
+		}, "", ""),
 		Logger: d.logger.With("component", "local-conversations"),
 	})
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/catalog"
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
@@ -49,6 +50,8 @@ type runner interface {
 	Send(ctx context.Context, req SendRequest) error
 	Interrupt(ctx context.Context) error
 	ApplySettings(ctx context.Context, st store.ConversationSettings) error
+	// StopTasks stops the provider's background tasks with these ids.
+	StopTasks(ctx context.Context, taskIDs []string) error
 	Close(ctx context.Context) error
 }
 
@@ -59,9 +62,12 @@ type Options struct {
 	Codex  CodexLauncher
 	// Cloud, when set, gives the context tools official Multica data for a
 	// scope. dir is private to one provider process and removed after it.
-	Cloud  func(scope store.Scope, dir string) contextmcp.Cloud
-	Logger *slog.Logger
-	Now    func() time.Time
+	Cloud func(scope store.Scope, dir string) contextmcp.Cloud
+	// Catalog answers provider, model and usage questions; nil reports
+	// every provider as unavailable.
+	Catalog *catalog.Catalog
+	Logger  *slog.Logger
+	Now     func() time.Time
 }
 
 // Service is the Go-owned local conversation service: one store, one

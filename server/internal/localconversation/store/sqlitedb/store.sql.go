@@ -648,6 +648,45 @@ func (q *Queries) InsertTurn(ctx context.Context, arg InsertTurnParams) error {
 	return err
 }
 
+const listBackgroundTaskEvents = `-- name: ListBackgroundTaskEvents :many
+SELECT conversation_id, seq, turn_id, turn_seq, item_id, type, final, payload, created_at FROM event
+WHERE conversation_id = ? AND item_id IS NOT NULL AND json_extract(payload, '$.kind') = 'background_task'
+ORDER BY seq
+`
+
+func (q *Queries) ListBackgroundTaskEvents(ctx context.Context, conversationID string) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listBackgroundTaskEvents, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Event{}
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ConversationID,
+			&i.Seq,
+			&i.TurnID,
+			&i.TurnSeq,
+			&i.ItemID,
+			&i.Type,
+			&i.Final,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listConversationMessages = `-- name: ListConversationMessages :many
 SELECT id, conversation_id, turn_id, role, content, attachment_ids, steered, failed, created_at FROM message WHERE conversation_id = ? ORDER BY created_at, id
 `

@@ -199,3 +199,8 @@ ON CONFLICT (scope_id, path) DO NOTHING;
 
 -- name: ListPreviewRoots :many
 SELECT path FROM preview_root WHERE scope_id = ? ORDER BY created_at, path;
+
+-- name: ListBackgroundTaskEvents :many
+SELECT * FROM event
+WHERE conversation_id = ? AND item_id IS NOT NULL AND json_extract(payload, '$.kind') = 'background_task'
+ORDER BY seq;

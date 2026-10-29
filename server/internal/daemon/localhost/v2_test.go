@@ -431,3 +431,17 @@ func TestV2UploadsAndServesFiles(t *testing.T) {
 		t.Fatalf("image outside = %d %v", status, failure)
 	}
 }
+
+func TestV2ProviderRoutes(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newV2Server(t)
+	h := v2Headers("user-1")
+	status, body := v2Do(t, srv, http.MethodGet, "/local/v2/providers", nil, h)
+	if status != http.StatusOK || len(body["providers"].([]any)) != 2 {
+		t.Fatalf("providers = %d %v", status, body)
+	}
+	if status, body := v2Do(t, srv, http.MethodGet, "/local/v2/models?provider=claude", nil, h); status != http.StatusBadRequest || body["error"].(map[string]any)["kind"] != "unsupported_provider" {
+		t.Fatalf("models without catalog = %d %v", status, body)
+	}
+}

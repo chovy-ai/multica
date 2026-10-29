@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/catalog"
 	"github.com/multica-ai/multica/server/internal/localconversation/service"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
@@ -84,6 +85,23 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		v.listFolderProjects(w, r, scopeID)
 	case path == "/folder-projects" && r.Method == http.MethodPost:
 		v.addFolderProject(w, r, scopeID)
+	case path == "/providers" && r.Method == http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"providers": v.svc.Providers(r.Context())})
+	case path == "/models" && r.Method == http.MethodGet:
+		models, err := v.svc.Models(r.Context(), r.URL.Query().Get("provider"), r.URL.Query().Get("force") == "true")
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, models)
+	case path == "/usage" && r.Method == http.MethodGet:
+		q := r.URL.Query()
+		usage, err := v.svc.Usage(r.Context(), scopeID, q.Get("provider"), q.Get("conversation_id"), q.Get("force") == "true")
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, usage)
 	case path == "/attachments" && r.Method == http.MethodPost:
 		v.upload(w, r, scopeID)
 	case len(parts) == 2 && parts[0] == "attachments" && r.Method == http.MethodGet:
@@ -305,6 +323,12 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			return
 		}
 		writeJSON(w, http.StatusOK, summaryDTO(conv))
+	case "stop_background_tasks":
+		if err := v.svc.StopBackgroundTasks(r.Context(), scopeID, id); err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "requested"})
 	case "interrupt":
 		if err := v.svc.Interrupt(r.Context(), scopeID, id); err != nil {
 			writeV2Error(w, err)
@@ -565,6 +589,8 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusForbidden, "outside_folder"
 	case errors.Is(err, store.ErrUploadTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "file_too_large"
+	case errors.Is(err, catalog.ErrUnknownProvider):
+		status, code = http.StatusBadRequest, "unsupported_provider"
 	case errors.Is(err, service.ErrInvalidRequest):
 		status, code = http.StatusBadRequest, "invalid_request"
 	case errors.Is(err, service.ErrConversationStarted):
