@@ -74,7 +74,10 @@ type ClaudeRunner struct {
 	limiter        *Limiter
 	now            func() time.Time
 
-	mu          sync.Mutex
+	mu sync.Mutex
+	// normMu serializes the normalizer between the adapter reader and
+	// finish, which may run from the exit or interrupt path.
+	normMu      sync.Mutex
 	adapter     ClaudeAdapter
 	norm        *claude.Normalizer
 	turn        *claudeTurn
@@ -266,14 +269,18 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 	r.mu.Unlock()
 	switch out.Type {
 	case "sdk_message":
+		r.normMu.Lock()
 		events := norm.Accept(out.Message)
-		if id := norm.SessionID(); id != "" {
-			r.rememberSession(id)
+		sessionID := norm.SessionID()
+		result := norm.TakeResult()
+		r.normMu.Unlock()
+		if sessionID != "" {
+			r.rememberSession(sessionID)
 		}
 		if turn != nil {
 			r.appendOutput(turn, events)
 		}
-		if result := norm.TakeResult(); result != nil && turn != nil {
+		if result != nil && turn != nil {
 			switch {
 			case turn.storageFailed:
 				r.finish(turn, "failed", &turnError{kind: "storage_limit", message: ErrStorageBacklog.Error()})
@@ -340,9 +347,11 @@ func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnErro
 	}
 	var finals []outputEvent
 	if norm != nil {
+		r.normMu.Lock()
 		for _, e := range norm.Close(itemStatus) {
 			finals = append(finals, claudeOutput(e))
 		}
+		r.normMu.Unlock()
 	}
 	// Critical: committed with the output before it, never rejected by the
 	// pending budget.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
+	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/service"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
@@ -24,6 +25,7 @@ func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.S
 		Path:           filepath.Join(d.cfg.ProfileDir, "local-conversations", "conversations.sqlite"),
 		ContextMCPName: contextMCPName,
 		Claude:         d.claudeLauncher(sidecar),
+		Codex:          d.codexLauncher(),
 		Logger:         d.logger.With("component", "local-conversations"),
 	})
 	if err != nil {
@@ -57,5 +59,29 @@ func (d *Daemon) claudeLauncher(sidecar localhost.Sidecar) service.ClaudeLaunche
 			return p, nil
 		}
 		return service.ClaudeSession{Fields: fields}, start, nil
+	}
+}
+
+// codexLauncher runs one app-server per Codex conversation with the Codex
+// executable the daemon resolves for cloud tasks.
+func (d *Daemon) codexLauncher() service.CodexLauncher {
+	return func(ctx context.Context, conv sqlitedb.Conversation) (service.CodexSession, service.StartCodexServer, error) {
+		entry, ok := d.cfg.Agents["codex"]
+		if !ok {
+			return service.CodexSession{}, nil, errors.New("Codex is not installed on this computer")
+		}
+		resolved, _, err := d.resolveAgentEntryForLaunch(ctx, "codex", entry)
+		if err != nil {
+			return service.CodexSession{}, nil, err
+		}
+		logger := d.logger.With("component", "codex-app-server", "conversation_id", conv.ID)
+		start := func(ctx context.Context, handler codex.Handler) (service.CodexServer, error) {
+			s, err := codex.Start(ctx, codex.Command{Path: resolved.Path, Dir: conv.Cwd, Env: os.Environ()}, handler, logger)
+			if err != nil {
+				return nil, err
+			}
+			return s, nil
+		}
+		return service.CodexSession{Cwd: conv.Cwd}, start, nil
 	}
 }

@@ -36,10 +36,24 @@ const (
 // service adds the conversation's stored model, effort and permission mode.
 type ClaudeLauncher func(ctx context.Context, conv sqlitedb.Conversation) (ClaudeSession, StartClaudeAdapter, error)
 
+// CodexLauncher prepares how a Codex conversation's app-server is started:
+// the executable, working directory and environment. The service adds the
+// stored thread, model, effort and permission mode.
+type CodexLauncher func(ctx context.Context, conv sqlitedb.Conversation) (CodexSession, StartCodexServer, error)
+
+// runner runs one conversation's turns on its provider.
+type runner interface {
+	Send(ctx context.Context, req SendRequest) error
+	Interrupt(ctx context.Context) error
+	ApplySettings(ctx context.Context, st store.ConversationSettings) error
+	Close(ctx context.Context) error
+}
+
 // Options configures Open.
 type Options struct {
 	Path           string
 	Claude         ClaudeLauncher
+	Codex          CodexLauncher
 	ContextMCPName string
 	Logger         *slog.Logger
 	Now            func() time.Time
@@ -57,7 +71,7 @@ type Service struct {
 	opts    Options
 
 	mu      sync.Mutex
-	runners map[string]*ClaudeRunner
+	runners map[string]runner
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -88,7 +102,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	} else if removed > 0 {
 		opts.Logger.Info("local conversations: removed unreferenced attachment files", "files", removed)
 	}
-	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), opts: opts, runners: map[string]*ClaudeRunner{}}
+	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), opts: opts, runners: map[string]runner{}}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {
@@ -104,7 +118,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
 	runners := s.runners
-	s.runners = map[string]*ClaudeRunner{}
+	s.runners = map[string]runner{}
 	s.mu.Unlock()
 	var errs []error
 	for _, r := range runners {
@@ -232,14 +246,21 @@ func (s *Service) scopedConversation(ctx context.Context, scopeID int64, convers
 	return conv, err
 }
 
-func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (*ClaudeRunner, error) {
+func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runner, error) {
 	s.mu.Lock()
 	r := s.runners[conv.ID]
 	s.mu.Unlock()
 	if r != nil {
 		return r, nil
 	}
-	if conv.Provider != "claude" || s.opts.Claude == nil {
+	switch {
+	case conv.Provider == "codex" && s.opts.Codex != nil:
+		r, err := s.codexRunner(ctx, conv)
+		if err != nil {
+			return nil, err
+		}
+		return s.keepRunner(conv.ID, r), nil
+	case conv.Provider != "claude" || s.opts.Claude == nil:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedProvider, conv.Provider)
 	}
 	session, start, err := s.opts.Claude(ctx, conv)
@@ -265,17 +286,43 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (*Clau
 		fields["permission_mode"] = conv.PermissionMode
 	}
 	session.Fields = fields
-	r = NewClaudeRunner(ClaudeRunnerOptions{
+	return s.keepRunner(conv.ID, NewClaudeRunner(ClaudeRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: s.opts.ContextMCPName, Now: s.opts.Now,
-	})
+	})), nil
+}
+
+func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (runner, error) {
+	session, start, err := s.opts.Codex(ctx, conv)
+	if err != nil {
+		return nil, err
+	}
+	if session.Cwd == "" {
+		session.Cwd = conv.Cwd
+	}
+	session.ThreadID = conv.ProviderSessionID
+	if conv.Model.Valid {
+		session.Model = &conv.Model.String
+	}
+	if conv.ReasoningEffort.Valid {
+		session.ReasoningEffort = &conv.ReasoningEffort.String
+	}
+	session.PermissionMode = conv.PermissionMode
+	return NewCodexRunner(CodexRunnerOptions{
+		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
+		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: s.opts.ContextMCPName, Now: s.opts.Now,
+	}), nil
+}
+
+// keepRunner registers r unless a concurrent call registered one first.
+func (s *Service) keepRunner(id string, r runner) runner {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if existing := s.runners[conv.ID]; existing != nil {
-		return existing, nil
+	if existing := s.runners[id]; existing != nil {
+		return existing
 	}
-	s.runners[conv.ID] = r
-	return r, nil
+	s.runners[id] = r
+	return r
 }
 
 func sendFingerprint(cmd SendCommand) string {

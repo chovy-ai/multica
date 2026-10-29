@@ -62,7 +62,7 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/local/v2")
 	if path == "/hello" && r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": []string{"claude"}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": []string{"claude", "codex"}})
 		return
 	}
 	scopeID, err := v.scope(r)
