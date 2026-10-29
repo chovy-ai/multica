@@ -264,6 +264,9 @@ func merge(dst *store.Batch, part store.Batch) {
 	if part.Receipt != nil {
 		dst.Receipt = part.Receipt
 	}
+	if part.Settings != nil {
+		dst.Settings = part.Settings
+	}
 	if part.Summary != nil {
 		if dst.Summary == nil {
 			s := *part.Summary
@@ -294,7 +297,7 @@ func mergeSummary(dst, src *store.SummaryPatch) {
 }
 
 func isEmpty(b store.Batch) bool {
-	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil
+	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil && b.Settings == nil
 }
 
 // batchBytes estimates a part's size for the batch and backlog budgets.

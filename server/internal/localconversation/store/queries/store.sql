@@ -144,3 +144,6 @@ SELECT * FROM command_receipt WHERE scope_id = ? AND request_id = ?;
 
 -- name: MarkCommandUncertain :exec
 UPDATE command_receipt SET uncertain = 1 WHERE scope_id = ? AND request_id = ?;
+
+-- name: UpdateConversationSettings :exec
+UPDATE conversation SET model = ?, reasoning_effort = ?, permission_mode = ? WHERE id = ?;

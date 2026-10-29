@@ -446,3 +446,44 @@ func truncateRunes(s string, n int) string {
 	runes := []rune(s)
 	return string(runes[:n])
 }
+
+// ApplySettings changes the provider settings. A live adapter is updated in
+// place; later adapter starts use the new values.
+func (r *ClaudeRunner) ApplySettings(ctx context.Context, st store.ConversationSettings) error {
+	r.mu.Lock()
+	fields := map[string]any{}
+	for k, v := range r.session.Fields {
+		fields[k] = v
+	}
+	delete(fields, "model")
+	delete(fields, "reasoning_effort")
+	if st.Model != nil {
+		fields["model"] = *st.Model
+	}
+	if st.ReasoningEffort != nil {
+		fields["reasoning_effort"] = *st.ReasoningEffort
+	}
+	fields["permission_mode"] = st.PermissionMode
+	r.session.Fields = fields
+	adapter := r.adapter
+	r.mu.Unlock()
+	if adapter == nil {
+		return nil
+	}
+	var model any
+	if st.Model != nil {
+		model = *st.Model
+	}
+	if _, err := adapter.Request(ctx, "set_model", map[string]any{"model": model}); err != nil {
+		return err
+	}
+	var effort any
+	if st.ReasoningEffort != nil {
+		effort = *st.ReasoningEffort
+	}
+	if _, err := adapter.Request(ctx, "apply_flag_settings", map[string]any{"settings": map[string]any{"effortLevel": effort}}); err != nil {
+		return err
+	}
+	_, err := adapter.Request(ctx, "set_permission_mode", map[string]any{"mode": st.PermissionMode})
+	return err
+}

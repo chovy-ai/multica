@@ -48,15 +48,6 @@ func (d *Daemon) claudeLauncher(sidecar localhost.Sidecar) service.ClaudeLaunche
 			return service.ClaudeSession{}, nil, err
 		}
 		fields := map[string]any{"executable": resolved.Path, "cwd": conv.Cwd}
-		if conv.Model.Valid && conv.Model.String != "" {
-			fields["model"] = conv.Model.String
-		}
-		if conv.ReasoningEffort.Valid && conv.ReasoningEffort.String != "" {
-			fields["reasoning_effort"] = conv.ReasoningEffort.String
-		}
-		if conv.PermissionMode != "" {
-			fields["permission_mode"] = conv.PermissionMode
-		}
 		logger := d.logger.With("component", "claude-adapter", "conversation_id", conv.ID)
 		start := func(ctx context.Context, handler claude.Handler) (service.ClaudeAdapter, error) {
 			p, err := claude.Start(ctx, claude.AdapterCommand(sidecar.Electron, sidecar.ClaudeEntry, os.Environ()), handler, logger)

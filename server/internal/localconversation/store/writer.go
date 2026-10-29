@@ -81,6 +81,16 @@ type Batch struct {
 	// Receipt records the command this batch accepts; a receipt that already
 	// exists rejects the whole batch with ErrDuplicateRequest.
 	Receipt *CommandReceipt
+	// Settings replaces the conversation's provider settings.
+	Settings *ConversationSettings
+}
+
+// ConversationSettings are the provider settings a conversation runs with.
+// A nil Model or ReasoningEffort means the provider default.
+type ConversationSettings struct {
+	Model           *string
+	ReasoningEffort *string
+	PermissionMode  string
 }
 
 // CommittedEvent is an appended event with its assigned sequence numbers.
@@ -381,6 +391,15 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 
 	if id := b.ProviderSessionID; id != nil {
 		if err := q.SetProviderSessionID(ctx, sqlitedb.SetProviderSessionIDParams{ProviderSessionID: *id, ID: conv.ID}); err != nil {
+			return Committed{}, err
+		}
+	}
+
+	if st := b.Settings; st != nil {
+		err := q.UpdateConversationSettings(ctx, sqlitedb.UpdateConversationSettingsParams{
+			Model: nullString(st.Model), ReasoningEffort: nullString(st.ReasoningEffort), PermissionMode: st.PermissionMode, ID: conv.ID,
+		})
+		if err != nil {
 			return Committed{}, err
 		}
 	}

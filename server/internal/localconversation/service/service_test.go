@@ -190,3 +190,45 @@ func TestOpenClosesTurnsInterruptedByARestart(t *testing.T) {
 		t.Fatalf("turns still running: %+v", running)
 	}
 }
+
+func TestServiceUpdateSettingsPersistsAndAppliesToTheLiveAdapter(t *testing.T) {
+	t.Parallel()
+
+	f := newServiceFixture(t, filepath.Join(t.TempDir(), "c.sqlite"))
+	f.create(t, "conv-1", "claude")
+	ctx := context.Background()
+	opus, auto := "claude-opus-5-5", "auto"
+	// Before any adapter runs, only the stored settings change.
+	if err := f.svc.UpdateSettings(ctx, f.scopeID, "conv-1", SettingsUpdate{Model: &opus}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	a := f.adapters[0]
+	if a.fields[0]["model"] != opus {
+		t.Fatalf("adapter started with %v, want model %s", a.fields[0], opus)
+	}
+
+	if err := f.svc.UpdateSettings(ctx, f.scopeID, "conv-1", SettingsUpdate{ClearModel: true, PermissionMode: &auto}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.sent(); fmt.Sprint(got) != "[start send set_model apply_flag_settings set_permission_mode]" {
+		t.Fatalf("adapter requests = %v", got)
+	}
+	if a.fields[2]["model"] != nil || a.fields[4]["mode"] != "auto" {
+		t.Fatalf("applied fields = %v / %v", a.fields[2], a.fields[4])
+	}
+	conv, _ := f.svc.Store().Conversation(ctx, "conv-1")
+	if conv.Model.Valid || conv.PermissionMode != "auto" {
+		t.Fatalf("stored settings = model %v permission %s", conv.Model, conv.PermissionMode)
+	}
+
+	bad := "yolo"
+	if err := f.svc.UpdateSettings(ctx, f.scopeID, "conv-1", SettingsUpdate{PermissionMode: &bad}); !errors.Is(err, ErrInvalidSettings) {
+		t.Fatalf("invalid permission mode = %v", err)
+	}
+	if err := f.svc.UpdateSettings(ctx, f.scopeID+1, "conv-1", SettingsUpdate{Model: &opus}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("update from another scope = %v", err)
+	}
+}

@@ -982,6 +982,27 @@ func (q *Queries) SetProviderTurnID(ctx context.Context, arg SetProviderTurnIDPa
 	return err
 }
 
+const updateConversationSettings = `-- name: UpdateConversationSettings :exec
+UPDATE conversation SET model = ?, reasoning_effort = ?, permission_mode = ? WHERE id = ?
+`
+
+type UpdateConversationSettingsParams struct {
+	Model           sql.NullString
+	ReasoningEffort sql.NullString
+	PermissionMode  string
+	ID              string
+}
+
+func (q *Queries) UpdateConversationSettings(ctx context.Context, arg UpdateConversationSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updateConversationSettings,
+		arg.Model,
+		arg.ReasoningEffort,
+		arg.PermissionMode,
+		arg.ID,
+	)
+	return err
+}
+
 const updateConversationSummary = `-- name: UpdateConversationSummary :exec
 UPDATE conversation SET
     status = ?,

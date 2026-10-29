@@ -20,6 +20,8 @@ var (
 	ErrRequestConflict = errors.New("local conversation: request id reused with different content")
 	// ErrUnsupportedProvider means no runner serves the conversation's provider.
 	ErrUnsupportedProvider = errors.New("local conversation: provider not supported by this daemon")
+	// ErrInvalidSettings rejects an unknown setting value.
+	ErrInvalidSettings = errors.New("local conversation: invalid settings")
 )
 
 const (
@@ -29,8 +31,9 @@ const (
 )
 
 // ClaudeLauncher prepares how a Claude conversation's adapter is started:
-// its start fields (executable, cwd, model, MCP, settings) and the process
-// launcher. The daemon resolves executables and credentials here.
+// its start fields (executable, cwd, MCP, Claude settings) and the process
+// launcher. The daemon resolves executables and credentials here; the
+// service adds the conversation's stored model, effort and permission mode.
 type ClaudeLauncher func(ctx context.Context, conv sqlitedb.Conversation) (ClaudeSession, StartClaudeAdapter, error)
 
 // Options configures Open.
@@ -246,6 +249,22 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (*Clau
 	if session.ProviderSessionID == "" {
 		session.ProviderSessionID = conv.ProviderSessionID
 	}
+	// Stored settings are the source of truth; the launcher only supplies
+	// how to run the provider.
+	fields := map[string]any{}
+	for k, v := range session.Fields {
+		fields[k] = v
+	}
+	if conv.Model.Valid {
+		fields["model"] = conv.Model.String
+	}
+	if conv.ReasoningEffort.Valid {
+		fields["reasoning_effort"] = conv.ReasoningEffort.String
+	}
+	if conv.PermissionMode != "" {
+		fields["permission_mode"] = conv.PermissionMode
+	}
+	session.Fields = fields
 	r = NewClaudeRunner(ClaudeRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: s.opts.ContextMCPName, Now: s.opts.Now,
@@ -267,4 +286,70 @@ func sendFingerprint(cmd SendCommand) string {
 	}{cmd.ConversationID, cmd.Text, cmd.Content})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// SettingsUpdate changes provider settings. A nil field keeps its value;
+// ClearModel or ClearReasoningEffort return that setting to the provider
+// default.
+type SettingsUpdate struct {
+	Model                *string
+	ClearModel           bool
+	ReasoningEffort      *string
+	ClearReasoningEffort bool
+	PermissionMode       *string
+}
+
+var validPermissionModes = map[string]bool{"default": true, "auto": true, "full-access": true}
+
+// UpdateSettings stores new provider settings, records them as a
+// conversation.updated event, and applies them to a running adapter.
+func (s *Service) UpdateSettings(ctx context.Context, scopeID int64, conversationID string, u SettingsUpdate) error {
+	conv, err := s.scopedConversation(ctx, scopeID, conversationID)
+	if err != nil {
+		return err
+	}
+	st := store.ConversationSettings{PermissionMode: conv.PermissionMode}
+	if conv.Model.Valid {
+		st.Model = &conv.Model.String
+	}
+	if conv.ReasoningEffort.Valid {
+		st.ReasoningEffort = &conv.ReasoningEffort.String
+	}
+	switch {
+	case u.ClearModel:
+		st.Model = nil
+	case u.Model != nil:
+		st.Model = u.Model
+	}
+	switch {
+	case u.ClearReasoningEffort:
+		st.ReasoningEffort = nil
+	case u.ReasoningEffort != nil:
+		st.ReasoningEffort = u.ReasoningEffort
+	}
+	if u.PermissionMode != nil {
+		if !validPermissionModes[*u.PermissionMode] {
+			return fmt.Errorf("%w: permission mode %q", ErrInvalidSettings, *u.PermissionMode)
+		}
+		st.PermissionMode = *u.PermissionMode
+	}
+	payload := map[string]any{"model": nil, "reasoning_effort": nil, "permission_mode": st.PermissionMode}
+	if st.Model != nil {
+		payload["model"] = *st.Model
+	}
+	if st.ReasoningEffort != nil {
+		payload["reasoning_effort"] = *st.ReasoningEffort
+	}
+	data, _ := json.Marshal(payload)
+	if _, err := s.batcher.AppendWait(ctx, store.Batch{ConversationID: conversationID, Settings: &st,
+		Events: []store.NewEvent{{Type: "conversation.updated", Payload: data, CreatedAt: s.opts.Now()}}}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	r := s.runners[conversationID]
+	s.mu.Unlock()
+	if r == nil {
+		return nil
+	}
+	return r.ApplySettings(ctx, st)
 }

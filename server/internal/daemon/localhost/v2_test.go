@@ -276,3 +276,28 @@ func containsString(list []string, s string) bool {
 	}
 	return false
 }
+
+func TestV2UpdateSettingsCommand(t *testing.T) {
+	t.Parallel()
+
+	srv, svc := newV2Server(t)
+	h := v2Headers("user-1")
+	v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-1", "provider": "claude"}, h)
+	status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "update_settings", "model": "claude-opus-5-5", "permission_mode": "full-access"}, h)
+	if status != http.StatusOK {
+		t.Fatalf("update = %d %v", status, body)
+	}
+	conv, _ := svc.Store().Conversation(context.Background(), "conv-1")
+	if conv.Model.String != "claude-opus-5-5" || conv.PermissionMode != "full-access" {
+		t.Fatalf("stored = %+v", conv)
+	}
+	if status, _ := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "update_settings", "model": nil}, h); status != http.StatusOK {
+		t.Fatalf("reset model = %d", status)
+	}
+	if conv, _ := svc.Store().Conversation(context.Background(), "conv-1"); conv.Model.Valid || conv.PermissionMode != "full-access" {
+		t.Fatalf("after reset = %+v", conv)
+	}
+	if status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "update_settings", "permission_mode": "yolo"}, h); status != http.StatusBadRequest || body["error"].(map[string]any)["kind"] != "invalid_settings" {
+		t.Fatalf("invalid = %d %v", status, body)
+	}
+}
