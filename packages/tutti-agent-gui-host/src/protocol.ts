@@ -57,6 +57,11 @@ export interface AgentGuiWorkspaceState {
   pendingTasks?: PendingChatTaskItem[];
 }
 
+export interface AgentGuiNewConversationRequest {
+  sequence: number;
+  projectPath: string | null;
+}
+
 export interface AgentGuiInitSnapshot extends AgentGuiWorkspaceState {
   appOrigin?: string | null;
   workspaceId: string;
@@ -71,6 +76,8 @@ export interface AgentGuiInitSnapshot extends AgentGuiWorkspaceState {
   activeSessionId: string | null;
   /** Explicit new-conversation intent; ordinary state refreshes never steal focus. */
   composerFocusSequence?: number;
+  /** Apply a local project to the home composer without creating a session. */
+  newConversationRequest?: AgentGuiNewConversationRequest;
   selectedAgentId?: string | null;
   generation?: number;
 }

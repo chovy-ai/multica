@@ -85,7 +85,9 @@ export function LocalConversationFlowPage() {
   const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const [showList, setShowList] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [newConversation, setNewConversation] = useState<{ scope: string; request: NonNullable<ComponentProps<typeof TuttiAgentGuiPanel>["newConversationRequest"]> }>();
+  const newConversationRequest = newConversation?.scope === visibilityScope ? newConversation.request : undefined;
+  const focusIntentSequence = useRef(0);
   const [addingProject, setAddingProject] = useState(false);
   const [forkingId, setForkingId] = useState<string | null>(null);
   const forking = forkingId !== null;
@@ -173,20 +175,13 @@ export function LocalConversationFlowPage() {
     setProjectHidden(scope, projectId, true);
     toast.success(projectLabels.removedNotice, { action: { label: projectLabels.undo, onClick: () => setProjectHidden(scope, projectId, false) } });
   };
-  const defaultFolderProjectId = selected ? projectForDirectory(folderProjects, selected.cwd)?.id ?? null : null;
-  const create = async (folderProjectId: string | null = defaultFolderProjectId) => {
-    if (creating) return;
+  const defaultFolderProjectId = projectForDirectory(folderProjects, selected?.cwd ?? newConversationRequest?.projectPath ?? "")?.id ?? null;
+  const create = (folderProjectId: string | null = defaultFolderProjectId) => {
     const target = providers.data?.find((entry) => entry.id === provider && entry.available) ?? providers.data?.find((entry) => entry.available);
     if (!target) return;
-    setCreating(true);
-    const startedIntent = intent;
-    try {
-      const created = await client.request(scope, "create", { provider: target.id, folderProjectId });
-      await qc.invalidateQueries({ queryKey: localConversationKey(scope) });
-      if (currentIntent.current === startedIntent) {
-        setSearch(""); setArchived(false); setFocusSequence((value) => value + 1); latest.current.select(created.id, created.provider);
-      }
-    } catch (error) { report(error); } finally { setCreating(false); }
+    const sequence = ++focusIntentSequence.current;
+    setNewConversation({ scope: visibilityScope, request: { sequence, projectPath: folderProjects.find((project) => project.id === folderProjectId)?.path ?? null } });
+    setSearch(""); setArchived(false); setFocusSequence(sequence); latest.current.select(null, target.id);
   };
   const update = async (params: LocalConversationMethods["update"]["params"], onError: (error: unknown) => void = report) => {
     if (updatingId) return false;
@@ -225,7 +220,7 @@ export function LocalConversationFlowPage() {
       const created = await client.request(scope, "fork", { id: entry.id });
       await qc.invalidateQueries({ queryKey: localConversationKey(scope) });
       if (currentIntent.current === startedIntent) {
-        setSearch(""); setArchived(false); setFocusSequence((value) => value + 1); latest.current.select(created.id, created.provider);
+        setSearch(""); setArchived(false); setFocusSequence(++focusIntentSequence.current); latest.current.select(created.id, created.provider);
       }
     } catch (error) { report(error); } finally { setForkingId(null); }
   };
@@ -341,7 +336,7 @@ export function LocalConversationFlowPage() {
             <div className="flex shrink-0 items-center gap-1">
               <LocalConversationImportButton key={`${scope.userId}:${scope.workspaceId}`} scope={scope} client={client} projects={projects} chinese={chinese} onImported={() => { void qc.invalidateQueries({ queryKey: localConversationKey(scope) }); }} />
               <IconButton label={projectLabels.new} disabled={addingProject} aria-busy={addingProject} onClick={() => { void addProject(); }}>{addingProject ? <Loader2 className="animate-spin" /> : <FolderPlus />}</IconButton>
-              <IconButton label={labels.new} disabled={creating || !providers.data?.some((entry) => entry.available)} disabledReason={labels.unavailable} onClick={() => { void create(); }}><Plus /></IconButton>
+              <IconButton label={labels.new} disabled={!providers.data?.some((entry) => entry.available)} disabledReason={labels.unavailable} onClick={() => create()}><Plus /></IconButton>
             </div>
           </div>
           <div className="px-3 py-3"><div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input aria-label={labels.search} placeholder={labels.search} className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setSearch(""); }} /></div></div>
@@ -357,7 +352,7 @@ export function LocalConversationFlowPage() {
                     {expanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}<FolderOpen className="size-3.5 shrink-0" /><span className="truncate">{title}</span><span className="ml-auto text-micro tabular-nums text-faint-foreground">{group.sessions.length}</span>
                   </Button>
                   <div className="flex shrink-0 items-center">
-                    {!archived && (group.id === null || group.project) && <IconButton size="icon-xs" label={`${projectLabels.create}：${title}`} disabled={creating || !providers.data?.some((entry) => entry.available)} onClick={() => { void create(group.id); }}><Plus className="size-3.5" /></IconButton>}
+                    {!archived && (group.id === null || group.project) && <IconButton size="icon-xs" label={`${projectLabels.create}：${title}`} disabled={!providers.data?.some((entry) => entry.available)} onClick={() => create(group.id)}><Plus className="size-3.5" /></IconButton>}
                     {group.id !== null && <DropdownMenu>
                       <DropdownMenuTrigger
                         // Activate on click; desktop accessibility presses may omit compatibility mouse events.
@@ -414,6 +409,7 @@ export function LocalConversationFlowPage() {
           <LocalRuntimeNotice scope={scope} chinese={chinese} />
           <TuttiAgentGuiPanel locateRequest={locateRequest ?? undefined} restoreDraftRequest={referenceDraft} key={`${workspace.id}:${userId}`} serviceFactory={factory} workspaceId={workspace.id} workspaceSlug={slug} userId={userId}
             activeSessionId={selectedId} selectedAgentId={localTargetId(provider)} active={active && mainVisible && (!compact || !showList)} composerFocusSequence={focusSequence || undefined}
+            newConversationRequest={newConversationRequest}
             onRestoreDraftApplied={() => setReferenceDraft(null)} onSelectSession={(session) => select(session?.id ?? null)}
             onOpenTask={(id) => { if (openInNewTab) openInNewTab(paths.issueDetail(id), undefined, { activate: true }); else push(paths.issueDetail(id)); }}
             onShowMessage={(message, tone) => tone === "error" ? toast.error(message) : toast.info(message)} />
