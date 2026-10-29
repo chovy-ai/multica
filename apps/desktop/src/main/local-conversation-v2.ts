@@ -114,7 +114,11 @@ export class LocalV2Proxy {
           const ws = new WebSocket(`ws://${endpoint.base}/local/v2/ws`, { headers: this.headers(scope, endpoint.token), maxPayload: 64 * 1024 * 1024 });
           const opened = await new Promise<boolean>((resolve, reject) => {
             ws.once("open", () => resolve(true));
-            ws.once("unexpected-response", (_request, response) => { ws.terminate(); response.statusCode === 403 && attempt === 0 ? resolve(false) : reject(new LocalV2Error("daemon_offline", "The local daemon refused the connection", response.statusCode ?? 0)); });
+            ws.once("unexpected-response", (_request, response) => {
+              ws.terminate();
+              if (response.statusCode === 403 && attempt === 0) resolve(false);
+              else reject(new LocalV2Error("daemon_offline", "The local daemon refused the connection", response.statusCode ?? 0));
+            });
             ws.once("error", () => reject(new LocalV2Error("daemon_offline", "Start the local daemon to use local conversations", 0)));
           });
           if (!opened) continue;
