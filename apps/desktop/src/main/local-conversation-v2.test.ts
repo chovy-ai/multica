@@ -7,7 +7,7 @@ import { LocalV2Error, LocalV2Proxy, type LocalV2ProxyOptions } from "./local-co
 
 const scope = { userId: "user", workspaceId: "ws" };
 
-interface Daemon { server: Server; base: string; token: string; sockets: WebSocket[]; requests: IncomingMessage[]; received: unknown[]; close(): Promise<void> }
+interface Daemon { helloVersion?: number; server: Server; base: string; token: string; sockets: WebSocket[]; requests: IncomingMessage[]; received: unknown[]; close(): Promise<void> }
 
 async function fakeDaemon(): Promise<Daemon> {
   const daemon = { token: "t1", sockets: [], requests: [], received: [] } as unknown as Daemon;
@@ -15,6 +15,9 @@ async function fakeDaemon(): Promise<Daemon> {
   daemon.server = createServer((req, res) => {
     daemon.requests.push(req);
     if (req.headers.authorization !== `Bearer ${daemon.token}`) { res.writeHead(403).end(); return; }
+    if (req.url === "/local/v2/hello") { res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: daemon.helloVersion ?? 2 })); return; }
+    if (req.url === "/local/v2/drain") { res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ busy: 2 })); return; }
+    if (req.url === "/local/v2/sessions/other/snapshot") { res.writeHead(403, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { kind: "account_mismatch", message: "another account" } })); return; }
     if (req.url === "/local/v2/sessions/missing/snapshot") { res.writeHead(404, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { kind: "not_found", message: "conversation missing" } })); return; }
     let body = "";
     req.on("data", (chunk) => { body += chunk; });
@@ -53,6 +56,31 @@ async function setup(overrides: Partial<LocalV2ProxyOptions> = {}) {
 const until = async (check: () => boolean) => { for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 10)); expect(check()).toBe(true); };
 
 describe("LocalV2Proxy", () => {
+  it("reports availability from the hello probe and from each request", async () => {
+    const availability = vi.fn();
+    const { daemon, proxy } = await setup({ availability });
+    await proxy.probe();
+    expect(availability).toHaveBeenLastCalledWith({ state: "connected" });
+    await expect(proxy.request(scope, "GET", "/sessions/other/snapshot")).rejects.toMatchObject({ kind: "account_mismatch" });
+    expect(availability).toHaveBeenLastCalledWith({ state: "unavailable", reason: "account_mismatch" });
+    daemon.helloVersion = 3;
+    await proxy.probe();
+    expect(availability).toHaveBeenLastCalledWith({ state: "unavailable", reason: "incompatible" });
+    await proxy.request(scope, "GET", "/sessions");
+    expect(availability).toHaveBeenLastCalledWith({ state: "connected" });
+    // Repeated states are reported once.
+    await proxy.request(scope, "GET", "/sessions");
+    expect(availability).toHaveBeenCalledTimes(4);
+    expect(await proxy.drain()).toBe(2);
+  });
+
+  it("reports an unreachable daemon as offline", async () => {
+    const availability = vi.fn();
+    const { proxy } = await setup({ availability, endpoint: async () => ({ base: "127.0.0.1:1", token: "t" }) });
+    await proxy.probe();
+    expect(availability).toHaveBeenLastCalledWith({ state: "unavailable", reason: "daemon_offline" });
+  });
+
   it("sends scoped, authenticated requests and keeps the daemon's error kinds", async () => {
     const { daemon, proxy } = await setup();
     expect(await proxy.request(scope, "POST", "/sessions/c1/commands", { type: "send" })).toEqual({ path: "/local/v2/sessions/c1/commands", method: "POST", body: { type: "send" } });

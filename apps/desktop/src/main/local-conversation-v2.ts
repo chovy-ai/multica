@@ -1,5 +1,7 @@
 import WebSocket from "ws";
 import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import { LOCAL_V2_VERSION } from "@multica/core/local-conversation/v2";
+import type { LocalHostAvailability } from "../shared/local-host-availability";
 
 /** The daemon's verified endpoint and token; the token never leaves main. */
 export interface LocalV2Endpoint { base: string; token: string }
@@ -13,7 +15,12 @@ export interface LocalV2ProxyOptions {
   connection(scope: LocalConversationScope, connected: boolean): void;
   /** Performs a daemon host request for a scope and returns its result. */
   hostRequest(scope: LocalConversationScope, kind: string, payload: Record<string, unknown>): Promise<unknown>;
+  /** Whether local conversations work, as each request and connection finds out. */
+  availability?(value: LocalHostAvailability): void;
 }
+
+/** Error kinds that say why local conversations cannot be used at all. */
+const BLOCKING = new Set(["daemon_offline", "not_signed_in", "account_mismatch"]);
 
 /** A v2 request failure with the daemon's stable error kind. */
 export class LocalV2Error extends Error {
@@ -43,6 +50,7 @@ export class LocalV2Proxy {
   private endpointValue?: LocalV2Endpoint;
   private sockets = new Map<string, Socket>();
   private closed = false;
+  private state?: string;
 
   constructor(private options: LocalV2ProxyOptions) {}
 
@@ -53,12 +61,50 @@ export class LocalV2Proxy {
     return this.endpointValue;
   }
 
+  private report(value: LocalHostAvailability) {
+    const key = JSON.stringify(value);
+    if (key === this.state) return;
+    this.state = key;
+    this.options.availability?.(value);
+  }
+
+  /** Reports a request's outcome: success means the service works. */
+  private outcome<T>(result: Promise<T>): Promise<T> {
+    return result.then((value) => { this.report({ state: "connected" }); return value; }, (error: unknown) => {
+      if (error instanceof LocalV2Error) {
+        if (error.kind === "draining") this.report({ state: "updating" });
+        else if (BLOCKING.has(error.kind)) this.report({ state: "unavailable", reason: error.kind as "daemon_offline" | "not_signed_in" | "account_mismatch" });
+      }
+      throw error;
+    });
+  }
+
+  /**
+   * Checks that the daemon serves this API version. A daemon without local
+   * conversations has no `/local/v2` routes.
+   */
+  async probe(): Promise<void> {
+    let response: Response;
+    try {
+      const endpoint = await this.endpoint(true);
+      response = await fetch(`http://${endpoint.base}/local/v2/hello`, { headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(5000) });
+    } catch { this.report({ state: "unavailable", reason: "daemon_offline" }); return; }
+    if (response.status === 404) { this.report({ state: "unavailable", reason: "unsupported" }); return; }
+    if (!response.ok) { this.report({ state: "unavailable", reason: "daemon_offline" }); return; }
+    const hello = await response.json().catch(() => null) as { version?: unknown } | null;
+    this.report(hello?.version === LOCAL_V2_VERSION ? { state: "connected" } : { state: "unavailable", reason: "incompatible" });
+  }
+
   private headers(scope: LocalConversationScope, token: string): Record<string, string> {
     return { Authorization: `Bearer ${token}`, "X-Multica-API-Origin": this.options.apiUrl, "X-Multica-User-ID": scope.userId, "X-Workspace-ID": scope.workspaceId };
   }
 
   /** One JSON request. A rotated token is re-read once. */
-  async request(scope: LocalConversationScope, method: string, path: string, body?: unknown): Promise<unknown> {
+  request(scope: LocalConversationScope, method: string, path: string, body?: unknown): Promise<unknown> {
+    return this.outcome(this.requestOnce(scope, method, path, body));
+  }
+
+  private async requestOnce(scope: LocalConversationScope, method: string, path: string, body?: unknown): Promise<unknown> {
     if (!path.startsWith("/") || path.includes("..")) throw new LocalV2Error("invalid_request", "Invalid local conversation path", 400);
     for (let attempt = 0; attempt < 2; attempt++) {
       const endpoint = await this.endpoint(attempt > 0);
@@ -122,10 +168,14 @@ export class LocalV2Proxy {
             ws.once("error", () => reject(new LocalV2Error("daemon_offline", "Start the local daemon to use local conversations", 0)));
           });
           if (!opened) continue;
+          this.report({ state: "connected" });
           this.attach(socket, ws);
           return ws;
         }
         throw new LocalV2Error("forbidden", "The local daemon refused the connection", 403);
+      } catch (error) {
+        if (error instanceof LocalV2Error && error.kind === "daemon_offline") this.report({ state: "unavailable", reason: "daemon_offline" });
+        throw error;
       } finally { socket.connecting = undefined; }
     })();
   }
@@ -179,6 +229,26 @@ export class LocalV2Proxy {
     if (socket.timer) clearTimeout(socket.timer);
     this.sockets.delete(this.key(scope));
     socket.ws?.close();
+  }
+
+  /** Drains the daemon's service before a restart; returns its running turns. */
+  async drain(): Promise<number> {
+    const endpoint = await this.endpoint();
+    const response = await fetch(`http://${endpoint.base}/local/v2/drain`, { method: "POST", headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(10_000) });
+    if (response.status === 404) return 0;
+    if (!response.ok) throw new LocalV2Error(`http_${response.status}`, "The local daemon did not drain", response.status);
+    return Number(((await response.json()) as { busy?: unknown }).busy) || 0;
+  }
+
+  /** Stops the provider processes of a drained service, e.g. before an app update. */
+  async stopProviders(): Promise<void> {
+    const endpoint = await this.endpoint();
+    await fetch(`http://${endpoint.base}/local/v2/stop-providers`, { method: "POST", headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(30_000) });
+  }
+
+  async undrain(): Promise<void> {
+    const endpoint = await this.endpoint();
+    await fetch(`http://${endpoint.base}/local/v2/undrain`, { method: "POST", headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(10_000) });
   }
 
   close(): void {

@@ -66,10 +66,6 @@ function installDaemon() {
     return entry;
   };
   const fail = (error: unknown): never => { throw error instanceof Error && /^[a-z_0-9]+: /.test(error.message) ? error : new Error(`internal: ${error instanceof Error ? error.message : String(error)}`); };
-  const localConversations = {
-    // Cases announce a changed conversation here; the daemon publishes the list again.
-    subscribe: () => () => {},
-  };
   const refresh = async (scope: unknown) => {
     const summaries = (await rows(scope)).map(summary);
     v2Listeners.forEach((listener) => listener(scope, { version: 2, type: "scope.summaries", scope_seq: summarySeq, summaries }));
@@ -106,11 +102,10 @@ function installDaemon() {
     send: async () => {}, onConnection: () => () => {}, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
     subscribe: (listener: (scope: unknown, message: unknown) => void) => {
       v2Listeners.add(listener);
-      window.desktopAPI.localConversations.subscribe((scope: unknown) => { void refresh(scope); });
       return () => v2Listeners.delete(listener);
     },
   };
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localV2, localConversations, pickDirectory: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected" }), subscribe: () => () => {} }, localV2, pickDirectory: vi.fn() } });
 }
 
 let qc: QueryClient;
@@ -262,8 +257,8 @@ describe("local conversation execution indicators", () => {
     const other = { ...source, id: "other", title: "Other conversation", turns: [] };
     mock.selected = other.id;
     mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [other, source] : []);
-    let notify!: Parameters<typeof window.desktopAPI.localConversations.subscribe>[0];
-    vi.spyOn(window.desktopAPI.localConversations, "subscribe").mockImplementation((listener) => { notify = listener; return () => {}; });
+    // The daemon publishes the list after a conversation changes.
+    const notify = (_scope: unknown, _id: string) => { void publishList(); };
     const mounted = render(page());
     const warning = await screen.findByRole("button", { name: "等待你的回答：Original" });
     const row = screen.getByRole("link", { name: /Original/ });
@@ -323,8 +318,8 @@ describe("local conversation execution indicators", () => {
     ["claude", "completed"], ["claude", "failed"], ["claude", "cancelled"],
   ] as const)("updates the %s row from idle through running to %s after execution notifications", async (provider, status) => {
     source = { ...source, provider };
-    let notify!: Parameters<typeof window.desktopAPI.localConversations.subscribe>[0];
-    vi.spyOn(window.desktopAPI.localConversations, "subscribe").mockImplementation((listener) => { notify = listener; return () => {}; });
+    // The daemon publishes the list after a conversation changes.
+    const notify = (_scope: unknown, _id: string) => { void publishList(); };
     render(page());
     await screen.findByRole("link", { name: /Original/ });
     expect(screen.queryByRole("status", { name: "会话运行中：Original" })).not.toBeInTheDocument();
@@ -344,8 +339,8 @@ describe("local conversation execution indicators", () => {
       { id: "second-agent", status: "running", createdAt: "2026-01-01", events: [], remote: { agentId: "b", agentName: "Second agent" } },
     ] };
     mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source, background] : []);
-    let notify!: Parameters<typeof window.desktopAPI.localConversations.subscribe>[0];
-    vi.spyOn(window.desktopAPI.localConversations, "subscribe").mockImplementation((listener) => { notify = listener; return () => {}; });
+    // The daemon publishes the list after a conversation changes.
+    const notify = (_scope: unknown, _id: string) => { void publishList(); };
     render(page());
     expect(await screen.findByRole("status", { name: "会话运行中：Background conversation" })).toBeVisible();
     expect(screen.getByRole("link", { name: /Original/ })).toHaveAttribute("aria-current", "true");

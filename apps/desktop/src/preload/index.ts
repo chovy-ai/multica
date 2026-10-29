@@ -20,7 +20,7 @@ import {
   type IssueWindowRequest,
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
-import type { LocalConversationClient, LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { localV2UploadSchema, type LocalV2Transport } from "@multica/core/local-conversation/v2";
 import type { LocalHostAvailability } from "../shared/local-host-availability";
 import type {
@@ -117,21 +117,6 @@ async function localFileError(response: Response): Promise<Error> {
   try { const body = await response.json() as { error?: { message?: string } }; return new Error(body.error?.message ?? `Local file request failed (HTTP ${response.status})`); }
   catch { return new Error(`Local file request failed (HTTP ${response.status})`); }
 }
-const localFileTransport: LocalConversationClient["files"] = {
-  url: (scope, fileRef) => localFileUrl(`files/${encodeURIComponent(fileRef)}`, scope),
-  read: async (scope, fileRef) => {
-    const response = await fetch(localFileUrl(`files/${encodeURIComponent(fileRef)}`, scope));
-    if (!response.ok) throw await localFileError(response);
-    return response.blob();
-  },
-  upload: async (scope, file) => {
-    const response = await fetch(localFileUrl("upload", scope), { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } });
-    if (!response.ok) throw await localFileError(response);
-    const body = await response.json() as { id?: unknown };
-    if (typeof body.id !== "string") throw new Error("The local file upload was not confirmed");
-    return body.id;
-  },
-};
 
 const desktopAPI = {
   localFileContextMenu: {
@@ -194,15 +179,6 @@ const desktopAPI = {
       return localV2UploadSchema.parse(await response.json());
     },
   } satisfies LocalV2Transport,
-  localConversations: {
-    files: localFileTransport,
-    request: (scope, method, params) => ipcRenderer.invoke("local-conversation:request", scope, method, params),
-    subscribe: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; sessionId: string }) => listener(payload.scope, payload.sessionId);
-      ipcRenderer.on("local-conversation:changed", handler);
-      return () => ipcRenderer.removeListener("local-conversation:changed", handler);
-    },
-  } satisfies LocalConversationClient,
   /** App version + normalized OS. Read once at preload time so the renderer
    *  can use it synchronously when initializing the API client. */
   appInfo,

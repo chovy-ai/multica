@@ -92,7 +92,7 @@ beforeEach(() => {
   const localV2 = { request: daemon, send: vi.fn(async () => {}), subscribe: (listener: (scope: LocalConversationScope, message: unknown) => void) => { messages.add(listener); return () => messages.delete(listener); },
     onConnection: () => () => {}, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
     choose: async (scopeValue: LocalConversationScope, choice: { kind: string }) => request(scopeValue, "previewChoose", { kind: choice.kind }) };
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localV2, resourcePreview: preview, openExternal: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected" }), subscribe: () => () => {} }, localV2, resourcePreview: preview, openExternal: vi.fn() } });
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {
@@ -233,7 +233,7 @@ it("shows one recoverable file error and preserves the main draft instead of sta
   request.mockImplementation(async (_scope, method) => {
     if (method === "read") return sessions[0];
     if (method === "previewRead") {
-      if (missing) throw new Error("Error invoking remote method 'local-conversation:request': Error: ENOENT: realpath '/project/walkthrough.md'");
+      if (missing) throw new Error("Error invoking remote method 'local-v2:request': Error: ENOENT: realpath '/project/walkthrough.md'");
       return { name: "test.ts", path: "/project/test.ts", mimeType: "text/plain", text: "ready", size: 5, truncated: false };
     }
     return undefined;

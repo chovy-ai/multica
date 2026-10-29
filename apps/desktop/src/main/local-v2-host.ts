@@ -3,7 +3,7 @@ import type { LocalConversationScope } from "@multica/core/local-conversation/pr
 import type { SettingsRequest } from "@multica/core/settings/operations";
 import { developerLogQuerySchema, type DeveloperLogQuery } from "../shared/developer-logs";
 import { SettingsOperationError } from "../shared/settings-operation-error";
-import type { SettingsConfirmRequest, SettingsHostRequest, SettingsApplyOutcome } from "../local-host/local-settings-tools";
+import type { SettingsConfirmRequest, SettingsHostRequest, SettingsApplyOutcome } from "./settings-confirm";
 
 export interface LocalV2HostHandlers {
   /** The signed-in account; requests for another account are refused. */

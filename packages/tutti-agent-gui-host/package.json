@@ -8,7 +8,6 @@
     "./frame-messaging": "./src/frame-messaging.ts",
     "./message-resource-links": "./src/message-resource-links.ts",
     "./resource-reference": "./src/resource-reference.ts",
-    "./side-context": "./src/side-context.ts",
     "./protocol": "./src/protocol.ts",
     "./local-timing": "./src/local-timing.ts",
     "./v2-conversation": "./src/runtime/v2-conversation.ts",

@@ -13,8 +13,8 @@ const apiOrigin = z.string().url().refine((value) => {
 const launchSchema = z.object({
   schemaVersion: z.literal(1), instanceId: z.literal("desktop"), ownerId: runId,
   kind: z.enum(["development", "packaged"]),
-  appPath: z.string(), cliPath: z.string(), electronPath: z.string(), entryPath: z.string(),
-  claudeEntryPath: z.string().optional(),
+  appPath: z.string(), cliPath: z.string(), electronPath: z.string(),
+  claudeEntryPath: z.string(),
   cliVersion: z.string().min(1), cliCommit: commit,
   profile: z.literal(DESKTOP_RUNTIME_PROFILE), apiUrl: apiOrigin, protocolVersion: z.literal(2),
 });
@@ -23,7 +23,7 @@ export const runtimeRecordSchema = z.object({
   pid: z.number().int().positive(), port: z.number().int().min(1).max(65535),
   profile: z.literal(DESKTOP_RUNTIME_PROFILE), apiUrl: apiOrigin,
   cliVersion: z.string().min(1), cliCommit: commit,
-  apiVersion: z.literal(1), sidecarProtocolVersion: z.literal(2),
+  apiVersion: z.literal(2), sidecarProtocolVersion: z.literal(2),
   localConversations: z.boolean(), startedAt: z.string().datetime({ offset: true }),
 });
 export type RuntimeRecord = z.infer<typeof runtimeRecordSchema>;
@@ -46,9 +46,8 @@ export interface RuntimeSource {
   appPath: string;
   cliPath: string;
   electronPath: string;
-  entryPath: string;
   /** Per-conversation Claude adapter for the daemon's local conversation service. */
-  claudeEntryPath?: string;
+  claudeEntryPath: string;
 }
 
 function origin(value: string): string {
@@ -115,8 +114,7 @@ export class RuntimeInstanceRegistry {
       schemaVersion: 1, instanceId: "desktop", ownerId: this.ownerId, profile: DESKTOP_RUNTIME_PROFILE,
       apiUrl: origin(apiUrl), kind: this.source.kind, appPath: resolve(this.source.appPath),
       cliPath: resolve(this.source.cliPath), cliVersion: version.version, cliCommit: version.commit,
-      electronPath: resolve(this.source.electronPath), entryPath: resolve(this.source.entryPath), protocolVersion: 2,
-      ...(this.source.claudeEntryPath ? { claudeEntryPath: resolve(this.source.claudeEntryPath) } : {}),
+      electronPath: resolve(this.source.electronPath), claudeEntryPath: resolve(this.source.claudeEntryPath), protocolVersion: 2,
     };
     await writePrivateRegistration(join(this.directory, "launch.json"), record);
     // The terminal command follows the latest registration, including another worktree.

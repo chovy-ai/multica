@@ -3,7 +3,6 @@ import { sideWorkspaceSyncSchema } from "@multica/core/local-conversation/protoc
 import { LocalTimingLog } from "./local-timing-log";
 import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
 import { DeveloperLogExporter } from "./developer-log-export";
-import { localProviderEnv } from "./local-provider-env";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, protocol, screen } from "electron";
 import { randomBytes } from "node:crypto";
 import { LOCAL_FILE_SCHEME, localFileScheme } from "./local-file-protocol";
@@ -22,18 +21,15 @@ import {
 import { setupLocalDirectory } from "./local-directory";
 import { setupTerminalCli } from "./terminal-cli-ipc";
 import { registerDesktopProtocol, setupBrowserLogin } from "./browser-login-ipc";
-import { LocalHostProxy } from "./local-conversation-proxy";
 import { LocalV2Error, LocalV2Proxy } from "./local-conversation-v2";
 import { localV2HostHandler } from "./local-v2-host";
 import { isLocalV2FilePath, isLocalV2RendererPost, localV2ClientMessageSchema, type LocalV2ChooseRequest } from "@multica/core/local-conversation/v2";
 import { ResourceWebPreview } from "./resource-web-preview";
 import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
-import { multicaWorkspaceRequest } from "../local-host/multica-api-request";
+import { multicaWorkspaceRequest } from "./multica-api-request";
 import { SettingsOperationError } from "../shared/settings-operation-error";
-import type { LocalConversationMethod, LocalConversationScope } from "@multica/core/local-conversation/protocol";
-import { parseLocalTiming } from "@multica/tutti-agent-gui-host/local-timing";
-import { developerLogQuerySchema } from "../shared/developer-logs";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";
@@ -46,7 +42,7 @@ import { createRendererWebPreferences } from "./renderer-web-preferences";
 import { getAppVersion } from "./app-version";
 import { DEVELOPER_LOGS_MCP_NAME, writeDeveloperLogsManifest } from "./developer-logs-mcp-server";
 import { registerCodexStdioMcp } from "./codex-mcp-registration";
-import { findLocalProvider } from "../local-host/local-provider-runner";
+import { findCodex } from "./find-codex";
 import { profileLogPath, readDesktopProfileCredentials } from "./daemon-profile";
 import { desktopRuntimeRegistry, desktopRuntimeProfile } from "./desktop-runtime-instance";
 import { loadRuntimeConfig } from "./runtime-config-loader";
@@ -169,9 +165,7 @@ function freezeBreadcrumbPath(): string {
 }
 
 let mainWindow: BrowserWindow | null = null;
-let localConversations: LocalHostProxy | null = null;
 let localV2: LocalV2Proxy | null = null;
-let localScopeTracker: ((scope: LocalConversationScope) => void) | undefined;
 let localAvailability: import("../shared/local-host-availability").LocalHostAvailability | null = null;
 let localTimingLog: LocalTimingLog | undefined;
 let developerLogs: DeveloperLogExporter | undefined;
@@ -700,56 +694,15 @@ if (!gotTheLock) {
         return multicaWorkspaceRequest({ apiUrl: localApiUrl, token: credentials.token, workspaceId: scope.workspaceId }, method, path, body, signal);
       });
       localTimingLog = new LocalTimingLog(join(app.getPath("userData"), "local-conversations", "diagnostics"));
-      const recentScopes = new Map<string, LocalConversationScope>();
-      const notifyRenderer = (scope: LocalConversationScope, sessionId: string) => {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:changed", { scope, sessionId });
-      };
-      const pick = async (properties: Electron.OpenDialogOptions["properties"], defaultPath?: string) => {
-        if (!mainWindow || mainWindow.isDestroyed()) return { path: null };
-        const result = await dialog.showOpenDialog(mainWindow, { ...(defaultPath ? { defaultPath } : {}), properties });
-        return { path: result.canceled ? null : result.filePaths[0] ?? null };
-      };
-      localConversations = new LocalHostProxy({
-        apiUrl: localApiUrl,
-        profile: desktopRuntimeProfile(),
-        endpoint: () => desktopRuntimeRegistry().endpoint(localApiUrl),
-        legacyDataDir: join(app.getPath("userData"), "local-conversations"),
-        providerEnv: () => localProviderEnv(),
-        notify: notifyRenderer,
-        // Every open view re-reads its scope; the renderer keys queries by scope.
-        resync: () => { for (const scope of recentScopes.values()) notifyRenderer(scope, ""); },
-        availability: (value) => {
-          localAvailability = value;
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:availability", value);
-        },
-        timing: (record) => { const parsed = parseLocalTiming(record); if (parsed) localTimingLog?.write(parsed); },
-        hostRequest: async (kind, raw) => {
-          const payload = (raw ?? {}) as Record<string, unknown>;
-          const signal = AbortSignal.timeout(90_000);
-          switch (kind) {
-            case "side_workspace": return sideWorkspaceControl.handle(raw, signal);
-            case "confirmed_operation": {
-              const request = payload.request as Parameters<NonNullable<typeof settingsHost.confirmAndApply>>[0];
-              if (request?.scope?.userId !== settingsUserId) throw new SettingsOperationError("settings_host_unavailable", "Open the main app with the same signed-in account to continue");
-              return settingsHost.confirmAndApply!(request, (payload.apply ?? null) as Parameters<NonNullable<typeof settingsHost.confirmAndApply>>[1], signal);
-            }
-            case "settings_host": return settingsHost.host!(payload.request as Parameters<NonNullable<typeof settingsHost.host>>[0], signal);
-            case "pick_directory": return pick(["openDirectory", "createDirectory"], typeof payload.current === "string" ? payload.current : undefined);
-            case "pick_preview": return pick([payload.kind === "directory" ? "openDirectory" : "openFile"]);
-            case "developer_logs_export": {
-              const scope = payload.scope as LocalConversationScope;
-              if (!developerLogs || scope?.userId !== settingsUserId) throw new SettingsOperationError("settings_host_unavailable", "Open the main app with the same signed-in account to continue");
-              return developerLogs.export(scope, developerLogQuerySchema.parse(payload.query), signal);
-            }
-          }
-          throw new SettingsOperationError("unsupported_host_request", `Desktop cannot handle ${kind}`);
-        },
-      });
       localV2 = new LocalV2Proxy({
         apiUrl: localApiUrl,
         endpoint: () => desktopRuntimeRegistry().endpoint(localApiUrl),
         message: (scope, message) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-v2:message", { scope, message }); },
         connection: (scope, connected) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-v2:connection", { scope, connected }); },
+        availability: (value) => {
+          localAvailability = value;
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:availability", value);
+        },
         hostRequest: localV2HostHandler({
           currentUser: () => settingsUserId,
           side: (request, signal) => sideWorkspaceControl.handle(request, signal),
@@ -761,20 +714,26 @@ if (!gotTheLock) {
           },
         }),
       });
-      const trackScope = (scope: LocalConversationScope) => {
-        recentScopes.delete(`${scope.userId}:${scope.workspaceId}`);
-        recentScopes.set(`${scope.userId}:${scope.workspaceId}`, scope);
-        if (recentScopes.size > 16) recentScopes.delete(recentScopes.keys().next().value!);
-      };
-      localScopeTracker = trackScope;
-      localConversations.setUser(settingsUserId ?? null);
-      localConversations.start();
+      // Probe until the service works; requests and connections report changes after that.
+      const probe = () => { void localV2?.probe(); };
+      probe();
+      setInterval(() => { if (localAvailability?.state !== "connected") probe(); }, 15_000).unref();
       developerLogs = new DeveloperLogExporter({
         log: localTimingLog,
         exportsRoot: join(app.getPath("userData"), "local-conversations", "diagnostics", "exports"),
         runtime: { appVersion: getAppVersion(), platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, chromeVersion: process.versions.chrome, nodeVersion: process.versions.node, packaged: app.isPackaged },
         assertScope: (scope) => { if (scope.userId !== settingsUserId) throw new Error("This account is no longer active"); },
-        conversations: async (scope) => (await localConversations!.request(scope, "list", {})).map((conversation) => conversation.id),
+        conversations: async (scope) => {
+          const ids: string[] = [];
+          let after = 0;
+          for (let page = 0; page < 100; page++) {
+            const list = await localV2!.request(scope, "GET", `/sessions?after_scope_seq=${after}`) as { scope_seq: number; summaries: { conversation_id: string; summary_seq: number }[]; has_more: boolean };
+            ids.push(...list.summaries.map((summary) => summary.conversation_id));
+            after = Math.max(after, list.scope_seq, ...list.summaries.map((summary) => summary.summary_seq));
+            if (!list.has_more) break;
+          }
+          return ids;
+        },
         runtimeLogs: async (scope, since, until) => {
           const [web, daemon] = await Promise.all([accountWebLog(scope.userId).snapshot(since, until), snapshotDaemonLog(daemonDiagnosticLogPath())]);
           return { web, daemon };
@@ -797,7 +756,7 @@ if (!gotTheLock) {
         }).catch((error: unknown) => console.warn("[developer-logs-mcp] Could not publish the diagnostics manifest", error));
       };
       publishDeveloperLogsManifest();
-      void findLocalProvider("codex").then((codex) => registerCodexStdioMcp(codex, {
+      void findCodex().then((codex) => registerCodexStdioMcp(codex, {
         name: DEVELOPER_LOGS_MCP_NAME,
         command: process.execPath,
         args: [join(__dirname, "developer-logs-mcp.js"), "--diagnostics", diagnosticsDir],
@@ -816,8 +775,14 @@ if (!gotTheLock) {
     };
     const sideWorkspaceControl = new SideWorkspaceControl({
       currentUser: () => settingsUserId,
-      snapshot: (scope, conversationId) => localConversations!.request(scope, "sideWorkspaceState", { conversationId }),
-      assertTurn: async (scope, id, turnId) => { const entry = await localConversations!.request(scope, "read", { id }); if (!entry.turns.some((turn) => turn.id === turnId && turn.status === "running")) throw new Error("The controlling Side execution has ended"); },
+      snapshot: async (scope, conversationId) => {
+        const { workspace } = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(conversationId)}/side-workspace`) as { workspace: unknown };
+        return workspace ? sideWorkspaceSyncSchema.parse(workspace) : null;
+      },
+      assertTurn: async (scope, id, turnId) => {
+        const snapshot = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(id)}/snapshot`) as { turns: { id: string; status: string }[] };
+        if (!snapshot.turns.some((turn) => turn.id === turnId && turn.status === "running")) throw new Error("The controlling Side execution has ended");
+      },
       preview: getResourcePreview,
       send: (command) => { if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable"); mainWindow.webContents.send("side-workspace:command", command); },
       activity: (tabId, conversationId, turnId, active) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("side-workspace:activity", { tabId, conversationId, turnId, active }); },
@@ -828,7 +793,7 @@ if (!gotTheLock) {
       sideWorkspaceControl.ack(reply);
     });
     const previewFor = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
-      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Preview requires the active main window");
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !localV2) throw new Error("Preview requires the active main window");
       if (scope.userId !== settingsUserId) throw new Error("This account is no longer active");
       return { preview: getResourcePreview(), owner: JSON.stringify([scope.userId, scope.workspaceId]) };
     };
@@ -849,13 +814,6 @@ if (!gotTheLock) {
       if (!localV2) throw new Error("Local conversations require the active main window");
       return localV2.request(scope, "GET", path);
     } });
-    ipcMain.handle("local-conversation:request", async (event, scope: LocalConversationScope, method: LocalConversationMethod, params) => {
-      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Local conversations require the active main window");
-      localScopeTracker?.(scope);
-      const result = await localConversations.request(scope, method, params);
-      if (method === "sideWorkspaceSync" && (result as { revision: number }).revision === (params as { revision: number }).revision) sideWorkspaceControl.reconcile(sideWorkspaceSyncSchema.parse(params));
-      return result;
-    });
     const mainFrame = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
       if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localV2) throw new Error("Local conversations require the active main window");
       if (scope?.userId !== settingsUserId || !scope.workspaceId) throw new Error("This account is no longer active");
@@ -866,10 +824,14 @@ if (!gotTheLock) {
       if (error instanceof LocalV2Error) throw new Error(`${error.kind}: ${error.message}`);
       throw error;
     };
-    ipcMain.handle("local-v2:request", (event, scope: LocalConversationScope, method: "GET" | "POST", path: string, body?: unknown) => {
+    ipcMain.handle("local-v2:request", async (event, scope: LocalConversationScope, method: "GET" | "POST", path: string, body?: unknown) => {
       if (method !== "GET" && method !== "POST") throw new Error("Invalid local conversation request");
       if (method === "POST" && !isLocalV2RendererPost(path, body)) throw new Error("invalid_request: Choose this folder in Multica first");
-      return mainFrame(event, scope).request(scope, method, path, body).catch(ipcError);
+      const result = await mainFrame(event, scope).request(scope, method, path, body).catch(ipcError);
+      // The browser tabs follow the layout the daemon accepted.
+      const command = body as { type?: unknown; workspace?: { revision?: unknown } } | undefined;
+      if (command?.type === "side_workspace_sync" && (result as { revision?: unknown })?.revision === command.workspace?.revision) sideWorkspaceControl.reconcile(sideWorkspaceSyncSchema.parse(command.workspace));
+      return result;
     });
     ipcMain.handle("local-v2:choose", async (event, scope: LocalConversationScope, request: LocalV2ChooseRequest) => {
       const proxy = mainFrame(event, scope);
@@ -899,16 +861,11 @@ if (!gotTheLock) {
     protocol.handle(LOCAL_FILE_SCHEME, async (request) => {
       const url = new URL(request.url);
       const scope = { userId: url.searchParams.get("userId") ?? "", workspaceId: url.searchParams.get("workspaceId") ?? "" };
-      if (!localConversations || url.searchParams.get("k") !== LOCAL_FILE_KEY || !scope.userId || scope.userId !== settingsUserId || !scope.workspaceId) return new Response("Forbidden", { status: 403 });
+      if (!localV2 || url.searchParams.get("k") !== LOCAL_FILE_KEY || !scope.userId || scope.userId !== settingsUserId || !scope.workspaceId) return new Response("Forbidden", { status: 403 });
       const route = url.pathname.replace(/^\/+/, "");
-      if (localV2 && route.startsWith("v2/")) {
-        const target = url.searchParams.get("target") ?? "";
-        if (request.method === "POST" && route === "v2/attachments") return localV2.file(request, scope, "/attachments");
-        if (request.method === "GET" && isLocalV2FilePath(target)) return localV2.file(request, scope, target);
-        return new Response("Not found", { status: 404 });
-      }
-      if (request.method === "POST" && route === "upload") return localConversations.file(request, scope, null);
-      if (request.method === "GET" && route.startsWith("files/")) return localConversations.file(request, scope, decodeURIComponent(route.slice("files/".length)));
+      const target = url.searchParams.get("target") ?? "";
+      if (request.method === "POST" && route === "v2/attachments") return localV2.file(request, scope, "/attachments");
+      if (request.method === "GET" && route === "v2/file" && isLocalV2FilePath(target)) return localV2.file(request, scope, target);
       return new Response("Not found", { status: 404 });
     });
 
@@ -1040,7 +997,7 @@ if (!gotTheLock) {
 
       if (sourceWindow === mainWindow) {
         settingsUserId = userId;
-        localConversations?.setUser(userId);
+        void localV2?.probe();
         publishDeveloperLogsManifest?.();
         const accountInvalidated = authSessionCoordinator.reportMain(userId);
         if (accountInvalidated) {
@@ -1140,11 +1097,11 @@ if (!gotTheLock) {
             : dialog.showMessageBox(options),
         ),
       },
-      // The sidecar runs this app's executable: stop it before the installer
-      // replaces the app, after asking when that would interrupt a turn.
+      // Provider processes run this app's executable: stop them before the
+      // installer replaces the app, after asking when that would interrupt a turn.
       beforeInstall: async () => {
-        if (!localConversations) return true;
-        const busy = await localConversations.drain().catch(() => 0);
+        if (!localV2) return true;
+        const busy = await localV2.drain().catch(() => 0);
         if (busy > 0 && mainWindow && !mainWindow.isDestroyed()) {
           const chinese = app.getLocale().startsWith("zh");
           const choice = await dialog.showMessageBox(mainWindow, {
@@ -1153,17 +1110,17 @@ if (!gotTheLock) {
             message: chinese ? "本地对话仍在运行" : "Local conversations are still running",
             detail: chinese ? "立即更新会中断正在运行的本地对话。" : "Updating now interrupts the local conversations that are running.",
           });
-          if (choice.response !== 1) { await localConversations.undrain().catch(() => {}); return false; }
+          if (choice.response !== 1) { await localV2.undrain().catch(() => {}); return false; }
         }
-        await localConversations.stopSidecar().catch(() => {});
+        await localV2.stopProviders().catch(() => {});
         return true;
       },
     });
     setupDaemonManager(() => mainWindow, {
       quiesceLocalConversations: async () => {
-        if (!localConversations) return true;
-        const busy = await localConversations.drain().catch(() => 0);
-        if (busy > 0) await localConversations.undrain().catch(() => {});
+        if (!localV2) return true;
+        const busy = await localV2.drain().catch(() => 0);
+        if (busy > 0) await localV2.undrain().catch(() => {});
         return busy === 0;
       },
     });
@@ -1172,10 +1129,10 @@ if (!gotTheLock) {
       if (event.defaultPrevented || localShutdown) return;
       event.preventDefault(); localShutdown = true;
       // Local conversations keep running in the daemon; only flush Desktop's own logs.
-      // The sidecar runs this app's executable, so it cannot outlive the app when
-      // quitting installs a downloaded update or the AppImage mount disappears.
-      const proxy = localConversations;
-      const stopped = proxy && (process.env.APPIMAGE || updateInstallsOnQuit()) ? proxy.stopSidecar().catch(() => {}) : Promise.resolve();
+      // Provider processes run this app's executable, so they cannot outlive the app
+      // when quitting installs a downloaded update or the AppImage mount disappears.
+      const proxy = localV2;
+      const stopped = proxy && (process.env.APPIMAGE || updateInstallsOnQuit()) ? proxy.stopProviders().catch(() => {}) : Promise.resolve();
       void stopped.finally(() => proxy?.close());
       void Promise.all([stopped, localTimingLog?.flush(), ...[...webDiagnosticLogs.values()].map((log) => log.flush())]).finally(() => app.quit());
     });

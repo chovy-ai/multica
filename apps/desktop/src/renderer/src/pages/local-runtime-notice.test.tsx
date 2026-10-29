@@ -9,7 +9,7 @@ let qc: QueryClient;
 afterEach(() => { cleanup(); qc.clear(); });
 const wrap = (children: ReactNode) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 const scope = { userId: "user", workspaceId: "workspace" };
-function setup(legacy: boolean, availability: LocalHostAvailability | null = { state: "connected", sidecar: "ready" }) {
+function setup(legacy: boolean, availability: LocalHostAvailability | null = { state: "connected" }) {
   const listeners = new Set<(value: LocalHostAvailability) => void>();
   qc = new QueryClient();
   // A daemon older than the local v2 API answers its routes with 404.
@@ -43,6 +43,6 @@ it("explains why local conversations are unavailable and clears once the daemon 
   expect(await screen.findByRole("alert")).toHaveTextContent("本机守护进程未运行");
   act(() => request.publish({ state: "unavailable", reason: "unsupported" }));
   expect(screen.getByRole("alert")).toHaveTextContent("WSL 或单独安装的 CLI 不支持");
-  act(() => request.publish({ state: "connected", sidecar: "ready" }));
+  act(() => request.publish({ state: "connected" }));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

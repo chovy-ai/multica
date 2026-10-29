@@ -1,6 +1,5 @@
 {
   "protocolVersion": 2,
-  "entry": "index.cjs",
   "electron": {
     "darwin": "../../../../MacOS/Multica",
     "windows": "../../../../Multica.exe",

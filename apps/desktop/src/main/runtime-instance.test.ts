@@ -28,18 +28,15 @@ async function publish(r: RuntimeRecord) {
 beforeEach(async () => {
   version.mockResolvedValue({ version: "0.7.0", commit: "bcdfa010e" });
   home = await mkdtemp(join(tmpdir(), "multica-shared-runtime-"));
-  source = { kind: "development", appPath: join(home, "worktree-a"), cliPath: join(home, "worktree-a/cli"), electronPath: process.execPath, entryPath: join(home, "worktree-a/host.js") };
+  source = { kind: "development", appPath: join(home, "worktree-a"), cliPath: join(home, "worktree-a/cli"), electronPath: process.execPath, claudeEntryPath: join(home, "worktree-a/claude-host.js") };
   registry = new RuntimeInstanceRegistry(home, source);
   await registry.register(apiUrl);
 });
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
 describe("single Desktop runtime registration", () => {
-  it("records the Claude adapter entry only when the source ships one", async () => {
-    expect(await registry.launch()).not.toHaveProperty("claudeEntryPath");
-    const withClaude = new RuntimeInstanceRegistry(home, { ...source, claudeEntryPath: join(home, "worktree-a/claude-host.js") });
-    await withClaude.register(apiUrl);
-    expect(await withClaude.launch()).toMatchObject({ claudeEntryPath: join(home, "worktree-a/claude-host.js") });
+  it("records the Claude adapter entry the daemon runs", async () => {
+    expect(await registry.launch()).toMatchObject({ claudeEntryPath: join(home, "worktree-a/claude-host.js") });
   });
 
   it("atomically replaces the launch source and terminal pointer when another Desktop starts", async () => {
@@ -109,7 +106,7 @@ describe("single Desktop runtime registration", () => {
     if (process.platform !== "win32") {
       await chmod(path, 0o644);
       await expect(registry.runtime()).rejects.toThrow("private");
-      await rm(path); await symlink(source.entryPath, path);
+      await rm(path); await symlink(source.claudeEntryPath, path);
       await expect(registry.runtime()).rejects.toThrow("private");
     }
   });

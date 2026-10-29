@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { clipboard, dialog, ipcMain, type BrowserWindow } from "electron";
 import { SETTINGS_OPERATIONS } from "@multica/core/settings/operations";
 import type { SettingsHostMessage, SettingsHostReply } from "../shared/settings-host";
-import { confirmThenApply, type SettingsHostRequest, type SettingsToolOptions } from "../local-host/local-settings-tools";
+import { confirmThenApply, type ConfirmAndApply, type SettingsHostRequest } from "./settings-confirm";
 import type { SettingsRequest, SettingsScope } from "@multica/core/settings/operations";
 import { publicSettingsValue, SettingsOperationError } from "../shared/settings-operation-error";
 
@@ -10,7 +10,7 @@ import { publicSettingsValue, SettingsOperationError } from "../shared/settings-
  * Desktop owns human confirmation: a confirmed write is performed here with
  * `apply`, never by the conversation host that asked for it.
  */
-export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null, getUser: () => string | null | undefined, getGeneration: () => number, apply: (request: SettingsRequest, signal: AbortSignal, scope: SettingsScope) => Promise<unknown>): Pick<SettingsToolOptions, "host" | "confirmAndApply"> {
+export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null, getUser: () => string | null | undefined, getGeneration: () => number, apply: (request: SettingsRequest, signal: AbortSignal, scope: SettingsScope) => Promise<unknown>): { host: (request: SettingsHostRequest, signal: AbortSignal) => Promise<unknown>; confirmAndApply: ConfirmAndApply } {
   const pending = new Map<string, { window: BrowserWindow; generation: number; resolve(value: unknown): void; reject(error: Error): void }>();
   ipcMain.handle("settings-host:reply", (event, reply: SettingsHostReply) => {
     if (!reply || typeof reply.id !== "string") throw new Error("Invalid settings reply");
