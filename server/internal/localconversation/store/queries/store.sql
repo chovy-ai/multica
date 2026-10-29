@@ -134,3 +134,13 @@ SELECT * FROM attachment WHERE id = ?;
 
 -- name: CountAttachmentsAtPath :one
 SELECT COUNT(*) FROM attachment WHERE path = ?;
+
+-- name: InsertCommandReceipt :exec
+INSERT INTO command_receipt (scope_id, request_id, fingerprint, result, uncertain, created_at)
+VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: GetCommandReceipt :one
+SELECT * FROM command_receipt WHERE scope_id = ? AND request_id = ?;
+
+-- name: MarkCommandUncertain :exec
+UPDATE command_receipt SET uncertain = 1 WHERE scope_id = ? AND request_id = ?;

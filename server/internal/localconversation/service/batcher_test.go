@@ -260,3 +260,31 @@ func TestBatcherCloseFlushesAndRejectsLaterAppends(t *testing.T) {
 		t.Fatalf("Append after Close = %v", err)
 	}
 }
+
+func TestAppendWaitCommitsAloneAfterEarlierEvents(t *testing.T) {
+	t.Parallel()
+
+	c, timers := &recordingCommitter{}, &manualTimers{}
+	b := NewBatcher(c, BatcherOptions{AfterFunc: timers.after})
+	defer b.Close()
+	_ = b.Append(part("conv-1", "before"), false)
+	if _, err := b.AppendWait(context.Background(), part("conv-1", "command")); err != nil {
+		t.Fatal(err)
+	}
+	_ = b.Append(part("conv-1", "after"), true)
+	got := waitBatches(t, c, 3)
+	if eventTexts(got[0]) != "before" || eventTexts(got[1]) != "command" || eventTexts(got[2]) != "after" {
+		t.Fatalf("batches = %s | %s | %s", eventTexts(got[0]), eventTexts(got[1]), eventTexts(got[2]))
+	}
+}
+
+func TestAppendWaitReturnsTheCommitError(t *testing.T) {
+	t.Parallel()
+
+	c := &recordingCommitter{fail: store.ErrDuplicateRequest}
+	b := NewBatcher(c, BatcherOptions{})
+	defer b.Close()
+	if _, err := b.AppendWait(context.Background(), part("conv-1", "x")); !errors.Is(err, store.ErrDuplicateRequest) {
+		t.Fatalf("AppendWait = %v", err)
+	}
+}

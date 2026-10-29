@@ -78,6 +78,9 @@ type Batch struct {
 	// Attachments are files written by WriteAttachmentFile that events in
 	// this batch reference.
 	Attachments []NewAttachment
+	// Receipt records the command this batch accepts; a receipt that already
+	// exists rejects the whole batch with ErrDuplicateRequest.
+	Receipt *CommandReceipt
 }
 
 // CommittedEvent is an appended event with its assigned sequence numbers.
@@ -265,6 +268,15 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 	}
 	if err != nil {
 		return Committed{}, err
+	}
+
+	if r := b.Receipt; r != nil {
+		if r.ScopeID != conv.ScopeID {
+			return Committed{}, fmt.Errorf("receipt %s belongs to another scope", r.RequestID)
+		}
+		if err := insertReceipt(ctx, q, *r); err != nil {
+			return Committed{}, err
+		}
 	}
 
 	turnSeqs := map[string]int64{}

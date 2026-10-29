@@ -14,8 +14,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 )
 
-// ErrTurnRunning rejects a send while the conversation already runs a turn.
-var ErrTurnRunning = errors.New("local conversation: a turn is already running")
+var (
+	// ErrTurnRunning rejects a send while the conversation already runs a turn.
+	ErrTurnRunning = errors.New("local conversation: a turn is already running")
+	// ErrOutcomeUnknown means the prompt may or may not have reached Claude;
+	// the command must not be replayed automatically (plan §8.1).
+	ErrOutcomeUnknown = errors.New("local conversation: provider outcome unknown")
+)
 
 // ClaudeAdapter is the running adapter process the runner talks to,
 // implemented by *claude.Process.
@@ -45,8 +50,10 @@ type ClaudeSession struct {
 type SendRequest struct {
 	TurnID    string
 	RequestID string
-	MessageID string
-	Text      string
+	// Fingerprint identifies the request content for idempotent retries.
+	Fingerprint string
+	MessageID   string
+	Text        string
 	// Content is the SDK user message content; text-only when empty.
 	Content []map[string]any
 }
@@ -109,8 +116,9 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 	}
 }
 
-// Send starts a turn. It returns once the turn start is recorded and the
-// prompt was handed to the adapter; output and completion follow as events.
+// Send starts a turn. It returns once the user input, turn start and command
+// receipt are durable and the prompt was handed to the adapter; output and
+// completion follow as events.
 func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 	r.mu.Lock()
 	if r.turn != nil {
@@ -128,8 +136,9 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 	now := r.now()
 	running := "running"
 	preview := truncateRunes(req.Text, previewRunes)
-	err := r.batcher.Append(store.Batch{
+	_, err := r.batcher.AppendWait(ctx, store.Batch{
 		ConversationID: r.conversationID,
+		Receipt:        &store.CommandReceipt{ScopeID: r.scopeID, RequestID: req.RequestID, Fingerprint: req.Fingerprint, Result: req.TurnID, CreatedAt: now},
 		StartTurn:      &store.NewTurn{ID: req.TurnID, RequestID: req.RequestID, StartedAt: now},
 		Events: []store.NewEvent{
 			r.event(req.TurnID, "", "user.message", true, map[string]any{"message_id": req.MessageID, "request_id": req.RequestID, "content": req.Text}, now),
@@ -137,7 +146,7 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		},
 		Messages: []store.NewMessage{{ID: req.MessageID, TurnID: req.TurnID, Role: "user", Content: req.Text, CreatedAt: now}},
 		Summary:  &store.SummaryPatch{Status: &running, LastMessagePreview: &preview, UpdatedAt: now},
-	}, true)
+	})
 	if err != nil {
 		r.mu.Lock()
 		r.turn = nil
@@ -156,13 +165,14 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		content = []map[string]any{{"type": "text", "text": req.Text}}
 	}
 	if _, err := adapter.Request(ctx, "send", map[string]any{"request_id": req.RequestID, "content": content}); err != nil {
-		kind := "provider_error"
 		var adapterErr *claude.AdapterError
-		if errors.As(err, &adapterErr) && adapterErr.Dispatch == "outcome_unknown" {
-			kind = "outcome_unknown"
+		if errors.As(err, &adapterErr) && (adapterErr.Dispatch == "not_dispatched" || adapterErr.Dispatch == "rejected") {
+			r.finish(turn, "failed", &turnError{kind: "provider_error", message: err.Error()})
+			return err
 		}
-		r.finish(turn, "failed", &turnError{kind: kind, message: err.Error()})
-		return err
+		// Anything else may have reached Claude: transport errors included.
+		r.finish(turn, "failed", &turnError{kind: "outcome_unknown", message: err.Error()})
+		return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
 	}
 	return nil
 }

@@ -64,6 +64,13 @@ type pendingBatch struct {
 	batch  store.Batch
 	bytes  int
 	sealed bool
+	// done receives the commit outcome for AppendWait callers.
+	done chan commitResult
+}
+
+type commitResult struct {
+	committed store.Committed
+	err       error
 }
 
 // NewBatcher returns a batcher committing through committer.
@@ -131,6 +138,45 @@ func (b *Batcher) Append(part store.Batch, critical bool) error {
 	return nil
 }
 
+// AppendWait commits part in a batch of its own, after everything appended
+// before it, and returns once it is durable. Commands that must not report
+// "accepted" before their input is stored use it; isolating the batch keeps
+// a rejected command (such as a duplicate request id) from taking other
+// events down with it.
+func (b *Batcher) AppendWait(ctx context.Context, part store.Batch) (store.Committed, error) {
+	size := batchBytes(part)
+	done := make(chan commitResult, 1)
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return store.Committed{}, store.ErrWriterClosed
+	}
+	id := part.ConversationID
+	c := b.convs[id]
+	if c == nil {
+		c = &conversationBatch{}
+		b.convs[id] = c
+	}
+	if open := c.open(); open != nil {
+		open.sealed = true
+	}
+	own := &pendingBatch{batch: store.Batch{ConversationID: id}, bytes: size, done: done}
+	merge(&own.batch, part)
+	c.queue = append(c.queue, own)
+	b.pending += size
+	b.seal(id, c)
+	b.mu.Unlock()
+
+	select {
+	case r := <-done:
+		return r.committed, r.err
+	case <-ctx.Done():
+		// The batch is queued and will commit or fail on its own; the caller
+		// stops waiting but must treat the outcome as unknown.
+		return store.Committed{}, ctx.Err()
+	}
+}
+
 // Close commits every pending batch and waits for in-flight commits.
 func (b *Batcher) Close() {
 	b.mu.Lock()
@@ -187,6 +233,9 @@ func (b *Batcher) flushLoop(id string, c *conversationBatch) {
 		b.mu.Lock()
 		b.pending -= next.bytes
 		b.mu.Unlock()
+		if next.done != nil {
+			next.done <- commitResult{committed: committed, err: err}
+		}
 		if err != nil {
 			if b.opts.Failed != nil {
 				b.opts.Failed(id, err)
@@ -212,6 +261,9 @@ func merge(dst *store.Batch, part store.Batch) {
 		dst.ProviderSessionID = part.ProviderSessionID
 	}
 	dst.Attachments = append(dst.Attachments, part.Attachments...)
+	if part.Receipt != nil {
+		dst.Receipt = part.Receipt
+	}
 	if part.Summary != nil {
 		if dst.Summary == nil {
 			s := *part.Summary
@@ -242,7 +294,7 @@ func mergeSummary(dst, src *store.SummaryPatch) {
 }
 
 func isEmpty(b store.Batch) bool {
-	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0
+	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil
 }
 
 // batchBytes estimates a part's size for the batch and backlog budgets.

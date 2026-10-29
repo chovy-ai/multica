@@ -374,3 +374,40 @@ func TestClaudeRunnerRecordsAFailedImageWriteAsAnErrorItem(t *testing.T) {
 		t.Fatalf("events = %v", got)
 	}
 }
+
+func TestClaudeRunnerRejectsAReusedRequestID(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	send(t, f, "t1")
+	f.adapter(0).emit(t, `{"type":"result","subtype":"success","is_error":false,"result":""}`)
+	f.turnEvents(t, "t1")
+	err := f.runner.Send(context.Background(), SendRequest{TurnID: "t2", RequestID: "req-t1", MessageID: "msg-t2", Text: "again"})
+	if !errors.Is(err, store.ErrDuplicateRequest) {
+		t.Fatalf("reused request id = %v", err)
+	}
+	if got := f.adapter(0).sent(); fmt.Sprint(got) != "[start send]" {
+		t.Fatalf("duplicate reached the adapter: %v", got)
+	}
+	if f.limiter.Running() != 0 {
+		t.Fatal("limiter slot leaked")
+	}
+	if running, _ := f.store.RunningTurns(context.Background()); len(running) != 0 {
+		t.Fatalf("duplicate started a turn: %+v", running)
+	}
+}
+
+func TestClaudeRunnerReportsUnknownOutcomes(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), func(typ string) (json.RawMessage, error) {
+		if typ == "send" {
+			return nil, errors.New("write send: broken pipe")
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	err := f.runner.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "r", MessageID: "m", Text: "x"})
+	if !errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("Send = %v, want ErrOutcomeUnknown", err)
+	}
+}

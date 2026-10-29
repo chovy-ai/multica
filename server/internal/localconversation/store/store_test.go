@@ -401,3 +401,38 @@ func TestLastSeqAndCommittedFromRow(t *testing.T) {
 		t.Fatalf("row %+v does not match committed %+v", got, want)
 	}
 }
+
+func TestReceiptCommitsWithItsBatchAndRejectsDuplicates(t *testing.T) {
+	t.Parallel()
+
+	s, _ := openTestStore(t)
+	scopeID := createConversation(t, s, "conv-1")
+	w := s.NewWriter(WriterOptions{})
+	defer w.Close()
+	ctx := context.Background()
+	receipt := &CommandReceipt{ScopeID: scopeID, RequestID: "req-1", Fingerprint: "fp", Result: "turn-1", CreatedAt: testTime}
+	if _, err := w.Submit(ctx, Batch{ConversationID: "conv-1", Receipt: receipt, StartTurn: &NewTurn{ID: "turn-1", StartedAt: testTime}}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Receipt(ctx, scopeID, "req-1")
+	if err != nil || r.Fingerprint != "fp" || r.Result != "turn-1" || r.Uncertain != 0 {
+		t.Fatalf("receipt = %+v, %v", r, err)
+	}
+	// A duplicate rejects the whole batch: no second turn is started.
+	_, err = w.Submit(ctx, Batch{ConversationID: "conv-1", Receipt: receipt, StartTurn: &NewTurn{ID: "turn-2", StartedAt: testTime}})
+	if !errors.Is(err, ErrDuplicateRequest) {
+		t.Fatalf("duplicate = %v", err)
+	}
+	if running, _ := s.RunningTurns(ctx); len(running) != 1 {
+		t.Fatalf("running turns = %d, want 1", len(running))
+	}
+	if err := s.MarkUncertain(ctx, scopeID, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Receipt(ctx, scopeID, "req-1"); r.Uncertain != 1 {
+		t.Fatal("receipt not marked uncertain")
+	}
+	if _, err := s.Receipt(ctx, scopeID+1, "req-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("receipt visible in another scope: %v", err)
+	}
+}

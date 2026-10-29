@@ -102,6 +102,29 @@ func (q *Queries) GetAttachment(ctx context.Context, id string) (Attachment, err
 	return i, err
 }
 
+const getCommandReceipt = `-- name: GetCommandReceipt :one
+SELECT scope_id, request_id, fingerprint, result, uncertain, created_at FROM command_receipt WHERE scope_id = ? AND request_id = ?
+`
+
+type GetCommandReceiptParams struct {
+	ScopeID   int64
+	RequestID string
+}
+
+func (q *Queries) GetCommandReceipt(ctx context.Context, arg GetCommandReceiptParams) (CommandReceipt, error) {
+	row := q.db.QueryRowContext(ctx, getCommandReceipt, arg.ScopeID, arg.RequestID)
+	var i CommandReceipt
+	err := row.Scan(
+		&i.ScopeID,
+		&i.RequestID,
+		&i.Fingerprint,
+		&i.Result,
+		&i.Uncertain,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getConversation = `-- name: GetConversation :one
 SELECT id, scope_id, provider, provider_session_id, title, title_mode, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation WHERE id = ?
 `
@@ -226,6 +249,32 @@ func (q *Queries) InsertAttachment(ctx context.Context, arg InsertAttachmentPara
 		arg.Path,
 		arg.Size,
 		arg.MediaType,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertCommandReceipt = `-- name: InsertCommandReceipt :exec
+INSERT INTO command_receipt (scope_id, request_id, fingerprint, result, uncertain, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type InsertCommandReceiptParams struct {
+	ScopeID     int64
+	RequestID   string
+	Fingerprint string
+	Result      string
+	Uncertain   int64
+	CreatedAt   string
+}
+
+func (q *Queries) InsertCommandReceipt(ctx context.Context, arg InsertCommandReceiptParams) error {
+	_, err := q.db.ExecContext(ctx, insertCommandReceipt,
+		arg.ScopeID,
+		arg.RequestID,
+		arg.Fingerprint,
+		arg.Result,
+		arg.Uncertain,
 		arg.CreatedAt,
 	)
 	return err
@@ -860,6 +909,20 @@ func (q *Queries) ListTurnsBefore(ctx context.Context, arg ListTurnsBeforeParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const markCommandUncertain = `-- name: MarkCommandUncertain :exec
+UPDATE command_receipt SET uncertain = 1 WHERE scope_id = ? AND request_id = ?
+`
+
+type MarkCommandUncertainParams struct {
+	ScopeID   int64
+	RequestID string
+}
+
+func (q *Queries) MarkCommandUncertain(ctx context.Context, arg MarkCommandUncertainParams) error {
+	_, err := q.db.ExecContext(ctx, markCommandUncertain, arg.ScopeID, arg.RequestID)
+	return err
 }
 
 const putMeta = `-- name: PutMeta :exec
