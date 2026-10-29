@@ -250,6 +250,7 @@
         "side_source_id": { "type": "string" },
         "side_source_turn_id": { "type": "string" },
         "side_quote": { "type": "string" },
+        "active_turn_id": { "type": "string" },
         "updated_at": { "$ref": "#/$defs/timestamp" }
       }
     },

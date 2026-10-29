@@ -194,11 +194,7 @@ func (v *V2) listSessions(w http.ResponseWriter, r *http.Request, scopeID int64)
 		writeV2Error(w, err)
 		return
 	}
-	summaries := make([]map[string]any, len(rows))
-	for i, row := range rows {
-		summaries[i] = summaryDTO(row)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"scope_seq": scopeSeq, "summaries": summaries, "has_more": len(rows) == v2PageLimit})
+	writeJSON(w, http.StatusOK, map[string]any{"scope_seq": scopeSeq, "summaries": v.summaries(r.Context(), rows), "has_more": len(rows) == v2PageLimit})
 }
 
 type createSessionBody struct {
@@ -258,10 +254,25 @@ func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id 
 	for i, in := range snap.PendingInteractions {
 		pending[i] = map[string]any{"interaction_id": in.ID, "turn_id": in.TurnID, "kind": in.Kind, "request": json.RawMessage(in.Payload), "created_at": in.CreatedAt}
 	}
+	queue, err := v.svc.Queue(r.Context(), scopeID, id)
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	c := snap.Conversation
+	settings := map[string]any{"model": nil, "reasoning_effort": nil, "permission_mode": c.PermissionMode}
+	if c.Model.Valid {
+		settings["model"] = c.Model.String
+	}
+	if c.ReasoningEffort.Valid {
+		settings["reasoning_effort"] = c.ReasoningEffort.String
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": V2Version, "store_generation": v.svc.Generation(), "snapshot_seq": snap.SnapshotSeq,
-		"conversation": summaryDTO(snap.Conversation), "turns": turns, "has_older_turns": snap.HasOlderTurns,
-		"pending_interactions": pending,
+		"conversation": summaryDTO(c), "turns": turns, "has_older_turns": snap.HasOlderTurns,
+		"pending_interactions": pending, "settings": settings, "queue": queue,
+		"created_at": c.CreatedAt, "forked_from_id": c.ForkedFromID, "forked_from_turn_id": c.ForkedFromTurnID,
+		"imported_from_session_id": c.ImportedFromSessionID,
 	})
 }
 
@@ -630,11 +641,7 @@ func (v *V2) wsSubscribeScope(ctx context.Context, c *wsConn, scopeID int64, msg
 				}
 				return
 			}
-			summaries := make([]map[string]any, len(rows))
-			for i, row := range rows {
-				summaries[i] = summaryDTO(row)
-			}
-			if err := c.send(map[string]any{"version": V2Version, "type": "scope.summaries", "scope_seq": rows[len(rows)-1].SummarySeq, "summaries": summaries}); err != nil {
+			if err := c.send(map[string]any{"version": V2Version, "type": "scope.summaries", "scope_seq": rows[len(rows)-1].SummarySeq, "summaries": v.summaries(ctx, rows)}); err != nil {
 				sub.Close()
 				return
 			}
@@ -937,4 +944,27 @@ func nonNilSlice[T any](s []T) []T {
 		return []T{}
 	}
 	return s
+}
+
+// summaries are list rows with each running conversation's active turn, so
+// lists can show running work without loading the conversation.
+func (v *V2) summaries(ctx context.Context, rows []sqlitedb.Conversation) []map[string]any {
+	running := map[string]string{}
+	for _, row := range rows {
+		if row.Status == "running" {
+			turns, _ := v.svc.Store().RunningTurns(ctx)
+			for _, t := range turns {
+				running[t.ConversationID] = t.ID
+			}
+			break
+		}
+	}
+	out := make([]map[string]any, len(rows))
+	for i, row := range rows {
+		out[i] = summaryDTO(row)
+		if id := running[row.ID]; id != "" {
+			out[i]["active_turn_id"] = id
+		}
+	}
+	return out
 }

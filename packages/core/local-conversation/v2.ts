@@ -42,6 +42,7 @@ export const localV2SummarySchema = z.object({
   side_source_id: z.string().optional(),
   side_source_turn_id: z.string().optional(),
   side_quote: z.string().optional(),
+  active_turn_id: z.string().optional(),
   updated_at: z.string(),
 });
 export type LocalV2Summary = z.infer<typeof localV2SummarySchema>;
@@ -99,6 +100,15 @@ export const localV2SnapshotSchema = z.object({
   pending_interactions: z.array(z.object({
     interaction_id: z.string(), turn_id: z.string(), kind: z.string(), request: payload, created_at: z.string(),
   })).default([]),
+  settings: z.object({ model: nullableString, reasoning_effort: nullableString, permission_mode: z.string().default("default") }).default({ model: null, reasoning_effort: null, permission_mode: "default" }),
+  queue: z.object({
+    revision: z.number().int(), paused: z.boolean(), error: z.string().optional(), dispatching_request_id: z.string().optional(),
+    items: z.array(payload).default([]),
+  }).default({ revision: 0, paused: false, items: [] }),
+  created_at: z.string().default(""),
+  forked_from_id: z.string().default(""),
+  forked_from_turn_id: z.string().default(""),
+  imported_from_session_id: z.string().default(""),
 });
 export type LocalV2Snapshot = z.infer<typeof localV2SnapshotSchema>;
 
