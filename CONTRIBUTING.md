@@ -487,6 +487,20 @@ without reinstalling. `multica instance list` shows the current registration;
 `multica instance status` verifies its running process. Explicit `--profile`
 values for standalone CLI use retain their existing meaning.
 
+Local conversation transport diagnostics use `[local-rpc]` records in the
+profile's `~/.multica/profiles/desktop-runtime/daemon.log`. Active traffic is summarized
+once per second; queue pressure is logged at increasing high-water thresholds,
+with immediate snapshots on stream errors and process exit. `queuedBytes` and
+`queuedFrames` count writes whose callbacks have not completed; peak values
+survive completion until the next traffic summary. Records include request
+methods/IDs, connection and conversation IDs, frame sizes, latency, history
+counts, process IDs and memory usage, never payloads, environment or credentials.
+The renderer's `[local-history]` records distinguish full-history reads caused
+by `sessionLoad`, `taskMessages`, `workspaceLoad` and other callers. Developer
+log exports include both sources and the daemon's client/session/process
+lifecycle records. These are observations; they do not limit writes or replay
+sessions after a sidecar restart.
+
 The shared Desktop profile is `desktop-runtime`; credentials and conversation
 data live in `~/.multica/profiles/desktop-runtime/`. Desktop login supplies its
 CLI token. Switching API origins discards that profile's cached credential

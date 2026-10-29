@@ -67,7 +67,25 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     return cloudState;
   };
   const local = <M extends import("@multica/core/local-conversation/protocol").LocalConversationMethod>(method: M, params: import("@multica/core/local-conversation/protocol").LocalConversationMethods[M]["params"]) => { assertCurrent(); return client.request(scope, method, params); };
-  const read = (id: string) => local("read", { id });
+  let readWindow = Date.now(), activeReads = 0, peakReads = 0, readFailures = 0, maxHistoryEvents = 0;
+  let readSources: Record<string, number> = {};
+  const read = async (id: string, source: "sessionLoad" | "taskMessages" | "workspaceLoad" | "other" = "other") => {
+    readSources[source] = (readSources[source] ?? 0) + 1;
+    peakReads = Math.max(peakReads, ++activeReads);
+    try {
+      const entry = await local("read", { id });
+      maxHistoryEvents = Math.max(maxHistoryEvents, entry.turns.reduce((count, turn) => count + turn.events.length, 0));
+      return entry;
+    } catch (error) { readFailures++; throw error; }
+    finally {
+      activeReads--;
+      if (Date.now() - readWindow >= 1000) {
+        // The renderer console is included in developer-log exports. Never log history content here.
+        console.debug("[local-history]", JSON.stringify({ at: new Date().toISOString(), windowMs: Date.now() - readWindow, sources: readSources, activeReads, peakReads, failures: readFailures, maxHistoryEvents }));
+        readWindow = Date.now(); readSources = {}; peakReads = activeReads; readFailures = 0; maxHistoryEvents = 0;
+      }
+    }
+  };
   const fileAttachment = async (id: string): Promise<Attachment> => {
     const file = await local("fileInfo", { id });
     const url = file.url;
@@ -85,7 +103,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       summaries.push(...pages.flatMap((page) => page.sessions));
     }
     const selectedId = options.getSelectedSessionId?.();
-    if (selectedId && !summaries.some((entry) => entry.id === selectedId)) summaries.push(await read(selectedId));
+    if (selectedId && !summaries.some((entry) => entry.id === selectedId)) summaries.push(await read(selectedId, "workspaceLoad"));
     const sessions = [...new Map(summaries.map((entry) => [entry.id, entry])).values()];
     assertCurrent();
     return { local: true, composerDraftScope: JSON.stringify([api.getBaseUrl(), options.storagePrefix ?? ""]), queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: remote.agents, movedQueueRequests: runtime.movedQueueRequests,
@@ -95,7 +113,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     };
   }
   async function detail(id: string): Promise<AgentGuiSessionDetail> {
-    const entry = await read(id); assertCurrent(); entry.turns.forEach((turn) => knownTurns.set(turn.id, id));
+    const entry = await read(id, "sessionLoad"); assertCurrent(); entry.turns.forEach((turn) => knownTurns.set(turn.id, id));
     const active = entry.turns.find((turn) => turn.status === "running");
     const chinese = (options.locale || document.documentElement.lang || navigator.language).startsWith("zh");
     const failedFiles = new Set<string>();
@@ -246,7 +264,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       }
       case "task.messages": {
         const id = knownTurns.get(params.taskId); if (!id) throw new Error("Execution is outside the loaded conversations");
-        const entry = await read(id);
+        const entry = await read(id, "taskMessages");
         const turn = entry.turns.find((turn) => turn.id === params.taskId);
         if (turn?.events.some((event) => ["text", "thinking", "tool_use", "tool_result"].includes(event.type)) && !receivedOutput.has(turn.id)) {
           receivedOutput.add(turn.id);

@@ -289,7 +289,9 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	})
 	s.mu.Lock()
 	s.clients[c.id] = c
+	clientCount := len(s.clients)
 	s.mu.Unlock()
+	s.cfg.Logger.Info("local conversation client connected", "connection_id", c.id, "clients", clientCount)
 	go func() {
 		<-c.conn.Done()
 		s.dropClient(c)
@@ -305,7 +307,9 @@ func (s *Server) dropClient(c *client) {
 			orphaned = append(orphaned, req)
 		}
 	}
+	clientCount := len(s.clients)
 	s.mu.Unlock()
+	s.cfg.Logger.Info("local conversation client disconnected", "connection_id", c.id, "clients", clientCount, "pending_host_requests", len(orphaned))
 	for _, req := range orphaned {
 		select {
 		case req.reply <- hostReply{err: AppError("settings_host_unavailable", "The desktop that received this request disconnected")}:
@@ -350,6 +354,7 @@ func (s *Server) handleClient(ctx context.Context, c *client, method string, par
 		c.userID = p.UserID
 		c.mu.Unlock()
 		status, instance := s.sup.Status()
+		s.cfg.Logger.Info("local conversation client session initialized", "connection_id", c.id, "instance", instance, "status", status)
 		return SessionResult{ConnectionID: c.id, Status: status, Instance: instance}, nil
 	case "subscribe":
 		p, err := decode[SubscribeParams](params)
