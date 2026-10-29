@@ -83,6 +83,17 @@ func (q *Queries) CountAttachmentsAtPath(ctx context.Context, path string) (int6
 	return count, err
 }
 
+const countPendingInteractions = `-- name: CountPendingInteractions :one
+SELECT COUNT(*) FROM interaction_request WHERE conversation_id = ? AND status = 'pending'
+`
+
+func (q *Queries) CountPendingInteractions(ctx context.Context, conversationID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPendingInteractions, conversationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getAttachment = `-- name: GetAttachment :one
 SELECT id, scope_id, conversation_id, path, size, media_type, created_at FROM attachment WHERE id = ?
 `
@@ -159,6 +170,29 @@ func (q *Queries) GetConversation(ctx context.Context, id string) (Conversation,
 		&i.QueueCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getInteraction = `-- name: GetInteraction :one
+SELECT id, conversation_id, turn_id, provider_request_id, kind, payload, status, answer, answered_by_connection, created_at, resolved_at FROM interaction_request WHERE id = ?
+`
+
+func (q *Queries) GetInteraction(ctx context.Context, id string) (InteractionRequest, error) {
+	row := q.db.QueryRowContext(ctx, getInteraction, id)
+	var i InteractionRequest
+	err := row.Scan(
+		&i.ID,
+		&i.ConversationID,
+		&i.TurnID,
+		&i.ProviderRequestID,
+		&i.Kind,
+		&i.Payload,
+		&i.Status,
+		&i.Answer,
+		&i.AnsweredByConnection,
+		&i.CreatedAt,
+		&i.ResolvedAt,
 	)
 	return i, err
 }
@@ -376,6 +410,34 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 		arg.ItemID,
 		arg.Type,
 		arg.Final,
+		arg.Payload,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertInteraction = `-- name: InsertInteraction :exec
+INSERT INTO interaction_request (id, conversation_id, turn_id, provider_request_id, kind, payload, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertInteractionParams struct {
+	ID                string
+	ConversationID    string
+	TurnID            string
+	ProviderRequestID string
+	Kind              string
+	Payload           string
+	CreatedAt         string
+}
+
+func (q *Queries) InsertInteraction(ctx context.Context, arg InsertInteractionParams) error {
+	_, err := q.db.ExecContext(ctx, insertInteraction,
+		arg.ID,
+		arg.ConversationID,
+		arg.TurnID,
+		arg.ProviderRequestID,
+		arg.Kind,
 		arg.Payload,
 		arg.CreatedAt,
 	)
@@ -600,6 +662,50 @@ ORDER BY created_at, id
 
 func (q *Queries) ListPendingInteractions(ctx context.Context, conversationID string) ([]InteractionRequest, error) {
 	rows, err := q.db.QueryContext(ctx, listPendingInteractions, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InteractionRequest{}
+	for rows.Next() {
+		var i InteractionRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.TurnID,
+			&i.ProviderRequestID,
+			&i.Kind,
+			&i.Payload,
+			&i.Status,
+			&i.Answer,
+			&i.AnsweredByConnection,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingTurnInteractions = `-- name: ListPendingTurnInteractions :many
+SELECT id, conversation_id, turn_id, provider_request_id, kind, payload, status, answer, answered_by_connection, created_at, resolved_at FROM interaction_request WHERE conversation_id = ? AND turn_id = ? AND status = 'pending' ORDER BY created_at, id
+`
+
+type ListPendingTurnInteractionsParams struct {
+	ConversationID string
+	TurnID         string
+}
+
+func (q *Queries) ListPendingTurnInteractions(ctx context.Context, arg ListPendingTurnInteractionsParams) ([]InteractionRequest, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingTurnInteractions, arg.ConversationID, arg.TurnID)
 	if err != nil {
 		return nil, err
 	}
@@ -1046,6 +1152,34 @@ type PutMetaParams struct {
 func (q *Queries) PutMeta(ctx context.Context, arg PutMetaParams) error {
 	_, err := q.db.ExecContext(ctx, putMeta, arg.Key, arg.Value)
 	return err
+}
+
+const resolveInteraction = `-- name: ResolveInteraction :execrows
+UPDATE interaction_request
+SET status = ?, answer = ?, answered_by_connection = ?, resolved_at = ?
+WHERE id = ? AND status = 'pending'
+`
+
+type ResolveInteractionParams struct {
+	Status               string
+	Answer               sql.NullString
+	AnsweredByConnection string
+	ResolvedAt           sql.NullString
+	ID                   string
+}
+
+func (q *Queries) ResolveInteraction(ctx context.Context, arg ResolveInteractionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resolveInteraction,
+		arg.Status,
+		arg.Answer,
+		arg.AnsweredByConnection,
+		arg.ResolvedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setConversationTurnCount = `-- name: SetConversationTurnCount :exec

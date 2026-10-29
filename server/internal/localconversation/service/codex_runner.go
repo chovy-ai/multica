@@ -65,6 +65,8 @@ type CodexRunner struct {
 	limiter *Limiter
 	context string
 	bind    ContextBinder
+	// onTurnEnd runs after a turn's completion is recorded.
+	onTurnEnd func(turnID string)
 
 	mu      sync.Mutex
 	session CodexSession
@@ -107,6 +109,8 @@ type CodexRunnerOptions struct {
 	Limiter        *Limiter
 	ContextMCPName string
 	Now            func() time.Time
+	// OnTurnEnd, when set, runs after a turn's completion is recorded.
+	OnTurnEnd func(turnID string)
 	// Context, when set, gives app-server Multica's context tools.
 	Context ContextBinder
 }
@@ -119,7 +123,7 @@ func NewCodexRunner(opts CodexRunnerOptions) *CodexRunner {
 	return &CodexRunner{
 		rec:   turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		start: opts.Start, batcher: opts.Batcher, limiter: opts.Limiter, context: contextName(opts.ContextMCPName), session: opts.Session,
-		bind: opts.Context,
+		bind: opts.Context, onTurnEnd: opts.OnTurnEnd,
 	}
 }
 
@@ -580,6 +584,9 @@ func (r *CodexRunner) finish(turn *codexTurn, status string, failure *turnError)
 	}
 	turn.normMu.Unlock()
 	_ = r.batcher.Append(r.rec.completionBatch(turn.id, status, failure, finals), true)
+	if r.onTurnEnd != nil {
+		r.onTurnEnd(turn.id)
+	}
 }
 
 // declineCodexRequest answers a server request without approving it.

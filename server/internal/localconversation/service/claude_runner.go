@@ -75,6 +75,7 @@ type ClaudeRunner struct {
 	limiter        *Limiter
 	now            func() time.Time
 	bindContext    ContextBinder
+	onTurnEnd      func(turnID string)
 	// releaseContext ends the context route of the running adapter.
 	releaseContext func()
 
@@ -107,6 +108,8 @@ type ClaudeRunnerOptions struct {
 	Limiter        *Limiter
 	ContextMCPName string
 	Now            func() time.Time
+	// OnTurnEnd, when set, runs after a turn's completion is recorded.
+	OnTurnEnd func(turnID string)
 	// Context, when set, gives the adapter Multica's context tools.
 	Context ContextBinder
 }
@@ -120,6 +123,7 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 		rec:            turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		conversationID: opts.ConversationID, start: opts.Start, session: opts.Session,
 		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName, bindContext: opts.Context,
+		onTurnEnd: opts.OnTurnEnd,
 	}
 }
 
@@ -381,6 +385,9 @@ func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnErro
 	// Critical: committed with the output before it, never rejected by the
 	// pending budget.
 	_ = r.batcher.Append(r.rec.completionBatch(turn.id, status, failure, finals), true)
+	if r.onTurnEnd != nil {
+		r.onTurnEnd(turn.id)
+	}
 }
 
 func (r *ClaudeRunner) rememberSession(id string) {

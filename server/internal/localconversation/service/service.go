@@ -76,8 +76,9 @@ type Service struct {
 	context *contextmcp.Server
 	opts    Options
 
-	mu      sync.Mutex
-	runners map[string]runner
+	mu        sync.Mutex
+	runners   map[string]runner
+	questions interactions
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -114,7 +115,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		_ = st.Close()
 		return nil, err
 	}
-	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), context: contextServer, opts: opts, runners: map[string]runner{}}
+	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), context: contextServer, opts: opts, runners: map[string]runner{},
+		questions: interactions{waiting: map[string]*waitingQuestion{}}}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {
@@ -301,7 +303,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 	session.Fields = fields
 	return s.keepRunner(conv.ID, NewClaudeRunner(ClaudeRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
-		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv),
+		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
 	})), nil
 }
 
@@ -323,7 +325,7 @@ func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (
 	session.PermissionMode = conv.PermissionMode
 	return NewCodexRunner(CodexRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
-		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv),
+		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
 	}), nil
 }
 
@@ -439,9 +441,9 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 		if s.opts.Cloud != nil {
 			cloud = s.opts.Cloud(scope, dir)
 		}
+		tools := append(contextmcp.ContextTools(s.store, cloud, conv.ScopeID, withWorkspace), s.questionToolFor(conv, current))
 		binding, err := s.context.Bind(context.Background(), contextmcp.Execution{
-			Instructions: contextmcp.ReadOnlyInstructions, Token: token,
-			Tools: contextmcp.ContextTools(s.store, cloud, conv.ScopeID, withWorkspace),
+			Instructions: contextmcp.ContextInstructions, Token: token, Tools: tools,
 		})
 		if err != nil {
 			_ = os.RemoveAll(dir)

@@ -28,6 +28,15 @@ func ReconcileInterruptedTurns(ctx context.Context, s *store.Store, committer Co
 			payload, _ := json.Marshal(final.payload)
 			batch.Events = append(batch.Events, store.NewEvent{TurnID: turn.ID, ItemID: final.itemID, Type: "item.completed", Final: true, Payload: payload, CreatedAt: now})
 		}
+		pending, err := s.PendingTurnInteractions(ctx, turn.ConversationID, turn.ID)
+		if err != nil {
+			return i, err
+		}
+		for _, in := range pending {
+			payload, _ := json.Marshal(map[string]any{"interaction_id": in.ID, "status": "cancelled"})
+			batch.Resolutions = append(batch.Resolutions, store.InteractionResolution{ID: in.ID, Status: "cancelled", At: now, IgnoreClosed: true})
+			batch.Events = append(batch.Events, store.NewEvent{TurnID: turn.ID, Type: "interaction.resolved", Final: true, Payload: payload, CreatedAt: now})
+		}
 		const message = "Multica restarted while this turn was running; it was not resumed"
 		completed, _ := json.Marshal(map[string]any{"status": "failed", "error": map[string]any{"kind": "daemon_restarted", "message": message}})
 		batch.Events = append(batch.Events, store.NewEvent{TurnID: turn.ID, Type: "turn.completed", Final: true, Payload: completed, CreatedAt: now})

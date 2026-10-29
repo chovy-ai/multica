@@ -83,6 +83,10 @@ type Batch struct {
 	Receipt *CommandReceipt
 	// Settings replaces the conversation's provider settings.
 	Settings *ConversationSettings
+	// Interactions and Resolutions open and close interaction requests; the
+	// conversation's pending count in its summary follows them.
+	Interactions []NewInteraction
+	Resolutions  []InteractionResolution
 }
 
 // ConversationSettings are the provider settings a conversation runs with.
@@ -415,6 +419,17 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		if err != nil {
 			return Committed{}, err
 		}
+	}
+
+	pending, pendingChanged, err := applyInteractions(ctx, q, conv, b)
+	if err != nil {
+		return Committed{}, err
+	}
+	if pendingChanged {
+		if b.Summary == nil {
+			b.Summary = &SummaryPatch{UpdatedAt: interactionTime(b)}
+		}
+		b.Summary.PendingInteractions = &pending
 	}
 
 	if p := b.Summary; p != nil {

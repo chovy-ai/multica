@@ -172,9 +172,14 @@ func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id 
 		}
 		turns[i] = turn
 	}
+	pending := make([]map[string]any, len(snap.PendingInteractions))
+	for i, in := range snap.PendingInteractions {
+		pending[i] = map[string]any{"interaction_id": in.ID, "turn_id": in.TurnID, "kind": in.Kind, "request": json.RawMessage(in.Payload), "created_at": in.CreatedAt}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": V2Version, "store_generation": v.svc.Generation(), "snapshot_seq": snap.SnapshotSeq,
 		"conversation": summaryDTO(snap.Conversation), "turns": turns, "has_older_turns": snap.HasOlderTurns,
+		"pending_interactions": pending,
 	})
 }
 
@@ -183,6 +188,9 @@ type commandBody struct {
 	RequestID string           `json:"request_id"`
 	Text      string           `json:"text"`
 	Content   []map[string]any `json:"content"`
+	// answer: the question and the user's answers by question id.
+	InteractionID string          `json:"interaction_id"`
+	Answer        json.RawMessage `json:"answer"`
 	// update_settings: an absent field keeps its value, null resets it to
 	// the provider default.
 	Model           json.RawMessage `json:"model"`
@@ -223,6 +231,16 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"turn_id": result.TurnID, "replayed": result.Replayed})
+	case "answer":
+		if body.InteractionID == "" {
+			writeV2Error(w, AppError("invalid_request", "interaction_id is required"))
+			return
+		}
+		if err := v.svc.Answer(r.Context(), scopeID, id, body.InteractionID, body.Answer, r.Header.Get(headerUserID)); err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "answered"})
 	case "update_settings":
 		model, clearModel, err := optionalString(body.Model)
 		if err != nil {
@@ -494,6 +512,10 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusTooManyRequests, "concurrency_limit"
 	case errors.Is(err, service.ErrTurnRunning):
 		status, code = http.StatusConflict, "turn_running"
+	case errors.Is(err, service.ErrInteractionAnswered):
+		status, code = http.StatusConflict, "already_answered"
+	case errors.Is(err, service.ErrInteractionClosed):
+		status, code = http.StatusConflict, "interaction_closed"
 	case errors.Is(err, service.ErrInvalidSettings):
 		status, code = http.StatusBadRequest, "invalid_settings"
 	case errors.Is(err, service.ErrUnsupportedProvider):

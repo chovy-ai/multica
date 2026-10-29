@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/protocol"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/service"
+	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
 
@@ -299,5 +300,40 @@ func TestV2UpdateSettingsCommand(t *testing.T) {
 	}
 	if status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "update_settings", "permission_mode": "yolo"}, h); status != http.StatusBadRequest || body["error"].(map[string]any)["kind"] != "invalid_settings" {
 		t.Fatalf("invalid = %d %v", status, body)
+	}
+}
+
+func TestV2AnswerCommandAndPendingQuestionsInSnapshot(t *testing.T) {
+	t.Parallel()
+
+	srv, svc := newV2Server(t)
+	h := v2Headers("user-1")
+	v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-1", "provider": "claude"}, h)
+	w := svc.Store().NewWriter(store.WriterOptions{})
+	defer w.Close()
+	question := `{"request_id":"q1","questions":[{"id":"go","question":"继续吗？","options":[{"label":"是"},{"label":"否"}],"multiSelect":false,"allowFreeText":false}]}`
+	_, err := w.Submit(context.Background(), store.Batch{ConversationID: "conv-1", StartTurn: &store.NewTurn{ID: "turn-1", StartedAt: time.Now()},
+		Interactions: []store.NewInteraction{{ID: "question:turn-1:q1", TurnID: "turn-1", Kind: "question", Request: json.RawMessage(question), CreatedAt: time.Now()}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, snap := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-1/snapshot", nil, h)
+	pending := snap["pending_interactions"].([]any)
+	if len(pending) != 1 || pending[0].(map[string]any)["interaction_id"] != "question:turn-1:q1" {
+		t.Fatalf("pending = %v", pending)
+	}
+	answer := func(value string) (int, map[string]any) {
+		return v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands",
+			map[string]any{"type": "answer", "interaction_id": "question:turn-1:q1", "answer": map[string]any{"go": value}}, h)
+	}
+	if status, body := answer("是"); status != http.StatusOK {
+		t.Fatalf("answer = %d %v", status, body)
+	}
+	if status, body := answer("否"); status != http.StatusConflict || body["error"].(map[string]any)["kind"] != "already_answered" {
+		t.Fatalf("second answer = %d %v", status, body)
+	}
+	_, snap = v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-1/snapshot", nil, h)
+	if len(snap["pending_interactions"].([]any)) != 0 || snap["conversation"].(map[string]any)["pending_interactions"].(float64) != 0 {
+		t.Fatalf("snapshot after answer = %v", snap)
 	}
 }

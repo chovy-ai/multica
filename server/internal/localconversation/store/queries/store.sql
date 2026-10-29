@@ -156,3 +156,21 @@ SELECT * FROM message WHERE conversation_id = ? ORDER BY created_at, id;
 
 -- name: GetScope :one
 SELECT * FROM scope WHERE id = ?;
+
+-- name: InsertInteraction :exec
+INSERT INTO interaction_request (id, conversation_id, turn_id, provider_request_id, kind, payload, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- name: ResolveInteraction :execrows
+UPDATE interaction_request
+SET status = ?, answer = ?, answered_by_connection = ?, resolved_at = ?
+WHERE id = ? AND status = 'pending';
+
+-- name: GetInteraction :one
+SELECT * FROM interaction_request WHERE id = ?;
+
+-- name: CountPendingInteractions :one
+SELECT COUNT(*) FROM interaction_request WHERE conversation_id = ? AND status = 'pending';
+
+-- name: ListPendingTurnInteractions :many
+SELECT * FROM interaction_request WHERE conversation_id = ? AND turn_id = ? AND status = 'pending' ORDER BY created_at, id;
