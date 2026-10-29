@@ -57,7 +57,7 @@ func remoteOf(t sqlitedb.Turn) *remoteState {
 // cloudAgents is what cloud agent turns need from the workspace API.
 type cloudAgents interface {
 	Request(ctx context.Context, method, path string, body any) (any, error)
-	Upload(ctx context.Context, path, name, mediaType string) (string, error)
+	Upload(ctx context.Context, path, name, mediaType string) (id, url string, err error)
 }
 
 func (s *Service) cloudFor(ctx context.Context, scopeID int64) (cloudAgents, error) {
@@ -265,7 +265,7 @@ func (s *Service) runRemote(scopeID int64, conversationID, turnID, messageID, pr
 			fail(err)
 			return
 		}
-		cloudID, err := cloud.Upload(ctx, path, a.FileName, a.MediaType)
+		cloudID, _, err := cloud.Upload(ctx, path, a.FileName, a.MediaType)
 		if err != nil {
 			fail(err)
 			return

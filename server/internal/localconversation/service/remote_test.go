@@ -21,6 +21,8 @@ type fakeCloud struct {
 	replied  bool
 	sessions int
 	cancel   bool
+	uploads  int
+	avatar   string
 }
 
 func (c *fakeCloud) Search(context.Context, string, string, int) (any, error) { return nil, nil }
@@ -28,8 +30,11 @@ func (c *fakeCloud) Read(context.Context, string, string, int, string) (any, err
 	return nil, nil
 }
 func (c *fakeCloud) Attachment(context.Context, string) (any, error) { return nil, nil }
-func (c *fakeCloud) Upload(_ context.Context, _, name, _ string) (string, error) {
-	return "cloud-" + name, nil
+func (c *fakeCloud) Upload(_ context.Context, _, name, _ string) (string, string, error) {
+	c.mu.Lock()
+	c.uploads++
+	c.mu.Unlock()
+	return "att-1", "https://files.example/workspaces/w/att-1.png", nil
 }
 
 func (c *fakeCloud) Request(_ context.Context, method, path string, body any) (any, error) {
@@ -39,6 +44,11 @@ func (c *fakeCloud) Request(_ context.Context, method, path string, body any) (a
 	c.calls = append(c.calls, key)
 	c.bodies[key] = body
 	switch {
+	case key == "GET /api/agents/agent-1":
+		return map[string]any{"id": "agent-1", "workspace_id": "w", "avatar_url": c.avatar}, nil
+	case key == "PUT /api/agents/agent-1":
+		c.avatar = "https://api.example/api/avatars/sig/workspaces/w/att-1.png"
+		return map[string]any{"id": "agent-1", "workspace_id": "w", "avatar_url": c.avatar}, nil
 	case key == "POST /api/chat/sessions":
 		c.sessions++
 		return map[string]any{"id": fmt.Sprintf("chat-%d", c.sessions), "workspace_id": "w"}, nil

@@ -582,6 +582,10 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 			}
 		}
 		tools = append(tools, s.sideToolsFor(conv, current, readContext)...)
+		tools = append(tools, s.developerLogTool(conv))
+		if agents, ok := cloud.(cloudAgents); ok && agents != nil {
+			tools = append(tools, s.avatarTool(conv, agents))
+		}
 		requester, _ := cloud.(workspace.Requester)
 		tools = append(tools, workspace.Tools(workspace.Options{
 			WorkspaceID: scope.WorkspaceID, UserID: scope.UserID, ConversationID: conv.ID,

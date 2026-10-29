@@ -128,15 +128,15 @@ func redact(s, token string) string {
 const uploadTimeout = 60 * time.Second
 
 // Upload sends a local file to the workspace and returns its attachment
-// id. An upload whose response cannot be read is unconfirmed.
-func (c *CloudClient) Upload(ctx context.Context, path, name, mediaType string) (string, error) {
+// id and URL. An upload whose response cannot be read is unconfirmed.
+func (c *CloudClient) Upload(ctx context.Context, path, name, mediaType string) (string, string, error) {
 	token := c.Token()
 	if token == "" {
-		return "", errCloudUnavailable
+		return "", "", errCloudUnavailable
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer f.Close()
 	ctx, cancel := context.WithTimeout(ctx, uploadTimeout)
@@ -158,7 +158,7 @@ func (c *CloudClient) Upload(ctx context.Context, path, name, mediaType string) 
 	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.APIURL, "/")+"/api/upload-file", body)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Workspace-ID", c.WorkspaceID)
@@ -169,18 +169,19 @@ func (c *CloudClient) Upload(ctx context.Context, path, name, mediaType string) 
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return "", errUnconfirmed
+		return "", "", errUnconfirmed
 	}
 	defer res.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(res.Body, maxCloudBody))
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return "", operationError(res.StatusCode, data, token)
+		return "", "", operationError(res.StatusCode, data, token)
 	}
 	var out struct {
-		ID string `json:"id"`
+		ID  string `json:"id"`
+		URL string `json:"url"`
 	}
 	if json.Unmarshal(data, &out) != nil || out.ID == "" {
-		return "", errors.New("Cloud attachment upload was not confirmed")
+		return "", "", errors.New("Cloud attachment upload was not confirmed")
 	}
-	return out.ID, nil
+	return out.ID, out.URL, nil
 }
