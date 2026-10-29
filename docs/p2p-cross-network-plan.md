@@ -23,7 +23,7 @@
 | 中继 | 放在 p2p-server 进程里，负责牵手，也做兜底转发；不限制单条连接的时长和流量 |
 | 中继限额 | 每个账号最多同时 8 条中继连接；全局只限制总量 |
 | 服务器 | 腾讯云，中国大陆地域，只有公网 IP，没有域名 |
-| 部署 | GitHub Actions 编译程序 → scp → systemd 重启 → 健康检查，失败自动回滚 |
+| 部署 | GitHub Actions 构建镜像 → 推送 TCR → 自动化助手在服务器上拉取并重启 → 健康检查，失败自动回滚 |
 
 ## 3. 总体架构
 
@@ -266,56 +266,35 @@ CREATE INDEX IF NOT EXISTS session_expires_at ON session (expires_at);
 
 ## 8. 部署流水线
 
-### 8.1 服务器布局
+**实施调整**：最初实现的是"编译程序 + scp + systemd"，需要 GitHub 持有服务器 SSH 私钥。后来改成 Docker 镜像 + TCR + 腾讯云自动化助手（TAT），GitHub 不再登录服务器，服务器也不需要手动初始化。细节以 [deploy/p2p-server/README.md](../deploy/p2p-server/README.md) 为准。
 
-```
-/opt/multica-p2p/
-  releases/<git-sha>/p2p-server
-  current -> releases/<git-sha>
-/var/lib/multica-p2p/    p2p.db、p2p-server.key（属于 multica-p2p 用户，权限 0700）
-/etc/multica-p2p/env     MULTICA_API_URL、MULTICA_P2P_PUBLIC_IP 等（不进仓库）
-```
+### 8.1 链路
 
-仓库新增：
+1. `test`：`go test` p2p-server 相关包。
+2. `deploy`（`production` 环境）：用 `deploy/p2p-server/Dockerfile` 构建镜像（约 15MB），推到 TCR 个人版 `ccr.ccs.tencentyun.com/<命名空间>/p2p-server:<sha>`。
+3. 用 CAM 子账号密钥调用 TAT `RunCommand`，以 root 在服务器上执行 `deploy/p2p-server/deploy.sh`，轮询执行结果。
+4. 从外网检查 `http://<公网IP>:8090/healthz`，失败只告警（GitHub 构建机访问大陆机器不稳定）。
 
-- `deploy/p2p-server/multica-p2p.service`：systemd 配置。
-  - `User=multica-p2p`，`Restart=always`，`EnvironmentFile=/etc/multica-p2p/env`
-  - `WorkingDirectory=/var/lib/multica-p2p`
-  - 加固项：`ProtectSystem=strict`、`ReadWritePaths=/var/lib/multica-p2p`、`NoNewPrivileges=yes`、`PrivateTmp=yes`
-  - `LimitNOFILE=65536`
-- `deploy/p2p-server/env.example`：env 模板。
-- `deploy/p2p-server/bootstrap.sh`：服务器首次初始化脚本，手动执行一次。负责创建运行用户和部署用户、目录、env 模板、systemd 配置，以及 sudoers 规则（部署用户只能执行 `systemctl restart multica-p2p` 和切换软链接）。
-- `deploy/p2p-server/README.md`：初始化步骤、安全组配置、日志查看（`journalctl -u multica-p2p`）、手动回滚方法。
+### 8.2 服务器上的 `deploy.sh`
 
-### 8.2 `.github/workflows/deploy-p2p.yml`
+- 幂等：首次运行安装 Docker 和 curl、调大 UDP 缓冲区（QUIC 需要）、创建数据目录和 `/etc/multica-p2p/env`；之后只同步公网 IP。
+- 拉取镜像 → 替换容器 → 健康检查最多 30 秒 → 失败时恢复上一个标签；保留最近 5 个镜像。
+- 容器使用 host 网络（中继需要 UDP 4001 和客户端真实 IP），只读根文件系统，去掉全部 capabilities，以 uid 10001 运行。
+- TCR 仓库设为公开，服务器拉取不需要凭证。
 
-- **触发**：
-  - 推送到 `main`，且改动了 `server/cmd/p2p-server/**`、`server/internal/p2pserver/**`、`server/go.mod`、`server/go.sum` 或 `deploy/p2p-server/**`。
-  - 手动触发（`workflow_dispatch`），可以指定要部署的 git ref。
-- **test**：`go test ./internal/p2pserver/... ./cmd/p2p-server/...`。
-- **build**：`CGO_ENABLED=0 GOOS=linux GOARCH=amd64` 编译（SQLite 驱动 modernc 是纯 Go 实现，不需要 CGO），通过 `-ldflags` 写入 git sha，作为 artifact 上传。
-- **deploy**（使用 GitHub 的 `production` 环境，可以设置审批人）：
-  1. 用固定的 `known_hosts` 建立 SSH 连接，不跳过主机校验。
-  2. 把程序 scp 到 `releases/<sha>/`。
-  3. 记下当前版本，切换 `current` 软链接，执行 `systemctl restart multica-p2p`。
-  4. 在服务器上循环执行 `curl -f localhost:8090/healthz`，最多等 30 秒。
-  5. 检查失败就切回上一个版本、重启服务，并把这次流水线标记为失败。
-  6. 只保留最近 5 个版本。
-- **并发**：`concurrency: deploy-p2p`，`cancel-in-progress: false`，不中断正在进行的部署。
+### 8.3 GitHub 配置
 
-### 8.3 GitHub 密钥（`production` 环境）
-
-| 名称 | 内容 |
-|---|---|
-| `P2P_SSH_HOST` | 服务器公网 IP |
-| `P2P_SSH_USER` | 部署用户 |
-| `P2P_SSH_KEY` | 部署专用私钥 |
-| `P2P_SSH_KNOWN_HOSTS` | `ssh-keyscan <IP>` 的输出 |
+| 类型 | 名称 | 内容 |
+|---|---|---|
+| `production` Secret | `TCR_USERNAME` / `TCR_PASSWORD` | TCR 推送账号（主账号 ID）和镜像仓库密码 |
+| `production` Secret | `TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` | CAM 子账号密钥，只授权 `tat:RunCommand`、`tat:DescribeInvocationTasks` |
+| 仓库变量 | `TCR_NAMESPACE`、`P2P_INSTANCE_ID`、`P2P_PUBLIC_IP` | 命名空间、实例 ID、公网 IP |
 
 ### 8.4 腾讯云配置
 
-- 安全组入站：8090/TCP、4001/TCP、4001/UDP，以及 22/TCP（如果条件允许，只对你自己的 IP 开放；GitHub Actions 的 IP 段很大，需要另外权衡）。
-- 上线前在服务器上执行 `curl -m 10 https://api.multica.ai/api/me`，测试从大陆访问境外的稳定性。
+- 防火墙入站：8090/TCP、4001/TCP、4001/UDP。部署不再需要 22 端口。
+- 确认自动化助手 agent 在线。
+- 上线前在服务器上测试访问 `api.multica.ai`。
 
 ### 8.5 fork 上的 `release.yml`
 
@@ -354,7 +333,7 @@ CREATE INDEX IF NOT EXISTS session_expires_at ON session (expires_at);
 | PR | 内容 | 依赖 |
 |---|---|---|
 | 1 | p2p-server：会话凭证、地址存储、`/v1/config`、中继节点和 ACL、按账号计数、测试 | — |
-| 2 | 部署：systemd 配置、初始化脚本、`deploy-p2p.yml` | PR 1。合并后先把服务部署上去，给 PR 3 联调用 |
+| 2 | 部署：`deploy-p2p.yml` 和服务器部署脚本 | PR 1。合并后先把服务部署上去，给 PR 3 联调用 |
 | 3 | daemon：中继客户端、打洞、AutoNAT、端口映射、地址上报、状态接口、退出登录清理；桌面端传入服务地址 | PR 1，联调需要 PR 2 |
 
 ## 12. 风险

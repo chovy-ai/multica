@@ -2,67 +2,101 @@
 
 p2p-server (device registry and relay, see
 [server/cmd/p2p-server/README.md](../../server/cmd/p2p-server/README.md)) runs
-as a single binary under systemd. The
-[Deploy p2p-server](../../.github/workflows/deploy-p2p.yml) workflow builds it
-and ships it over SSH on every push to `main` that touches it, or on demand
-from the Actions tab.
+as a Docker container on one Tencent Cloud host. The
+[Deploy p2p-server](../../.github/workflows/deploy-p2p.yml) workflow runs on
+every push to `main` that touches it, or on demand from the Actions tab:
 
-## Layout on the server
+1. Test, build the image from [Dockerfile](Dockerfile) and push it to Tencent
+   Container Registry (TCR) as `ccr.ccs.tencentyun.com/<namespace>/p2p-server:<sha>`.
+2. Send [deploy.sh](deploy.sh) to the host through Tencent Cloud Automation
+   Tools (TAT) and wait for its result. The workflow never logs in to the host.
+3. Check `http://<public IP>:8090/healthz` from outside (warning only).
+
+`deploy.sh` runs as root on the host. It is idempotent: the first run installs
+Docker and creates the configuration, so the host needs no manual setup. Each
+run pulls the tag, replaces the container, health-checks it for 30 seconds and
+restarts the previous tag if the check fails.
+
+## Layout on the host
 
 ```
-/opt/multica-p2p/releases/<sha>/p2p-server   uploaded builds (newest five kept)
-/opt/multica-p2p/current -> releases/<sha>   live build
-/var/lib/multica-p2p/                        p2p.db, p2p-server.key (relay identity)
-/etc/multica-p2p/env                         configuration (see env.example)
-/usr/local/sbin/multica-p2p-activate         switch, restart, health check, rollback
+/etc/multica-p2p/env            configuration, created on the first deploy (see below)
+/var/lib/multica-p2p/           p2p.db, p2p-server.key (relay identity), owned by uid 10001
+/var/lib/multica-p2p-deploy/    the live tag
+container multica-p2p           host networking, read-only root, all capabilities dropped
 ```
 
-The service runs as the unprivileged `multica-p2p` user. GitHub Actions logs in
-as `multica-deploy`, which can upload releases and run only
-`multica-p2p-activate` through sudo.
+## One-time setup
 
-## First-time setup
+### Tencent Cloud
 
-1. **Deploy key.** Generate a key pair used only for deploys:
+1. **TCR personal edition** (region: Guangzhou, same as the host): create a
+   namespace and a repository named `p2p-server`. Make the repository
+   **public**: the image only contains the open-source binary, and a public
+   repository lets the host pull without registry credentials. Set the
+   registry password; the username is the main account ID.
 
-   ```sh
-   ssh-keygen -t ed25519 -N "" -C multica-p2p-deploy -f multica-p2p-deploy
+2. **Firewall** (Lighthouse instance → 防火墙): allow `TCP 8090`, `TCP 4001`
+   and `UDP 4001` from all IPv4 addresses. SSH is not needed for deploys.
+
+3. **TAT agent**: on the instance page, check that Automation Tools
+   (自动化助手) shows the agent online. Lighthouse images ship it.
+
+4. **CAM sub-user** for the workflow (访问管理 → 用户 → 新建用户 → 编程访问),
+   with only this policy:
+
+   ```json
+   {
+     "version": "2.0",
+     "statement": [
+       {
+         "effect": "allow",
+         "action": ["tat:RunCommand", "tat:DescribeInvocationTasks"],
+         "resource": ["*"]
+       }
+     ]
+   }
    ```
 
-2. **Bootstrap.** Copy this directory to the server and run:
+   Its API key can run commands as root on the instances of this account, so
+   keep it only in GitHub.
 
-   ```sh
-   sudo ./bootstrap.sh "$(cat multica-p2p-deploy.pub)"
-   ```
+### GitHub
 
-3. **Configure.** Edit `/etc/multica-p2p/env` and set `MULTICA_P2P_PUBLIC_IP`
-   to the instance's public IP.
+Enable Actions for the repository first: a fork starts with Actions disabled
+(Actions tab → enable, and Settings → Actions → General → allow actions).
 
-4. **Security group.** Allow inbound `8090/tcp` (registry), `4001/tcp` and
-   `4001/udp` (relay), and `22/tcp` for deploys. If the OS firewall is enabled
-   (`ufw` / `firewalld`), open the same ports there.
+Environment `production` secrets (Settings → Environments → production):
 
-5. **GitHub.** In the repository settings, create the `production`
-   environment (optionally with required reviewers) and add these secrets:
+| Secret | Value |
+| --- | --- |
+| `TCR_USERNAME` | Tencent Cloud main account ID |
+| `TCR_PASSWORD` | TCR registry password |
+| `TENCENTCLOUD_SECRET_ID` | CAM sub-user SecretId |
+| `TENCENTCLOUD_SECRET_KEY` | CAM sub-user SecretKey |
 
-   | Secret | Value |
-   | --- | --- |
-   | `P2P_SSH_HOST` | Server public IP |
-   | `P2P_SSH_USER` | `multica-deploy` |
-   | `P2P_SSH_KEY` | Contents of `multica-p2p-deploy` (the private key) |
-   | `P2P_SSH_KNOWN_HOSTS` | Output of `ssh-keyscan -t ed25519 <server IP>`, checked against the server's own `/etc/ssh/ssh_host_ed25519_key.pub` |
+Repository variables (Settings → Secrets and variables → Actions → Variables):
 
-   For an ARM instance, set the repository variable `P2P_GOARCH` to `arm64`.
+| Variable | Value |
+| --- | --- |
+| `TCR_NAMESPACE` | TCR namespace |
+| `P2P_INSTANCE_ID` | Lighthouse instance ID (`lhins-…`) |
+| `P2P_PUBLIC_IP` | Instance public IP |
+| `TENCENTCLOUD_REGION` | Optional, default `ap-guangzhou` |
+| `P2P_PLATFORM` | Optional, default `linux/amd64` (`linux/arm64` for ARM hosts) |
 
-6. **Deploy.** Run the workflow from the Actions tab, then check from your own
-   machine:
+Then run the workflow from the Actions tab.
 
-   ```sh
-   curl -i http://<server IP>:8090/healthz   # 204
-   ```
+## Configuration
 
-Also check that the server can reach the Multica API, since every new session
-is verified there:
+The first deploy writes `/etc/multica-p2p/env` with the defaults from
+[server/cmd/p2p-server/README.md](../../server/cmd/p2p-server/README.md) and
+`MULTICA_P2P_PUBLIC_IP` from the `P2P_PUBLIC_IP` variable. Later deploys only
+update `MULTICA_P2P_PUBLIC_IP`; other edits made on the host are kept and take
+effect on the next deploy or `docker restart multica-p2p`.
+
+Before relying on the service, check that the host reaches the Multica API,
+since every new session is verified there (TAT → 执行命令, or OrcaTerm):
 
 ```sh
 curl -m 10 -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://api.multica.ai/api/me   # 401 is expected
@@ -70,13 +104,11 @@ curl -m 10 -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://api.multic
 
 ## Operations
 
-- Logs: `journalctl -u multica-p2p -f`. A relay usage summary is logged every
+- Logs: `docker logs -f multica-p2p`. A relay usage summary is logged every
   five minutes; refused relay connections are logged with their reason.
-- Manual rollback: `sudo /usr/local/sbin/multica-p2p-activate <older sha>`
-  (`ls /opt/multica-p2p/releases`).
-- After changing `multica-p2p.service` or `activate.sh`, copy this directory to
-  the server and re-run `bootstrap.sh`; deploys only replace the binary.
-  `/etc/multica-p2p/env` is never overwritten.
+- Live tag: `cat /var/lib/multica-p2p-deploy/current`.
+- Manual rollback: re-run the workflow with an older commit as `ref`.
 - Keep `/var/lib/multica-p2p/p2p-server.key`: losing it changes the relay peer
-  ID. Daemons fetch the relay address from the registry, so they recover on
-  their next refresh, but existing relay reservations are dropped.
+  ID. Daemons fetch the relay address from the registry and recover on their
+  next refresh, but existing relay reservations are dropped.
+- Relayed traffic counts against the Lighthouse monthly traffic allowance.
