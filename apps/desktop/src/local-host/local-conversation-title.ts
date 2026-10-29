@@ -56,8 +56,8 @@ export function conversationTitleSource(content: string): string {
 }
 
 export function normalizeModelConversationTitle(output: string): string | null {
-  const title = output.trim().replace(/^#+\s*/, "").replace(/^["'“「`]+|["'”」`]+$/g, "").trim();
-  if (!title || title.length > 160 || /[\r\n]|mention:\/\/|https?:\/\/|\]\(/.test(title) || isDefaultConversationTitle(title)) return null;
+  const title = output.replace(/<reasoning_effort>[\s\S]*?<\/reasoning_effort>/gi, "").trim().replace(/^#+\s*/, "").replace(/^["'“「`]+|["'”」`]+$/g, "").trim();
+  if (!title || title.length > 160 || /[\r\n]|mention:\/\/|https?:\/\/|\]\(|<\/?reasoning_effort\b/i.test(title) || isDefaultConversationTitle(title)) return null;
   return shorten(title, 48);
 }
 
