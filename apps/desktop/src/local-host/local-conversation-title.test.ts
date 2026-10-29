@@ -208,6 +208,25 @@ describe("background model title lifecycle", () => {
     expect(options.generateTitle).toHaveBeenCalledOnce();
   });
 
+  it.each(["codex", "claude"] as const)("uses only the authored request when the %s title model returns control content", async (provider) => {
+    const { service, options } = await modelTitleService(async () => "<reasoning_effort>10</reasoning_effort>");
+    const entry = await service.request(scope, "create", { provider });
+    const content = `请帮我设计 P2P 服务${CHAT_CONTEXT_SNAPSHOT_START}PRIVATE SNAPSHOT${CHAT_CONTEXT_SNAPSHOT_END}`;
+    await service.request(scope, "send", { id: entry.id, content, prompt: "PRIVATE EXECUTION CONTEXT" });
+    await vi.waitFor(async () => {
+      const current = await service.request(scope, "read", { id: entry.id });
+      expect(current.titleGeneration).toBe("failed");
+      expect(current.title).toBe("设计 P2P 服务");
+      expect(current.turns[0]?.status).toBe("completed");
+    });
+    await service.stop();
+    const reopened = new LocalConversationService(options); reopened.setCurrentUser(scope.userId);
+    try {
+      expect((await reopened.request(scope, "read", { id: entry.id })).title).toBe("设计 P2P 服务");
+    } finally { await reopened.stop(); }
+    expect(options.generateTitle).toHaveBeenCalledOnce();
+  });
+
   it("summarizes first-message agent mentions through the local provider without using the agent response", async () => {
     const { service, options } = await modelTitleService(async () => "登录界面设计评审");
     const entry = await service.request(scope, "create", { provider: "claude" });

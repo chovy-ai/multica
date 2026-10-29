@@ -53,6 +53,10 @@ for (const theme of ["light", "dark"] as const) {
       const list = gui.locator(".multica-model-picker-list");
       const effort = gui.getByRole("menuitem", { name: "思考强度 默认" });
       await expect(effort).toBeVisible();
+      await expect(menu.getByRole("menuitem", { name: "刷新模型", exact: true })).toHaveCount(0);
+      await expect(menu.locator(".multica-composer-footer-help")).toHaveCount(0);
+      await expect(menu.getByRole("separator")).toHaveCount(1);
+      expect(await menu.evaluate((element) => element.lastElementChild?.matches(".multica-model-picker-effort"))).toBe(true);
       const bounds = (await menu.boundingBox())!;
       expect(bounds.x).toBeGreaterThanOrEqual(0);
       expect(bounds.y).toBeGreaterThanOrEqual(0);

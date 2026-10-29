@@ -161,6 +161,24 @@ export function AgentGuiApplication({
       };
     }),
   }), [workspace]);
+  const mentionAgentDirectory = useMemo<NonNullable<AgentGUIProps["mentionAgentDirectory"]>>(() => {
+    const agents = new Map(agentDirectory.agents.map((entry) => [entry.agentTargetId, entry]));
+    for (const { agent, provider, iconUrl, canInvoke, runtimeBound, unavailableReason } of workspace.agents) {
+      agents.set(agent.id, {
+        agentTargetId: agent.id,
+        provider,
+        name: agent.name,
+        description: agent.description,
+        iconUrl: iconUrl || genericAgentIcon,
+        providerAccountUsageApplicable: false,
+        availability: {
+          status: canInvoke && runtimeBound && !agent.archived_at ? "ready" : "unavailable",
+          reason: unavailableReason,
+        },
+      });
+    }
+    return { ...agentDirectory, agents: [...agents.values()] };
+  }, [agentDirectory, workspace.agents]);
   const imageSessionId = node.lastActiveAgentSessionId ? handle.toServerSessionId(node.lastActiveAgentSessionId) : null;
   const hostApi = useMemo(() => createAgentGuiHostApi(client, { workspaceId: snapshot.workspaceId, locale: snapshot.locale, local: snapshot.local }, handle, imageSessionId), [client, handle, snapshot.locale, snapshot.workspaceId, snapshot.local, imageSessionId]);
   const mentionService = useMemo(() => createMulticaContextMentions(client, { workspaceId: snapshot.workspaceId, locale: snapshot.locale, local: snapshot.local }, handle), [client, handle, snapshot.workspaceId, snapshot.locale, snapshot.local]);
@@ -190,6 +208,7 @@ export function AgentGuiApplication({
     state={node}
     runtimeRequests={{ composerAppend: appends[0] ?? null, composerFocusSequence, workbench: { instanceId: `multica-agent-gui:${initial.workspaceId}` } }}
     agentDirectory={agentDirectory}
+    mentionAgentDirectory={mentionAgentDirectory}
     agentActivityRuntime={handle.runtime}
     agentHostApi={hostApi}
     locale={snapshot.locale}

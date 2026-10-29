@@ -31,6 +31,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
   }
   const errors = new Map<string, { message: string; promptId?: string; origin: "admission" | "operation" }>();
   const operations = new Map<string, Promise<void>>();
+  const steering = new Map<string, { sessionId: string; requestId?: string; promptId: string; accepted: boolean }>();
   const listeners = new Set<Parameters<AgentSessionEngine["subscribe"]>[0]>();
   let revision = 0;
   let cached: ReturnType<AgentSessionEngine["getSnapshot"]> | undefined;
@@ -60,6 +61,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       const items: EngineQueuedPrompt[] = queue?.items.map((item) => item.requestId === dispatching ? { ...item.display, visibleInQueue: false } : item.display) ?? [];
       const prompts = [...items, ...(pending.get(id) ?? []).map((item) => item.display).filter((item) => !items.some((existing) => existing.clientSubmitId === item.clientSubmitId))];
       const error = errors.get(id);
+      const sending = [...steering.entries()].find(([, value]) => value.sessionId === id);
       const failureMessage = error?.message ?? queue?.error ?? null;
       for (const prompt of prompts) if (prompt.visibleInQueue === false) {
         const clientSubmitId = prompt.clientSubmitId || prompt.id;
@@ -69,7 +71,8 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       }
       records[id] = { agentSessionId: id, workspaceId: base.identity.workspaceId, prompts,
         deliveryBarrierTurnId: null, failedPromptId: failureMessage ? error?.promptId ?? prompts[0]?.id ?? null : null,
-        failureMessage, inFlight: null, sendNextPromptId: null,
+        failureMessage, inFlight: sending ? { commandId: sending[0], kind: "send", promptId: sending[1].promptId } : null,
+        sendNextPromptId: sending?.[1].promptId ?? null,
         suspendReason: queue?.paused || error || pending.get(id)?.some((item) => item.restored) ? "user_stop" : null, uncertainDelivery: null,
       } satisfies PromptQueueRecord;
     }
@@ -95,8 +98,16 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
   };
   const receive = (id: string, queue?: LocalPromptQueue) => {
     if (disposed) return;
-    if (!queue || queues.has(id) && queue.revision < queues.get(id)!.revision) return;
+    if (!queue) return;
+    // Reconcile accepted operations against the newest canonical state, even
+    // when their RPC acknowledgement arrives after an invalidation snapshot.
+    if (queues.has(id) && queue.revision < queues.get(id)!.revision) queue = queues.get(id)!;
     queues.set(id, queue);
+    for (const [key, request] of steering) if (request.sessionId === id && (
+      !queue.items.some((item) => item.requestId === request.requestId) && !(pending.get(id) ?? []).some((item) => item.input.clientSubmitId === request.requestId && !item.confirmed)
+      || queue.dispatchingRequestId === request.requestId
+      || request.accepted && (queue.paused || queue.error)
+    )) steering.delete(key);
     pending.set(id, (pending.get(id) ?? []).filter((item) => {
       if (!queue.items.some((prompt) => prompt.requestId === item.input.clientSubmitId)) return true;
       item.confirmed = true;
@@ -128,7 +139,9 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
     const prompt = snapshot().promptQueue.recordsBySessionId[id]?.prompts.find((item) => item.id === promptId);
     const requestId = prompt?.clientSubmitId || promptId;
     const key = JSON.stringify([id, action, requestId]);
-    if (operations.has(key)) return;
+    if (operations.has(key) || steering.has(key)) return;
+    const request = action === "sendNow" && promptId ? { sessionId: id, requestId, promptId, accepted: false } : undefined;
+    if (request) { steering.set(key, request); publish(); }
     const operation = (async () => {
       const item = (pending.get(id) ?? []).find((value) => value.input.clientSubmitId === requestId);
       if (action === "sendNow" && item) {
@@ -152,11 +165,17 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
           clearError(id, item.display.id, "admission");
         }
         clearError(id, promptId, "operation");
+        if (request) request.accepted = true;
         receive(id, queue); publish();
-      } catch (error) { fail(id, error, promptId); }
+      } catch (error) { steering.delete(key); fail(id, error, promptId); }
     })();
     operations.set(key, operation);
-    void operation.finally(() => operations.delete(key));
+    void operation.finally(() => {
+      operations.delete(key);
+      // An acknowledgement only accepts the steer. Keep presenting it until
+      // Electron reports dispatch, removal, failure or an explicit stop.
+      if (request && !request.accepted) { steering.delete(key); publish(); }
+    });
   };
   const unsubscribe = base.subscribe(() => { for (const listener of listeners) listener(snapshot()); });
   const engine: AgentSessionEngine = { ...base,

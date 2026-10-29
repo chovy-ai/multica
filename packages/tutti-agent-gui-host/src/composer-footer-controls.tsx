@@ -200,9 +200,11 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
             ? (chinese ? "此模型未提供可用强度" : "No effort options reported for this model")
             : (chinese ? "选择模型后可调整思考强度" : "Choose a model to adjust thinking effort")}</DropdownMenuItem>}
         </>}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem disabled={loading || busy} onSelect={(event) => { event.preventDefault(); void load(true); }}>{error ? labels.retry : labels.refresh}</DropdownMenuItem>
-        <p className="multica-composer-footer-help">{labels.modelScope}</p>
+        {(!snapshot.local || error) && <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem disabled={loading || busy} onSelect={(event) => { event.preventDefault(); void load(true); }}>{error ? labels.retry : labels.refresh}</DropdownMenuItem>
+        </>}
+        {!snapshot.local && <p className="multica-composer-footer-help">{labels.modelScope}</p>}
       </DropdownMenuContent>
     </DropdownMenu>
     <DropdownMenu>
