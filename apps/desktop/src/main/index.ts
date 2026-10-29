@@ -6,6 +6,7 @@ import { DeveloperLogExporter } from "./developer-log-export";
 import { localProviderEnv } from "./local-provider-env";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, protocol, screen } from "electron";
 import { randomBytes } from "node:crypto";
+import { LOCAL_FILE_SCHEME, localFileScheme } from "./local-file-protocol";
 import { homedir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -609,9 +610,8 @@ const DEV_APP_NAME = process.env.DESKTOP_APP_SUFFIX
 
 // Local conversation file content streams through this scheme (see the
 // preload's file transport); it must be privileged before the app is ready.
-const LOCAL_FILE_SCHEME = "multica-local-file";
 const LOCAL_FILE_KEY = randomBytes(32).toString("hex");
-protocol.registerSchemesAsPrivileged([{ scheme: LOCAL_FILE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
+protocol.registerSchemesAsPrivileged([localFileScheme]);
 
 if (is.dev) {
   app.setName(DEV_APP_NAME);
