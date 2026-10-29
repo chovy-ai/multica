@@ -193,3 +193,17 @@ func CommittedFromRow(e sqlitedb.Event) CommittedEvent {
 		ItemID: e.ItemID.String, Type: e.Type, Final: e.Final == 1, Payload: json.RawMessage(e.Payload), CreatedAt: created,
 	}
 }
+
+// TurnEvents returns every event of one turn in order.
+func (s *Store) TurnEvents(ctx context.Context, conversationID, turnID string) ([]sqlitedb.Event, error) {
+	return sqlitedb.New(s.read).ListTurnEvents(ctx, sqlitedb.ListTurnEventsParams{ConversationID: conversationID, TurnID: sql.NullString{String: turnID, Valid: true}})
+}
+
+// Conversation returns one conversation row.
+func (s *Store) Conversation(ctx context.Context, conversationID string) (sqlitedb.Conversation, error) {
+	conv, err := sqlitedb.New(s.read).GetConversation(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return conv, fmt.Errorf("%w: conversation %s", ErrNotFound, conversationID)
+	}
+	return conv, err
+}
