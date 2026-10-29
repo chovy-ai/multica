@@ -33,6 +33,7 @@ import { developerLogQuerySchema } from "../shared/developer-logs";
 import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";
+import { setupLocalFileContextMenu } from "./local-file-context-menu";
 import { handleAppShortcut } from "./keyboard-shortcuts";
 import { installNavigationGestures } from "./navigation-gestures";
 import { installNavigationGuard } from "./navigation-guard";
@@ -824,6 +825,7 @@ if (!gotTheLock) {
       const { preview, owner } = previewFor(event, scope);
       return preview.chromeProfiles.cancel(owner, requestId);
     });
+    setupLocalFileContextMenu({ getWindow: () => mainWindow, currentUser: () => settingsUserId, request: (scope, method, params) => localConversations!.request(scope, method, params) });
     ipcMain.handle("local-conversation:request", async (event, scope: LocalConversationScope, method: LocalConversationMethod, params) => {
       if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localConversations) throw new Error("Local conversations require the active main window");
       localScopeTracker?.(scope);

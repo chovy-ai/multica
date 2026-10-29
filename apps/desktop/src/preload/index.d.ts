@@ -19,6 +19,7 @@ import type {
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 
 interface DesktopAPI {
+  localFileContextMenu: import("../shared/local-file-context-menu").LocalFileContextMenuClient;
   terminalCli: import("../shared/terminal-cli").TerminalCliClient;
   developerLogs: import("../shared/developer-logs").DeveloperLogsClient;
   settingsHost?: import("../shared/settings-host").SettingsHostClient;

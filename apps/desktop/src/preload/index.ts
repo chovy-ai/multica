@@ -133,6 +133,9 @@ const localFileTransport: LocalConversationClient["files"] = {
 };
 
 const desktopAPI = {
+  localFileContextMenu: {
+    show: (scope, input) => ipcRenderer.invoke("local-file:context-menu", scope, input),
+  } satisfies import("../shared/local-file-context-menu").LocalFileContextMenuClient,
   terminalCli: {
     status: () => ipcRenderer.invoke("terminal-cli:status"),
     install: () => ipcRenderer.invoke("terminal-cli:install"),

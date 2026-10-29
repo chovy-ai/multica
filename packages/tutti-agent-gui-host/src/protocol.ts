@@ -157,6 +157,7 @@ export interface AgentGuiRpcMethods {
   "host.openSide": { params: { sessionId: string; turnId?: string; quote?: string; requestId: string; pending?: LocalSidePrompt; queuedRequestId?: string; queued?: true }; result: ChatSession };
   "host.startSide": { params: { sessionId: string; queued?: true }; result: void };
   "host.openResource": { params: { sessionId: string; url: string }; result: void };
+  "host.showFileContextMenu": { params: { sessionId: string; url: string; hasSelection: boolean }; result: void };
   "host.locateSource": { params: { sessionId: string; turnId?: string; quote?: string }; result: void };
   "host.selectSession": { params: { sessionId: string | null; agentId?: string }; result: void };
   "host.showMessage": { params: { message: string; tone?: "info" | "warning" | "error" }; result: void };
