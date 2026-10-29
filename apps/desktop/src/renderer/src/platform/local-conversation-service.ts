@@ -5,7 +5,6 @@ import type { AgentTask, Attachment } from "@multica/core/types";
 import { createAgentGuiParentService, type ParentServiceOptions } from "@multica/views/conversation-flow/service";
 import type { AgentGuiHostEvent, AgentGuiRpcMethod, AgentGuiRpcMethods, AgentGuiSessionDetail, AgentGuiWorkspaceState } from "@multica/tutti-agent-gui-host/protocol";
 import type { LocalConversation, LocalConversationClient, LocalConversationScope, LocalConversationTurn, LocalProviderId } from "@multica/core/local-conversation/protocol";
-import { sideExecutionContent } from "@multica/tutti-agent-gui-host/side-context";
 import { isTaskCreationReference, localMessageDisplayContent } from "@multica/core/local-conversation/protocol";
 import { isAutomaticLocalDirectory } from "@multica/tutti-agent-gui-host/local-projects";
 import type { AgentGuiSession } from "@multica/tutti-agent-gui-host/protocol";
@@ -227,7 +226,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
           if (!target?.canInvoke || !target.runtimeBound || target.agent.archived_at) throw new Error("Mentioned agent is not available");
           return { id, name: target.agent.name };
         });
-        const accepted = await local("remoteSend", { id: entry.id, content: params.content, prompt: entry.side ? sideExecutionContent(entry.side, content) : content, agents, attachmentIds: files, requestId: params.requestId });
+        const accepted = await local("remoteSend", { id: entry.id, content: params.content, prompt: content, agents, attachmentIds: files, requestId: params.requestId });
         return { message_id: accepted.messageId, task_id: accepted.turns[0]!.id, created_at: accepted.createdAt };
       }
       case "session.cancel": {

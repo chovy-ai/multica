@@ -65,6 +65,7 @@ describe("Electron-owned conversation queue", () => {
     const next = new Promise<void>((resolve) => { finishNext = resolve; });
     let cancelled = false;
     const { service, options } = await setup(async (input, _emit, signal) => {
+      input.onSessionId?.("queue-native-session");
       if (input.content === "first") {
         signal.addEventListener("abort", () => { cancelled = true; }, { once: true });
         await exiting;
@@ -219,6 +220,7 @@ describe("Electron-owned conversation queue", () => {
   });
   it("send-now waits for cancellation and moves the selected message ahead of the queue", async () => {
     const { service, options } = await setup(async (input, _emit, signal) => {
+      input.onSessionId?.("queue-native-session");
       if (input.content === "first") await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
       return { output: "done" };
     });

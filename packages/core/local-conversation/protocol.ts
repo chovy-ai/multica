@@ -36,13 +36,14 @@ export interface LocalBackgroundTask {
   delivery?: { status: "pending" | "requested" | "delivered" | "interrupted"; turnId?: string };
 }
 export interface LocalConversationTurn {
+  inputMessageId?: string;
   backgroundDelivery?: { sourceTurnId: string; taskIds: string[] };
   backgroundTasks?: LocalBackgroundTask[];
   questions?: LocalUserQuestion[];
   requestId?: string;
   id: string; status: "running" | "completed" | "failed" | "cancelled";
   createdAt: string; completedAt?: string; error?: string; events: LocalConversationEvent[];
-  remote?: { agentId: string; agentName: string; sessionId?: string; taskId?: string; queueOwned?: boolean };
+  remote?: { agentId: string; agentName: string; sessionId?: string; taskId?: string; contextThroughMessageId?: string; queueOwned?: boolean };
 }
 export interface LocalUserQuestionInput {
   request_id: string;
@@ -55,7 +56,7 @@ export interface LocalUserQuestion extends LocalUserQuestionInput {
   answers?: Record<string, string | string[]>;
 }
 export interface LocalUserQuestionResult { answersByQuestionId: Record<string, string | string[]> }
-export interface LocalConversationMessage { steered?: boolean; origin?: { conversationId: string; requestId: string }; id: string; role: "user" | "assistant"; content: string; turnId: string; createdAt: string; failed?: boolean; attachmentIds?: string[] }
+export interface LocalConversationMessage { steered?: boolean; origin?: { conversationId: string; requestId: string }; id: string; role: "user" | "assistant"; content: string; contextContent?: string; turnId: string; createdAt: string; failed?: boolean; attachmentIds?: string[] }
 /** Keep internal image prompt markers out of displayed history and previews. */
 export function localMessageDisplayContent(message?: Pick<LocalConversationMessage, "role" | "content" | "attachmentIds">): string {
   if (!message) return "";
@@ -70,6 +71,7 @@ export interface LocalConversation {
   titleMode?: "auto" | "manual";
   titleGeneration?: "pending" | "complete" | "failed";
   archived: boolean; model: string | null; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; providerSessionId?: string;
+  providerContext?: { sessionId: string; throughMessageId: string };
   forkedFrom?: string;
   importedFrom?: { provider: LocalProviderId; sessionId: string };
   forkedFromTurnId?: string;
@@ -192,10 +194,10 @@ export interface LocalConversationMethods {
   answerQuestion: { params: { id: string; turnId: string; requestId: string; answers: Record<string, string | string[]> }; result: void };
   models: { params: { provider: LocalProviderId; force?: boolean }; result: LocalConversationModels };
   usage: { params: { provider: LocalProviderId; id?: string; force?: boolean }; result: LocalProviderUsage };
-  remoteBegin: { params: { id: string; content: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
+  remoteBegin: { params: { id: string; content: string; prompt?: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
   /** Starts cloud agent turns; the host sends, polls and resumes them. */
   remoteSend: { params: { id: string; content: string; prompt?: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
-  remoteUpdate: { params: { id: string; turnId: string; sessionId?: string; taskId?: string; events?: LocalConversationEvent[]; output?: string; error?: string; status?: LocalConversationTurn["status"] }; result: void };
+  remoteUpdate: { params: { id: string; turnId: string; sessionId?: string; taskId?: string; contextThroughMessageId?: string; events?: LocalConversationEvent[]; output?: string; error?: string; status?: LocalConversationTurn["status"] }; result: void };
 }
 export type LocalConversationMethod = keyof LocalConversationMethods;
 /** File content moves over the host's HTTP file endpoint, never through JSON-RPC or IPC. */

@@ -30,6 +30,7 @@ import type { CancelTaskResponse } from "@multica/core/types";
 import { z } from "zod";
 import { SideWorkspaceRegistry } from "./local-side-workspace";
 import type { SideWorkspaceControlRequest } from "../shared/side-workspace";
+import { dialogueContext, withDialogueContext } from "./local-dialogue-context";
 const queueTaskSchema = z.object({ id: z.string(), workspace_id: z.string(), identifier: z.string(), title: z.string(), description: z.string().nullable().optional() });
 
 function text(value: unknown, name: string, max = 2_000_000): string {
@@ -624,8 +625,8 @@ export class LocalConversationService {
         const previousEffort = entry.reasoningEffort;
         const previousModel = entry.model;
         const previousPermission = entry.permissionMode;
-        entry.model = model; entry.reasoningEffort = reasoningEffort; entry.permissionMode = permissionMode; entry.messages.push({ id: messageId, role: "user", content, turnId, createdAt: at, attachmentIds, ...(params.origin ? { origin: params.origin as LocalConversation["messages"][number]["origin"] } : {}) });
-        entry.turns.push({ id: turnId, requestId, status: "running", createdAt: at, events: [] });
+        entry.model = model; entry.reasoningEffort = reasoningEffort; entry.permissionMode = permissionMode; entry.messages.push({ id: messageId, role: "user", content, ...(prompt !== content ? { contextContent: prompt } : {}), turnId, createdAt: at, attachmentIds, ...(params.origin ? { origin: params.origin as LocalConversation["messages"][number]["origin"] } : {}) });
+        entry.turns.push({ id: turnId, inputMessageId: messageId, requestId, status: "running", createdAt: at, events: [] });
         refreshGeneratedConversationTitle(entry);
         const timing = createLocalTiming({ source: "main", conversationId: entry.id, requestId, turnId, provider: entry.provider }, this.options.timing ?? (() => {}));
         timing.heartbeat();
@@ -686,6 +687,7 @@ export class LocalConversationService {
       }
       case "remoteBegin": {
         const entry = session(); const content = text(params.content, "message");
+        const prompt = params.prompt === undefined ? content : text(params.prompt, "prompt");
         const attachmentIds = params.attachmentIds === undefined ? undefined : (Array.isArray(params.attachmentIds) && params.attachmentIds.length <= 20 ? params.attachmentIds.map((id) => text(id, "file", 128)) : (() => { throw new Error("Invalid files"); })());
         const requestId = params.requestId === undefined ? undefined : text(params.requestId, "submission request", 160);
         if (requestId && [...rows.values()].some((item) => item.side?.requestId === `side:${entry.id}:${requestId}`)) throw new Error("This queued message was moved to a side conversation");
@@ -693,11 +695,11 @@ export class LocalConversationService {
         if (existing.length) { const message = entry.messages.find((item) => item.turnId === existing[0]!.id && item.role === "user")!; if (message.content !== content) throw new Error("Submission request belongs to another message"); result = { messageId: message.id, turns: existing, createdAt: message.createdAt, replayed: true }; break; }
         this.writable(entry);
         if (!Array.isArray(params.agents) || params.agents.length < 1 || params.agents.length > 20) throw new Error("Invalid mentioned agents");
-        const at = new Date().toISOString(); const turns = params.agents.map((value) => {
+        const at = new Date().toISOString(); const messageId = randomUUID(); const turns = params.agents.map((value) => {
           const agent = value as Record<string, unknown>;
-          return { id: randomUUID(), requestId, status: "running" as const, createdAt: at, events: [], remote: { agentId: text(agent.id, "agent", 128), agentName: text(agent.name, "agent name", 256) } };
+          return { id: randomUUID(), inputMessageId: messageId, requestId, status: "running" as const, createdAt: at, events: [], remote: { agentId: text(agent.id, "agent", 128), agentName: text(agent.name, "agent name", 256) } };
         });
-        const messageId = randomUUID(); entry.messages.push({ id: messageId, role: "user", content, turnId: turns[0]!.id, createdAt: at, attachmentIds, ...(params.origin ? { origin: params.origin as LocalConversation["messages"][number]["origin"] } : {}) }); entry.turns.push(...turns);
+        entry.messages.push({ id: messageId, role: "user", content, ...(prompt !== content ? { contextContent: prompt } : {}), turnId: turns[0]!.id, createdAt: at, attachmentIds, ...(params.origin ? { origin: params.origin as LocalConversation["messages"][number]["origin"] } : {}) }); entry.turns.push(...turns);
         refreshGeneratedConversationTitle(entry);
         try { await this.save(scope); }
         catch (error) { entry.messages = entry.messages.filter((message) => message.id !== messageId); const ids = new Set<string>(turns.map((turn) => turn.id)); entry.turns = entry.turns.filter((turn) => !ids.has(turn.id)); throw error; }
@@ -708,10 +710,10 @@ export class LocalConversationService {
         if (!this.options.queueCloudClient) throw new Error("Agent invocation is unavailable");
         const controller = new AbortController();
         const cloud = await this.options.queueCloudClient(scope, controller.signal);
-        const accepted = await this.request(scope, "remoteBegin", { id: entry.id, content: text(params.content, "message"), agents: params.agents as { id: string; name: string }[], attachmentIds: params.attachmentIds as string[] | undefined, requestId: params.requestId as string | undefined });
+        const accepted = await this.request(scope, "remoteBegin", { id: entry.id, content: text(params.content, "message"), prompt: params.prompt as string | undefined, agents: params.agents as { id: string; name: string }[], attachmentIds: params.attachmentIds as string[] | undefined, requestId: params.requestId as string | undefined });
         if (!accepted.replayed) {
           const item = { requestId: accepted.turns[0]!.id, content: text(params.content, "message"), prompt: params.prompt === undefined ? undefined : text(params.prompt, "prompt"), attachmentIds: params.attachmentIds as string[] | undefined } as LocalQueuedPrompt;
-          this.startCloudTurns(scope, entry, accepted.turns, controller, false, (turn) => runQueuedCloudTurn({ scope, entry, item, turn, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
+          this.startCloudTurns(scope, entry, accepted.turns, controller, false, (turn) => runQueuedCloudTurn({ scope, entry, item, turn, messageId: accepted.messageId, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
         }
         result = accepted; break;
       }
@@ -720,6 +722,7 @@ export class LocalConversationService {
         if (!turn?.remote) throw new Error("Remote execution not found");
         if (params.sessionId !== undefined) turn.remote.sessionId = text(params.sessionId, "cloud conversation", 128);
         if (params.taskId !== undefined) turn.remote.taskId = text(params.taskId, "cloud execution", 128);
+        if (params.contextThroughMessageId !== undefined) turn.remote.contextThroughMessageId = text(params.contextThroughMessageId, "context boundary", 128);
         if (Array.isArray(params.events)) turn.events = params.events as LocalConversationEvent[];
         if (params.status !== undefined) {
           if (!["running", "completed", "failed", "cancelled"].includes(String(params.status))) throw new Error("Invalid execution state");
@@ -895,8 +898,8 @@ export class LocalConversationService {
           if (!this.options.queueCloudClient) throw new Error("Queued agent invocation is unavailable");
           const cloud = await this.options.queueCloudClient(scope, controller.signal);
           this.key(scope);
-          const accepted = await this.request(scope, "remoteBegin", { id: entry.id, content: item.content, requestId: item.requestId, agents: item.agents, attachmentIds: item.attachmentIds });
-          this.startCloudTurns(scope, entry, accepted.turns, controller, true, (turn) => runQueuedCloudTurn({ scope, entry, item: { ...item, prompt }, turn, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
+          const accepted = await this.request(scope, "remoteBegin", { id: entry.id, content: item.content, prompt, requestId: item.requestId, agents: item.agents, attachmentIds: item.attachmentIds });
+          this.startCloudTurns(scope, entry, accepted.turns, controller, true, (turn) => runQueuedCloudTurn({ scope, entry, item: { ...item, prompt }, turn, messageId: accepted.messageId, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
         } else await this.request(scope, "send", { id: entry.id, ...item, prompt });
         queue.items = queue.items.filter((value) => value.requestId !== item.requestId);
       } catch (error) {
@@ -927,7 +930,7 @@ export class LocalConversationService {
   }
   private async forkConversation(scope: LocalConversationScope, rows: Map<string, LocalConversation>, entry: LocalConversation, signal: AbortSignal, turnId?: string): Promise<LocalConversation> {
     delete entry.promptQueue;
-    const sourceId = entry.id, sourceNativeId = entry.providerSessionId!;
+    const sourceId = entry.id, sourceNativeId = entry.providerSessionId!, sourceContext = entry.providerContext;
     const nativeTurns = entry.turns.filter((turn) => !turn.remote);
     const through = turnId ? { index: nativeTurns.findIndex((turn) => turn.id === turnId), prompts: nativeTurns.map((turn) => entry.messages.find((message) => message.role === "user" && message.turnId === turn.id)?.content ?? "") } : undefined;
     if (turnId) {
@@ -956,13 +959,15 @@ export class LocalConversationService {
     }
     this.key(scope); signal.throwIfAborted();
     if (!savedContext && (typeof nativeId !== "string" || !nativeId.trim() || nativeId === sourceNativeId)) throw new Error("The provider did not create an independent conversation");
-    entry.providerSessionId = nativeId; entry.forkedFrom = sourceId;
+    entry.providerSessionId = nativeId; delete entry.providerContext; entry.forkedFrom = sourceId;
     if (nativeId) entry.forkMode = "native";
     entry.pinned = false; entry.archived = false; entry.createdAt = entry.updatedAt = new Date().toISOString();
     const turns = new Map(entry.turns.map((turn) => [turn.id, randomUUID()]));
+    const messageIds = new Map(entry.messages.map((message) => [message.id, randomUUID()]));
     entry.forkedTurnId = turnId ? turns.get(turnId) : undefined;
     for (const turn of entry.turns) {
       turn.id = turns.get(turn.id)!;
+      if (turn.inputMessageId) turn.inputMessageId = messageIds.get(turn.inputMessageId);
       if (turn.backgroundDelivery) turn.backgroundDelivery.sourceTurnId = turns.get(turn.backgroundDelivery.sourceTurnId)!;
       for (const task of turn.backgroundTasks ?? []) {
         if (task.status === "running") { task.status = "cancelled"; task.summary = "Background task belongs to the source conversation."; }
@@ -975,7 +980,9 @@ export class LocalConversationService {
       // Keep historical attribution without reusing a live official-agent session.
       if (turn.remote) turn.remote = { agentId: turn.remote.agentId, agentName: turn.remote.agentName };
     }
-    for (const message of entry.messages) { message.id = randomUUID(); message.turnId = turns.get(message.turnId)!; }
+    const contextBoundary = sourceContext && sourceContext.sessionId === sourceNativeId ? messageIds.get(sourceContext.throughMessageId) : undefined;
+    for (const message of entry.messages) { message.id = messageIds.get(message.id)!; message.turnId = turns.get(message.turnId)!; }
+    if (nativeId && contextBoundary) entry.providerContext = { sessionId: nativeId, throughMessageId: contextBoundary };
     rows.set(entry.id, entry);
     try { await this.save(scope); }
     catch (error) { rows.delete(entry.id); throw error; }
@@ -1061,12 +1068,16 @@ export class LocalConversationService {
     const imageWrites: Promise<void>[] = [];
     timing.mark("turn.execute");
     try {
-      const files: { name: string; path: string; mimeType: string }[] = [];
+      const files: { id: string; name: string; path: string; mimeType: string }[] = [];
       const message = entry.messages.find((item) => item.turnId === turnId && item.role === "user");
+      const dialogue = message ? dialogueContext(entry, message.id, {
+        local: true, sessionId: entry.providerSessionId,
+        throughMessageId: entry.providerContext?.sessionId === entry.providerSessionId ? entry.providerContext?.throughMessageId : undefined,
+      }) : undefined;
       await timing.measure("attachments.resolve", async () => {
-        for (const id of new Set(message?.attachmentIds ?? [])) {
+        for (const id of new Set([...(message?.attachmentIds ?? []), ...(dialogue?.messages.flatMap((item) => item.attachment_ids) ?? [])])) {
           const file = await this.request(scope, "fileInfo", { id });
-          files.push({ name: file.name, path: file.path, mimeType: file.mimeType });
+          files.push({ id, name: file.name, path: file.path, mimeType: file.mimeType });
         }
       });
       let claude: ClaudeConversationSession | undefined;
@@ -1103,8 +1114,8 @@ export class LocalConversationService {
       if (context && claude) { claude.contexts.add(context); retainedContext = true; }
       this.key(scope);
       if (controller.signal.aborted || (delivery && (this.stopping || entry.promptQueue?.paused || entry.archived))) throw new Error("Execution cancelled");
-      let executionContent = content;
-      if (entry.side && !entry.providerSessionId) executionContent = sideExecutionContent(entry.side, content);
+      let executionContent = dialogue ? withDialogueContext(dialogue, content) : content;
+      if (entry.side && !entry.providerSessionId) executionContent = sideExecutionContent(entry.side, executionContent);
       if (entry.forkMode === "saved-context" && !entry.providerSessionId) {
         const history = entry.messages.filter((message) => message.turnId !== turnId);
         const recent = history.slice(-20).map((message) => ({ role: message.role, content: message.content.slice(-32000), content_truncated: message.content.length > 32000, attachment_ids: message.attachmentIds ?? [] }));
@@ -1166,6 +1177,7 @@ export class LocalConversationService {
       if (!controller.signal.aborted) {
         if (delivery && !result.output.trim()) throw new Error("The background follow-up returned no summary");
         entry.providerSessionId = result.sessionId ?? entry.providerSessionId;
+        if (message && entry.providerSessionId) entry.providerContext = { sessionId: entry.providerSessionId, throughMessageId: message.id };
         turn.status = "completed";
         entry.messages.push({ id: randomUUID(), role: "assistant", content: result.output, turnId, createdAt: new Date().toISOString() });
       }
