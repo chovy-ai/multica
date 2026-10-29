@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -283,6 +284,47 @@ func TestServiceGivesAdaptersTheContextTools(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("context route still served after the adapter exited")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestServiceGivesCloudContextAPrivateDirectory(t *testing.T) {
+	t.Parallel()
+
+	f := &serviceFixture{}
+	dirs := make(chan string, 1)
+	svc, err := Open(context.Background(), Options{Path: filepath.Join(t.TempDir(), "c.sqlite"), Claude: f.launch,
+		Cloud: func(scope store.Scope, dir string) contextmcp.Cloud {
+			if scope.WorkspaceID != "w" {
+				t.Errorf("cloud scope = %+v", scope)
+			}
+			dirs <- dir
+			return nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close(context.Background())
+	f.svc = svc
+	ctx := context.Background()
+	f.scopeID, _ = svc.Store().EnsureScope(ctx, store.Scope{APIOrigin: "https://api.multica.ai", UserID: "u", WorkspaceID: "w"})
+	f.create(t, "conv-1", "claude")
+	if _, err := svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	dir := <-dirs
+	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("run dir %s: %v", dir, err)
+	}
+	f.adapters[0].exit(errors.New("gone"))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run directory kept after the adapter exited")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

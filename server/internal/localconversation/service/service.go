@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -55,6 +57,9 @@ type Options struct {
 	Path   string
 	Claude ClaudeLauncher
 	Codex  CodexLauncher
+	// Cloud, when set, gives the context tools official Multica data for a
+	// scope. dir is private to one provider process and removed after it.
+	Cloud  func(scope store.Scope, dir string) contextmcp.Cloud
 	Logger *slog.Logger
 	Now    func() time.Time
 }
@@ -422,13 +427,29 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 			c["workspace_id"] = scope.WorkspaceID
 			return c
 		}
-		binding, err := s.context.Bind(context.Background(), contextmcp.Execution{
-			Instructions: contextmcp.ReadOnlyInstructions, Token: token,
-			Tools: contextmcp.ContextTools(s.store, nil, conv.ScopeID, withWorkspace),
-		})
+		runs := filepath.Join(filepath.Dir(s.opts.Path), "runs")
+		if err := os.MkdirAll(runs, 0o700); err != nil {
+			return contextmcp.Binding{}, nil, err
+		}
+		dir, err := os.MkdirTemp(runs, "run-")
 		if err != nil {
 			return contextmcp.Binding{}, nil, err
 		}
-		return binding, func() { s.context.Release(binding) }, nil
+		var cloud contextmcp.Cloud
+		if s.opts.Cloud != nil {
+			cloud = s.opts.Cloud(scope, dir)
+		}
+		binding, err := s.context.Bind(context.Background(), contextmcp.Execution{
+			Instructions: contextmcp.ReadOnlyInstructions, Token: token,
+			Tools: contextmcp.ContextTools(s.store, cloud, conv.ScopeID, withWorkspace),
+		})
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			return contextmcp.Binding{}, nil, err
+		}
+		return binding, func() {
+			s.context.Release(binding)
+			_ = os.RemoveAll(dir)
+		}, nil
 	}
 }

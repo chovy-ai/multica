@@ -3,13 +3,17 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/localhost"
+	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/service"
+	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
 
@@ -21,6 +25,7 @@ func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.S
 		Path:   filepath.Join(d.cfg.ProfileDir, "local-conversations", "conversations.sqlite"),
 		Claude: d.claudeLauncher(sidecar),
 		Codex:  d.codexLauncher(),
+		Cloud:  d.contextCloud,
 		Logger: d.logger.With("component", "local-conversations"),
 	})
 	if err != nil {
@@ -79,4 +84,22 @@ func (d *Daemon) codexLauncher() service.CodexLauncher {
 		}
 		return service.CodexSession{Cwd: conv.Cwd}, start, nil
 	}
+}
+
+// contextCloud gives context tools official data with the profile's
+// credentials, only for conversations of the server this daemon signs in
+// to: the token is not valid for another API origin.
+func (d *Daemon) contextCloud(scope store.Scope, dir string) contextmcp.Cloud {
+	if normalizeOrigin(scope.APIOrigin) != normalizeOrigin(d.cfg.ServerBaseURL) || d.client == nil {
+		return nil
+	}
+	return &contextmcp.CloudClient{APIURL: d.cfg.ServerBaseURL, WorkspaceID: scope.WorkspaceID, Token: d.client.Token, CLIPath: d.cfg.LocalHostCLIPath, Dir: dir}
+}
+
+func normalizeOrigin(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
