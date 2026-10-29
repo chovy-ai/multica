@@ -22,7 +22,7 @@ export function providerArgs(provider: LocalProviderId, model?: string | null, r
   if (provider === "codex") return [...permissions, "exec", ...(resume ? ["resume"] : []), ...effort, "--json", "--skip-git-repo-check", ...(systemPrompt ? ["--config", `developer_instructions=${JSON.stringify(systemPrompt)}`] : []),
     ...CODEX_PLUGIN_ISOLATION_ARGS, ...codexMcpIsolationArgs(extensions.codexMcpServers ?? []),
     ...(titleOnly ? ["--ephemeral", "--sandbox", "read-only", "--disable", "shell_tool", "--disable", "unified_exec"] : []),
-    ...(mcp ? ["--config", `mcp_servers.${CONTEXT_MCP_NAME}={url=${JSON.stringify(mcp.url)},bearer_token_env_var=${JSON.stringify(CONTEXT_MCP_TOKEN_ENV)},enabled=true,required=true,default_tools_approval_mode="auto"${mcp.tools?.includes("ask_user_question") ? ",tool_timeout_sec=3600" : ""}}`] : []),
+    ...(mcp ? ["--config", `mcp_servers.${CONTEXT_MCP_NAME}={url=${JSON.stringify(mcp.url)},bearer_token_env_var=${JSON.stringify(CONTEXT_MCP_TOKEN_ENV)},enabled=true,required=true,default_tools_approval_mode="approve"${mcp.tools?.includes("ask_user_question") ? ",tool_timeout_sec=3600" : ""}}`] : []),
     ...(model ? ["--model", model] : []), ...(resume ? [resume] : []), "-"];
   return ["--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", ...permissions, ...effort, ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     "--strict-mcp-config", "--settings", JSON.stringify(extensions.claudePlugins ?? { enabledPlugins: {}, syncClaudeAiPlugins: false }),

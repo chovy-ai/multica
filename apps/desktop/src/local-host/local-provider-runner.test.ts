@@ -102,6 +102,7 @@ process.stdin.on('end', () => {
     for (const resume of [undefined, "owned-session"]) {
       const codex = providerArgs("codex", undefined, resume, undefined, mcp, false, "default", { codexMcpServers: ["external", "has.dot"] }).join(" ");
       expect(codex).toContain(`mcp_servers.${CONTEXT_MCP_NAME}=`); expect(codex).toContain('bearer_token_env_var="MULTICA_CONTEXT_MCP_TOKEN"');
+      expect(codex).toContain('default_tools_approval_mode="approve"');
       expect(codex).toContain('mcp_servers={"external"={enabled=false},"has.dot"={enabled=false}}');
       expect(codex).toContain("--disable plugins");
       const claude = providerArgs("claude", undefined, resume, undefined, mcp);

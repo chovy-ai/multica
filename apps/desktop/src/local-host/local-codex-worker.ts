@@ -66,7 +66,7 @@ export class LocalCodexWorker {
       const token = env[CONTEXT_MCP_TOKEN_ENV];
       if (!token) throw new Error("Multica MCP credentials are unavailable");
       const url = this.bridge.bind(id, { url: input.mcp.url, token, signal });
-      mcpServers[CONTEXT_MCP_NAME] = { url, bearer_token_env_var: CONTEXT_MCP_TOKEN_ENV, enabled: true, required: true, default_tools_approval_mode: "auto", tool_timeout_sec: 3600 };
+      mcpServers[CONTEXT_MCP_NAME] = { url, bearer_token_env_var: CONTEXT_MCP_TOKEN_ENV, enabled: true, required: true, default_tools_approval_mode: "approve", tool_timeout_sec: 3600 };
     }
     // These are non-secret locations and scope identifiers. MCP credentials stay in the bridge.
     const scopedEnv = Object.fromEntries(["MULTICA_TASK_CONFIG_ROOT", "MULTICA_SERVER_URL", "MULTICA_WORKSPACE_ID", "MULTICA_SETTINGS_MCP_URL"]
