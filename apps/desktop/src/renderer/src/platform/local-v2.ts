@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { parseWithFallback } from "@multica/core/api/schema";
 import {
   LOCAL_V2_VERSION, localV2ServerMessageSchema, localV2SessionListSchema, localV2SnapshotSchema,
@@ -72,7 +73,7 @@ export class LocalV2ScopeClient {
       let after = 0;
       for (let page = 0; page < SUMMARY_PAGES; page++) {
         const raw = await this.request("GET", `/sessions?after_scope_seq=${after}`);
-        const list = parseWithFallback(raw, localV2SessionListSchema, { scope_seq: after, summaries: [], has_more: false }, { endpoint: "local-v2.sessions" });
+        const list = parseWithFallback<z.infer<typeof localV2SessionListSchema>>(raw, localV2SessionListSchema, { scope_seq: after, summaries: [], has_more: false }, { endpoint: "local-v2.sessions" });
         for (const summary of list.summaries) this.receiveSummary(summary);
         after = Math.max(after, list.scope_seq, ...list.summaries.map((summary) => summary.summary_seq));
         if (!list.has_more) break;
@@ -131,6 +132,7 @@ export class LocalV2ScopeClient {
       this.notifySummaries();
       return;
     }
+    if (message.type === "host.request") return; // answered by the main process
     if (message.type === "subscription.status" && !message.conversation_id) {
       // The scope stream fell behind: read the list again.
       if (message.status === "resubscribe" || message.status === "snapshot_required") this.reloadSummaries();

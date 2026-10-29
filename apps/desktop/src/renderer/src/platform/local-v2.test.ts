@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import type { LocalV2Transport } from "@multica/core/local-conversation/v2";
+import { localV2SummarySchema, type LocalV2Transport } from "@multica/core/local-conversation/v2";
 import { LocalV2ScopeClient, localV2Error } from "./local-v2";
 
 const scope = { userId: "u", workspaceId: "w" };
 const at = "2026-10-29T00:00:00Z";
-const summary = (id: string, seq: number, title = id) => ({ conversation_id: id, summary_seq: seq, provider: "claude", title, status: "idle", pinned: false, archived: false, updated_at: at });
+const summary = (id: string, seq: number, title = id) => localV2SummarySchema.parse({ conversation_id: id, summary_seq: seq, provider: "claude", title, status: "idle", pinned: false, archived: false, updated_at: at });
 
 function transport(pages: unknown[] = []) {
   const sent: unknown[] = [];
