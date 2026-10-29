@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "type": "subscription.status",
+  "conversation_id": "conv-9",
+  "status": "rejected",
+  "error": {
+    "kind": "subscription_limit",
+    "message": "Too many open conversations"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "type": "fork_session",
+  "id": "r6",
+  "session_id": "5f0c2f7e-1111-4222-8333-944445555666",
+  "dir": "/repo",
+  "title": "Fork of 排查崩溃",
+  "up_to_message_id": "7a9d1c3e-0000-4000-8000-000000000001"
+}

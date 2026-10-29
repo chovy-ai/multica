@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "type": "subscription.status",
+  "conversation_id": "conv-1",
+  "status": "live",
+  "high_water": 62
+}

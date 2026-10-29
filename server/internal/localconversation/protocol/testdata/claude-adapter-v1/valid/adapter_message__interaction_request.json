@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "type": "interaction_request",
+  "interaction_id": "ix-2",
+  "kind": "permission",
+  "request": {
+    "tool": "Bash",
+    "input": {
+      "command": "rm -rf build"
+    }
+  }
+}

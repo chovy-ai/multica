@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "type": "error",
+  "code": "write_backlog",
+  "message": "daemon stopped reading adapter output"
+}

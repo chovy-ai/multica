@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "type": "sdk_message",
+  "message": {
+    "session_id": "x"
+  }
+}
