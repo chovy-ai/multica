@@ -437,6 +437,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	if d.local != nil {
 		d.local.Register(mux)
 	}
+	mux.HandleFunc("/p2p/status", d.p2pStatusHandler())
 
 	srv := &http.Server{Handler: mux}
 

@@ -139,6 +139,8 @@ type Config struct {
 	AutoUpdateEnabled              bool                  // periodically check for a newer CLI release and self-update when idle (default: true on Multica Cloud, false on self-host)
 	AutoUpdateCheckInterval        time.Duration         // how often the auto-update loop polls for a new release (default: 6h)
 	AutoReloadEnabled              bool                  // restart when the multica binary on disk no longer matches the running version (default: true for CLI-launched daemons)
+	P2PServerURL                   string                // p2p device registry (cmd/p2p-server); setting it enables LAN device links (default: empty, disabled; MULTICA_DAEMON_P2P_SERVER_URL)
+	P2PPort                        int                   // TCP and QUIC (UDP) port for peer connections (default: 0, a random port; MULTICA_DAEMON_P2P_PORT)
 	PollInterval                   time.Duration
 	WSClaimPollInterval            time.Duration // upper bound for healthy WS batch-claim safety polls; actual sleeps use downward-only jitter
 	HeartbeatInterval              time.Duration
@@ -627,6 +629,14 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		autoReloadEnabled = false
 	}
 
+	p2pPort, err := intFromEnv("MULTICA_DAEMON_P2P_PORT", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	if p2pPort < 0 || p2pPort > 65535 {
+		return Config{}, fmt.Errorf("MULTICA_DAEMON_P2P_PORT: %d is not a valid port", p2pPort)
+	}
+
 	return Config{
 		ServerBaseURL:                   serverBaseURL,
 		DaemonID:                        daemonID,
@@ -652,6 +662,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		AutoUpdateEnabled:               autoUpdateEnabled,
 		AutoUpdateCheckInterval:         autoUpdateInterval,
 		AutoReloadEnabled:               autoReloadEnabled,
+		P2PServerURL:                    strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_DAEMON_P2P_SERVER_URL")), "/"),
+		P2PPort:                         p2pPort,
 		HealthPort:                      healthPort,
 		MaxConcurrentTasks:              maxConcurrentTasks,
 		PollInterval:                    pollInterval,

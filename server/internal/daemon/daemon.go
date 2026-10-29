@@ -30,6 +30,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/localhost"
+	"github.com/multica-ai/multica/server/internal/daemon/p2p"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -442,6 +443,9 @@ type Daemon struct {
 	// gitCALastErr is the last applyGitCACerts failure, so a persistent one
 	// (e.g. on Windows) is logged once rather than on every repo refresh.
 	gitCALastErr atomic.Pointer[string]
+
+	// p2p is the device link service, nil while disabled or not yet started.
+	p2p atomic.Pointer[p2p.Service]
 
 	// terminalReports is the durable outbox for complete/fail callbacks. The
 	// sender hook is production-wired through Client and overridable in focused
@@ -2183,6 +2187,12 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
+	if d.cfg.P2PServerURL != "" {
+		if err := d.startP2P(ctx); err != nil {
+			// The link is optional; task execution must not depend on it.
+			d.logger.Warn("p2p: disabled for this run", "error", err)
+		}
+	}
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health
