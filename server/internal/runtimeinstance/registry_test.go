@@ -159,3 +159,29 @@ func TestRuntimeInstanceRejectsInvalidRegistration(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchValidatesOptionalClaudeEntry(t *testing.T) {
+	t.Parallel()
+
+	launch := launchFixture(t, fixture(t))
+	if err := launch.Validate(); err != nil {
+		t.Fatalf("launch without claude entry: %v", err)
+	}
+	launch.ClaudeEntryPath = "relative/claude-host.js"
+	if err := launch.Validate(); err == nil {
+		t.Fatal("relative claude entry accepted")
+	}
+	launch.ClaudeEntryPath = filepath.Join(launch.AppPath, "missing-claude-host.js")
+	if err := launch.Validate(); err != nil {
+		t.Fatalf("absolute claude entry rejected: %v", err)
+	}
+	if err := launch.ValidateExecutable(launch.CLIPath); err == nil {
+		t.Fatal("missing claude entry passed the executable check")
+	}
+	if err := os.WriteFile(launch.ClaudeEntryPath, []byte("test-owned"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.ValidateExecutable(launch.CLIPath); err != nil {
+		t.Fatalf("present claude entry rejected: %v", err)
+	}
+}

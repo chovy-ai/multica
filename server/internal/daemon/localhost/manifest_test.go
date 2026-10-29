@@ -126,3 +126,37 @@ func TestLocateHonorsLauncherOverride(t *testing.T) {
 		t.Fatalf("Locate() = %+v, %v", got, err)
 	}
 }
+
+func TestLocateResolvesOptionalClaudeEntry(t *testing.T) {
+	t.Parallel()
+
+	_, exe, electron := packagedLayout(t)
+	path := manifestPath(exe)
+	writeFile(t, filepath.Join(filepath.Dir(path), "index.cjs"), "sidecar")
+	writeFile(t, filepath.Join(filepath.Dir(path), "claude-host.cjs"), "claude")
+	data, _ := json.Marshal(Manifest{ProtocolVersion: 2, Entry: "index.cjs", ClaudeEntry: "claude-host.cjs",
+		Electron: map[string]string{runtime.GOOS: relTo(t, filepath.Dir(path), electron)}})
+	writeFile(t, path, string(data))
+	got, err := Locate(exe, noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(got.ClaudeEntry) != "claude-host.cjs" {
+		t.Fatalf("ClaudeEntry = %q", got.ClaudeEntry)
+	}
+
+	// A manifest without the entry keeps working and leaves it empty.
+	writeFile(t, path, manifestJSON(2, "index.cjs", relTo(t, filepath.Dir(path), electron)))
+	got, err = Locate(exe, noEnv)
+	if err != nil || got.ClaudeEntry != "" {
+		t.Fatalf("without claude entry = %+v, %v", got, err)
+	}
+
+	// A declared but missing entry is an error, not a silent downgrade.
+	data, _ = json.Marshal(Manifest{ProtocolVersion: 2, Entry: "index.cjs", ClaudeEntry: "missing.cjs",
+		Electron: map[string]string{runtime.GOOS: relTo(t, filepath.Dir(path), electron)}})
+	writeFile(t, path, string(data))
+	if _, err := Locate(exe, noEnv); err == nil {
+		t.Fatal("missing claude entry accepted")
+	}
+}

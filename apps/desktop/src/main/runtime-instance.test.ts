@@ -35,6 +35,13 @@ beforeEach(async () => {
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
 describe("single Desktop runtime registration", () => {
+  it("records the Claude adapter entry only when the source ships one", async () => {
+    expect(await registry.launch()).not.toHaveProperty("claudeEntryPath");
+    const withClaude = new RuntimeInstanceRegistry(home, { ...source, claudeEntryPath: join(home, "worktree-a/claude-host.js") });
+    await withClaude.register(apiUrl);
+    expect(await withClaude.launch()).toMatchObject({ claudeEntryPath: join(home, "worktree-a/claude-host.js") });
+  });
+
   it("atomically replaces the launch source and terminal pointer when another Desktop starts", async () => {
     const otherSource = { ...source, kind: "packaged" as const, appPath: join(home, "Multica.app"), cliPath: join(home, "Multica.app/cli") };
     const next = new RuntimeInstanceRegistry(home, otherSource);

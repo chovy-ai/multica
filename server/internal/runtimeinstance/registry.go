@@ -38,6 +38,9 @@ type Launch struct {
 	CLICommit       string `json:"cliCommit"`
 	ElectronPath    string `json:"electronPath"`
 	EntryPath       string `json:"entryPath"`
+	// ClaudeEntryPath is the per-conversation Claude adapter; empty for
+	// Desktop builds without the Go-owned local conversation service.
+	ClaudeEntryPath string `json:"claudeEntryPath,omitempty"`
 	Profile         string `json:"profile"`
 	APIURL          string `json:"apiUrl"`
 	ProtocolVersion int    `json:"protocolVersion"`
@@ -105,6 +108,9 @@ func (l Launch) Validate() error {
 		if !filepath.IsAbs(path) || strings.ContainsRune(path, 0) {
 			return errors.New("runtime paths must be absolute")
 		}
+	}
+	if l.ClaudeEntryPath != "" && (!filepath.IsAbs(l.ClaudeEntryPath) || strings.ContainsRune(l.ClaudeEntryPath, 0)) {
+		return errors.New("runtime paths must be absolute")
 	}
 	return nil
 }
@@ -224,7 +230,11 @@ func (l Launch) ValidateExecutable(exe string) error {
 	if !SameFile(exe, l.CLIPath) {
 		return errors.New("runtime instance belongs to another CLI; use its registered executable")
 	}
-	for _, path := range []string{l.CLIPath, l.ElectronPath, l.EntryPath} {
+	paths := []string{l.CLIPath, l.ElectronPath, l.EntryPath}
+	if l.ClaudeEntryPath != "" {
+		paths = append(paths, l.ClaudeEntryPath)
+	}
+	for _, path := range paths {
 		info, err := os.Stat(path)
 		if err != nil {
 			return fmt.Errorf("runtime component unavailable: %w", err)

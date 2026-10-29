@@ -1,0 +1,70 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+
+	"github.com/multica-ai/multica/server/internal/daemon/localhost"
+	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
+	"github.com/multica-ai/multica/server/internal/localconversation/service"
+	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
+)
+
+// contextMCPName is the MCP server name Multica's context tools use in
+// provider configuration.
+const contextMCPName = "multica"
+
+// openLocalConversations opens the Go-owned local conversation service and
+// its /local/v2 API. The shared sidecar keeps serving /local/v1 until Desktop
+// switches over; the two use separate storage.
+func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.Sidecar) error {
+	svc, err := service.Open(ctx, service.Options{
+		Path:           filepath.Join(d.cfg.ProfileDir, "local-conversations", "conversations.sqlite"),
+		ContextMCPName: contextMCPName,
+		Claude:         d.claudeLauncher(sidecar),
+		Logger:         d.logger.With("component", "local-conversations"),
+	})
+	if err != nil {
+		return err
+	}
+	d.conversations = svc
+	d.localV2 = localhost.NewV2(svc, d.cfg.LocalAPIToken, d.cfg.ProfileDir)
+	return nil
+}
+
+// claudeLauncher starts one Claude adapter per conversation with the
+// packaged Electron in Node mode, using the Claude Code executable the
+// daemon resolves for cloud tasks.
+func (d *Daemon) claudeLauncher(sidecar localhost.Sidecar) service.ClaudeLauncher {
+	return func(ctx context.Context, conv sqlitedb.Conversation) (service.ClaudeSession, service.StartClaudeAdapter, error) {
+		entry, ok := d.cfg.Agents["claude"]
+		if !ok {
+			return service.ClaudeSession{}, nil, errors.New("Claude Code is not installed on this computer")
+		}
+		resolved, _, err := d.resolveAgentEntryForLaunch(ctx, "claude", entry)
+		if err != nil {
+			return service.ClaudeSession{}, nil, err
+		}
+		fields := map[string]any{"executable": resolved.Path, "cwd": conv.Cwd}
+		if conv.Model.Valid && conv.Model.String != "" {
+			fields["model"] = conv.Model.String
+		}
+		if conv.ReasoningEffort.Valid && conv.ReasoningEffort.String != "" {
+			fields["reasoning_effort"] = conv.ReasoningEffort.String
+		}
+		if conv.PermissionMode != "" {
+			fields["permission_mode"] = conv.PermissionMode
+		}
+		logger := d.logger.With("component", "claude-adapter", "conversation_id", conv.ID)
+		start := func(ctx context.Context, handler claude.Handler) (service.ClaudeAdapter, error) {
+			p, err := claude.Start(ctx, claude.AdapterCommand(sidecar.Electron, sidecar.ClaudeEntry, os.Environ()), handler, logger)
+			if err != nil {
+				return nil, err
+			}
+			return p, nil
+		}
+		return service.ClaudeSession{Fields: fields}, start, nil
+	}
+}

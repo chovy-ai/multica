@@ -14,6 +14,7 @@ const launchSchema = z.object({
   schemaVersion: z.literal(1), instanceId: z.literal("desktop"), ownerId: runId,
   kind: z.enum(["development", "packaged"]),
   appPath: z.string(), cliPath: z.string(), electronPath: z.string(), entryPath: z.string(),
+  claudeEntryPath: z.string().optional(),
   cliVersion: z.string().min(1), cliCommit: commit,
   profile: z.literal(DESKTOP_RUNTIME_PROFILE), apiUrl: apiOrigin, protocolVersion: z.literal(2),
 });
@@ -46,6 +47,8 @@ export interface RuntimeSource {
   cliPath: string;
   electronPath: string;
   entryPath: string;
+  /** Per-conversation Claude adapter for the daemon's local conversation service. */
+  claudeEntryPath?: string;
 }
 
 function origin(value: string): string {
@@ -113,6 +116,7 @@ export class RuntimeInstanceRegistry {
       apiUrl: origin(apiUrl), kind: this.source.kind, appPath: resolve(this.source.appPath),
       cliPath: resolve(this.source.cliPath), cliVersion: version.version, cliCommit: version.commit,
       electronPath: resolve(this.source.electronPath), entryPath: resolve(this.source.entryPath), protocolVersion: 2,
+      ...(this.source.claudeEntryPath ? { claudeEntryPath: resolve(this.source.claudeEntryPath) } : {}),
     };
     await writePrivateRegistration(join(this.directory, "launch.json"), record);
     // The terminal command follows the latest registration, including another worktree.

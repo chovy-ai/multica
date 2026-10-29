@@ -15,6 +15,9 @@ export function desktopRuntimeRegistry(): RuntimeInstanceRegistry {
     entryPath: app.isPackaged
       ? join(appPath.replace("app.asar", "app.asar.unpacked"), "resources/local-conversation-host/index.cjs")
       : join(appPath, "out/main/local-conversation-host.js"),
+    claudeEntryPath: app.isPackaged
+      ? join(appPath.replace("app.asar", "app.asar.unpacked"), "resources/local-conversation-host/claude-host.cjs")
+      : join(appPath, "out/main/claude-host.js"),
   });
   return registry;
 }
