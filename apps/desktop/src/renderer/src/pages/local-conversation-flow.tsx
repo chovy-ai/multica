@@ -338,9 +338,11 @@ export function LocalConversationFlowPage() {
         <div className="flex h-full min-h-0 min-w-0 flex-col border-r" data-testid="local-conversation-sessions">
           <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
             <h1 className="min-w-0 flex-1 truncate text-body font-semibold">{labels.sessions}</h1>
-            <LocalConversationImportButton key={`${scope.userId}:${scope.workspaceId}`} scope={scope} client={client} projects={projects} chinese={chinese} onImported={() => { void qc.invalidateQueries({ queryKey: localConversationKey(scope) }); }} />
-            <IconButton label={projectLabels.new} disabled={addingProject} aria-busy={addingProject} onClick={() => { void addProject(); }}>{addingProject ? <Loader2 className="animate-spin" /> : <FolderPlus />}</IconButton>
-            <IconButton label={labels.new} disabled={creating || !providers.data?.some((entry) => entry.available)} disabledReason={labels.unavailable} onClick={() => { void create(); }}><Plus /></IconButton>
+            <div className="flex shrink-0 items-center gap-1">
+              <LocalConversationImportButton key={`${scope.userId}:${scope.workspaceId}`} scope={scope} client={client} projects={projects} chinese={chinese} onImported={() => { void qc.invalidateQueries({ queryKey: localConversationKey(scope) }); }} />
+              <IconButton label={projectLabels.new} disabled={addingProject} aria-busy={addingProject} onClick={() => { void addProject(); }}>{addingProject ? <Loader2 className="animate-spin" /> : <FolderPlus />}</IconButton>
+              <IconButton label={labels.new} disabled={creating || !providers.data?.some((entry) => entry.available)} disabledReason={labels.unavailable} onClick={() => { void create(); }}><Plus /></IconButton>
+            </div>
           </div>
           <div className="px-3 py-3"><div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input aria-label={labels.search} placeholder={labels.search} className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setSearch(""); }} /></div></div>
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto px-3 pb-2">
@@ -404,8 +406,10 @@ export function LocalConversationFlowPage() {
             {compact && <IconButton label={labels.sessions} onClick={() => setShowList(true)}><ArrowLeft /></IconButton>}
             <span className="min-w-0 flex-1 truncate text-body font-medium">{selected?.title ?? labels.newTitle}</span>
             {selected?.forkMode === "saved-context" && <span className="shrink-0 text-micro text-muted-foreground" title={chinese ? "从该轮保存的消息建立独立上下文；未保存的原生状态不包含在内。" : "Independent context from saved messages through this turn; unsaved native state is not included."}>{chinese ? "上下文分叉" : "Context fork"}</span>}
-            {selected && <Button variant="ghost" size="sm" className="max-w-48" aria-label={labels.directory} disabled={selected.messages.length > 0} title={`${automaticDirectory ? directoryName : selected.cwd}${selected.messages.length ? ` · ${labels.directoryLocked}` : ""}`} onClick={() => { void client.request(scope, "directory", { id: selected.id }).then(() => qc.invalidateQueries({ queryKey: localConversationKey(scope) })).catch(report); }}><FolderOpen className="size-4" /><span className="truncate">{directoryName}</span></Button>}
-            <IconButton aria-expanded={sideOpen} label={sideOpen ? (chinese ? "关闭右侧面板" : "Close right workspace") : (chinese ? "打开右侧面板" : "Open right workspace")} onClick={() => sideWorkspace.current?.toggle()}><PanelRightOpen /></IconButton>
+            <div className="flex min-w-0 items-center gap-1">
+              {selected && <Button variant="ghost" size="sm" className="min-w-0 max-w-48 shrink" aria-label={labels.directory} disabled={selected.messages.length > 0} title={`${automaticDirectory ? directoryName : selected.cwd}${selected.messages.length ? ` · ${labels.directoryLocked}` : ""}`} onClick={() => { void client.request(scope, "directory", { id: selected.id }).then(() => qc.invalidateQueries({ queryKey: localConversationKey(scope) })).catch(report); }}><FolderOpen className="size-4" /><span className="truncate">{directoryName}</span></Button>}
+              <IconButton aria-expanded={sideOpen} label={sideOpen ? (chinese ? "关闭右侧面板" : "Close right workspace") : (chinese ? "打开右侧面板" : "Open right workspace")} onClick={() => sideWorkspace.current?.toggle()}><PanelRightOpen /></IconButton>
+            </div>
           </div>
           <LocalRuntimeNotice scope={scope} chinese={chinese} />
           <TuttiAgentGuiPanel locateRequest={locateRequest ?? undefined} restoreDraftRequest={referenceDraft} key={`${workspace.id}:${userId}`} serviceFactory={factory} workspaceId={workspace.id} workspaceSlug={slug} userId={userId}
