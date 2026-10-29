@@ -22,6 +22,40 @@ async function setup(run: typeof runLocalProvider) {
   return { service, options };
 }
 describe("Electron-owned conversation queue", () => {
+  it.each(["codex", "claude"] as const)("steers %s once after delayed provider exit without another click", async (provider) => {
+    let exit!: () => void;
+    let finishNext!: () => void;
+    const exiting = new Promise<void>((resolve) => { exit = resolve; });
+    const next = new Promise<void>((resolve) => { finishNext = resolve; });
+    let cancelled = false;
+    const { service, options } = await setup(async (input, _emit, signal) => {
+      if (input.content === "first") {
+        signal.addEventListener("abort", () => { cancelled = true; }, { once: true });
+        await exiting;
+      }
+      if (input.content === "third") await next;
+      return { output: "done" };
+    });
+    const entry = await service.request(scope, "create", { provider });
+    try {
+      await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("first") });
+      await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
+      await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("second") });
+      await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("third") });
+      const receipt = await service.request(scope, "queueUpdate", { id: entry.id, action: "sendNow", requestId: "third" });
+      expect(cancelled).toBe(true);
+      expect(receipt).toMatchObject({ paused: false, items: [{ requestId: "third" }, { requestId: "second" }] });
+      expect(options.run).toHaveBeenCalledOnce();
+      exit();
+      await vi.waitFor(() => expect(options.run).toHaveBeenCalledTimes(2));
+      // A duplicate receipt/retry must not cancel the selected turn after it starts.
+      await service.request(scope, "queueUpdate", { id: entry.id, action: "sendNow", requestId: "third" });
+      expect(options.run.mock.calls[1]?.[2].aborted).toBe(false);
+      finishNext();
+      await vi.waitFor(() => expect(options.run).toHaveBeenCalledTimes(3));
+      expect(options.run.mock.calls.map(([input]) => input.content)).toEqual(["first", "third", "second"]);
+    } finally { exit(); finishNext(); }
+  });
   it("separates saved queue wait from context preparation and provider execution", async () => {
     const { service, options } = await setup(async () => ({ output: "done" }));
     const entry = await service.request(scope, "create", { provider: "codex" });
@@ -76,6 +110,7 @@ describe("Electron-owned conversation queue", () => {
     try {
       const receipt = await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("first") });
       expect(receipt).toMatchObject({ dispatchingRequestId: "first" });
+      expect(await service.request(scope, "queueUpdate", { id: entry.id, action: "sendNow", requestId: "first" })).toMatchObject({ paused: false, dispatchingRequestId: "first" });
       expect((await service.request(scope, "read", { id: entry.id })).promptQueue).toMatchObject({ dispatchingRequestId: "first" });
       expect((await service.request(scope, "list", {})).find((value) => value.id === entry.id)?.promptQueue).toMatchObject({ dispatchingRequestId: "first" });
       allowAdmission();

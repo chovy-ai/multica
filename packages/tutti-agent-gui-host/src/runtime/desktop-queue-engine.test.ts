@@ -14,7 +14,7 @@ function setup(running = false, pendingStore?: DesktopPendingStore) {
   base.dispatch({ type: "session/snapshotReceived", sessions: [{ agentSessionId: "session", workspaceId: "ws", provider: "codex", title: "Conversation", cwd: "/workspace", activeTurnId: running ? "active" : null,
     ...(running ? { activeTurn: { agentSessionId: "session", turnId: "active", origin: "user_prompt", phase: "running", startedAtUnixMs: 1, updatedAtUnixMs: 1 } } : {}), pendingInteractions: [], latestTurnInteractions: [] }] });
   const options = { pendingStore, enabled: () => true, enqueue: vi.fn(async (_input: SubmitInput): Promise<LocalPromptQueue> => ({ revision: 1, paused: false, items: [] })),
-    update: vi.fn(async () => ({ revision: 2, paused: true, items: [] })), error: vi.fn() };
+    update: vi.fn(async (): Promise<LocalPromptQueue> => ({ revision: 2, paused: true, items: [] })), error: vi.fn() };
   const adapter = createDesktopQueueEngine(base, options);
   return { ...adapter, options, sendInput };
 }
@@ -25,6 +25,65 @@ const submit = (engine: ReturnType<typeof setup>["engine"], id: string) => engin
 const sendNow = (engine: ReturnType<typeof setup>["engine"], promptId: string) => engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: "session", promptId, awaitingTurnExpiresAtUnixMs: 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
 const visible = (engine: ReturnType<typeof setup>["engine"]) => engine.getSnapshot().promptQueue.recordsBySessionId.session?.prompts.filter((prompt) => prompt.visibleInQueue !== false).map((prompt) => prompt.id) ?? [];
 describe("desktop queue presentation", () => {
+  it("submits steering immediately and keeps it pending after acknowledgement until dispatch", async () => {
+    const { engine, receive, options } = setup(true);
+    let acknowledge!: (queue: LocalPromptQueue) => void;
+    options.update.mockImplementation(() => new Promise((resolve) => { acknowledge = resolve; }));
+    receive("session", { revision: 1, paused: false, items: [queued("next"), queued("later")] });
+    try {
+      sendNow(engine, "next");
+      expect(options.update).toHaveBeenCalledWith("session", "sendNow", "next");
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session).toMatchObject({
+        inFlight: { kind: "send", promptId: "next" }, sendNextPromptId: "next",
+      });
+      // Cancelling the old turn first publishes a paused queue.
+      receive("session", { revision: 2, paused: true, items: [queued("next"), queued("later")] });
+      acknowledge({ revision: 3, paused: false, items: [queued("next"), queued("later")] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      sendNow(engine, "next");
+      expect(options.update).toHaveBeenCalledOnce();
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.inFlight?.promptId).toBe("next");
+      expect(visible(engine)).toEqual(["next", "later"]);
+      receive("session", { revision: 4, paused: false, dispatchingRequestId: "next", items: [queued("next"), queued("later")] });
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.inFlight).toBeNull();
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.sendNextPromptId).toBeNull();
+      sendNow(engine, "next");
+      expect(options.update).toHaveBeenCalledOnce();
+      expect(visible(engine)).toEqual(["later"]);
+    } finally { engine.dispose(); }
+  });
+  it.each(["stop", "failure", "removed"] as const)("releases acknowledged steering on %s and permits explicit retry", async (outcome) => {
+    const { engine, receive, options } = setup(true);
+    options.update.mockResolvedValue({ revision: 2, paused: false, items: [queued("next")] });
+    receive("session", { revision: 1, paused: false, items: [queued("next")] });
+    try {
+      sendNow(engine, "next");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.inFlight?.promptId).toBe("next");
+      receive("session", { revision: 3, paused: outcome !== "removed", items: outcome === "removed" ? [] : [queued("next")], ...(outcome === "failure" ? { error: "Could not dispatch" } : {}) });
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.inFlight).toBeNull();
+      if (outcome !== "removed") {
+        options.update.mockResolvedValue({ revision: 4, paused: false, items: [queued("next")] });
+        sendNow(engine, "next");
+        expect(options.update).toHaveBeenCalledTimes(2);
+      }
+    } finally { engine.dispose(); }
+  });
+  it("settles a late steer acknowledgement against a newer stopped snapshot", async () => {
+    const { engine, receive, options } = setup(true);
+    let acknowledge!: (queue: LocalPromptQueue) => void;
+    options.update.mockImplementation(() => new Promise((resolve) => { acknowledge = resolve; }));
+    receive("session", { revision: 1, paused: false, items: [queued("next")] });
+    try {
+      sendNow(engine, "next");
+      receive("session", { revision: 4, paused: true, items: [queued("next")] });
+      acknowledge({ revision: 3, paused: false, items: [queued("next")] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session).toMatchObject({ inFlight: null, suspendReason: "user_stop" });
+      sendNow(engine, "next");
+      expect(options.update).toHaveBeenCalledTimes(2);
+    } finally { engine.dispose(); }
+  });
   it("rejects the 101st prompt before admission or checkpointing and accepts after a slot opens", () => {
     const store = createDesktopPendingStore();
     const { engine, receive, options } = setup(true, store);
@@ -80,6 +139,7 @@ describe("desktop queue presentation", () => {
       engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: "session", promptId: "next", awaitingTurnExpiresAtUnixMs: 1000, cancelCommandId: "cancel", timeoutMs: 1000 });
       await vi.waitFor(() => expect(options.error).toHaveBeenCalledOnce());
       expect(visible(engine)).toEqual(["next"]);
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.inFlight).toBeNull();
       expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.failureMessage).toBe("Queue update unavailable");
       receive("session", { revision: 3, paused: false, items: [queued("next")] });
       expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.failureMessage).toBe("Queue update unavailable");
@@ -90,7 +150,7 @@ describe("desktop queue presentation", () => {
     } finally { engine.dispose(); }
   });
   it("waits for an in-flight image admission and coalesces repeated send-now clicks", async () => {
-    const { engine, options } = setup(true);
+    const { engine, receive, options } = setup(true);
     let accept!: (queue: LocalPromptQueue) => void;
     options.enqueue.mockImplementation(() => new Promise((resolve) => { accept = resolve; }));
     const input = { agentSessionId: "session", clientSubmitId: "image", content: [{ type: "text" as const, text: "use this image" }, { type: "image" as const, attachmentId: "saved-image", mimeType: "image/png" }] };
@@ -98,6 +158,8 @@ describe("desktop queue presentation", () => {
     sendNow(engine, "image"); sendNow(engine, "image");
     expect(options.update).not.toHaveBeenCalled();
     expect(options.enqueue).toHaveBeenCalledOnce();
+    receive("session", { revision: 0, paused: false, items: [] });
+    expect(engine.getSnapshot().promptQueue.recordsBySessionId.session?.inFlight?.promptId).toBe("image");
     accept({ revision: 1, paused: false, items: [{ ...queued("image"), attachmentIds: ["saved-image"] }] });
     await vi.waitFor(() => expect(options.update).toHaveBeenCalledOnce());
     expect(options.update).toHaveBeenCalledWith("session", "sendNow", "image");
