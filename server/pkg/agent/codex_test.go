@@ -28,10 +28,8 @@ func newTestCodexClient(t *testing.T) (*codexClient, *fakeStdin, []Message) {
 	var messages []Message
 
 	c := &codexClient{
-		cfg:         Config{Logger: slog.Default()},
-		stdin:       fs,
-		pending:     make(map[int]*pendingRPC),
-		processDone: make(chan struct{}),
+		cfg:  Config{Logger: slog.Default()},
+		conn: newCodexConn(fs, slog.Default()),
 		onMessage: func(msg Message) {
 			mu.Lock()
 			messages = append(messages, msg)
@@ -50,7 +48,7 @@ func TestSupplementCodexTurnTargetsExactActiveTurn(t *testing.T) {
 	stdin.afterWrite = func() {
 		c.handleLine(`{"jsonrpc":"2.0","id":1,"result":{}}`)
 	}
-	c.stdin = stdin
+	c.conn = newCodexConn(stdin, slog.Default())
 
 	if err := supplementCodexTurn(context.Background(), c, "keep the original goal and add this"); err != nil {
 		t.Fatalf("supplementCodexTurn: %v", err)
@@ -144,26 +142,22 @@ func splitLines(s string) []string {
 	return lines
 }
 
-func TestCodexHandleResponseSuccess(t *testing.T) {
+func TestCodexHandleLineResolvesRequest(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-
-	// Register a pending request
-	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: "test"}
-	c.mu.Lock()
-	c.pending[1] = pr
-	c.mu.Unlock()
-
-	c.handleLine(`{"jsonrpc":"2.0","id":1,"result":{"ok":true}}`)
-
-	res := <-pr.ch
-	if res.err != nil {
-		t.Fatalf("expected no error, got %v", res.err)
+	stdin := &fakeStdinWithHook{}
+	stdin.afterWrite = func() {
+		c.handleLine(`{"jsonrpc":"2.0","id":1,"result":{"ok":true}}`)
 	}
+	c.conn = newCodexConn(stdin, slog.Default())
 
+	result, err := c.request(context.Background(), "test", map[string]any{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
 	var parsed map[string]any
-	if err := json.Unmarshal(res.result, &parsed); err != nil {
+	if err := json.Unmarshal(result, &parsed); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 	if parsed["ok"] != true {
@@ -171,24 +165,25 @@ func TestCodexHandleResponseSuccess(t *testing.T) {
 	}
 }
 
-func TestCodexHandleResponseError(t *testing.T) {
+func TestCodexHandleLineRejectsRequest(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
+	stdin := &fakeStdinWithHook{}
+	stdin.afterWrite = func() {
+		c.handleLine(`{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad request"}}`)
+	}
+	c.conn = newCodexConn(stdin, slog.Default())
 
-	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: "test"}
-	c.mu.Lock()
-	c.pending[1] = pr
-	c.mu.Unlock()
-
-	c.handleLine(`{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad request"}}`)
-
-	res := <-pr.ch
-	if res.err == nil {
+	result, err := c.request(context.Background(), "test", map[string]any{})
+	if err == nil {
 		t.Fatal("expected error")
 	}
-	if res.result != nil {
-		t.Fatalf("expected nil result, got %v", res.result)
+	if want := "test: bad request (code=-32600)"; err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+	if result != nil {
+		t.Fatalf("expected nil result, got %s", result)
 	}
 }
 
@@ -2110,41 +2105,11 @@ func TestCodexRawItemAgentMessageFinalAnswerFromSubagentIgnored(t *testing.T) {
 	}
 }
 
-func TestCodexCloseAllPending(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-
-	pr1 := &pendingRPC{ch: make(chan rpcResult, 1), method: "m1"}
-	pr2 := &pendingRPC{ch: make(chan rpcResult, 1), method: "m2"}
-	c.mu.Lock()
-	c.pending[1] = pr1
-	c.pending[2] = pr2
-	c.mu.Unlock()
-
-	c.closeAllPending(fmt.Errorf("test error"))
-
-	r1 := <-pr1.ch
-	if r1.err == nil {
-		t.Fatal("expected error for pending 1")
-	}
-	r2 := <-pr2.ch
-	if r2.err == nil {
-		t.Fatal("expected error for pending 2")
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.pending) != 0 {
-		t.Fatalf("expected empty pending map, got %d", len(c.pending))
-	}
-}
-
 func TestCodexRequestFailsImmediatelyAfterProcessExit(t *testing.T) {
 	t.Parallel()
 
 	c, fs, _ := newTestCodexClient(t)
-	c.markProcessExited(errCodexProcessExited)
+	c.conn.Close(errCodexProcessExited)
 
 	_, err := c.request(context.Background(), "thread/start", map[string]any{})
 	if !errors.Is(err, errCodexProcessExited) {
@@ -2168,7 +2133,7 @@ func TestCodexRequestPrefersContextCancellationOverProcessExit(t *testing.T) {
 		for {
 			if len(fs.Lines()) >= 1 {
 				cancel()
-				c.markProcessExited(errCodexProcessExited)
+				c.conn.Close(errCodexProcessExited)
 				processExitMarked <- nil
 				return
 			}
@@ -2196,13 +2161,11 @@ func TestCodexRequestPrefersReadyResponseOverProcessExit(t *testing.T) {
 	fs := &fakeStdinWithHook{}
 	fs.afterWrite = func() {
 		c.handleLine(`{"jsonrpc":"2.0","id":1,"result":{"ok":true}}`)
-		c.markProcessExited(errCodexProcessExited)
+		c.conn.Close(errCodexProcessExited)
 	}
 	c = &codexClient{
-		cfg:         Config{Logger: slog.Default()},
-		stdin:       fs,
-		pending:     make(map[int]*pendingRPC),
-		processDone: make(chan struct{}),
+		cfg:  Config{Logger: slog.Default()},
+		conn: newCodexConn(fs, slog.Default()),
 	}
 
 	result, err := c.request(context.Background(), "thread/start", map[string]any{})
@@ -2832,7 +2795,7 @@ func TestCodexStartOrResumeThreadDoesNotFallBackAfterProcessExit(t *testing.T) {
 		deadline := time.Now().Add(2 * time.Second)
 		for {
 			if len(fs.Lines()) >= 1 {
-				c.markProcessExited(errCodexProcessExited)
+				c.conn.Close(errCodexProcessExited)
 				processExitMarked <- nil
 				return
 			}
