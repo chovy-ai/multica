@@ -90,6 +90,8 @@ type Batch struct {
 	// Metadata replaces the conversation's list metadata; the summary
 	// always follows it.
 	Metadata *ConversationMetadata
+	// Queue changes the conversation's prompt queue.
+	Queue *QueueChange
 }
 
 // ConversationMetadata is how a conversation is listed and where it runs.
@@ -431,6 +433,12 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		}
 		if b.Summary == nil {
 			b.Summary = &SummaryPatch{UpdatedAt: metadataTime(b)}
+		}
+	}
+
+	if c := b.Queue; c != nil {
+		if err := applyQueue(ctx, q, conv.ID, c); err != nil {
+			return Committed{}, err
 		}
 	}
 

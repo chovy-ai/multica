@@ -94,6 +94,20 @@ func (q *Queries) CountPendingInteractions(ctx context.Context, conversationID s
 	return count, err
 }
 
+const deletePromptQueueItem = `-- name: DeletePromptQueueItem :exec
+DELETE FROM prompt_queue_item WHERE conversation_id = ? AND request_id = ?
+`
+
+type DeletePromptQueueItemParams struct {
+	ConversationID string
+	RequestID      string
+}
+
+func (q *Queries) DeletePromptQueueItem(ctx context.Context, arg DeletePromptQueueItemParams) error {
+	_, err := q.db.ExecContext(ctx, deletePromptQueueItem, arg.ConversationID, arg.RequestID)
+	return err
+}
+
 const findConversationByCwd = `-- name: FindConversationByCwd :one
 SELECT id, scope_id, provider, provider_session_id, title, title_mode, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation WHERE scope_id = ? AND cwd = ? ORDER BY created_at LIMIT 1
 `
@@ -294,6 +308,22 @@ func (q *Queries) GetMeta(ctx context.Context, key string) (string, error) {
 	var value string
 	err := row.Scan(&value)
 	return value, err
+}
+
+const getPromptQueue = `-- name: GetPromptQueue :one
+SELECT conversation_id, revision, paused, error FROM prompt_queue WHERE conversation_id = ?
+`
+
+func (q *Queries) GetPromptQueue(ctx context.Context, conversationID string) (PromptQueue, error) {
+	row := q.db.QueryRowContext(ctx, getPromptQueue, conversationID)
+	var i PromptQueue
+	err := row.Scan(
+		&i.ConversationID,
+		&i.Revision,
+		&i.Paused,
+		&i.Error,
+	)
+	return i, err
 }
 
 const getScope = `-- name: GetScope :one
@@ -602,6 +632,27 @@ type InsertPreviewRootParams struct {
 
 func (q *Queries) InsertPreviewRoot(ctx context.Context, arg InsertPreviewRootParams) error {
 	_, err := q.db.ExecContext(ctx, insertPreviewRoot, arg.ScopeID, arg.Path, arg.CreatedAt)
+	return err
+}
+
+const insertPromptQueueItem = `-- name: InsertPromptQueueItem :exec
+INSERT INTO prompt_queue_item (conversation_id, request_id, position, item) VALUES (?, ?, ?, ?)
+`
+
+type InsertPromptQueueItemParams struct {
+	ConversationID string
+	RequestID      string
+	Position       int64
+	Item           string
+}
+
+func (q *Queries) InsertPromptQueueItem(ctx context.Context, arg InsertPromptQueueItemParams) error {
+	_, err := q.db.ExecContext(ctx, insertPromptQueueItem,
+		arg.ConversationID,
+		arg.RequestID,
+		arg.Position,
+		arg.Item,
+	)
 	return err
 }
 
@@ -957,6 +1008,65 @@ func (q *Queries) ListPreviewRoots(ctx context.Context, scopeID int64) ([]string
 			return nil, err
 		}
 		items = append(items, path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPromptQueueItems = `-- name: ListPromptQueueItems :many
+SELECT conversation_id, request_id, position, item FROM prompt_queue_item WHERE conversation_id = ? ORDER BY position, request_id
+`
+
+func (q *Queries) ListPromptQueueItems(ctx context.Context, conversationID string) ([]PromptQueueItem, error) {
+	rows, err := q.db.QueryContext(ctx, listPromptQueueItems, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PromptQueueItem{}
+	for rows.Next() {
+		var i PromptQueueItem
+		if err := rows.Scan(
+			&i.ConversationID,
+			&i.RequestID,
+			&i.Position,
+			&i.Item,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQueuedConversations = `-- name: ListQueuedConversations :many
+SELECT DISTINCT conversation_id FROM prompt_queue_item ORDER BY conversation_id
+`
+
+func (q *Queries) ListQueuedConversations(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listQueuedConversations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var conversation_id string
+		if err := rows.Scan(&conversation_id); err != nil {
+			return nil, err
+		}
+		items = append(items, conversation_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -1367,6 +1477,24 @@ func (q *Queries) MarkCommandUncertain(ctx context.Context, arg MarkCommandUncer
 	return err
 }
 
+const promptQueueBounds = `-- name: PromptQueueBounds :one
+SELECT CAST(COALESCE(MIN(position), 0) AS INTEGER) AS first_position, CAST(COALESCE(MAX(position), 0) AS INTEGER) AS last_position, COUNT(*) AS item_count
+FROM prompt_queue_item WHERE conversation_id = ?
+`
+
+type PromptQueueBoundsRow struct {
+	FirstPosition int64
+	LastPosition  int64
+	ItemCount     int64
+}
+
+func (q *Queries) PromptQueueBounds(ctx context.Context, conversationID string) (PromptQueueBoundsRow, error) {
+	row := q.db.QueryRowContext(ctx, promptQueueBounds, conversationID)
+	var i PromptQueueBoundsRow
+	err := row.Scan(&i.FirstPosition, &i.LastPosition, &i.ItemCount)
+	return i, err
+}
+
 const putMeta = `-- name: PutMeta :exec
 INSERT INTO store_meta (key, value) VALUES (?, ?)
 ON CONFLICT (key) DO UPDATE SET value = excluded.value
@@ -1421,6 +1549,21 @@ type SetConversationTurnCountParams struct {
 
 func (q *Queries) SetConversationTurnCount(ctx context.Context, arg SetConversationTurnCountParams) error {
 	_, err := q.db.ExecContext(ctx, setConversationTurnCount, arg.TurnCount, arg.ID)
+	return err
+}
+
+const setPromptQueueItemPosition = `-- name: SetPromptQueueItemPosition :exec
+UPDATE prompt_queue_item SET position = ? WHERE conversation_id = ? AND request_id = ?
+`
+
+type SetPromptQueueItemPositionParams struct {
+	Position       int64
+	ConversationID string
+	RequestID      string
+}
+
+func (q *Queries) SetPromptQueueItemPosition(ctx context.Context, arg SetPromptQueueItemPositionParams) error {
+	_, err := q.db.ExecContext(ctx, setPromptQueueItemPosition, arg.Position, arg.ConversationID, arg.RequestID)
 	return err
 }
 
@@ -1531,6 +1674,28 @@ func (q *Queries) UpdateConversationSummary(ctx context.Context, arg UpdateConve
 		arg.SummarySeq,
 		arg.UpdatedAt,
 		arg.ID,
+	)
+	return err
+}
+
+const upsertPromptQueue = `-- name: UpsertPromptQueue :exec
+INSERT INTO prompt_queue (conversation_id, revision, paused, error) VALUES (?, ?, ?, ?)
+ON CONFLICT (conversation_id) DO UPDATE SET revision = excluded.revision, paused = excluded.paused, error = excluded.error
+`
+
+type UpsertPromptQueueParams struct {
+	ConversationID string
+	Revision       int64
+	Paused         int64
+	Error          string
+}
+
+func (q *Queries) UpsertPromptQueue(ctx context.Context, arg UpsertPromptQueueParams) error {
+	_, err := q.db.ExecContext(ctx, upsertPromptQueue,
+		arg.ConversationID,
+		arg.Revision,
+		arg.Paused,
+		arg.Error,
 	)
 	return err
 }

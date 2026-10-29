@@ -110,6 +110,13 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		v.approvePreviewRoot(w, r, scopeID)
 	case strings.HasPrefix(path, "/preview/") && r.Method == http.MethodGet:
 		v.preview(w, r, scopeID, strings.TrimPrefix(path, "/preview/"))
+	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "queue" && r.Method == http.MethodGet:
+		queue, err := v.svc.Queue(r.Context(), scopeID, parts[1])
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, queue)
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "image" && r.Method == http.MethodGet:
 		v.conversationImage(w, r, scopeID, parts[1])
 	case path == "/directory-source" && r.Method == http.MethodGet:
@@ -238,6 +245,14 @@ type commandBody struct {
 	ProjectID json.RawMessage `json:"project_id"`
 	// set_directory: the folder the conversation runs in.
 	Cwd string `json:"cwd"`
+	// queue_enqueue: the client's queued message; paused queues it
+	// without dispatching. queue_update: the action and, for remove and
+	// send_now, the item's request_id.
+	Item   json.RawMessage `json:"item"`
+	Paused bool            `json:"paused"`
+	Action string          `json:"action"`
+	// send: provider text replacing Text, such as Text with context.
+	Prompt string `json:"prompt"`
 }
 
 // optionalString decodes an update_settings field.
@@ -267,7 +282,7 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			writeV2Error(w, AppError("invalid_request", "request_id is required"))
 			return
 		}
-		result, err := v.svc.Send(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, AttachmentIDs: body.AttachmentIDs})
+		result, err := v.svc.Send(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, Prompt: body.Prompt, AttachmentIDs: body.AttachmentIDs})
 		if err != nil {
 			writeV2Error(w, err)
 			return
@@ -323,6 +338,20 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			return
 		}
 		writeJSON(w, http.StatusOK, summaryDTO(conv))
+	case "queue_enqueue":
+		queue, err := v.svc.Enqueue(r.Context(), scopeID, id, body.Item, body.Paused)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, queue)
+	case "queue_update":
+		queue, err := v.svc.UpdateQueue(r.Context(), scopeID, id, body.Action, body.RequestID)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, queue)
 	case "stop_background_tasks":
 		if err := v.svc.StopBackgroundTasks(r.Context(), scopeID, id); err != nil {
 			writeV2Error(w, err)
@@ -589,6 +618,12 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusForbidden, "outside_folder"
 	case errors.Is(err, store.ErrUploadTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "file_too_large"
+	case errors.Is(err, service.ErrQueueItemStarted):
+		status, code = http.StatusConflict, "queue_item_started"
+	case errors.Is(err, service.ErrQueueFull):
+		status, code = http.StatusConflict, "queue_full"
+	case errors.Is(err, service.ErrArchived):
+		status, code = http.StatusConflict, "archived"
 	case errors.Is(err, catalog.ErrUnknownProvider):
 		status, code = http.StatusBadRequest, "unsupported_provider"
 	case errors.Is(err, service.ErrInvalidRequest):

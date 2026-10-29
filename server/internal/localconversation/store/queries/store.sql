@@ -204,3 +204,29 @@ SELECT path FROM preview_root WHERE scope_id = ? ORDER BY created_at, path;
 SELECT * FROM event
 WHERE conversation_id = ? AND item_id IS NOT NULL AND json_extract(payload, '$.kind') = 'background_task'
 ORDER BY seq;
+
+-- name: GetPromptQueue :one
+SELECT * FROM prompt_queue WHERE conversation_id = ?;
+
+-- name: UpsertPromptQueue :exec
+INSERT INTO prompt_queue (conversation_id, revision, paused, error) VALUES (?, ?, ?, ?)
+ON CONFLICT (conversation_id) DO UPDATE SET revision = excluded.revision, paused = excluded.paused, error = excluded.error;
+
+-- name: ListPromptQueueItems :many
+SELECT * FROM prompt_queue_item WHERE conversation_id = ? ORDER BY position, request_id;
+
+-- name: InsertPromptQueueItem :exec
+INSERT INTO prompt_queue_item (conversation_id, request_id, position, item) VALUES (?, ?, ?, ?);
+
+-- name: DeletePromptQueueItem :exec
+DELETE FROM prompt_queue_item WHERE conversation_id = ? AND request_id = ?;
+
+-- name: SetPromptQueueItemPosition :exec
+UPDATE prompt_queue_item SET position = ? WHERE conversation_id = ? AND request_id = ?;
+
+-- name: PromptQueueBounds :one
+SELECT CAST(COALESCE(MIN(position), 0) AS INTEGER) AS first_position, CAST(COALESCE(MAX(position), 0) AS INTEGER) AS last_position, COUNT(*) AS item_count
+FROM prompt_queue_item WHERE conversation_id = ?;
+
+-- name: ListQueuedConversations :many
+SELECT DISTINCT conversation_id FROM prompt_queue_item ORDER BY conversation_id;

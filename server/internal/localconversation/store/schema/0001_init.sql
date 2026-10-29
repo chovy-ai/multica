@@ -106,14 +106,19 @@ CREATE TABLE interaction_request (
 );
 CREATE INDEX interaction_request_status ON interaction_request (conversation_id, status);
 
+CREATE TABLE prompt_queue (
+    conversation_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL DEFAULT 0,
+    paused INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE prompt_queue_item (
-    id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
     position INTEGER NOT NULL,
-    input TEXT NOT NULL,
-    attachment_ids TEXT NOT NULL DEFAULT '[]',
-    state TEXT NOT NULL DEFAULT 'queued',
-    request_id TEXT NOT NULL DEFAULT ''
+    item TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, request_id)
 );
 CREATE INDEX prompt_queue_order ON prompt_queue_item (conversation_id, position);
 

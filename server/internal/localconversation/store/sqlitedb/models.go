@@ -109,14 +109,18 @@ type PreviewRoot struct {
 	CreatedAt string
 }
 
-type PromptQueueItem struct {
-	ID             string
+type PromptQueue struct {
 	ConversationID string
-	Position       int64
-	Input          string
-	AttachmentIds  string
-	State          string
+	Revision       int64
+	Paused         int64
+	Error          string
+}
+
+type PromptQueueItem struct {
+	ConversationID string
 	RequestID      string
+	Position       int64
+	Item           string
 }
 
 type Scope struct {

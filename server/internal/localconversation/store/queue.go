@@ -1,0 +1,96 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
+)
+
+// QueueItem is one queued message. Item is the client's item, stored as
+// given.
+type QueueItem struct {
+	RequestID string
+	Item      json.RawMessage
+}
+
+// QueueState is a conversation's prompt queue.
+type QueueState struct {
+	Revision int64
+	Paused   bool
+	Error    string
+	Items    []QueueItem
+}
+
+// QueueChange is one queue mutation. The caller serializes mutations and
+// sets the resulting revision, pause state and error.
+type QueueChange struct {
+	Revision int64
+	Paused   bool
+	Error    string
+	// Append adds an item at the end; Front adds it, or moves an existing
+	// item, to the front.
+	Append *QueueItem
+	Front  string
+	Remove string
+}
+
+// Queue reads a conversation's prompt queue.
+func (s *Store) Queue(ctx context.Context, conversationID string) (QueueState, error) {
+	q := sqlitedb.New(s.read)
+	var state QueueState
+	meta, err := q.GetPromptQueue(ctx, conversationID)
+	switch {
+	case err == nil:
+		state = QueueState{Revision: meta.Revision, Paused: meta.Paused == 1, Error: meta.Error}
+	case !errors.Is(err, sql.ErrNoRows):
+		return state, err
+	}
+	rows, err := q.ListPromptQueueItems(ctx, conversationID)
+	if err != nil {
+		return state, err
+	}
+	for _, row := range rows {
+		state.Items = append(state.Items, QueueItem{RequestID: row.RequestID, Item: json.RawMessage(row.Item)})
+	}
+	return state, nil
+}
+
+func applyQueue(ctx context.Context, q *sqlitedb.Queries, conversationID string, c *QueueChange) error {
+	err := q.UpsertPromptQueue(ctx, sqlitedb.UpsertPromptQueueParams{
+		ConversationID: conversationID, Revision: c.Revision, Paused: boolInt(c.Paused), Error: c.Error,
+	})
+	if err != nil {
+		return err
+	}
+	if c.Remove != "" {
+		if err := q.DeletePromptQueueItem(ctx, sqlitedb.DeletePromptQueueItemParams{ConversationID: conversationID, RequestID: c.Remove}); err != nil {
+			return err
+		}
+	}
+	bounds, err := q.PromptQueueBounds(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	if c.Append != nil {
+		err := q.InsertPromptQueueItem(ctx, sqlitedb.InsertPromptQueueItemParams{
+			ConversationID: conversationID, RequestID: c.Append.RequestID, Position: bounds.LastPosition + 1, Item: string(c.Append.Item),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if c.Front != "" {
+		return q.SetPromptQueueItemPosition(ctx, sqlitedb.SetPromptQueueItemPositionParams{
+			Position: bounds.FirstPosition - 1, ConversationID: conversationID, RequestID: c.Front,
+		})
+	}
+	return nil
+}
+
+// QueuedConversations lists conversations with queued messages.
+func (s *Store) QueuedConversations(ctx context.Context) ([]string, error) {
+	return sqlitedb.New(s.read).ListQueuedConversations(ctx)
+}

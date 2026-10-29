@@ -20,6 +20,8 @@ import (
 )
 
 var (
+	// ErrClosing rejects new work while the service shuts down.
+	ErrClosing = errors.New("local conversation: the service is shutting down")
 	// ErrRequestConflict means a request id was reused for different content.
 	ErrRequestConflict = errors.New("local conversation: request id reused with different content")
 	// ErrUnsupportedProvider means no runner serves the conversation's provider.
@@ -85,8 +87,10 @@ type Service struct {
 	// metaMu serializes metadata read-modify-write updates.
 	metaMu    sync.Mutex
 	mu        sync.Mutex
+	closing   bool
 	runners   map[string]runner
 	questions interactions
+	queues    queues
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -124,7 +128,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		return nil, err
 	}
 	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), context: contextServer, opts: opts, runners: map[string]runner{},
-		questions: interactions{waiting: map[string]*waitingQuestion{}}}
+		questions: interactions{waiting: map[string]*waitingQuestion{}},
+		queues:    queues{locks: map[string]*sync.Mutex{}, dispatching: map[string]string{}}}
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: s.hub.Publish,
 		Failed: func(id string, err error) {
@@ -133,12 +138,21 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 			}
 		},
 	})
+	// Queues keep running after a restart.
+	queued, err := st.QueuedConversations(ctx)
+	if err != nil {
+		opts.Logger.Warn("local conversations: could not list queued conversations", "error", err)
+	}
+	for _, id := range queued {
+		go s.dispatchQueue(id)
+	}
 	return s, nil
 }
 
 // Close stops every runner, commits pending output and closes the store.
 func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
+	s.closing = true
 	runners := s.runners
 	s.runners = map[string]runner{}
 	s.mu.Unlock()
@@ -172,6 +186,9 @@ type SendCommand struct {
 	Text           string
 	// AttachmentIDs are uploads of this scope sent with the message.
 	AttachmentIDs []string
+	// Prompt, when set, is what the provider receives instead of Text,
+	// such as Text with resolved context.
+	Prompt string
 }
 
 // SendResult reports the accepted turn. Replayed is set when the request id
@@ -276,8 +293,11 @@ func (s *Service) scopedConversation(ctx context.Context, scopeID int64, convers
 
 func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runner, error) {
 	s.mu.Lock()
-	r := s.runners[conv.ID]
+	r, closing := s.runners[conv.ID], s.closing
 	s.mu.Unlock()
+	if closing {
+		return nil, ErrClosing
+	}
 	if r != nil {
 		return r, nil
 	}
@@ -287,7 +307,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 		if err != nil {
 			return nil, err
 		}
-		return s.keepRunner(conv.ID, r), nil
+		return s.keepRunner(conv.ID, r)
 	case conv.Provider != "claude" || s.opts.Claude == nil:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedProvider, conv.Provider)
 	}
@@ -317,7 +337,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 	return s.keepRunner(conv.ID, NewClaudeRunner(ClaudeRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
-	})), nil
+	}))
 }
 
 func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (runner, error) {
@@ -343,14 +363,21 @@ func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (
 }
 
 // keepRunner registers r unless a concurrent call registered one first.
-func (s *Service) keepRunner(id string, r runner) runner {
+// keepRunner registers a new runner, or returns the one another caller
+// registered first. A runner that arrives after Close began is closed.
+func (s *Service) keepRunner(id string, r runner) (runner, error) {
 	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		_ = r.Close(context.Background())
+		return nil, ErrClosing
+	}
 	defer s.mu.Unlock()
 	if existing := s.runners[id]; existing != nil {
-		return existing
+		return existing, nil
 	}
 	s.runners[id] = r
-	return r
+	return r, nil
 }
 
 func sendFingerprint(cmd SendCommand) string {

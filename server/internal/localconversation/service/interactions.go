@@ -205,6 +205,7 @@ func (s *Service) turnEnded(conversationID, turnID string) {
 	if len(ids) > 0 {
 		s.cancelQuestions(conversationID, ids)
 	}
+	go s.dispatchQueue(conversationID)
 }
 
 // cancelQuestions closes still-pending questions and wakes their waiters.

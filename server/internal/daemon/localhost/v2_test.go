@@ -445,3 +445,28 @@ func TestV2ProviderRoutes(t *testing.T) {
 		t.Fatalf("models without catalog = %d %v", status, body)
 	}
 }
+
+func TestV2QueueCommands(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newV2Server(t)
+	h := v2Headers("user-1")
+	v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-1", "provider": "claude"}, h)
+	item := map[string]any{"requestId": "q1", "content": "later", "display": map[string]any{"id": "q1", "createdAtUnixMs": 1}}
+	status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "queue_enqueue", "item": item, "paused": true}, h)
+	if status != http.StatusOK || body["paused"] != true || len(body["items"].([]any)) != 1 {
+		t.Fatalf("enqueue = %d %v", status, body)
+	}
+	_, queue := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-1/queue", nil, h)
+	if queue["revision"].(float64) != 1 {
+		t.Fatalf("queue = %v", queue)
+	}
+	status, body = v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "queue_update", "action": "remove", "request_id": "q1"}, h)
+	if status != http.StatusOK || len(body["items"].([]any)) != 0 {
+		t.Fatalf("remove = %d %v", status, body)
+	}
+	_, snap := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-1/snapshot", nil, h)
+	if snap["conversation"].(map[string]any)["queue_count"].(float64) != 0 {
+		t.Fatalf("summary = %v", snap["conversation"])
+	}
+}
