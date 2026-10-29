@@ -222,6 +222,27 @@ describe("Electron-owned conversation queue", () => {
     } else await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
     expect(cloud.mock.calls.filter(([method, path]) => method === "POST" && path.endsWith("/messages"))).toHaveLength(1);
   });
+  it("captures the preceding local reply when the queued agent invocation is dispatched", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const { service, options } = await setup(async () => { await gate; return { output: "LOCAL_REPLY_BEFORE_AGENT" }; });
+    const cloud = vi.fn(async (method: string, path: string) => {
+      if (path === "/api/chat/sessions") return { id: "cloud-chat", workspace_id: scope.workspaceId };
+      if (method === "POST" && path.endsWith("/messages")) return { task_id: "cloud-run", message_id: "cloud-input", created_at: new Date().toISOString() };
+      if (path.includes("/messages/page")) return { messages: [{ id: "reply", chat_session_id: "cloud-chat", role: "assistant", task_id: "cloud-run", content: "cloud done" }] };
+      return [];
+    });
+    Object.assign(options, { queueCloudClient: async () => cloud });
+    const entry = await service.request(scope, "create", { provider: "codex" });
+    try {
+      await service.request(scope, "queueEnqueue", { id: entry.id, item: prompt("local", "Original issue") });
+      await vi.waitFor(() => expect(options.run).toHaveBeenCalledOnce());
+      await service.request(scope, "queueEnqueue", { id: entry.id, item: { ...prompt("cloud", "记录一下"), references: [{ kind: "agent", id: "defined-agent" }], agents: [{ id: "defined-agent", name: "Defined agent" }] } });
+      expect(cloud).not.toHaveBeenCalled();
+      finish();
+      await vi.waitFor(() => expect(cloud).toHaveBeenCalledWith("POST", "/api/chat/sessions/cloud-chat/messages", expect.objectContaining({ content: expect.stringContaining("LOCAL_REPLY_BEFORE_AGENT") })));
+    } finally { finish(); }
+  });
   it("moves a queued prompt to Side once without executing it in the source", async () => {
     const { service, options } = await setup(async () => ({ output: "done" }));
     const entry = await service.request(scope, "create", { provider: "claude" });

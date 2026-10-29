@@ -29,6 +29,43 @@
 
 作用域哈希包括 API 地址、账号和工作区，避免不同环境、账号或工作区混读。文件采用原子替换写入，权限为目录 0700、文件 0600；切换账号会停止旧账号的本机执行。退出时等待本机执行结束并保存。意外中断的本机执行在重开时标为中断，不自动重复发送。
 
+### Sending local context to mentioned agents
+
+Every defined-agent invocation includes the saved conversation before its own
+user message, even when reusing that agent's cloud chat. The local host captures
+the boundary before asynchronous admission or uploads. Queued requests capture
+context at dispatch, after preceding replies have been saved; parallel agent
+outputs and later messages stay outside that invocation's snapshot.
+
+The snapshot identifies the source conversation, workspace, boundary message and
+message roles. Historical and current attachments are uploaded once per target
+invocation and mapped to cloud attachment IDs. The existing scoped file API
+resolves the bytes; local file paths, credentials and execution events are not
+included in the snapshot. Side conversations include their saved inherited text
+and selected quote, without reading newer messages from the live parent.
+
+Snapshots up to 24,000 characters are included directly. Longer snapshots are
+attached as complete JSON files, with up to six recent messages (2,000 characters
+each) inline and an explicit download command, for example:
+
+```sh
+multica attachment download <context-attachment-id> -o ./attachments
+```
+
+The attached JSON preserves complete saved message text and attachment metadata.
+It uses the existing authenticated attachment API, rather than a new source
+history endpoint. Missing files or failed uploads fail the invocation visibly;
+an ambiguous message send is never retried automatically. Upload volume and
+admission time grow with historical attachments and remain subject to existing
+server upload limits. Ordinary local provider sends are unaffected.
+
+Regression checks (fake providers and cloud requests; no model calls):
+
+```sh
+pnpm --filter @multica/desktop exec vitest run src/local-host/local-queued-cloud-run.test.ts src/local-host/local-conversation-queue.test.ts src/local-host/local-conversation-service.test.ts src/renderer/src/platform/local-conversation-service.test.ts
+pnpm --filter @multica/desktop typecheck
+```
+
 GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，再异步读取历史。读取完成后，仅最新请求且宿主意图未改变时才能导航；旧读取可以完成，但不能把用户刚选中的会话切回去。页面通过现有会话、运行器、账号和工作区组成的意图键识别外部导航，不改会话协议或历史内容。
 
 本机会话列表保留置顶优先级，组内按最后一轮的 `createdAt` 倒序排列；无轮次时使用会话创建时间。同一时刻先按会话创建时间倒序，再按 ID 升序确定顺序。排序在主进程裁剪列表历史之前完成，使用已保存的轮次开始时间，重启后规则一致。流式输出、工具事件、执行结束、标题和归档操作不改变排序依据；排队消息仅在出队并建立轮次时更新排序。导入和分叉使用保留历史中的最后一轮开始时间，Side 尚无轮次时使用自身创建时间。

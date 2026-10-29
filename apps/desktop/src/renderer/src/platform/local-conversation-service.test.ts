@@ -308,7 +308,7 @@ describe("local providers and official agent invocation routing", () => {
     await vi.waitFor(() => expect(mock.api.sendChatMessage).toHaveBeenCalledTimes(2));
     expect(mock.api.createChatSession.mock.calls.map(([request]) => request.agent_id).sort()).toEqual(["code", "design"]);
     for (const id of ["cloud-design", "cloud-code"]) {
-      expect(mock.api.sendChatMessage).toHaveBeenCalledWith(id, expect.stringContaining("User request and referenced context:\n\nReview"), []);
+      expect(mock.api.sendChatMessage).toHaveBeenCalledWith(id, expect.stringContaining("Current user request and explicit references:\nReview"), []);
     }
     for (const [, prompt] of mock.api.sendChatMessage.mock.calls) {
       expect(prompt).toContain("fenced code block with the language html");
@@ -333,7 +333,7 @@ describe("local providers and official agent invocation routing", () => {
     expect(mock.api.createChatSession).toHaveBeenCalledOnce();
     expect(mock.api.sendChatMessage).toHaveBeenCalledTimes(2);
     for (const [index, content] of ["Show an HTML chart", "Now show an SVG diagram"].entries()) {
-      expect(mock.api.sendChatMessage.mock.calls[index]).toEqual(["cloud-design", expect.stringContaining(`User request and referenced context:\n\n${content}`), []]);
+      expect(mock.api.sendChatMessage.mock.calls[index]).toEqual(["cloud-design", expect.stringContaining(`Current user request and explicit references:\n${content}`), []]);
       expect(mock.api.sendChatMessage.mock.calls[index]![1]).toContain("fenced code block with the language html");
       expect(mock.api.sendChatMessage.mock.calls[index]![1]).toContain("fenced code block with the language svg");
     }

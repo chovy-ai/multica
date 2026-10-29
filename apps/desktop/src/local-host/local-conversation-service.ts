@@ -705,7 +705,7 @@ export class LocalConversationService {
         const accepted = await this.request(scope, "remoteBegin", { id: entry.id, content: text(params.content, "message"), agents: params.agents as { id: string; name: string }[], attachmentIds: params.attachmentIds as string[] | undefined, requestId: params.requestId as string | undefined });
         if (!accepted.replayed) {
           const item = { requestId: accepted.turns[0]!.id, content: text(params.content, "message"), prompt: params.prompt === undefined ? undefined : text(params.prompt, "prompt"), attachmentIds: params.attachmentIds as string[] | undefined } as LocalQueuedPrompt;
-          this.startCloudTurns(scope, entry, accepted.turns, controller, false, (turn) => runQueuedCloudTurn({ scope, entry, item, turn, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
+          this.startCloudTurns(scope, entry, accepted.turns, controller, false, (turn) => runQueuedCloudTurn({ scope, entry, item, turn, messageId: accepted.messageId, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
         }
         result = accepted; break;
       }
@@ -890,7 +890,7 @@ export class LocalConversationService {
           const cloud = await this.options.queueCloudClient(scope, controller.signal);
           this.key(scope);
           const accepted = await this.request(scope, "remoteBegin", { id: entry.id, content: item.content, requestId: item.requestId, agents: item.agents, attachmentIds: item.attachmentIds });
-          this.startCloudTurns(scope, entry, accepted.turns, controller, true, (turn) => runQueuedCloudTurn({ scope, entry, item: { ...item, prompt }, turn, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
+          this.startCloudTurns(scope, entry, accepted.turns, controller, true, (turn) => runQueuedCloudTurn({ scope, entry, item: { ...item, prompt }, turn, messageId: accepted.messageId, signal: controller.signal, cloud, local: (scope, method, params) => this.request(scope, method, params) }));
         } else await this.request(scope, "send", { id: entry.id, ...item, prompt });
         queue.items = queue.items.filter((value) => value.requestId !== item.requestId);
       } catch (error) {
