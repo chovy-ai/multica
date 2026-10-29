@@ -369,7 +369,12 @@ export class LocalConversationService {
             if (params.action === "remove" || params.action === "sendNow") {
               const requestId = text(params.requestId, "queued request", 160);
               const item = queue.items.find((value) => value.requestId === requestId);
-              if (!item || this.queueDispatches.get(`${this.key(scope)}:${entry.id}`) === requestId) throw new Error("This queued message has already started");
+              if (!item || this.queueDispatches.get(`${this.key(scope)}:${entry.id}`) === requestId) {
+                // Removing an unconfirmed or dispatched submission only discards
+                // its queue presentation; it must never cancel or replay a turn.
+                if (params.action === "remove") return queue;
+                throw new Error("This queued message has already started");
+              }
               queue.items = queue.items.filter((value) => value !== item);
               if (params.action === "sendNow") {
                 queue.items.unshift(item); queue.paused = false; delete queue.error;
