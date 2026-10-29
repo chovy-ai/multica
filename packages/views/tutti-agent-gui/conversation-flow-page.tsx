@@ -129,8 +129,7 @@ export function ConversationFlowPage() {
       if (openInNewTab) openInNewTab(target, undefined, { activate: true });
       else push(target);
     }}
-    onShowMessage={(message, tone) => tone === "error" ? toast.error(message)
-      : tone === "warning" ? toast.warning(message) : toast.info(message)}
+    onShowMessage={(message, tone) => toast[tone ?? "info"](message)}
   /></div>;
 
   const list = <div className="flex h-full min-h-0 flex-col border-r" data-testid="conversation-flow-sessions">

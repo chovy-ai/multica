@@ -33,7 +33,7 @@ interface Props {
   onRestoreDraftApplied: (id: string) => void;
   onSelectSession: (session: ChatSession | null, agent?: Agent) => void;
   onOpenTask: (issueId: string) => void;
-  onShowMessage: (message: string, tone?: "info" | "warning" | "error") => void;
+  onShowMessage: (message: string, tone?: "success" | "info" | "warning" | "error") => void;
 }
 
 /** The imported UI owns its document, portals, React version and CSS. */

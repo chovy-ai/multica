@@ -58,7 +58,7 @@ export function createAgentGuiHostApi(
     toast: {
       error: (message) => { void client.request("host.showMessage", { message, tone: "error" }); },
       info: (message) => { void client.request("host.showMessage", { message, tone: "info" }); },
-      success: (message) => { void client.request("host.showMessage", { message, tone: "info" }); },
+      success: (message) => { void client.request("host.showMessage", { message, tone: "success" }); },
     },
   };
 }

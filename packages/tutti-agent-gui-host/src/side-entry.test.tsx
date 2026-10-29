@@ -86,7 +86,7 @@ it.each([[true, "复制成功"], [false, "Copied successfully"]] as const)("dism
   await expectDismissed();
   expect(request).not.toHaveBeenCalled();
   await act(async () => copy.resolve());
-  expect(request).toHaveBeenCalledExactlyOnceWith("host.showMessage", { message, tone: "info" });
+  expect(request).toHaveBeenCalledExactlyOnceWith("host.showMessage", { message, tone: "success" });
   await select();
   expect(container.querySelector('[role="toolbar"]')).not.toBeNull();
 });

@@ -9,7 +9,9 @@ const state = vi.hoisted(() => ({
   pathname: "/acme/conversations", search: "session=flow-session", slug: "acme",
   replace: vi.fn(), push: vi.fn(), openInNewTab: vi.fn(), panel: vi.fn(), restore: vi.fn(), nativeChat: vi.fn(),
   create: vi.fn(), archive: vi.fn(), read: vi.fn(), list: vi.fn(), compact: false,
+  toast: { success: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
+vi.mock("sonner", () => ({ toast: state.toast }));
 vi.mock("@tanstack/react-query", () => ({ useQuery: ({ queryKey }: { queryKey: string[] }) => ({
   data: queryKey.includes("chat") ? [{ id: "flow-session", title: "Saved design review", agent_id: "codex", status: "active", has_unread: true, updated_at: "2026-10-23T00:00:00Z" }, { id: "next-session", title: "Other conversation", agent_id: "codex", status: "active", last_message: { content: "Ready for acceptance", role: "assistant" } }]
     : queryKey.includes("agents") ? [{ id: "codex", name: "Codex", runtime_id: "runtime" }]
@@ -58,6 +60,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("independent conversation flow", () => {
+  it("uses each host message tone for its toast", () => {
+    render(<ConversationFlowPage />);
+    const panel = state.panel.mock.lastCall![0] as ComponentProps<typeof TuttiAgentGuiPanel>;
+    for (const tone of ["success", "info", "warning", "error"] as const) {
+      panel.onShowMessage("Host feedback", tone);
+      expect(state.toast[tone]).toHaveBeenCalledExactlyOnceWith("Host feedback");
+    }
+    panel.onShowMessage("Default feedback");
+    expect(state.toast.info).toHaveBeenLastCalledWith("Default feedback");
+  });
+
   it("uses its own URL selection and never changes the native Chat pointer", () => {
     render(<ConversationFlowPage />);
     expect(state.panel).toHaveBeenCalledWith(expect.objectContaining({ activeSessionId: "flow-session", active: true }));

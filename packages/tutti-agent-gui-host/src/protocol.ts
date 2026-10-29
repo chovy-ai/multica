@@ -167,7 +167,7 @@ export interface AgentGuiRpcMethods {
   "host.showFileContextMenu": { params: { sessionId: string; url: string; hasSelection: boolean }; result: void };
   "host.locateSource": { params: { sessionId: string; turnId?: string; quote?: string }; result: void };
   "host.selectSession": { params: { sessionId: string | null; agentId?: string }; result: void };
-  "host.showMessage": { params: { message: string; tone?: "info" | "warning" | "error" }; result: void };
+  "host.showMessage": { params: { message: string; tone?: "success" | "info" | "warning" | "error" }; result: void };
   "host.promptApplied": { params: { sequence: number; restoreRequestId?: string }; result: void };
 }
 

@@ -9,11 +9,13 @@ import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 import { LocalConversationFlowPage } from "./local-conversation-flow";
 import { useProjectVisibilityStore } from "../stores/local-conversation-project-visibility";
 import { useConversationLayoutStore } from "../stores/local-conversation-layout";
+import type { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
+import type { ComponentProps } from "react";
 
-const mock = vi.hoisted(() => ({ request: vi.fn(), replace: vi.fn(), pathname: "/test/conversations", selected: "source", error: vi.fn(), success: vi.fn(), copyText: vi.fn(), compact: false, locale: "zh-Hans", projects: [] as Project[], folders: [] as LocalFolderProject[], folderError: null as Error | null }));
+const mock = vi.hoisted(() => ({ request: vi.fn(), replace: vi.fn(), pathname: "/test/conversations", selected: "source", error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), panel: vi.fn(), copyText: vi.fn(), compact: false, locale: "zh-Hans", projects: [] as Project[], folders: [] as LocalFolderProject[], folderError: null as Error | null }));
 vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: mock.copyText }));
 vi.mock("@multica/core/projects/queries", () => ({ projectListOptions: () => ({ queryKey: ["test-projects"], queryFn: async () => mock.projects }) }));
-vi.mock("sonner", () => ({ toast: { error: mock.error, success: mock.success, info: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { error: mock.error, success: mock.success, info: mock.info, warning: mock.warning } }));
 vi.mock("@multica/core/auth", () => ({ useAuthStore: (selector: (state: unknown) => unknown) => selector({ user: { id: "user" } }) }));
 vi.mock("@multica/core/paths", () => ({ useCurrentWorkspace: () => ({ id: "workspace" }), useRequiredWorkspaceSlug: () => "test", useWorkspacePaths: () => ({ conversationFlow: () => "/test/conversations" }) }));
 vi.mock("@multica/core/platform", () => ({ getCurrentSlug: () => "test" }));
@@ -24,7 +26,10 @@ vi.mock("@multica/views/navigation", () => ({
 vi.mock("@multica/views/i18n", () => ({ useLocale: () => mock.locale, useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: { title: string }) => selector(chat).replace("{{title}}", options?.title ?? "") }) }));
 vi.mock("@multica/ui/hooks/use-mobile", () => ({ useIsCompact: () => mock.compact }));
 vi.mock("@multica/views/runtimes/provider-logo", () => ({ ProviderLogo: () => null }));
-vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: (props: { newConversationRequest?: { sequence: number; projectPath: string | null } }) => <textarea aria-label="Conversation draft" data-new-conversation={JSON.stringify(props.newConversationRequest)} /> }));
+vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: (props: ComponentProps<typeof TuttiAgentGuiPanel>) => {
+  mock.panel(props);
+  return <textarea aria-label="Conversation draft" data-new-conversation={JSON.stringify(props.newConversationRequest)} />;
+} }));
 vi.mock("../platform/local-conversation-service", () => ({ localConversationKey: () => ["test-local-sessions"], localTargetId: (provider: string) => `local:${provider}`, createLocalConversationParentService: vi.fn() }));
 
 let qc: QueryClient;
@@ -585,6 +590,24 @@ describe("local conversation context menu", () => {
 });
 
 describe("Side conversations in the main session list", () => {
+  it("preserves success, info, warning and error feedback in both main and Side panels", async () => {
+    const side: LocalConversation = { ...source, id: "side", title: "Side exploration", side: { sourceId: source.id, turnId: "turn", quote: "Quoted source text", requestId: "side-request", context: [] } };
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source, side] : [{ id: "codex", available: true }]);
+    localStorage.setItem("multica-side-workspace:user:workspace:session:source", JSON.stringify({ tabs: [{ id: "side-tab", kind: "side", sessionId: side.id }], selected: "side-tab", open: true }));
+    render(page());
+    for (const sessionId of [source.id, side.id]) {
+      await waitFor(() => expect(mock.panel.mock.calls.some(([props]) => props.activeSessionId === sessionId)).toBe(true));
+      const props = mock.panel.mock.calls.findLast(([props]) => props.activeSessionId === sessionId)![0] as ComponentProps<typeof TuttiAgentGuiPanel>;
+      for (const tone of ["success", "info", "warning", "error"] as const) {
+        const message = `${sessionId}:${tone}`;
+        props.onShowMessage(message, tone);
+        expect(mock[tone]).toHaveBeenLastCalledWith(message);
+      }
+      props.onShowMessage("Default feedback");
+      expect(mock.info).toHaveBeenLastCalledWith("Default feedback");
+    }
+  });
+
   it.each(["codex", "claude"] as const)("keeps %s Sides in the right workspace while excluding them from the list, search, archives and counts", async (provider) => {
     mock.folders = [folder("project-a", "Main project")];
     const side: LocalConversation = { ...source, id: "side", title: "Side exploration", provider, side: { sourceId: source.id, turnId: "turn", quote: "Quoted source text", requestId: "side-request", context: [] } };
