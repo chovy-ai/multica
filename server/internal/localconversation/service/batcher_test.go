@@ -198,12 +198,16 @@ func TestBatcherRejectsAppendsBeyondThePendingBudget(t *testing.T) {
 	if err := b.Append(part("conv-2", strings.Repeat("y", 300)), false); !errors.Is(err, ErrStorageBacklog) {
 		t.Fatalf("Append over budget = %v, want ErrStorageBacklog", err)
 	}
+	// Critical parts such as turn completion are never rejected.
+	if err := b.Append(part("conv-2", "turn.completed"), true); err != nil {
+		t.Fatalf("critical Append over budget = %v", err)
+	}
 	close(c.block)
-	waitBatches(t, c, 1)
-	// The budget frees up once the commit finishes.
+	waitBatches(t, c, 2)
+	// The budget frees up once the commits finish.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if err := b.Append(part("conv-2", strings.Repeat("y", 300)), true); err == nil {
+		if err := b.Append(part("conv-2", strings.Repeat("y", 300)), false); err == nil {
 			break
 		} else if time.Now().After(deadline) {
 			t.Fatalf("budget never freed: %v", err)

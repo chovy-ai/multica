@@ -85,7 +85,9 @@ func NewBatcher(committer Committer, opts BatcherOptions) *Batcher {
 
 // Append adds part to the conversation's open batch. Critical parts (turn
 // completion, failures, interaction requests) are committed without waiting,
-// together with everything appended before them.
+// together with everything appended before them. The pending budget applies
+// only to non-critical parts: a turn completion must never be dropped, and
+// it is small.
 func (b *Batcher) Append(part store.Batch, critical bool) error {
 	size := batchBytes(part)
 	b.mu.Lock()
@@ -93,7 +95,7 @@ func (b *Batcher) Append(part store.Batch, critical bool) error {
 	if b.closed {
 		return store.ErrWriterClosed
 	}
-	if b.pending > 0 && b.pending+size > b.opts.MaxPendingBytes {
+	if !critical && b.pending > 0 && b.pending+size > b.opts.MaxPendingBytes {
 		return ErrStorageBacklog
 	}
 	id := part.ConversationID
@@ -206,6 +208,9 @@ func merge(dst *store.Batch, part store.Batch) {
 	if part.CompleteTurn != nil {
 		dst.CompleteTurn = part.CompleteTurn
 	}
+	if part.ProviderSessionID != nil {
+		dst.ProviderSessionID = part.ProviderSessionID
+	}
 	if part.Summary != nil {
 		if dst.Summary == nil {
 			s := *part.Summary
@@ -236,7 +241,7 @@ func mergeSummary(dst, src *store.SummaryPatch) {
 }
 
 func isEmpty(b store.Batch) bool {
-	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil
+	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil
 }
 
 // batchBytes estimates a part's size for the batch and backlog budgets.

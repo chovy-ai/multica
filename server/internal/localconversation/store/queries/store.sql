@@ -41,6 +41,9 @@ UPDATE conversation SET
     updated_at = ?
 WHERE id = ?;
 
+-- name: SetProviderSessionID :exec
+UPDATE conversation SET provider_session_id = ? WHERE id = ?;
+
 -- name: SetConversationTurnCount :exec
 UPDATE conversation SET turn_count = ? WHERE id = ?;
 

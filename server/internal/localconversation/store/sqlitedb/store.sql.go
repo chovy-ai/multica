@@ -833,6 +833,20 @@ func (q *Queries) SetConversationTurnCount(ctx context.Context, arg SetConversat
 	return err
 }
 
+const setProviderSessionID = `-- name: SetProviderSessionID :exec
+UPDATE conversation SET provider_session_id = ? WHERE id = ?
+`
+
+type SetProviderSessionIDParams struct {
+	ProviderSessionID string
+	ID                string
+}
+
+func (q *Queries) SetProviderSessionID(ctx context.Context, arg SetProviderSessionIDParams) error {
+	_, err := q.db.ExecContext(ctx, setProviderSessionID, arg.ProviderSessionID, arg.ID)
+	return err
+}
+
 const setProviderTurnID = `-- name: SetProviderTurnID :exec
 UPDATE turn SET provider_turn_id = ? WHERE id = ?
 `

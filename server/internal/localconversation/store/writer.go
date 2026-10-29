@@ -73,6 +73,8 @@ type Batch struct {
 	Messages       []NewMessage
 	CompleteTurn   *TurnCompletion
 	Summary        *SummaryPatch
+	// ProviderSessionID records the native session the conversation resumes.
+	ProviderSessionID *string
 }
 
 // CommittedEvent is an appended event with its assigned sequence numbers.
@@ -345,6 +347,12 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 			AttachmentIds: string(ids), Steered: boolInt(m.Steered), Failed: boolInt(m.Failed), CreatedAt: formatTime(m.CreatedAt),
 		})
 		if err != nil {
+			return Committed{}, err
+		}
+	}
+
+	if id := b.ProviderSessionID; id != nil {
+		if err := q.SetProviderSessionID(ctx, sqlitedb.SetProviderSessionIDParams{ProviderSessionID: *id, ID: conv.ID}); err != nil {
 			return Committed{}, err
 		}
 	}
