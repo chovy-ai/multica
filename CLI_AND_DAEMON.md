@@ -329,7 +329,7 @@ Daemon behavior is configured via flags or environment variables:
 | Daemon ID | `--daemon-id` | `MULTICA_DAEMON_ID` | hostname |
 | Device name | `--device-name` | `MULTICA_DAEMON_DEVICE_NAME` | hostname |
 | Runtime name | `--runtime-name` | `MULTICA_AGENT_RUNTIME_NAME` | `Local Agent` |
-| Device link registry | — | `MULTICA_DAEMON_P2P_SERVER_URL` | empty (disabled). Point at a [p2p-server](server/cmd/p2p-server/README.md) to connect directly to your account's other devices on the local network |
+| Device link registry | — | `MULTICA_DAEMON_P2P_SERVER_URL` | empty (disabled). Point at a [p2p-server](server/cmd/p2p-server/README.md) to link with your account's other devices: directly on the local network, and across networks through its relay (hole-punching to a direct connection when possible). The Desktop app sets it from its build-time `VITE_P2P_SERVER_URL`; `multica auth logout` removes the device from the registry |
 | Device link port | — | `MULTICA_DAEMON_P2P_PORT` | `0` (random; used for both TCP and UDP/QUIC) |
 | Workspaces root | — | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` |
 | GC enabled | — | `MULTICA_GC_ENABLED` | `true` (set `false`/`0` to disable) |

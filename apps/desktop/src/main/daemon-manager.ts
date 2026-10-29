@@ -27,6 +27,7 @@ import { desktopRuntimeRegistry, desktopRuntimeProfile } from "./desktop-runtime
 import { decideVersionAction } from "./version-decision";
 import { createDaemonQuitHandler } from "./daemon-quit";
 import { quitConfirmationOptions, quitFailureOptions } from "./daemon-quit-dialogs";
+import { buildP2PServerUrl, p2pServerEnv } from "./p2p-server-env";
 import {
   prepareDaemonForInstall,
   type DaemonInstallPrep,
@@ -923,7 +924,35 @@ async function probeLocalRuntimes(): Promise<LocalRuntimeProbe> {
 // applied by fix-path in main/index.ts — as a top-level const it would
 // snapshot process.env at import time, before that block runs.
 function desktopSpawnEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, MULTICA_LAUNCHED_BY: "desktop", MULTICA_DESKTOP_OWNER_ID: desktopRuntimeRegistry().ownerId };
+  return {
+    ...process.env,
+    ...p2pServerEnv(process.env, buildP2PServerUrl()),
+    MULTICA_LAUNCHED_BY: "desktop",
+    MULTICA_DESKTOP_OWNER_ID: desktopRuntimeRegistry().ownerId,
+  };
+}
+
+// Sign-out removes this device from the p2p registry while the token that
+// owns it still exists, so the account's other devices drop it right away.
+// Best effort: the CLI only warns when the registry is unreachable, and an
+// entry left behind expires there within 24 hours.
+async function unregisterP2PDevice(): Promise<void> {
+  const active = await ensureActiveProfile();
+  if (!active) return;
+  const bin = await resolveCliBinary();
+  if (!bin) return;
+  await new Promise<void>((resolve) => {
+    execFile(
+      bin,
+      ["daemon", "p2p-unregister", ...profileArgs(active.name)],
+      { timeout: 15_000, env: desktopSpawnEnv() },
+      (err, _stdout, stderr) => {
+        if (err) console.warn("[daemon] p2p-unregister failed", err.message);
+        else if (stderr.trim()) console.warn("[daemon] p2p-unregister:", stderr.trim());
+        resolve();
+      },
+    );
+  });
 }
 
 function scheduleStatusRefresh(): void {
@@ -1453,8 +1482,9 @@ export function setupDaemonManager(
       }
     },
   );
-  ipcMain.handle("daemon:clear-token", () => {
+  ipcMain.handle("daemon:clear-token", async () => {
     setDesiredDaemonRunning(false, true);
+    await unregisterP2PDevice();
     return clearToken();
   });
   ipcMain.handle(

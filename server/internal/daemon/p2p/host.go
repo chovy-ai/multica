@@ -18,6 +18,7 @@ import (
 	libp2pconnmgr "github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/net/upgrader"
+	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
@@ -31,19 +32,22 @@ import (
 // calling libp2p.New. The top-level constructor links every transport libp2p
 // supports, including WebRTC and WebTransport, which added about 5.5MB to the
 // stripped CLI for code the daemon never runs. Building the host here keeps
-// only QUIC, TCP, TLS/Noise and yamux.
-func newHost(key crypto.PrivKey, listen []string, gater connmgr.ConnectionGater) (host.Host, error) {
+// only QUIC, TCP, TLS/Noise and yamux, plus what cross-network links need:
+// the circuit relay v2 client, DCUtR hole punching and UPnP/NAT-PMP port
+// mapping. addrs, when set, rewrites the advertised addresses (the service
+// appends its relay circuit address).
+func newHost(key crypto.PrivKey, listen []string, gater connmgr.ConnectionGater, addrs basichost.AddrsFactory) (host.Host, error) {
 	self, err := peer.IDFromPrivateKey(key)
 	if err != nil {
 		return nil, err
 	}
-	addrs := make([]ma.Multiaddr, 0, len(listen))
+	listenAddrs := make([]ma.Multiaddr, 0, len(listen))
 	for _, s := range listen {
 		a, err := ma.NewMultiaddr(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid listen address %q: %w", s, err)
 		}
-		addrs = append(addrs, a)
+		listenAddrs = append(listenAddrs, a)
 	}
 
 	var cleanup []func() error
@@ -137,14 +141,22 @@ func newHost(key crypto.PrivKey, listen []string, gater connmgr.ConnectionGater)
 	}
 
 	h, err := basichost.NewHost(sw, &basichost.HostOpts{
-		EventBus:    bus,
-		ConnManager: cm,
-		EnablePing:  true,
+		EventBus:           bus,
+		ConnManager:        cm,
+		EnablePing:         true,
+		AddrsFactory:       addrs,
+		NATManager:         basichost.NewNATManager,
+		EnableHolePunching: true,
 	})
 	if err != nil {
 		return fail(err)
 	}
-	if err := sw.Listen(addrs...); err != nil {
+	// Dials /p2p-circuit addresses and accepts connections relayed to us.
+	if err := relayclient.AddTransport(h, upg); err != nil {
+		h.Close()
+		return fail(err)
+	}
+	if err := sw.Listen(listenAddrs...); err != nil {
 		h.Close()
 		return fail(err)
 	}

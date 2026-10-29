@@ -1,0 +1,31 @@
+[Unit]
+Description=Multica p2p-server (device registry and relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=multica-p2p
+Group=multica-p2p
+EnvironmentFile=/etc/multica-p2p/env
+WorkingDirectory=/var/lib/multica-p2p
+ExecStart=/opt/multica-p2p/current/p2p-server
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/multica-p2p
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

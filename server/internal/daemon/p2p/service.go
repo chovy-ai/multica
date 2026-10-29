@@ -11,13 +11,17 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
+	ma "github.com/multiformats/go-multiaddr"
+	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 // DefaultMDNSServiceName keeps Multica's LAN announcements apart from other
@@ -32,7 +36,21 @@ const (
 	// a device that registered seconds after our last refresh.
 	minKickInterval = 5 * time.Second
 	connectTimeout  = 10 * time.Second
+	// addrsDebounce coalesces the address churn of startup, port mapping
+	// and relay reservation into one re-registration.
+	addrsDebounce = 2 * time.Second
+	// relayRenewMargin renews a relay reservation this long before expiry.
+	relayRenewMargin = 5 * time.Minute
+	// relayRecheckInterval is how often a registry without a relay is asked
+	// again.
+	relayRecheckInterval = 10 * time.Minute
 )
+
+var relayRetrySchedule = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute, 10 * time.Minute}
+
+// RelayFunc returns the relay node to reserve a slot on, or nil when the
+// registry offers none.
+type RelayFunc func(ctx context.Context) (*peer.AddrInfo, error)
 
 // ErrNotAllowed means the peer is not a device of this account.
 var ErrNotAllowed = errors.New("p2p: peer is not a device of this account")
@@ -50,7 +68,15 @@ type Config struct {
 	// disables it.
 	MDNSServiceName string
 	RefreshInterval time.Duration
-	Logger          *slog.Logger
+	// Relay enables reachability across networks: the service keeps a
+	// reservation on the relay, advertises its circuit address, and devices
+	// that cannot dial each other directly connect through it and then try
+	// to hole-punch. Nil keeps the service LAN-only.
+	Relay RelayFunc
+	// OnAddrsChanged is called, debounced, when AdvertisedAddrs changes, so
+	// the new addresses can be registered.
+	OnAddrsChanged func()
+	Logger         *slog.Logger
 }
 
 // Service is this device's endpoint on the account's peer-to-peer network.
@@ -72,6 +98,15 @@ type Service struct {
 
 	discoveredMu sync.Mutex
 	discovered   map[peer.ID]peer.AddrInfo
+
+	relayFetch RelayFunc
+	onAddrs    func()
+	relayLost  chan struct{}
+
+	relayMu       sync.Mutex
+	relayInfo     *peer.AddrInfo
+	relayReserved bool
+	relayExpires  time.Time
 }
 
 // Start builds the libp2p host, starts LAN discovery and the allowlist
@@ -109,13 +144,16 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		cancel:     cancel,
 		kick:       make(chan struct{}, 1),
 		discovered: map[peer.ID]peer.AddrInfo{},
+		relayFetch: cfg.Relay,
+		onAddrs:    cfg.OnAddrsChanged,
+		relayLost:  make(chan struct{}, 1),
 	}
 	if s.interval <= 0 {
 		s.interval = defaultRefreshInterval
 	}
-	gater := &accountGater{allow: s.allow, onUnknown: func(peer.ID) { s.requestRefresh() }}
+	gater := &accountGater{allow: s.allow, isRelay: s.isRelay, onUnknown: func(peer.ID) { s.requestRefresh() }}
 
-	h, err := newHost(cfg.Key, listen, gater)
+	h, err := newHost(cfg.Key, listen, gater, s.withCircuitAddrs)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("p2p: start host: %w", err)
@@ -130,11 +168,29 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		}
 	}
 
-	s.wg.Add(1)
+	addrSub, err := h.EventBus().Subscribe(new(event.EvtLocalAddressesUpdated))
+	if err != nil {
+		s.Close()
+		return nil, fmt.Errorf("p2p: subscribe to address updates: %w", err)
+	}
+	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
 		s.refreshLoop()
 	}()
+	go func() {
+		defer s.wg.Done()
+		defer addrSub.Close()
+		s.addrsLoop(addrSub.Out())
+	}()
+	if s.relayFetch != nil {
+		h.Network().Notify(&network.NotifyBundle{DisconnectedF: s.onDisconnected})
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.relayLoop()
+		}()
+	}
 	logger.Info("p2p: host started", "peer_id", self.String(), "addrs", h.Addrs())
 	return s, nil
 }
@@ -153,18 +209,27 @@ func (s *Service) Close() error {
 // ID returns this device's peer ID.
 func (s *Service) ID() peer.ID { return s.host.ID() }
 
-// Handle serves inbound streams for protocol. Only allowed peers can reach
-// it; the gater rejects everyone else before any stream opens.
+// Handle serves inbound streams for protocol from devices of this account,
+// whether connected directly or through the relay. The gater keeps
+// strangers from connecting at all; the relay node itself can connect, so
+// streams are checked here too.
 func (s *Service) Handle(p protocol.ID, h network.StreamHandler) {
-	s.host.SetStreamHandler(p, h)
+	s.host.SetStreamHandler(p, func(st network.Stream) {
+		if !s.allow.allowed(st.Conn().RemotePeer()) {
+			st.Reset()
+			return
+		}
+		h(st)
+	})
 }
 
-// Open opens a stream to a device of this account.
+// Open opens a stream to a device of this account, over a direct or relayed
+// connection.
 func (s *Service) Open(ctx context.Context, p peer.ID, proto protocol.ID) (network.Stream, error) {
 	if !s.allow.allowed(p) {
 		return nil, ErrNotAllowed
 	}
-	return s.host.NewStream(ctx, p, proto)
+	return s.host.NewStream(network.WithAllowLimitedConn(ctx, "multica-device-link"), p, proto)
 }
 
 // Ping measures the round trip to a device using libp2p's ping protocol.
@@ -172,7 +237,7 @@ func (s *Service) Ping(ctx context.Context, p peer.ID) (time.Duration, error) {
 	if !s.allow.allowed(p) {
 		return 0, ErrNotAllowed
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(network.WithAllowLimitedConn(ctx, "multica-device-link"))
 	defer cancel()
 	select {
 	case res := <-ping.Ping(ctx, s.host, p):
@@ -182,8 +247,8 @@ func (s *Service) Ping(ctx context.Context, p peer.ID) (time.Duration, error) {
 	}
 }
 
-// AddAddrs records addresses for a peer learned outside mDNS, e.g. from a
-// future server signaling channel.
+// AddAddrs records addresses for a peer learned outside mDNS and the
+// registry.
 func (s *Service) AddAddrs(info peer.AddrInfo) { s.HandlePeerFound(info) }
 
 // HandlePeerFound implements mdns.Notifee. Addresses are remembered even for
@@ -209,8 +274,10 @@ func (s *Service) connect(info peer.AddrInfo) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		ctx, cancel := context.WithTimeout(s.ctx, connectTimeout)
+		ctx, cancel := context.WithTimeout(network.WithAllowLimitedConn(s.ctx, "multica-device-link"), connectTimeout)
 		defer cancel()
+		// Direct addresses are tried before the relay circuit; once relayed,
+		// DCUtR tries to upgrade to a direct connection.
 		if err := s.host.Connect(ctx, info); err != nil && s.ctx.Err() == nil {
 			s.logger.Debug("p2p: connect failed", "peer_id", info.ID.String(), "error", err)
 		}
@@ -258,7 +325,8 @@ func (s *Service) refreshLoop() {
 }
 
 // Refresh reloads the allowlist now. Devices that left the account are
-// disconnected; newly listed devices already seen on the LAN are dialed.
+// disconnected; listed devices that are not connected are dialed on the
+// addresses they registered and any seen on the LAN.
 func (s *Service) Refresh(ctx context.Context) error {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
@@ -267,37 +335,221 @@ func (s *Service) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	added, removed := s.allow.replace(peers)
+	_, removed := s.allow.replace(peers)
 	for _, id := range removed {
 		s.host.Network().ClosePeer(id)
 	}
-	if len(added) > 0 {
-		s.discoveredMu.Lock()
-		var infos []peer.AddrInfo
-		for _, id := range added {
-			if info, ok := s.discovered[id]; ok {
-				infos = append(infos, info)
-			}
+	s.discoveredMu.Lock()
+	var infos []peer.AddrInfo
+	for _, p := range s.allow.list() {
+		if s.host.Network().Connectedness(p.ID) == network.Connected {
+			continue
 		}
-		s.discoveredMu.Unlock()
-		for _, info := range infos {
-			s.connect(info)
+		info := peer.AddrInfo{ID: p.ID, Addrs: append([]ma.Multiaddr(nil), p.RegisteredAddrs...)}
+		if d, ok := s.discovered[p.ID]; ok {
+			info.Addrs = append(info.Addrs, d.Addrs...)
 		}
+		if len(info.Addrs) > 0 {
+			infos = append(infos, info)
+		}
+	}
+	s.discoveredMu.Unlock()
+	for _, info := range infos {
+		s.connect(info)
 	}
 	return nil
 }
 
+// AdvertisedAddrs are the addresses to register for other devices: listen,
+// port-mapped and observed public addresses plus the relay circuit address
+// while a reservation is held. Loopback and link-local addresses are left
+// out since no other device can use them.
+func (s *Service) AdvertisedAddrs() []string {
+	out := []string{}
+	for _, a := range s.host.Addrs() {
+		// A circuit address starts with the relay's address, which says
+		// nothing about this device's own interfaces.
+		if isCircuit(a) {
+			out = append(out, a.String())
+			continue
+		}
+		if manet.IsIPLoopback(a) || manet.IsIP6LinkLocal(a) || manet.IsIPUnspecified(a) {
+			continue
+		}
+		if ip, err := manet.ToIP(a); err == nil && ip.IsLinkLocalUnicast() {
+			continue
+		}
+		out = append(out, a.String())
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Service) addrsLoop(events <-chan any) {
+	var timer *time.Timer
+	var fire <-chan time.Time
+	for {
+		select {
+		case <-s.ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
+			return
+		case _, ok := <-events:
+			if !ok {
+				return
+			}
+			if timer == nil {
+				timer = time.NewTimer(addrsDebounce)
+			} else {
+				timer.Reset(addrsDebounce)
+			}
+			fire = timer.C
+		case <-fire:
+			fire = nil
+			if s.onAddrs != nil {
+				s.onAddrs()
+			}
+		}
+	}
+}
+
+func (s *Service) isRelay(p peer.ID) bool {
+	s.relayMu.Lock()
+	defer s.relayMu.Unlock()
+	return s.relayInfo != nil && s.relayInfo.ID == p
+}
+
+// withCircuitAddrs is the host's address factory: it appends this device's
+// address on the relay while a reservation is held.
+func (s *Service) withCircuitAddrs(addrs []ma.Multiaddr) []ma.Multiaddr {
+	s.relayMu.Lock()
+	info, reserved := s.relayInfo, s.relayReserved
+	s.relayMu.Unlock()
+	if !reserved || info == nil {
+		return addrs
+	}
+	circuit, err := ma.NewMultiaddr("/p2p/" + info.ID.String() + "/p2p-circuit")
+	if err != nil {
+		return addrs
+	}
+	out := append([]ma.Multiaddr(nil), addrs...)
+	for _, a := range info.Addrs {
+		out = append(out, a.Encapsulate(circuit))
+	}
+	return out
+}
+
+func (s *Service) onDisconnected(n network.Network, c network.Conn) {
+	if !s.isRelay(c.RemotePeer()) || n.Connectedness(c.RemotePeer()) == network.Connected {
+		return
+	}
+	select {
+	case s.relayLost <- struct{}{}:
+	default:
+	}
+}
+
+// relayLoop keeps a reservation on the relay: it reserves, renews before
+// expiry, and reserves again right away when the relay connection drops.
+// The relay address is fetched for every reservation, so a relay that moved
+// or changed identity is picked up within one reservation period.
+func (s *Service) relayLoop() {
+	failures := 0
+	for {
+		wait, err := s.reserve()
+		if err != nil {
+			s.setReservation(false, time.Time{})
+			if s.ctx.Err() != nil {
+				return
+			}
+			wait = relayRetrySchedule[min(failures, len(relayRetrySchedule)-1)]
+			failures++
+			s.logger.Warn("p2p: relay reservation failed", "error", err, "retry_in", wait)
+		} else {
+			failures = 0
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-s.ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		case <-s.relayLost:
+			timer.Stop()
+			s.setReservation(false, time.Time{})
+			s.logger.Info("p2p: relay connection lost; reserving again")
+		}
+	}
+}
+
+// reserve makes or renews the reservation and returns how long to wait
+// before the next one.
+func (s *Service) reserve() (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(s.ctx, connectTimeout+20*time.Second)
+	defer cancel()
+	info, err := s.relayFetch(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("fetch relay: %w", err)
+	}
+	if info == nil {
+		s.relayMu.Lock()
+		s.relayInfo, s.relayReserved = nil, false
+		s.relayMu.Unlock()
+		return relayRecheckInterval, nil
+	}
+	s.relayMu.Lock()
+	if s.relayInfo != nil && s.relayInfo.ID != info.ID {
+		s.relayReserved = false
+	}
+	s.relayInfo = info
+	s.relayMu.Unlock()
+
+	rsvp, err := relayclient.Reserve(ctx, s.host, *info)
+	if err != nil {
+		return 0, err
+	}
+	s.host.ConnManager().Protect(info.ID, "multica-relay")
+	s.setReservation(true, rsvp.Expiration)
+	s.logger.Info("p2p: relay reservation held", "relay", info.ID.String(), "expires", rsvp.Expiration)
+	return max(time.Until(rsvp.Expiration)-relayRenewMargin, 30*time.Second), nil
+}
+
+func (s *Service) setReservation(reserved bool, expires time.Time) {
+	s.relayMu.Lock()
+	s.relayReserved, s.relayExpires = reserved, expires
+	s.relayMu.Unlock()
+}
+
+// Connection kinds reported in PeerStatus.
+const (
+	ConnectionDirect  = "direct"
+	ConnectionRelayed = "relayed"
+)
+
 // PeerStatus is one device of the account as seen from here.
 type PeerStatus struct {
 	Peer
-	Connected bool     `json:"connected"`
-	Addrs     []string `json:"addrs"`
+	Connected bool `json:"connected"`
+	// Connection is ConnectionDirect when any connection to the device
+	// avoids the relay, ConnectionRelayed when all go through it, and empty
+	// when not connected.
+	Connection string   `json:"connection"`
+	Addrs      []string `json:"addrs"`
+}
+
+// RelayStatus is this device's reservation on the relay.
+type RelayStatus struct {
+	PeerID    string     `json:"peer_id"`
+	Reserved  bool       `json:"reserved"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // Status is a point-in-time snapshot for diagnostics.
 type Status struct {
 	PeerID      string       `json:"peer_id"`
 	ListenAddrs []string     `json:"listen_addrs"`
+	Relay       *RelayStatus `json:"relay,omitempty"`
 	Peers       []PeerStatus `json:"peers"`
 }
 
@@ -308,6 +560,15 @@ func (s *Service) Peers() []PeerStatus {
 	for _, p := range list {
 		ps := PeerStatus{Peer: p, Addrs: []string{}}
 		ps.Connected = s.host.Network().Connectedness(p.ID) == network.Connected
+		for _, c := range s.host.Network().ConnsToPeer(p.ID) {
+			if isCircuit(c.RemoteMultiaddr()) {
+				if ps.Connection == "" {
+					ps.Connection = ConnectionRelayed
+				}
+			} else {
+				ps.Connection = ConnectionDirect
+			}
+		}
 		for _, a := range s.host.Peerstore().Addrs(p.ID) {
 			ps.Addrs = append(ps.Addrs, a.String())
 		}
@@ -320,9 +581,23 @@ func (s *Service) Peers() []PeerStatus {
 // Status returns this device's identity, listen addresses and peers.
 func (s *Service) Status() Status {
 	st := Status{PeerID: s.host.ID().String(), ListenAddrs: []string{}, Peers: s.Peers()}
+	s.relayMu.Lock()
+	if s.relayInfo != nil {
+		st.Relay = &RelayStatus{PeerID: s.relayInfo.ID.String(), Reserved: s.relayReserved}
+		if s.relayReserved {
+			exp := s.relayExpires
+			st.Relay.ExpiresAt = &exp
+		}
+	}
+	s.relayMu.Unlock()
 	for _, a := range s.host.Addrs() {
 		st.ListenAddrs = append(st.ListenAddrs, a.String())
 	}
 	sort.Strings(st.ListenAddrs)
 	return st
+}
+
+func isCircuit(a ma.Multiaddr) bool {
+	_, err := a.ValueForProtocol(ma.P_CIRCUIT)
+	return err == nil
 }
