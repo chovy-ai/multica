@@ -11,6 +11,7 @@
     "./side-context": "./src/side-context.ts",
     "./protocol": "./src/protocol.ts",
     "./local-timing": "./src/local-timing.ts",
+    "./v2-conversation": "./src/runtime/v2-conversation.ts",
     "./html-preview": "./src/html-preview-contract.ts"
   },
   "scripts": {

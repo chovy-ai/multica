@@ -668,6 +668,7 @@ func summaryDTO(c sqlitedb.Conversation) map[string]any {
 		"conversation_id": c.ID, "summary_seq": c.SummarySeq, "provider": c.Provider, "title": c.Title, "status": c.Status,
 		"cwd": c.Cwd, "project_id": nil, "pinned": c.Pinned == 1, "archived": c.Archived == 1,
 		"last_message_preview": c.LastMessagePreview, "pending_interactions": c.PendingInteractions, "queue_count": c.QueueCount,
+		"turn_count": c.TurnCount, "created_at": c.CreatedAt,
 		"updated_at": c.UpdatedAt,
 	}
 	if c.ProjectID.Valid {

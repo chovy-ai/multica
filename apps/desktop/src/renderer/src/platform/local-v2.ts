@@ -1,0 +1,178 @@
+import { parseWithFallback } from "@multica/core/api/schema";
+import {
+  LOCAL_V2_VERSION, localV2ServerMessageSchema, localV2SessionListSchema, localV2SnapshotSchema,
+  type LocalV2Scope, type LocalV2Snapshot, type LocalV2Summary, type LocalV2Transport,
+} from "@multica/core/local-conversation/v2";
+
+/** A failed v2 request with the daemon's stable error kind. */
+export class LocalV2RequestError extends Error {
+  constructor(readonly kind: string, message: string) { super(message); }
+}
+
+/** IPC carries the daemon's error kind as a "kind: message" prefix. */
+export function localV2Error(error: unknown): LocalV2RequestError {
+  const text = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : String(error);
+  const match = /^([a-z][a-z0-9_]*): ([\s\S]*)$/.exec(text);
+  return match ? new LocalV2RequestError(match[1]!, match[2]!) : new LocalV2RequestError("unknown", text);
+}
+
+export type ConversationListener = (message: unknown) => void;
+
+interface ConversationSubscription {
+  listeners: Set<ConversationListener>;
+  cursor: number;
+}
+
+const SUMMARY_PAGES = 100;
+
+/**
+ * One account and workspace of the local v2 API in this renderer. It keeps
+ * the complete conversation list current through the scope subscription,
+ * and shares one WebSocket subscription per conversation among its
+ * listeners. Subscriptions do not survive a reconnect: listeners are told
+ * to reload, and resubscribe from their new snapshot.
+ */
+export class LocalV2ScopeClient {
+  private summaryMap = new Map<string, LocalV2Summary>();
+  private summaryLoad?: Promise<void>;
+  private scopeSeq = 0;
+  private summaryListeners = new Set<() => void>();
+  private conversations = new Map<string, ConversationSubscription>();
+  private generation = "";
+
+  constructor(private transport: LocalV2Transport, readonly scope: LocalV2Scope) {}
+
+  async request(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> {
+    try { return await this.transport.request(this.scope, method, path, body); }
+    catch (error) { throw localV2Error(error); }
+  }
+
+  /** A conversation command: send, interrupt, update, queue_update... */
+  command(id: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.request("POST", `/sessions/${encodeURIComponent(id)}/commands`, body);
+  }
+
+  async snapshot(id: string): Promise<LocalV2Snapshot> {
+    const raw = await this.request("GET", `/sessions/${encodeURIComponent(id)}/snapshot`);
+    const snapshot = parseWithFallback<LocalV2Snapshot | null>(raw, localV2SnapshotSchema, null, { endpoint: "local-v2.snapshot" });
+    if (!snapshot) throw new LocalV2RequestError("invalid_response", "Invalid local conversation response. Reload and retry.");
+    this.generation = snapshot.store_generation;
+    return snapshot;
+  }
+
+  fileUrl(path: string): string { return this.transport.fileUrl(this.scope, path); }
+  upload(file: File) { return this.transport.upload(this.scope, file); }
+
+  /** Every conversation of the scope, loaded once and kept current. */
+  summaries(): LocalV2Summary[] { return [...this.summaryMap.values()]; }
+  summary(id: string): LocalV2Summary | undefined { return this.summaryMap.get(id); }
+
+  loadSummaries(): Promise<void> {
+    return this.summaryLoad ??= (async () => {
+      let after = 0;
+      for (let page = 0; page < SUMMARY_PAGES; page++) {
+        const raw = await this.request("GET", `/sessions?after_scope_seq=${after}`);
+        const list = parseWithFallback(raw, localV2SessionListSchema, { scope_seq: after, summaries: [], has_more: false }, { endpoint: "local-v2.sessions" });
+        for (const summary of list.summaries) this.receiveSummary(summary);
+        after = Math.max(after, list.scope_seq, ...list.summaries.map((summary) => summary.summary_seq));
+        if (!list.has_more) break;
+      }
+      this.scopeSeq = after;
+      await this.transport.send(this.scope, { version: LOCAL_V2_VERSION, type: "subscribe_scope", after_scope_seq: after });
+      this.notifySummaries();
+    })().catch((error: unknown) => { this.summaryLoad = undefined; throw error; });
+  }
+
+  onSummaries(listener: () => void): () => void {
+    this.summaryListeners.add(listener);
+    return () => { this.summaryListeners.delete(listener); };
+  }
+
+  /** Records a conversation the caller just created or changed. */
+  receiveSummary(summary: LocalV2Summary): void {
+    const current = this.summaryMap.get(summary.conversation_id);
+    if (current && current.summary_seq > summary.summary_seq) return;
+    this.summaryMap.set(summary.conversation_id, summary);
+  }
+
+  private notifySummaries() { for (const listener of this.summaryListeners) listener(); }
+
+  /**
+   * Receives a conversation's server messages after afterSeq. A listener
+   * that starts behind the shared subscription is told to reload instead.
+   */
+  subscribe(id: string, afterSeq: number, generation: string, listener: ConversationListener): () => void {
+    let subscription = this.conversations.get(id);
+    if (!subscription) {
+      subscription = { listeners: new Set(), cursor: afterSeq };
+      this.conversations.set(id, subscription);
+      void this.transport.send(this.scope, { version: LOCAL_V2_VERSION, type: "subscribe", conversation_id: id, after_seq: afterSeq, store_generation: generation || this.generation })
+        .catch(() => listener({ version: LOCAL_V2_VERSION, type: "subscription.status", conversation_id: id, status: "resubscribe" }));
+    } else if (afterSeq < subscription.cursor) {
+      queueMicrotask(() => listener({ version: LOCAL_V2_VERSION, type: "subscription.status", conversation_id: id, status: "resubscribe" }));
+    }
+    subscription.listeners.add(listener);
+    return () => {
+      const current = this.conversations.get(id);
+      if (!current?.listeners.delete(listener) || current.listeners.size) return;
+      this.conversations.delete(id);
+      void this.transport.send(this.scope, { version: LOCAL_V2_VERSION, type: "unsubscribe", conversation_id: id }).catch(() => {});
+    };
+  }
+
+  /** Routes one server message of this scope. */
+  receive(raw: unknown): void {
+    const parsed = localV2ServerMessageSchema.safeParse(raw);
+    if (!parsed.success) return;
+    const message = parsed.data;
+    if (message.type === "scope.summaries") {
+      for (const summary of message.summaries) this.receiveSummary(summary);
+      this.scopeSeq = Math.max(this.scopeSeq, message.scope_seq);
+      this.notifySummaries();
+      return;
+    }
+    if (message.type === "subscription.status" && !message.conversation_id) {
+      // The scope stream fell behind: read the list again.
+      if (message.status === "resubscribe" || message.status === "snapshot_required") this.reloadSummaries();
+      return;
+    }
+    const id = message.conversation_id!;
+    const subscription = this.conversations.get(id);
+    if (!subscription) return;
+    if (message.type === "conversation.events") subscription.cursor = Math.max(subscription.cursor, message.to_seq);
+    else if (message.status !== "subscribed" && message.status !== "live") this.conversations.delete(id);
+    for (const listener of [...subscription.listeners]) listener(raw);
+  }
+
+  /** A reconnect loses every subscription. */
+  connection(connected: boolean): void {
+    if (connected) { if (this.summaryLoad) this.reloadSummaries(); return; }
+    const lost = [...this.conversations.entries()];
+    this.conversations.clear();
+    for (const [id, subscription] of lost) {
+      for (const listener of subscription.listeners) listener({ version: LOCAL_V2_VERSION, type: "subscription.status", conversation_id: id, status: "resubscribe" });
+    }
+  }
+
+  private reloadSummaries() {
+    this.summaryLoad = undefined;
+    void this.loadSummaries().catch(() => {});
+  }
+}
+
+const clients = new Map<string, LocalV2ScopeClient>();
+let routed: LocalV2Transport | undefined;
+
+/** The renderer's client of a scope; one per account and workspace. */
+export function localV2(transport: LocalV2Transport, scope: LocalV2Scope): LocalV2ScopeClient {
+  if (routed !== transport) {
+    routed = transport;
+    const find = (value: LocalV2Scope) => clients.get(JSON.stringify([value.userId, value.workspaceId]));
+    transport.subscribe((value, message) => find(value)?.receive(message));
+    transport.onConnection((value, connected) => find(value)?.connection(connected));
+  }
+  const key = JSON.stringify([scope.userId, scope.workspaceId]);
+  let client = clients.get(key);
+  if (!client) { client = new LocalV2ScopeClient(transport, scope); clients.set(key, client); }
+  return client;
+}

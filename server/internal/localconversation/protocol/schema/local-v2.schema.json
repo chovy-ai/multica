@@ -251,6 +251,8 @@
         "side_source_turn_id": { "type": "string" },
         "side_quote": { "type": "string" },
         "active_turn_id": { "type": "string" },
+        "turn_count": { "type": "integer", "minimum": 0 },
+        "created_at": { "$ref": "#/$defs/timestamp" },
         "updated_at": { "$ref": "#/$defs/timestamp" }
       }
     },
