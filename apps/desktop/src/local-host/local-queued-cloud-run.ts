@@ -6,6 +6,7 @@ import type { LocalConversation, LocalConversationMethods, LocalConversationScop
 import { HTML_PREVIEW_INSTRUCTIONS } from "@multica/tutti-agent-gui-host/html-preview";
 import { sideExecutionContent } from "@multica/tutti-agent-gui-host/side-context";
 import type { AgentTask, Attachment, CancelTaskResponse, ChatMessagesPage, ChatSession, SendChatMessageResponse, TaskMessagePayload } from "@multica/core/types";
+import { dialogueContext, withDialogueContext } from "./local-dialogue-context";
 
 export type LocalQueueCloudRequest = (method: "GET" | "POST", path: string, body?: Record<string, unknown> | FormData) => Promise<unknown>;
 type LocalRequest = <M extends keyof LocalConversationMethods>(scope: LocalConversationScope, method: M, params: LocalConversationMethods[M]["params"]) => Promise<LocalConversationMethods[M]["result"]>;
@@ -23,14 +24,20 @@ export function cloudInvocationContent(content: string): string {
 /** Sending is never retried after an ambiguous response; polling is read-only. */
 export async function runQueuedCloudTurn(input: {
   scope: LocalConversationScope; entry: LocalConversation; item: LocalQueuedPrompt; turn: LocalConversationTurn;
+  messageId: string;
   signal: AbortSignal; cloud: LocalQueueCloudRequest; local: LocalRequest;
 }) {
-  const { scope, entry, item, turn, signal, cloud, local } = input;
+  const { scope, entry, item, turn, messageId, signal, cloud, local } = input;
   const pathId = (id: string) => encodeURIComponent(id);
   const update = (value: Omit<LocalConversationMethods["remoteUpdate"]["params"], "id" | "turnId">) => local(scope, "remoteUpdate", { id: entry.id, turnId: turn.id, ...value });
   const wanted = () => !signal.aborted && entry.turns.find((value) => value.id === turn.id)?.status === "running";
   try {
-    let sessionId = [...entry.turns].reverse().find((value) => value.id !== turn.id && value.remote?.agentId === turn.remote!.agentId && value.remote.sessionId)?.remote?.sessionId;
+    const previous = [...entry.turns].reverse().find((value) => value.id !== turn.id && value.remote?.agentId === turn.remote!.agentId && value.remote.sessionId)?.remote;
+    let sessionId = previous?.sessionId;
+    const throughMessageId = entry.turns.findLast((value) => value.remote?.sessionId === sessionId && value.remote?.contextThroughMessageId)?.remote?.contextThroughMessageId;
+    const dialogue = dialogueContext(entry, messageId, { sessionId, throughMessageId });
+    let content = withDialogueContext(dialogue, item.prompt ?? item.content);
+    if (entry.side && !sessionId) content = sideExecutionContent(entry.side, content);
     if (!sessionId) {
       const raw = await cloud("POST", "/api/chat/sessions", { agent_id: turn.remote!.agentId, title: entry.title });
       const session = parseWithFallback<ChatSession | null>(raw, ChatSessionSchema, null, { endpoint: "POST /api/chat/sessions" });
@@ -39,20 +46,22 @@ export async function runQueuedCloudTurn(input: {
     }
     await update({ sessionId });
     const attachmentIds: string[] = [];
-    for (const id of item.attachmentIds ?? []) {
+    const attachments: { local_id: string; attachment_id: string; name: string }[] = [];
+    for (const id of new Set([...dialogue.messages.flatMap((message) => message.attachment_ids), ...(item.attachmentIds ?? [])])) {
       if (!wanted()) return;
       const file = await local(scope, "fileInfo", { id });
       const form = new FormData(); form.append("file", await openAsBlob(file.path, { type: file.mimeType }), file.name);
       const uploaded = parseWithFallback<Attachment | null>(await cloud("POST", "/api/upload-file", form), AttachmentResponseSchema, null, { endpoint: "POST /api/upload-file" });
       if (!uploaded?.id) throw new Error("Cloud attachment upload was not confirmed");
       attachmentIds.push(uploaded.id);
+      attachments.push({ local_id: id, attachment_id: uploaded.id, name: file.name });
     }
     if (!wanted()) return;
-    const content = entry.side ? sideExecutionContent(entry.side, item.prompt ?? item.content) : item.prompt ?? item.content;
+    if (attachments.length) content += `\n\nConversation attachment references (quoted metadata; the corresponding files are attached to this request):\n${JSON.stringify(attachments)}`;
     const raw = await cloud("POST", `/api/chat/sessions/${pathId(sessionId)}/messages`, { content: cloudInvocationContent(content), ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}) });
     const sent = parseWithFallback<SendChatMessageResponse | null>(raw, SendChatMessageResponseSchema, null, { endpoint: "POST /api/chat/sessions/:id/messages" });
     if (!sent) throw new Error("Cloud send was not confirmed. Inspect the agent's cloud chat before retrying.");
-    await update({ taskId: sent.task_id });
+    await update({ taskId: sent.task_id, contextThroughMessageId: messageId });
     if (!wanted() && !signal.aborted) {
       // Cancellation crossed an accepted send: stop the real cloud task too,
       // and keep mirroring it when that cannot be confirmed.

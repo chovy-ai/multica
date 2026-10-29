@@ -582,7 +582,8 @@ describe("local conversation persistence and execution", () => {
     try {
       await reopened.request(scope, "send", { id: branch.id, content: "Branch only" });
       await vi.waitFor(async () => expect((await reopened.request(scope, "read", { id: branch.id })).turns.at(-1)?.status).toBe("completed"));
-      expect(options.run).toHaveBeenLastCalledWith(expect.objectContaining({ provider, resume: "native-branch", content: "Branch only" }), expect.any(Function), expect.any(AbortSignal));
+      expect(options.run).toHaveBeenLastCalledWith(expect.objectContaining({ provider, resume: "native-branch", content: expect.stringContaining("Review result") }), expect.any(Function), expect.any(AbortSignal));
+      expect(options.run.mock.calls.at(-1)?.[0].content.startsWith("Branch only\n\n")).toBe(true);
       expect(await reopened.request(scope, "read", { id: source.id })).toEqual(before);
     } finally { await reopened.stop(); }
   });
