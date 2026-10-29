@@ -124,3 +124,13 @@ ORDER BY seq;
 SELECT * FROM interaction_request
 WHERE conversation_id = ? AND status = 'pending'
 ORDER BY created_at, id;
+
+-- name: InsertAttachment :exec
+INSERT INTO attachment (id, scope_id, conversation_id, path, size, media_type, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetAttachment :one
+SELECT * FROM attachment WHERE id = ?;
+
+-- name: CountAttachmentsAtPath :one
+SELECT COUNT(*) FROM attachment WHERE path = ?;

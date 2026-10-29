@@ -75,6 +75,9 @@ type Batch struct {
 	Summary        *SummaryPatch
 	// ProviderSessionID records the native session the conversation resumes.
 	ProviderSessionID *string
+	// Attachments are files written by WriteAttachmentFile that events in
+	// this batch reference.
+	Attachments []NewAttachment
 }
 
 // CommittedEvent is an appended event with its assigned sequence numbers.
@@ -291,6 +294,19 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		}
 		turnSeqs[turnID] = turn.LastTurnSeq
 		return turn.LastTurnSeq, nil
+	}
+
+	for _, a := range b.Attachments {
+		if a.ConversationID != conv.ID || a.ScopeID != conv.ScopeID {
+			return Committed{}, fmt.Errorf("attachment %s belongs to another conversation", a.ID)
+		}
+		err := q.InsertAttachment(ctx, sqlitedb.InsertAttachmentParams{
+			ID: a.ID, ScopeID: a.ScopeID, ConversationID: a.ConversationID, Path: a.Name,
+			Size: a.Size, MediaType: a.MediaType, CreatedAt: formatTime(a.CreatedAt),
+		})
+		if err != nil {
+			return Committed{}, err
+		}
 	}
 
 	committed := Committed{Events: make([]CommittedEvent, 0, len(b.Events))}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,11 @@ type ClaudeAdapter interface {
 	Close(ctx context.Context) error
 	Done() <-chan struct{}
 	Err() error
+}
+
+// AttachmentFiles writes attachment files, implemented by *store.Store.
+type AttachmentFiles interface {
+	WriteAttachmentFile(scopeID int64, conversationID, mediaType string, data []byte, now time.Time) (store.NewAttachment, error)
 }
 
 // StartClaudeAdapter launches an adapter delivering output to handler.
@@ -56,6 +62,8 @@ const (
 // adapter goes away. Output handling never blocks the adapter reader.
 type ClaudeRunner struct {
 	conversationID string
+	scopeID        int64
+	files          AttachmentFiles
 	start          StartClaudeAdapter
 	session        ClaudeSession
 	batcher        *Batcher
@@ -80,6 +88,8 @@ type claudeTurn struct {
 // ClaudeRunnerOptions configures a runner.
 type ClaudeRunnerOptions struct {
 	ConversationID string
+	ScopeID        int64
+	Files          AttachmentFiles
 	Start          StartClaudeAdapter
 	Session        ClaudeSession
 	Batcher        *Batcher
@@ -94,7 +104,7 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 		opts.Now = time.Now
 	}
 	return &ClaudeRunner{
-		conversationID: opts.ConversationID, start: opts.Start, session: opts.Session,
+		conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, start: opts.Start, session: opts.Session,
 		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName,
 	}
 }
@@ -300,9 +310,7 @@ func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
 	var preview *string
 	for _, e := range events {
 		if e.Image != nil {
-			// Inline images need attachment storage, which the service does
-			// not have yet; they are not recorded.
-			continue
+			e = r.storeImage(&batch, e, now)
 		}
 		batch.Events = append(batch.Events, r.event(turn.id, e.ItemID, e.Type, e.Final, e.Payload, now))
 		if e.Final && e.Payload["kind"] == "assistant_text" {
@@ -328,6 +336,28 @@ func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
 			}()
 		}
 	}
+}
+
+// storeImage writes an inline tool image as an attachment committed with the
+// batch, and points the image event at it. A failed write becomes an error
+// item, so the image's absence is visible instead of silent.
+func (r *ClaudeRunner) storeImage(batch *store.Batch, e claude.Event, now time.Time) claude.Event {
+	data, err := base64.StdEncoding.DecodeString(e.Image.Data)
+	var attachment store.NewAttachment
+	if err == nil {
+		attachment, err = r.files.WriteAttachmentFile(r.scopeID, r.conversationID, e.Image.MimeType, data, now)
+	}
+	if err != nil {
+		return claude.Event{ItemID: e.ItemID, Type: "item.completed", Final: true, Payload: map[string]any{
+			"kind": "error", "status": "failed", "error": map[string]any{"kind": "attachment_failed", "message": err.Error()},
+		}}
+	}
+	batch.Attachments = append(batch.Attachments, attachment)
+	payload := map[string]any{"attachment_id": attachment.ID}
+	for k, v := range e.Payload {
+		payload[k] = v
+	}
+	return claude.Event{ItemID: e.ItemID, Type: e.Type, Final: e.Final, Payload: payload}
 }
 
 type turnError struct {

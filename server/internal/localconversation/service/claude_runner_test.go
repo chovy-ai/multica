@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -73,6 +74,7 @@ func (a *fakeAdapter) sent() []string {
 }
 
 type runnerFixture struct {
+	scopeID  int64
 	store    *store.Store
 	batcher  *Batcher
 	limiter  *Limiter
@@ -101,8 +103,9 @@ func newRunnerFixture(t *testing.T, limiter *Limiter, reply func(string) (json.R
 	f := &runnerFixture{store: s, limiter: limiter}
 	f.batcher = NewBatcher(w, BatcherOptions{MaxDelay: time.Millisecond})
 	t.Cleanup(f.batcher.Close)
+	f.scopeID = scopeID
 	f.runner = NewClaudeRunner(ClaudeRunnerOptions{
-		ConversationID: "conv-1", Batcher: f.batcher, Limiter: limiter, ContextMCPName: "multica",
+		ConversationID: "conv-1", ScopeID: scopeID, Files: s, Batcher: f.batcher, Limiter: limiter, ContextMCPName: "multica",
 		Session: ClaudeSession{Fields: map[string]any{"executable": "/bin/claude", "cwd": "/repo"}, ProviderSessionID: "native-0"},
 		Start: func(_ context.Context, handler claude.Handler) (ClaudeAdapter, error) {
 			a := &fakeAdapter{handler: handler, reply: reply, done: make(chan struct{})}
@@ -307,5 +310,67 @@ func TestClaudeRunnerRespectsTheConcurrencyLimitAndOneTurnAtATime(t *testing.T) 
 	send(t, f, "t1")
 	if err := f.runner.Send(context.Background(), SendRequest{TurnID: "t2", RequestID: "r2", MessageID: "m2", Text: "y"}); !errors.Is(err, ErrTurnRunning) {
 		t.Fatalf("second Send while running = %v", err)
+	}
+}
+
+func TestClaudeRunnerStoresToolImagesAsAttachments(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	send(t, f, "t1")
+	f.adapter(0).emit(t,
+		`{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"tu-1","name":"Screenshot","input":{}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu-1","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":""}`,
+	)
+	f.turnEvents(t, "t1")
+	events, err := f.store.EventsAfter(context.Background(), "conv-1", 0, 1<<30, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attachmentID string
+	for _, e := range events {
+		if e.ItemID.String == "output-image:tu-1:0" {
+			var p map[string]any
+			_ = json.Unmarshal([]byte(e.Payload), &p)
+			attachmentID, _ = p["attachment_id"].(string)
+			if p["kind"] != "image" || p["mime_type"] != "image/png" {
+				t.Fatalf("image payload = %v", p)
+			}
+		}
+	}
+	if attachmentID == "" {
+		t.Fatal("image event has no attachment_id")
+	}
+	_, path, err := f.store.Attachment(context.Background(), f.scopeID, attachmentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "\x89PNG\r\n\x1a\n" {
+		t.Fatalf("attachment bytes = %q, %v", data, err)
+	}
+}
+
+type failingFiles struct{}
+
+func (failingFiles) WriteAttachmentFile(int64, string, string, []byte, time.Time) (store.NewAttachment, error) {
+	return store.NewAttachment{}, errors.New("disk full")
+}
+
+func TestClaudeRunnerRecordsAFailedImageWriteAsAnErrorItem(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	f.runner.files = failingFiles{}
+	send(t, f, "t1")
+	f.adapter(0).emit(t,
+		`{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"tu-1","name":"Screenshot","input":{}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu-1","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":""}`,
+	)
+	got := f.turnEvents(t, "t1")
+	if !strings.Contains(strings.Join(got, "\n"), "item.completed output-image:tu-1:0 failed") {
+		t.Fatalf("events = %v", got)
 	}
 }

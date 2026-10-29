@@ -72,6 +72,36 @@ func (q *Queries) CompleteTurn(ctx context.Context, arg CompleteTurnParams) erro
 	return err
 }
 
+const countAttachmentsAtPath = `-- name: CountAttachmentsAtPath :one
+SELECT COUNT(*) FROM attachment WHERE path = ?
+`
+
+func (q *Queries) CountAttachmentsAtPath(ctx context.Context, path string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAttachmentsAtPath, path)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getAttachment = `-- name: GetAttachment :one
+SELECT id, scope_id, conversation_id, path, size, media_type, created_at FROM attachment WHERE id = ?
+`
+
+func (q *Queries) GetAttachment(ctx context.Context, id string) (Attachment, error) {
+	row := q.db.QueryRowContext(ctx, getAttachment, id)
+	var i Attachment
+	err := row.Scan(
+		&i.ID,
+		&i.ScopeID,
+		&i.ConversationID,
+		&i.Path,
+		&i.Size,
+		&i.MediaType,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getConversation = `-- name: GetConversation :one
 SELECT id, scope_id, provider, provider_session_id, title, title_mode, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at FROM conversation WHERE id = ?
 `
@@ -171,6 +201,34 @@ func (q *Queries) GetTurn(ctx context.Context, id string) (Turn, error) {
 		&i.CompletedAt,
 	)
 	return i, err
+}
+
+const insertAttachment = `-- name: InsertAttachment :exec
+INSERT INTO attachment (id, scope_id, conversation_id, path, size, media_type, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertAttachmentParams struct {
+	ID             string
+	ScopeID        int64
+	ConversationID string
+	Path           string
+	Size           int64
+	MediaType      string
+	CreatedAt      string
+}
+
+func (q *Queries) InsertAttachment(ctx context.Context, arg InsertAttachmentParams) error {
+	_, err := q.db.ExecContext(ctx, insertAttachment,
+		arg.ID,
+		arg.ScopeID,
+		arg.ConversationID,
+		arg.Path,
+		arg.Size,
+		arg.MediaType,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const insertConversation = `-- name: InsertConversation :exec
