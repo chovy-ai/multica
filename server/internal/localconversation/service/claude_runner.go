@@ -104,6 +104,9 @@ type claudeTurn struct {
 	// storageFailed is set when the batcher rejected output; the rest of
 	// the turn's output is dropped and the turn ends as failed.
 	storageFailed bool
+	// lastMessageID is the uuid of the turn's last transcript message, where
+	// a fork through this turn ends.
+	lastMessageID string
 }
 
 // ClaudeRunnerOptions configures a runner.
@@ -331,6 +334,11 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 			r.rememberSession(sessionID)
 		}
 		if turn != nil {
+			if id := transcriptMessageID(out.Message); id != "" {
+				r.mu.Lock()
+				turn.lastMessageID = id
+				r.mu.Unlock()
+			}
 			r.appendOutput(turn, events)
 		}
 		if result != nil && turn != nil {
@@ -408,7 +416,10 @@ func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnErro
 	}
 	// Critical: committed with the output before it, never rejected by the
 	// pending budget.
-	_ = r.batcher.Append(r.rec.completionBatch(turn.id, status, failure, finals), true)
+	r.mu.Lock()
+	lastMessageID := turn.lastMessageID
+	r.mu.Unlock()
+	_ = r.batcher.Append(r.rec.completionBatch(turn.id, lastMessageID, status, failure, finals), true)
 	if r.onTurnEnd != nil {
 		r.onTurnEnd(turn.id)
 	}
@@ -490,4 +501,17 @@ func contextName(name string) string {
 		return contextmcp.Name
 	}
 	return name
+}
+
+// transcriptMessageID is the uuid of an SDK message that Claude keeps in
+// its session transcript: user and assistant messages.
+func transcriptMessageID(raw json.RawMessage) string {
+	var m struct {
+		Type string `json:"type"`
+		UUID string `json:"uuid"`
+	}
+	if json.Unmarshal(raw, &m) != nil || (m.Type != "user" && m.Type != "assistant") {
+		return ""
+	}
+	return m.UUID
 }

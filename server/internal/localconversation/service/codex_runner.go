@@ -583,7 +583,7 @@ func (r *CodexRunner) finish(turn *codexTurn, status string, failure *turnError)
 		finals = append(finals, codexOutput(e))
 	}
 	turn.normMu.Unlock()
-	_ = r.batcher.Append(r.rec.completionBatch(turn.id, status, failure, finals), true)
+	_ = r.batcher.Append(r.rec.completionBatch(turn.id, turn.nativeTurnID, status, failure, finals), true)
 	if r.onTurnEnd != nil {
 		r.onTurnEnd(turn.id)
 	}

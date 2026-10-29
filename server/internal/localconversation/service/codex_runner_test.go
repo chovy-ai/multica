@@ -46,6 +46,8 @@ func (f *fakeCodex) Request(_ context.Context, method string, params any) (json.
 		return json.RawMessage(`{"data":[{"id":"gpt-5.5","isDefault":true}]}`), nil
 	case "thread/start", "thread/resume":
 		return json.RawMessage(`{"thread":{"id":"th-1"}}`), nil
+	case "thread/fork":
+		return json.RawMessage(`{"thread":{"id":"th-fork"}}`), nil
 	case "turn/start":
 		if hook != nil {
 			hook()

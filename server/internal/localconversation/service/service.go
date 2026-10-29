@@ -88,6 +88,7 @@ type Service struct {
 	metaMu    sync.Mutex
 	mu        sync.Mutex
 	closing   bool
+	forking   map[string]bool
 	runners   map[string]runner
 	questions interactions
 	queues    queues
@@ -127,7 +128,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		_ = st.Close()
 		return nil, err
 	}
-	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), context: contextServer, opts: opts, runners: map[string]runner{},
+	s := &Service{store: st, writer: writer, hub: NewHub(st, HubOptions{}), limiter: NewLimiter(MaxRunningTurns), context: contextServer, opts: opts, runners: map[string]runner{}, forking: map[string]bool{},
 		questions: interactions{waiting: map[string]*waitingQuestion{}},
 		queues:    queues{locks: map[string]*sync.Mutex{}, dispatching: map[string]string{}}}
 	s.batcher = NewBatcher(writer, BatcherOptions{

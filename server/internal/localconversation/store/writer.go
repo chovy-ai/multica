@@ -51,6 +51,9 @@ type TurnCompletion struct {
 	ErrorKind   string
 	Error       string
 	CompletedAt time.Time
+	// ProviderTurnID is where the turn ends in the provider's own history:
+	// the Codex turn id, or the last Claude transcript message uuid.
+	ProviderTurnID string
 }
 
 // SummaryPatch changes the conversation summary. Nil fields keep their value.
@@ -452,6 +455,11 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		})
 		if err != nil {
 			return Committed{}, err
+		}
+		if c.ProviderTurnID != "" {
+			if err := q.SetProviderTurnID(ctx, sqlitedb.SetProviderTurnIDParams{ProviderTurnID: c.ProviderTurnID, ID: c.TurnID}); err != nil {
+				return Committed{}, err
+			}
 		}
 	}
 

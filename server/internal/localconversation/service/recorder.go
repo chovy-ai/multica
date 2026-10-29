@@ -82,14 +82,14 @@ func (t *turnRecorder) outputBatch(turnID string, events []outputEvent) store.Ba
 
 // completionBatch records the finals of items the turn left open, then
 // turn.completed, the turn row and the conversation status, together.
-func (t *turnRecorder) completionBatch(turnID, status string, failure *turnError, finals []outputEvent) store.Batch {
+func (t *turnRecorder) completionBatch(turnID, providerTurnID, status string, failure *turnError, finals []outputEvent) store.Batch {
 	now := t.now()
 	batch := store.Batch{ConversationID: t.conversationID}
 	for _, e := range finals {
 		batch.Events = append(batch.Events, t.event(turnID, e.ItemID, e.Type, e.Final, e.Payload, now))
 	}
 	payload := map[string]any{"status": status}
-	completion := &store.TurnCompletion{TurnID: turnID, Status: status, CompletedAt: now}
+	completion := &store.TurnCompletion{TurnID: turnID, Status: status, CompletedAt: now, ProviderTurnID: providerTurnID}
 	if failure != nil {
 		payload["error"] = map[string]any{"kind": failure.kind, "message": failure.message}
 		completion.ErrorKind, completion.Error = failure.kind, failure.message

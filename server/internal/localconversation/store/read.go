@@ -231,33 +231,49 @@ func (s *Store) Turn(ctx context.Context, conversationID, turnID string) (sqlite
 // OpenBackgroundTasks returns the provider task ids of the conversation's
 // background tasks that have no final event yet.
 func (s *Store) OpenBackgroundTasks(ctx context.Context, conversationID string) ([]string, error) {
-	rows, err := sqlitedb.New(s.read).ListBackgroundTaskEvents(ctx, conversationID)
+	rows, err := s.OpenBackgroundTaskItems(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
-	open := map[string]string{}
-	var order []string
+	var ids []string
 	for _, e := range rows {
-		if e.Final == 1 {
-			delete(open, e.ItemID.String)
-			continue
-		}
 		var payload struct {
 			TaskID string `json:"task_id"`
 		}
 		_ = json.Unmarshal([]byte(e.Payload), &payload)
-		if _, seen := open[e.ItemID.String]; !seen && payload.TaskID != "" {
-			order = append(order, e.ItemID.String)
-		}
 		if payload.TaskID != "" {
-			open[e.ItemID.String] = payload.TaskID
-		}
-	}
-	var ids []string
-	for _, item := range order {
-		if id, ok := open[item]; ok {
-			ids = append(ids, id)
+			ids = append(ids, payload.TaskID)
 		}
 	}
 	return ids, nil
+}
+
+// OpenBackgroundTaskItems returns the latest event of each background task
+// item that has no final event yet, in the order the items started.
+func (s *Store) OpenBackgroundTaskItems(ctx context.Context, conversationID string) ([]sqlitedb.Event, error) {
+	rows, err := sqlitedb.New(s.read).ListBackgroundTaskEvents(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[string]sqlitedb.Event{}
+	var order []string
+	for _, e := range rows {
+		id := e.ItemID.String
+		if e.Final == 1 {
+			delete(latest, id)
+			continue
+		}
+		if _, seen := latest[id]; !seen {
+			order = append(order, id)
+		}
+		latest[id] = e
+	}
+	var open []sqlitedb.Event
+	for _, id := range order {
+		if e, ok := latest[id]; ok {
+			open = append(open, e)
+			delete(latest, id)
+		}
+	}
+	return open, nil
 }

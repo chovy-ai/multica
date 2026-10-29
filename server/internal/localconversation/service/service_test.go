@@ -25,6 +25,8 @@ type serviceFixture struct {
 	scopeID  int64
 	mu       sync.Mutex
 	adapters []*fakeAdapter
+	// reply, when set, answers requests of adapters started after it.
+	reply func(a *fakeAdapter, typ string) (json.RawMessage, error)
 }
 
 func newServiceFixture(t *testing.T, path string) *serviceFixture {
@@ -47,6 +49,9 @@ func (f *serviceFixture) launch(_ context.Context, conv sqlitedb.Conversation) (
 	return ClaudeSession{Fields: map[string]any{"executable": "/bin/claude", "cwd": conv.Cwd}}, func(_ context.Context, h claude.Handler) (ClaudeAdapter, error) {
 		a := &fakeAdapter{handler: h, done: make(chan struct{})}
 		f.mu.Lock()
+		if reply := f.reply; reply != nil {
+			a.reply = func(typ string) (json.RawMessage, error) { return reply(a, typ) }
+		}
 		f.adapters = append(f.adapters, a)
 		f.mu.Unlock()
 		return a, nil

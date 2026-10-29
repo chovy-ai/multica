@@ -253,6 +253,8 @@ type commandBody struct {
 	Action string          `json:"action"`
 	// send: provider text replacing Text, such as Text with context.
 	Prompt string `json:"prompt"`
+	// fork: the turn the fork ends after; empty forks everything.
+	TurnID string `json:"turn_id"`
 }
 
 // optionalString decodes an update_settings field.
@@ -338,6 +340,13 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			return
 		}
 		writeJSON(w, http.StatusOK, summaryDTO(conv))
+	case "fork":
+		conv, err := v.svc.Fork(r.Context(), service.ForkCommand{ScopeID: scopeID, SourceID: id, TurnID: body.TurnID, RequestID: body.RequestID})
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, summaryDTO(conv))
 	case "queue_enqueue":
 		queue, err := v.svc.Enqueue(r.Context(), scopeID, id, body.Item, body.Paused)
 		if err != nil {
@@ -618,6 +627,10 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusForbidden, "outside_folder"
 	case errors.Is(err, store.ErrUploadTooLarge):
 		status, code = http.StatusRequestEntityTooLarge, "file_too_large"
+	case errors.Is(err, service.ErrForkUnavailable):
+		status, code = http.StatusConflict, "fork_unavailable"
+	case errors.Is(err, service.ErrForking):
+		status, code = http.StatusConflict, "forking"
 	case errors.Is(err, service.ErrQueueItemStarted):
 		status, code = http.StatusConflict, "queue_item_started"
 	case errors.Is(err, service.ErrQueueFull):
