@@ -69,4 +69,15 @@ describe("model-generated conversation titles", () => {
     expect(normalizeModelConversationTitle("  “排查登录失败”  ")).toBe("排查登录失败");
     for (const output of ["", "新会话", "Title\nHere is an explanation", "[@TES-131](mention://issue/131)", "Answer ".repeat(100)]) expect(normalizeModelConversationTitle(output)).toBeNull();
   });
+
+  it.each([
+    ["<reasoning_effort>10</reasoning_effort>", null],
+    ["<reasoning_effort>10</reasoning_effort>\nP2P 服务设计", "P2P 服务设计"],
+    ["<reasoning_effort>\n10\n</reasoning_effort>\n“P2P 服务设计”", "P2P 服务设计"],
+    ["P2P 服务设计 <reasoning_effort>10</reasoning_effort>", "P2P 服务设计"],
+    ["<reasoning_effort>10", null],
+    ["10</reasoning_effort>", null],
+  ] as const)("excludes internal control blocks from title output %j", (output, expected) => {
+    expect(normalizeModelConversationTitle(output)).toBe(expected);
+  });
 });
