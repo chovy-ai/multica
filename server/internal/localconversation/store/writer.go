@@ -1,0 +1,418 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
+)
+
+// ErrWriterClosed is returned for batches submitted after Close.
+var ErrWriterClosed = errors.New("local conversation store: writer closed")
+
+// NewEvent is one event to append. Seq and TurnSeq are assigned on commit.
+type NewEvent struct {
+	TurnID    string
+	ItemID    string
+	Type      string
+	Final     bool
+	Payload   json.RawMessage
+	CreatedAt time.Time
+}
+
+// NewTurn starts a turn before the batch's events are appended.
+type NewTurn struct {
+	ID        string
+	RequestID string
+	StartedAt time.Time
+}
+
+// NewMessage is a message projection row written with its final event.
+type NewMessage struct {
+	ID            string
+	TurnID        string
+	Role          string
+	Content       string
+	AttachmentIDs []string
+	Steered       bool
+	Failed        bool
+	CreatedAt     time.Time
+}
+
+// TurnCompletion ends a turn.
+type TurnCompletion struct {
+	TurnID      string
+	Status      string
+	ErrorKind   string
+	Error       string
+	CompletedAt time.Time
+}
+
+// SummaryPatch changes the conversation summary. Nil fields keep their value.
+// Any patch advances the scope sequence so subscribed lists see the change.
+type SummaryPatch struct {
+	Status              *string
+	Title               *string
+	LastMessagePreview  *string
+	PendingInteractions *int64
+	QueueCount          *int64
+	UpdatedAt           time.Time
+}
+
+// Batch is everything one conversation commits at once. All of it lands in
+// the same transaction or none of it does.
+type Batch struct {
+	ConversationID string
+	StartTurn      *NewTurn
+	Events         []NewEvent
+	Messages       []NewMessage
+	CompleteTurn   *TurnCompletion
+	Summary        *SummaryPatch
+}
+
+// CommittedEvent is an appended event with its assigned sequence numbers.
+type CommittedEvent struct {
+	ConversationID string
+	Seq            int64
+	TurnID         string
+	TurnSeq        int64
+	ItemID         string
+	Type           string
+	Final          bool
+	Payload        json.RawMessage
+	CreatedAt      time.Time
+}
+
+// Committed is the durable result of one batch, ready to publish.
+type Committed struct {
+	Events []CommittedEvent
+	// ScopeSeq is the new scope sequence when the summary changed, else 0.
+	ScopeSeq int64
+	// Summary is the conversation row after the batch when the summary changed.
+	Summary *sqlitedb.Conversation
+}
+
+// WriterOptions bounds the writer.
+type WriterOptions struct {
+	// QueueSize bounds batches waiting for the writer goroutine.
+	QueueSize int
+	// MaxGroup bounds batches merged into one transaction.
+	MaxGroup int
+}
+
+// Writer is the only goroutine that writes conversation data. Batches that
+// are ready at the same time are committed in one transaction, so the number
+// of synchronous disk flushes follows the commit rate, not the number of
+// active conversations.
+type Writer struct {
+	store    *Store
+	maxGroup int
+	queue    chan *writeRequest
+	done     chan struct{}
+	closeMu  sync.RWMutex
+	closed   bool
+}
+
+type writeRequest struct {
+	ctx    context.Context
+	batch  Batch
+	result chan writeResult
+}
+
+type writeResult struct {
+	committed Committed
+	err       error
+}
+
+// NewWriter starts the writer goroutine.
+func (s *Store) NewWriter(opts WriterOptions) *Writer {
+	if opts.QueueSize <= 0 {
+		opts.QueueSize = 256
+	}
+	if opts.MaxGroup <= 0 {
+		opts.MaxGroup = 64
+	}
+	w := &Writer{store: s, maxGroup: opts.MaxGroup, queue: make(chan *writeRequest, opts.QueueSize), done: make(chan struct{})}
+	go w.run()
+	return w
+}
+
+// Submit commits batch and returns once it is durable. It blocks while the
+// writer queue is full, bounded by ctx.
+func (w *Writer) Submit(ctx context.Context, batch Batch) (Committed, error) {
+	req := &writeRequest{ctx: ctx, batch: batch, result: make(chan writeResult, 1)}
+	w.closeMu.RLock()
+	if w.closed {
+		w.closeMu.RUnlock()
+		return Committed{}, ErrWriterClosed
+	}
+	select {
+	case w.queue <- req:
+		w.closeMu.RUnlock()
+	case <-ctx.Done():
+		w.closeMu.RUnlock()
+		return Committed{}, ctx.Err()
+	}
+	// Once queued the batch is committed or rejected by the writer; waiting
+	// for that outcome keeps the caller from publishing an unknown state.
+	res := <-req.result
+	return res.committed, res.err
+}
+
+// Close stops accepting batches and waits for queued batches to finish.
+func (w *Writer) Close() {
+	w.closeMu.Lock()
+	if !w.closed {
+		w.closed = true
+		close(w.queue)
+	}
+	w.closeMu.Unlock()
+	<-w.done
+}
+
+func (w *Writer) run() {
+	defer close(w.done)
+	for first := range w.queue {
+		group := []*writeRequest{first}
+	drain:
+		for len(group) < w.maxGroup {
+			select {
+			case req, ok := <-w.queue:
+				if !ok {
+					break drain
+				}
+				group = append(group, req)
+			default:
+				break drain
+			}
+		}
+		w.commitGroup(group)
+	}
+}
+
+// commitGroup applies each batch inside its own savepoint so one invalid
+// batch is rejected without failing the others, then commits once.
+func (w *Writer) commitGroup(group []*writeRequest) {
+	results := make([]writeResult, len(group))
+	fail := func(err error) {
+		for i, req := range group {
+			if results[i].err == nil {
+				results[i] = writeResult{err: err}
+			}
+			req.result <- results[i]
+		}
+	}
+
+	ctx := context.Background()
+	tx, err := w.store.write.BeginTx(ctx, nil)
+	if err != nil {
+		fail(fmt.Errorf("begin write transaction: %w", err))
+		return
+	}
+	for i, req := range group {
+		if err := req.ctx.Err(); err != nil {
+			results[i] = writeResult{err: err}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "SAVEPOINT batch"); err != nil {
+			_ = tx.Rollback()
+			fail(err)
+			return
+		}
+		committed, err := applyBatch(ctx, sqlitedb.New(tx), req.batch)
+		if err != nil {
+			if _, rbErr := tx.ExecContext(ctx, "ROLLBACK TO batch"); rbErr != nil {
+				_ = tx.Rollback()
+				fail(errors.Join(err, rbErr))
+				return
+			}
+			results[i] = writeResult{err: err}
+		} else {
+			results[i] = writeResult{committed: committed}
+		}
+		if _, err := tx.ExecContext(ctx, "RELEASE batch"); err != nil {
+			_ = tx.Rollback()
+			fail(err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		// Nothing in the group is durable; report the commit failure to every
+		// batch, including those that applied cleanly.
+		for i := range results {
+			results[i] = writeResult{err: fmt.Errorf("commit: %w", err)}
+		}
+	}
+	for i, req := range group {
+		req.result <- results[i]
+	}
+}
+
+func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, error) {
+	conv, err := q.GetConversation(ctx, b.ConversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Committed{}, fmt.Errorf("%w: conversation %s", ErrNotFound, b.ConversationID)
+	}
+	if err != nil {
+		return Committed{}, err
+	}
+
+	turnSeqs := map[string]int64{}
+	if t := b.StartTurn; t != nil {
+		err := q.InsertTurn(ctx, sqlitedb.InsertTurnParams{
+			ID: t.ID, ConversationID: conv.ID, TurnIndex: conv.TurnCount, RequestID: t.RequestID,
+			Status: "running", StartedAt: formatTime(t.StartedAt),
+		})
+		if err != nil {
+			return Committed{}, fmt.Errorf("start turn %s: %w", t.ID, err)
+		}
+		if err := q.SetConversationTurnCount(ctx, sqlitedb.SetConversationTurnCountParams{TurnCount: conv.TurnCount + 1, ID: conv.ID}); err != nil {
+			return Committed{}, err
+		}
+		turnSeqs[t.ID] = 0
+	}
+	turnSeq := func(turnID string) (int64, error) {
+		if seq, ok := turnSeqs[turnID]; ok {
+			return seq, nil
+		}
+		turn, err := q.GetTurn(ctx, turnID)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && turn.ConversationID != conv.ID) {
+			return 0, fmt.Errorf("%w: turn %s in conversation %s", ErrNotFound, turnID, conv.ID)
+		}
+		if err != nil {
+			return 0, err
+		}
+		turnSeqs[turnID] = turn.LastTurnSeq
+		return turn.LastTurnSeq, nil
+	}
+
+	committed := Committed{Events: make([]CommittedEvent, 0, len(b.Events))}
+	seq := conv.LastSeq
+	for _, e := range b.Events {
+		if !json.Valid(e.Payload) {
+			return Committed{}, fmt.Errorf("event %s payload is not JSON", e.Type)
+		}
+		seq++
+		ce := CommittedEvent{ConversationID: conv.ID, Seq: seq, TurnID: e.TurnID, ItemID: e.ItemID, Type: e.Type, Final: e.Final, Payload: e.Payload, CreatedAt: e.CreatedAt}
+		params := sqlitedb.InsertEventParams{
+			ConversationID: conv.ID, Seq: seq, Type: e.Type, Final: boolInt(e.Final),
+			Payload: string(e.Payload), CreatedAt: formatTime(e.CreatedAt),
+		}
+		if e.TurnID != "" {
+			last, err := turnSeq(e.TurnID)
+			if err != nil {
+				return Committed{}, err
+			}
+			ce.TurnSeq = last + 1
+			turnSeqs[e.TurnID] = ce.TurnSeq
+			params.TurnID = sql.NullString{String: e.TurnID, Valid: true}
+			params.TurnSeq = sql.NullInt64{Int64: ce.TurnSeq, Valid: true}
+		}
+		if e.ItemID != "" {
+			params.ItemID = sql.NullString{String: e.ItemID, Valid: true}
+		}
+		if err := q.InsertEvent(ctx, params); err != nil {
+			return Committed{}, err
+		}
+		committed.Events = append(committed.Events, ce)
+	}
+	if seq != conv.LastSeq {
+		if err := q.AdvanceConversationSeq(ctx, sqlitedb.AdvanceConversationSeqParams{LastSeq: seq, ID: conv.ID}); err != nil {
+			return Committed{}, err
+		}
+	}
+	for turnID, last := range turnSeqs {
+		if err := q.AdvanceTurnSeq(ctx, sqlitedb.AdvanceTurnSeqParams{LastTurnSeq: last, ID: turnID}); err != nil {
+			return Committed{}, err
+		}
+	}
+
+	for _, m := range b.Messages {
+		if _, err := turnSeq(m.TurnID); err != nil {
+			return Committed{}, err
+		}
+		ids, err := json.Marshal(nonNil(m.AttachmentIDs))
+		if err != nil {
+			return Committed{}, err
+		}
+		err = q.InsertMessage(ctx, sqlitedb.InsertMessageParams{
+			ID: m.ID, ConversationID: conv.ID, TurnID: m.TurnID, Role: m.Role, Content: m.Content,
+			AttachmentIds: string(ids), Steered: boolInt(m.Steered), Failed: boolInt(m.Failed), CreatedAt: formatTime(m.CreatedAt),
+		})
+		if err != nil {
+			return Committed{}, err
+		}
+	}
+
+	if c := b.CompleteTurn; c != nil {
+		if _, err := turnSeq(c.TurnID); err != nil {
+			return Committed{}, err
+		}
+		err := q.CompleteTurn(ctx, sqlitedb.CompleteTurnParams{
+			Status: c.Status, ErrorKind: c.ErrorKind, Error: c.Error,
+			CompletedAt: sql.NullString{String: formatTime(c.CompletedAt), Valid: true}, ID: c.TurnID,
+		})
+		if err != nil {
+			return Committed{}, err
+		}
+	}
+
+	if p := b.Summary; p != nil {
+		scopeSeq, err := q.BumpScopeSeq(ctx, conv.ScopeID)
+		if err != nil {
+			return Committed{}, err
+		}
+		next := conv
+		next.LastSeq = seq
+		next.SummarySeq = scopeSeq
+		next.UpdatedAt = formatTime(p.UpdatedAt)
+		if p.Status != nil {
+			next.Status = *p.Status
+		}
+		if p.Title != nil {
+			next.Title = *p.Title
+		}
+		if p.LastMessagePreview != nil {
+			next.LastMessagePreview = *p.LastMessagePreview
+		}
+		if p.PendingInteractions != nil {
+			next.PendingInteractions = *p.PendingInteractions
+		}
+		if p.QueueCount != nil {
+			next.QueueCount = *p.QueueCount
+		}
+		if b.StartTurn != nil {
+			next.TurnCount = conv.TurnCount + 1
+		}
+		err = q.UpdateConversationSummary(ctx, sqlitedb.UpdateConversationSummaryParams{
+			Status: next.Status, Title: next.Title, LastMessagePreview: next.LastMessagePreview,
+			PendingInteractions: next.PendingInteractions, QueueCount: next.QueueCount,
+			SummarySeq: next.SummarySeq, UpdatedAt: next.UpdatedAt, ID: conv.ID,
+		})
+		if err != nil {
+			return Committed{}, err
+		}
+		committed.ScopeSeq = scopeSeq
+		committed.Summary = &next
+	}
+	return committed, nil
+}
+
+func boolInt(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func nonNil(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
+}
