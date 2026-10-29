@@ -318,6 +318,14 @@ export class LocalConversationService {
       case "capabilities": result = { protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }; break;
       case "queueEnqueue": case "queueUpdate": case "queueSide": {
         const entry = session();
+        if (method === "queueUpdate" && params.action === "sendNow") {
+          const requestId = text(params.requestId, "queued request", 160);
+          // A repeated steer must never cancel the turn it already started,
+          // including the window before its queue item is removed.
+          if (this.queueDispatches.get(`${this.key(scope)}:${entry.id}`) === requestId || entry.turns.some((turn) => turn.requestId === requestId)) {
+            result = this.queueSnapshot(scope, entry); break;
+          }
+        }
         if (method === "queueUpdate" && (params.action === "stop" || params.action === "sendNow")) {
           if (params.action === "sendNow" && !entry.promptQueue?.items.some((item) => item.requestId === params.requestId)) throw new Error("This queued message has already started");
           await this.queueMutation(scope, entry, async () => { (entry.promptQueue ??= { revision: 0, paused: true, items: [] }).paused = true; });

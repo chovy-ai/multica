@@ -39,6 +39,8 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 
 手动停止先保存暂停状态，再取消执行；执行失败保留后续消息并暂停。应用重启恢复未发送消息时保持暂停，避免无提示重放。旧版浏览器保存的队列只在确认主进程已接收后清除；发送结果不明的旧记录不自动重发。队列转为 Side 时，来源移除和 Side 队列使用同一份会话文件保存，Side 执行不依赖面板保持打开。
 
+点击队列“引导”立即提交 `sendNow` 操作；若消息尚未确认入队，先等待原编号的入队回执。GUI 通过已有的 `inFlight` 与 `sendNextPromptId` 展示处理中，并合并同一消息的重复引导，直到宿主报告开始派发、消息移出、失败或用户停止。操作回执仅表示引导已接收，旧执行仍可能正在退出。宿主负责暂停队列、取消旧执行，再恢复队列；只有旧运行器释放后才自动发送选中的消息，不需要再次点击。已经派发或已建立轮次的同编号重复请求返回当前队列，不取消该轮。失败保留消息供显式重试，GUI 卸载不影响宿主续发。
+
 队列回归：`pnpm --filter @multica/desktop exec vitest run src/local-host/local-conversation-queue.test.ts src/renderer/src/platform/local-conversation-service.test.ts`，以及 `pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/runtime/desktop-queue-engine.test.ts src/runtime/runtime.test.ts`。测试使用注入的假运行器和 HTTP 响应，不调用真实模型。
 
 未发送的文字草稿由 GUI 宿主的 Zustand store 管理，每次编辑同步投影到窗口的 `sessionStorage`，新 GUI 文档在首次渲染前恢复。作用域包括 API 地址、账号、工作区、主对话流或对应 Side 面板，再沿用 GUI 的会话和首页草稿键；不同会话互不覆盖，首页切换运行器仍共用原有首页草稿。清空和已有的发送结算回调通过同一个 setter 更新存储，切换 tab 本身不会提交内容。构建适配只替换 GUI 的草稿状态所有者，vendored 源码快照保持不变。
