@@ -23,6 +23,9 @@ import { setupLocalDirectory } from "./local-directory";
 import { setupTerminalCli } from "./terminal-cli-ipc";
 import { registerDesktopProtocol, setupBrowserLogin } from "./browser-login-ipc";
 import { LocalHostProxy } from "./local-conversation-proxy";
+import { LocalV2Error, LocalV2Proxy } from "./local-conversation-v2";
+import { localV2HostHandler } from "./local-v2-host";
+import { isLocalV2FilePath, localV2ClientMessageSchema } from "@multica/core/local-conversation/v2";
 import { ResourceWebPreview } from "./resource-web-preview";
 import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
@@ -167,6 +170,7 @@ function freezeBreadcrumbPath(): string {
 
 let mainWindow: BrowserWindow | null = null;
 let localConversations: LocalHostProxy | null = null;
+let localV2: LocalV2Proxy | null = null;
 let localScopeTracker: ((scope: LocalConversationScope) => void) | undefined;
 let localAvailability: import("../shared/local-host-availability").LocalHostAvailability | null = null;
 let localTimingLog: LocalTimingLog | undefined;
@@ -741,6 +745,22 @@ if (!gotTheLock) {
           throw new SettingsOperationError("unsupported_host_request", `Desktop cannot handle ${kind}`);
         },
       });
+      localV2 = new LocalV2Proxy({
+        apiUrl: localApiUrl,
+        endpoint: () => desktopRuntimeRegistry().endpoint(localApiUrl),
+        message: (scope, message) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-v2:message", { scope, message }); },
+        connection: (scope, connected) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-v2:connection", { scope, connected }); },
+        hostRequest: localV2HostHandler({
+          currentUser: () => settingsUserId,
+          side: (request, signal) => sideWorkspaceControl.handle(request, signal),
+          confirm: (request, apply, signal) => settingsHost.confirmAndApply!(request, apply, signal),
+          settingsHost: (request, signal) => settingsHost.host!(request, signal),
+          developerLogs: (scope, query, signal) => {
+            if (!developerLogs) throw new SettingsOperationError("settings_host_unavailable", "Developer logs are unavailable");
+            return developerLogs.export(scope, query, signal);
+          },
+        }),
+      });
       const trackScope = (scope: LocalConversationScope) => {
         recentScopes.delete(`${scope.userId}:${scope.workspaceId}`);
         recentScopes.set(`${scope.userId}:${scope.workspaceId}`, scope);
@@ -833,6 +853,23 @@ if (!gotTheLock) {
       if (method === "sideWorkspaceSync" && (result as { revision: number }).revision === (params as { revision: number }).revision) sideWorkspaceControl.reconcile(sideWorkspaceSyncSchema.parse(params));
       return result;
     });
+    const mainFrame = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localV2) throw new Error("Local conversations require the active main window");
+      if (scope?.userId !== settingsUserId || !scope.workspaceId) throw new Error("This account is no longer active");
+      return localV2;
+    };
+    ipcMain.handle("local-v2:request", (event, scope: LocalConversationScope, method: "GET" | "POST", path: string, body?: unknown) => {
+      if (method !== "GET" && method !== "POST") throw new Error("Invalid local conversation request");
+      return mainFrame(event, scope).request(scope, method, path, body).catch((error: unknown) => {
+        // Structured kinds survive IPC only inside the message.
+        if (error instanceof LocalV2Error) throw new Error(`${error.kind}: ${error.message}`);
+        throw error;
+      });
+    });
+    ipcMain.handle("local-v2:send", (event, scope: LocalConversationScope, message: unknown) => {
+      const parsed = localV2ClientMessageSchema.parse(message);
+      return mainFrame(event, scope).send(scope, parsed);
+    });
     ipcMain.handle("local-conversation:availability", (event) => event.sender === mainWindow?.webContents ? localAvailability : null);
     ipcMain.on("local-conversation:file-key", (event) => {
       event.returnValue = event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame ? LOCAL_FILE_KEY : "";
@@ -842,6 +879,12 @@ if (!gotTheLock) {
       const scope = { userId: url.searchParams.get("userId") ?? "", workspaceId: url.searchParams.get("workspaceId") ?? "" };
       if (!localConversations || url.searchParams.get("k") !== LOCAL_FILE_KEY || !scope.userId || scope.userId !== settingsUserId || !scope.workspaceId) return new Response("Forbidden", { status: 403 });
       const route = url.pathname.replace(/^\/+/, "");
+      if (localV2 && route.startsWith("v2/")) {
+        const target = url.searchParams.get("target") ?? "";
+        if (request.method === "POST" && route === "v2/attachments") return localV2.file(request, scope, "/attachments");
+        if (request.method === "GET" && isLocalV2FilePath(target)) return localV2.file(request, scope, target);
+        return new Response("Not found", { status: 404 });
+      }
       if (request.method === "POST" && route === "upload") return localConversations.file(request, scope, null);
       if (request.method === "GET" && route.startsWith("files/")) return localConversations.file(request, scope, decodeURIComponent(route.slice("files/".length)));
       return new Response("Not found", { status: 404 });

@@ -24,6 +24,7 @@ interface DesktopAPI {
   developerLogs: import("../shared/developer-logs").DeveloperLogsClient;
   settingsHost?: import("../shared/settings-host").SettingsHostClient;
   localConversations: import("@multica/core/local-conversation/protocol").LocalConversationClient;
+  localV2: import("@multica/core/local-conversation/v2").LocalV2Transport;
   localHost: {
     availability(): Promise<import("../shared/local-host-availability").LocalHostAvailability | null>;
     subscribe(listener: (value: import("../shared/local-host-availability").LocalHostAvailability) => void): () => void;

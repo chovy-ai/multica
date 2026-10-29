@@ -109,3 +109,32 @@ export const localV2SessionListSchema = z.object({
 });
 
 export const localV2ErrorSchema = z.object({ error: errorSchema });
+
+export interface LocalV2Scope { userId: string; workspaceId: string }
+
+/**
+ * Desktop's v2 transport as the renderer sees it: the main process keeps
+ * the daemon token and one WebSocket per scope.
+ */
+export interface LocalV2Transport {
+  /** A JSON request to `/local/v2{path}`. */
+  request(scope: LocalV2Scope, method: "GET" | "POST", path: string, body?: unknown): Promise<unknown>;
+  /** Sends a client message on the scope's WebSocket. */
+  send(scope: LocalV2Scope, message: LocalV2ClientMessage): Promise<void>;
+  /** Receives the scope's server messages. */
+  subscribe(listener: (scope: LocalV2Scope, message: unknown) => void): () => void;
+  /** Receives connection changes; subscriptions are lost on disconnect. */
+  onConnection(listener: (scope: LocalV2Scope, connected: boolean) => void): () => void;
+  /** A URL streaming a daemon file: an attachment, a conversation image or preview content. */
+  fileUrl(scope: LocalV2Scope, path: string): string;
+  /** Uploads a message attachment. */
+  upload(scope: LocalV2Scope, file: File): Promise<LocalV2Upload>;
+}
+
+export const localV2UploadSchema = z.object({ id: z.string(), name: z.string(), mime_type: z.string(), size: z.number() });
+export type LocalV2Upload = z.infer<typeof localV2UploadSchema>;
+
+/** Daemon file routes the renderer may stream. */
+export function isLocalV2FilePath(path: string): boolean {
+  return /^\/attachments\/[\w-]{1,128}$/.test(path) || /^\/sessions\/[\w:.~-]{1,160}\/image\?path=/.test(path) || /^\/preview\/content\?/.test(path);
+}

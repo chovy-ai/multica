@@ -128,6 +128,11 @@ export interface AgentGuiRpcMethods {
   "interaction.respond": { params: { sessionId: string; turnId: string; requestId: string; answers: Record<string, string | string[]> }; result: void };
   "workspace.load": { params: Record<string, never>; result: AgentGuiWorkspaceState };
   "session.load": { params: { sessionId: string }; result: AgentGuiSessionDetail };
+  /** A local conversation's metadata and its v2 snapshot (`LocalV2Snapshot`). */
+  "local.snapshot": { params: { sessionId: string }; result: { detail: AgentGuiSessionDetail; snapshot: unknown } };
+  /** Receive a local conversation's events after afterSeq as `local.events`. */
+  "local.subscribe": { params: { sessionId: string; afterSeq: number; generation: string }; result: void };
+  "local.unsubscribe": { params: { sessionId: string }; result: void };
   "session.create": {
     params: { agentId: string; title?: string; projectId?: string | null; cwd?: string };
     result: AgentGuiSession;
@@ -186,7 +191,11 @@ export type AgentGuiHostEvent =
   | { type: "invalidate"; scope: "task"; sessionId: string; taskId: string; generation?: number }
   | { type: "init"; snapshot: AgentGuiInitSnapshot }
   | { type: "appendPrompt"; sequence: number; prompt: string; sessionId?: string; attachments?: Attachment[]; restoreRequestId?: string }
-  | { type: "connection"; connected: boolean };
+  | { type: "connection"; connected: boolean }
+  /** A v2 server message of a subscribed local conversation. */
+  | { type: "local.events"; sessionId: string; message: unknown }
+  /** The local conversation's subscription ended; reload its snapshot. */
+  | { type: "local.reload"; sessionId: string };
 
 export interface AgentGuiRpcClient {
   request<TMethod extends AgentGuiRpcMethod>(

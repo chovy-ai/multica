@@ -21,6 +21,7 @@ import {
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
 import type { LocalConversationClient, LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import { localV2UploadSchema, type LocalV2Transport } from "@multica/core/local-conversation/v2";
 import type { LocalHostAvailability } from "../shared/local-host-availability";
 import type {
   DaemonStatus,
@@ -172,6 +173,26 @@ const desktopAPI = {
       return () => ipcRenderer.removeListener("local-conversation:availability", handler);
     },
   },
+  localV2: {
+    request: (scope, method, path, body) => ipcRenderer.invoke("local-v2:request", scope, method, path, body),
+    send: (scope, message) => ipcRenderer.invoke("local-v2:send", scope, message),
+    subscribe: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; message: unknown }) => listener(payload.scope, payload.message);
+      ipcRenderer.on("local-v2:message", handler);
+      return () => ipcRenderer.removeListener("local-v2:message", handler);
+    },
+    onConnection: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; connected: boolean }) => listener(payload.scope, payload.connected);
+      ipcRenderer.on("local-v2:connection", handler);
+      return () => ipcRenderer.removeListener("local-v2:connection", handler);
+    },
+    fileUrl: (scope, path) => `${localFileUrl("v2/file", scope)}&${new URLSearchParams({ target: path })}`,
+    upload: async (scope, file) => {
+      const response = await fetch(localFileUrl("v2/attachments", scope), { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } });
+      if (!response.ok) throw await localFileError(response);
+      return localV2UploadSchema.parse(await response.json());
+    },
+  } satisfies LocalV2Transport,
   localConversations: {
     files: localFileTransport,
     request: (scope, method, params) => ipcRenderer.invoke("local-conversation:request", scope, method, params),
