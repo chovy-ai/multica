@@ -28,6 +28,7 @@ interface Props {
   selectedAgentId?: string | null;
   active: boolean;
   composerFocusSequence?: number;
+  newConversationRequest?: AgentGuiInitSnapshot["newConversationRequest"];
   restoreDraftRequest?: RestoreDraftRequest | null;
   onRestoreDraftApplied: (id: string) => void;
   onSelectSession: (session: ChatSession | null, agent?: Agent) => void;
@@ -58,8 +59,8 @@ export function TuttiAgentGuiPanel(props: Props) {
   const [src, setSrc] = useState<string>();
   const sequence = useRef(Date.now());
   const sentRestore = useRef<string | null>(null);
-  const initRef = useRef({ locale, theme: resolvedTheme, activeSessionId: props.activeSessionId, selectedAgentId: props.selectedAgentId, composerFocusSequence: props.composerFocusSequence });
-  initRef.current = { locale, theme: resolvedTheme, activeSessionId: props.activeSessionId, selectedAgentId: props.selectedAgentId, composerFocusSequence: props.composerFocusSequence };
+  const initRef = useRef({ locale, theme: resolvedTheme, activeSessionId: props.activeSessionId, selectedAgentId: props.selectedAgentId, composerFocusSequence: props.composerFocusSequence, newConversationRequest: props.newConversationRequest });
+  initRef.current = { locale, theme: resolvedTheme, activeSessionId: props.activeSessionId, selectedAgentId: props.selectedAgentId, composerFocusSequence: props.composerFocusSequence, newConversationRequest: props.newConversationRequest };
   const { workspaceId, workspaceSlug, userId } = props;
 
   const snapshot = useCallback(async (): Promise<AgentGuiInitSnapshot> => {
@@ -70,6 +71,7 @@ export function TuttiAgentGuiPanel(props: Props) {
     return { ...workspace, workspaceId, workspaceSlug, userId, appOrigin: resourceNavigation.current.appOrigin,
       activeSessionId: state.activeSessionId, selectedAgentId: state.selectedAgentId,
       composerFocusSequence: state.composerFocusSequence,
+      newConversationRequest: state.newConversationRequest,
       hostActive: latest.current.active,
       hostVisible: visible.current,
       locale: state.locale.startsWith("zh") ? "zh-CN" : "en",
@@ -192,7 +194,7 @@ export function TuttiAgentGuiPanel(props: Props) {
     let alive = true;
     void snapshot().then((value) => { if (alive) serviceRef.current?.publish({ type: "init", snapshot: value }); }).catch(() => undefined);
     return () => { alive = false; };
-  }, [snapshot, locale, resolvedTheme, props.activeSessionId, props.selectedAgentId, props.composerFocusSequence, props.active, active, status, appOrigin]);
+  }, [snapshot, locale, resolvedTheme, props.activeSessionId, props.selectedAgentId, props.composerFocusSequence, props.newConversationRequest, props.active, active, status, appOrigin]);
 
   useEffect(() => { if (active) serviceRef.current?.reconnect(); }, [active]);
   useEffect(() => {

@@ -85,6 +85,40 @@ async function setup(data = backend()) {
 }
 
 describe("Multica Agent GUI runtime with the original session engine", () => {
+  it("keeps the first local session identity when its initial queue admission fails and is explicitly retried", async () => {
+    const data = backend();
+    const original = data.request.getMockImplementation()!;
+    let admissions = 0;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") return { ...await original(method, params), local: true, queueOwner: "desktop" };
+      if (method === "models.list") return { supported: true, models: [] };
+      if (method === "queue.enqueue") {
+        if (++admissions === 1) throw new Error("Initial queue admission failed");
+        return { revision: 1, paused: true, items: [params.item] };
+      }
+      return original(method, params);
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true, queueOwner: "desktop" });
+      handles.push(handle); await handle.initialize();
+      expect(data.request.mock.calls.filter(([method]) => method === "session.create")).toHaveLength(0);
+      const engine = handle.runtime.getSessionEngine(init.workspaceId);
+      const input = { mode: "new" as const, agentSessionId: "first-local-draft", agentTargetId: agent.id, cwd: "/project",
+        requestId: "first-activation", clientSubmitId: "first-submit", initialContent: [{ type: "text" as const, text: "First local message" }] };
+      engine.activateSession(input);
+      await vi.waitFor(() => expect(JSON.stringify(engine.getSnapshot().pendingIntents)).toContain("Initial queue admission failed"));
+      expect(admissions).toBe(1);
+      expect(handle.toServerSessionId(input.agentSessionId)).toBe(session.id);
+      engine.activateSession({ ...input, requestId: "explicit-retry" });
+      await vi.waitFor(() => expect(admissions).toBe(2));
+      expect(data.request.mock.calls.filter(([method]) => method === "session.create")).toHaveLength(1);
+      expect(data.request.mock.calls.find(([method]) => method === "session.create")?.[1]).toMatchObject({ cwd: "/project" });
+      for (const [, params] of data.request.mock.calls.filter(([method]) => method === "queue.enqueue")) {
+        expect(params).toMatchObject({ sessionId: session.id, item: { requestId: "first-submit", content: "First local message" } });
+      }
+    } finally { error.mockRestore(); }
+  });
   it("reuses the original prepared image and settings on explicit admission retry and shows the failure", async () => {
     const data = backend(); data.sessions.push(session);
     const original = data.request.getMockImplementation()!;
@@ -845,6 +879,7 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
       requestId: "retry-activation", clientSubmitId: "submit-1", initialContent: [{ type: "text", text: "Inspect build" }] });
     await vi.waitFor(() => expect(JSON.stringify(engine.getSnapshot().pendingIntents)).toContain("submission_unconfirmed"));
     expect(data.request.mock.calls.filter(([method]) => method === "session.send")).toHaveLength(1);
+    expect(data.request.mock.calls.filter(([method]) => method === "session.create")).toHaveLength(1);
   });
 
   it("rejects recoverable deletion and unsupported capabilities without calling a destructive API", async () => {

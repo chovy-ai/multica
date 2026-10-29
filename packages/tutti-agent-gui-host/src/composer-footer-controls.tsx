@@ -20,6 +20,9 @@ interface Props {
   handle: Handle;
   targets: AgentGuiExecutionTarget[];
   snapshot: AgentGuiInitSnapshot;
+  newConversationRequest?: AgentGuiInitSnapshot["newConversationRequest"];
+  onNewConversationApplied?(): void;
+  onOpenNewConversation?(): void;
   pendingTarget?: { target: AgentGuiExecutionTarget; fromSession: string; draft?: ProviderDraft; projectPath?: string | null } | null;
   onLeaveSession(target: AgentGuiExecutionTarget, fromSession: string, draft?: ProviderDraft, projectPath?: string | null): void;
   onCancelTargetSwitch(): void;
@@ -27,7 +30,7 @@ interface Props {
   onReadyForFocus(sequence: number): void;
 }
 
-export function ComposerFooterControls({ context, client, handle, targets, snapshot, pendingTarget = null, onLeaveSession, onCancelTargetSwitch, onSelectAgent, onReadyForFocus }: Props) {
+export function ComposerFooterControls({ context, client, handle, targets, snapshot, newConversationRequest, onNewConversationApplied, onOpenNewConversation, pendingTarget = null, onLeaveSession, onCancelTargetSwitch, onSelectAgent, onReadyForFocus }: Props) {
   const modelValueId = useId();
   const agentValueId = useId();
   const onDraftContentChange = context.onDraftContentChange;
@@ -41,6 +44,21 @@ export function ComposerFooterControls({ context, client, handle, targets, snaps
     ?? context.selectedAgentTarget?.agentTargetId;
   const agent = targets.find((entry) => entry.id === agentId);
   const deliveredFocus = useRef<number | null>(null);
+  const appliedNewConversation = useRef<number | null>(null);
+  useEffect(() => {
+    if (!snapshot.local || snapshot.activeSessionId || !context.isActive || context.isSubmittingPrompt || !onProjectPathChange
+      || !newConversationRequest || agentId !== snapshot.selectedAgentId
+      || appliedNewConversation.current === newConversationRequest.sequence) return;
+    if (sessionId) {
+      // The GUI can attach a session before the host selection echo arrives.
+      onOpenNewConversation?.();
+      return;
+    }
+    appliedNewConversation.current = newConversationRequest.sequence;
+    onProjectPathChange(newConversationRequest.projectPath);
+    onReadyForFocus(newConversationRequest.sequence);
+    onNewConversationApplied?.();
+  }, [snapshot.local, snapshot.activeSessionId, snapshot.selectedAgentId, sessionId, context.isActive, context.isSubmittingPrompt, agentId, newConversationRequest, onProjectPathChange, onReadyForFocus, onNewConversationApplied, onOpenNewConversation]);
   useEffect(() => {
     if (!snapshot.composerFocusSequence || !context.isActive || !sessionId
       || deliveredFocus.current === snapshot.composerFocusSequence
