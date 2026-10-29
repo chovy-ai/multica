@@ -84,8 +84,6 @@ func StartRelay(cfg RelayConfig) (*Relay, error) {
 		// needs a relay itself.
 		libp2p.DisableRelay(),
 		libp2p.ForceReachabilityPublic(),
-		// Lets daemons check whether their own addresses are dialable.
-		libp2p.EnableAutoNATv2(),
 	}
 	if len(announce) > 0 {
 		opts = append(opts, libp2p.AddrsFactory(func([]ma.Multiaddr) []ma.Multiaddr { return announce }))

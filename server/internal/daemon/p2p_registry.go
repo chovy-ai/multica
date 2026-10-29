@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -23,8 +24,18 @@ type p2pDevice struct {
 	Addrs      []string `json:"addrs"`
 }
 
-// errP2PUnauthorized is a 401 from the registry.
-var errP2PUnauthorized = fmt.Errorf("p2p registry: unauthorized")
+// p2pRelayInfo is the registry's relay node, from GET /v1/config.
+type p2pRelayInfo struct {
+	PeerID string   `json:"peer_id"`
+	Addrs  []string `json:"addrs"`
+}
+
+var (
+	// errP2PUnauthorized is a 401 from the registry.
+	errP2PUnauthorized = errors.New("p2p registry: unauthorized")
+	// errP2PNotFound is a 404 from the registry.
+	errP2PNotFound = errors.New("p2p registry: not found")
+)
 
 // p2pSessionRenewMargin renews a session this long before it expires.
 const p2pSessionRenewMargin = 10 * time.Minute
@@ -74,6 +85,22 @@ func (c *p2pRegistryClient) list(ctx context.Context) ([]p2pDevice, error) {
 		return nil, err
 	}
 	return resp.Devices, nil
+}
+
+func (c *p2pRegistryClient) relay(ctx context.Context) (*p2pRelayInfo, error) {
+	var resp struct {
+		Relay *p2pRelayInfo `json:"relay"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/config", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Relay, nil
+}
+
+// remove deletes a device of this account from the registry.
+func (c *p2pRegistryClient) remove(ctx context.Context, daemonID, profile string) error {
+	q := url.Values{"daemon_id": {daemonID}, "profile": {profile}}
+	return c.do(ctx, http.MethodDelete, "/v1/devices?"+q.Encode(), nil, nil)
 }
 
 // do calls a session-authenticated endpoint, obtaining a session first and
@@ -135,6 +162,10 @@ func (c *p2pRegistryClient) send(ctx context.Context, method, path, bearer strin
 	if resp.StatusCode == http.StatusUnauthorized {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("%w: %s %s", errP2PUnauthorized, method, path)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("%w: %s %s", errP2PNotFound, method, path)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

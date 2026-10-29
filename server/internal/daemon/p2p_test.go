@@ -209,3 +209,91 @@ func waitUntil(timeout time.Duration, cond func() bool) bool {
 	}
 	return cond()
 }
+
+func TestUnregisterP2PDeviceDeletesThisDevice(t *testing.T) {
+	var deleted []string
+	status := http.StatusNoContent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/sessions" && r.Header.Get("Authorization") == "Bearer mul_login":
+			json.NewEncoder(w).Encode(map[string]any{"session_token": "sess", "expires_at": time.Now().Add(time.Hour)})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/devices" && r.Header.Get("Authorization") == "Bearer sess":
+			deleted = append(deleted, r.URL.Query().Get("daemon_id")+"/"+r.URL.Query().Get("profile"))
+			w.WriteHeader(status)
+		default:
+			http.Error(w, "unexpected", http.StatusTeapot)
+		}
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+
+	t.Setenv("MULTICA_DAEMON_P2P_SERVER_URL", "")
+	if err := UnregisterP2PDevice(ctx, "mul_login", "work"); err != nil || len(deleted) != 0 {
+		t.Fatalf("without a registry: err=%v deleted=%v", err, deleted)
+	}
+
+	t.Setenv("MULTICA_DAEMON_P2P_SERVER_URL", srv.URL+"/")
+	t.Setenv("MULTICA_DAEMON_ID", "machine-1")
+	if err := UnregisterP2PDevice(ctx, "mul_login", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 || deleted[0] != "machine-1/work" {
+		t.Fatalf("deleted = %v", deleted)
+	}
+	// Already gone (expired or removed elsewhere) is success.
+	status = http.StatusNotFound
+	if err := UnregisterP2PDevice(ctx, "mul_login", "work"); err != nil {
+		t.Fatalf("404: %v", err)
+	}
+	status = http.StatusInternalServerError
+	if err := UnregisterP2PDevice(ctx, "mul_login", "work"); err == nil {
+		t.Fatal("500 should be reported")
+	}
+}
+
+func TestFetchP2PRelayAndPeerAddrs(t *testing.T) {
+	_, pub, _ := crypto.GenerateEd25519Key(rand.Reader)
+	relayID, _ := peer.IDFromPublicKey(pub)
+	raw, _ := crypto.MarshalPublicKey(pub)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/sessions":
+			json.NewEncoder(w).Encode(map[string]any{"session_token": "sess", "expires_at": time.Now().Add(time.Hour)})
+		case "/v1/config":
+			json.NewEncoder(w).Encode(map[string]any{"relay": map[string]any{
+				"peer_id": relayID.String(),
+				"addrs":   []string{"/ip4/1.2.3.4/udp/4001/quic-v1", "garbage"},
+			}})
+		case "/v1/devices":
+			json.NewEncoder(w).Encode(map[string]any{"devices": []p2pDevice{{
+				DaemonID: "m2", PublicKey: base64.StdEncoding.EncodeToString(raw),
+				Addrs: []string{"/ip4/1.2.3.4/udp/4001/quic-v1/p2p/" + relayID.String() + "/p2p-circuit", "garbage"},
+			}}})
+		}
+	}))
+	defer srv.Close()
+	registry := newP2PRegistryClient(srv.URL, func() string { return "tok" })
+	info, err := fetchP2PRelay(context.Background(), registry)
+	if err != nil || info.ID != relayID || len(info.Addrs) != 1 {
+		t.Fatalf("relay = %+v, %v", info, err)
+	}
+	peers, err := fetchP2PPeers(context.Background(), registry)
+	if err != nil || len(peers) != 1 || len(peers[0].RegisteredAddrs) != 1 {
+		t.Fatalf("peers = %+v, %v", peers, err)
+	}
+}
+
+func TestFetchP2PRelayWithoutRelay(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/sessions" {
+			json.NewEncoder(w).Encode(map[string]any{"session_token": "sess", "expires_at": time.Now().Add(time.Hour)})
+			return
+		}
+		w.Write([]byte(`{"relay":null}`))
+	}))
+	defer srv.Close()
+	info, err := fetchP2PRelay(context.Background(), newP2PRegistryClient(srv.URL, func() string { return "tok" }))
+	if err != nil || info != nil {
+		t.Fatalf("relay = %+v, %v; want nil, nil", info, err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // Peer is one device of the account, as registered on the server.
@@ -14,6 +15,10 @@ type Peer struct {
 	DaemonID   string  `json:"daemon_id"`
 	Profile    string  `json:"profile"`
 	DeviceName string  `json:"device_name"`
+	// RegisteredAddrs are the addresses the device reported to the server,
+	// including its relay circuit address. They are dialed when the device
+	// is not already connected.
+	RegisteredAddrs []ma.Multiaddr `json:"-"`
 }
 
 // FetchFunc returns the authoritative set of devices allowed to connect.

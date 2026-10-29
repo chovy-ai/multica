@@ -76,6 +76,15 @@ var daemonLogsCmd = &cobra.Command{
 	RunE:  runDaemonLogs,
 }
 
+var daemonP2PUnregisterCmd = &cobra.Command{
+	Use:    "p2p-unregister",
+	Short:  "Remove this device from the p2p device registry",
+	Long:   "Removes this machine's device for the profile from the registry set by MULTICA_DAEMON_P2P_SERVER_URL, so the account's other devices drop it right away. The Desktop app runs it before signing out; `multica auth logout` does the same itself. Failures are reported but do not fail the command.",
+	Hidden: true,
+	Args:   cobra.NoArgs,
+	RunE:   runDaemonP2PUnregister,
+}
+
 var daemonDiskUsageCmd = &cobra.Command{
 	Use:   "disk-usage",
 	Short: "Show daemon workspace disk usage by run or workspace",
@@ -154,6 +163,7 @@ func init() {
 	daemonCmd.AddCommand(daemonProbeRuntimesCmd)
 	daemonCmd.AddCommand(daemonLogsCmd)
 	daemonCmd.AddCommand(daemonDiskUsageCmd)
+	daemonCmd.AddCommand(daemonP2PUnregisterCmd)
 }
 
 type daemonRuntimeProbe struct {
@@ -2536,5 +2546,29 @@ func formatAge(seconds int64) string {
 		return fmt.Sprintf("%dm %ds", int(d/time.Minute), int((d%time.Minute)/time.Second))
 	default:
 		return fmt.Sprintf("%ds", seconds)
+	}
+}
+
+func runDaemonP2PUnregister(cmd *cobra.Command, _ []string) error {
+	if err := requireHumanLocalCommand("daemon p2p-unregister"); err != nil {
+		return err
+	}
+	profile := resolveProfile(cmd)
+	cfg, _ := cli.LoadCLIConfigForProfile(profile)
+	unregisterP2PDevice(cmd.Context(), cfg.Token, profile)
+	return nil
+}
+
+// unregisterP2PDevice removes the device from the p2p registry, best effort:
+// sign-out must not depend on the registry being reachable, and a device
+// left behind expires there within 24 hours.
+func unregisterP2PDevice(ctx context.Context, token, profile string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := daemon.UnregisterP2PDevice(ctx, token, profile); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not remove this device from the p2p registry: %v\n", err)
 	}
 }

@@ -556,6 +556,10 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// The registry only accepts this account's token, so remove the device
+	// before the token is gone.
+	unregisterP2PDevice(cmd.Context(), cfg.Token, profile)
+
 	cfg.Token = ""
 	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)

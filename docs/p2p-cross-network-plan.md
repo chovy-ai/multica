@@ -169,8 +169,8 @@ CREATE INDEX IF NOT EXISTS session_expires_at ON session (expires_at);
 
 - 使用 go-libp2p 的 Circuit Relay v2（`p2p/protocol/circuitv2/relay`），同时开启：
   - **identify**：把 daemon 被观测到的公网地址告诉它，这是打洞的前提。
-  - **AutoNAT v2 服务**：帮助 daemon 判断自己能否被公网直接访问。
   - **ping**。
+  - 不开 AutoNAT 服务：daemon 侧没有 AutoNAT 客户端（见 7.2）。
 - 通过 `AddrsFactory` 对外只宣告 `MULTICA_P2P_PUBLIC_IP` 对应的地址，不宣告内网地址。
 - **ACL**（`relay.WithACL`）：
   - `AllowReserve(peer, addr)`：peer ID 已注册且未过期才允许预约。
@@ -206,10 +206,11 @@ CREATE INDEX IF NOT EXISTS session_expires_at ON session (expires_at);
 - Circuit Relay v2 客户端传输：拨号 `/p2p-circuit` 地址，接收经中继的连接。
 - identify：打洞依赖它获取自己的公网地址。
 - DCUtR 打洞服务（`p2p/protocol/holepunch`）。
-- AutoNAT v2 客户端：判断自己能否被公网直接访问。
 - UPnP/NAT-PMP 端口映射（`basichost` 的 NATManager）：家用路由器支持的话可以直接获得公网地址。
 
-完成后要测量 CLI 体积增加了多少，并写进 PR 说明。
+**实施调整**：没有接入 AutoNAT v2 客户端。它需要在 daemon 里再起一个专门回拨用的 libp2p host，而打洞只依赖中继通过 identify 观测到的地址（只要一个观测者即可），不依赖 AutoNAT。状态接口也因此不提供 `reachability` 字段。
+
+实测 CLI 体积（darwin/arm64，`-s -w`）：28.76MB → 29.16MB，增加约 393KB。
 
 ### 7.3 连接拦截器（`gater.go`）
 
@@ -242,7 +243,6 @@ CREATE INDEX IF NOT EXISTS session_expires_at ON session (expires_at);
   "enabled": true,
   "peer_id": "...",
   "listen_addrs": ["..."],
-  "reachability": "public | private | unknown",
   "relay": { "peer_id": "...", "reserved": true, "expires_at": "..." },
   "peers": [
     { "peer_id": "...", "device_name": "...", "connected": true, "connection": "direct | relayed", "addrs": ["..."] }
@@ -255,12 +255,14 @@ CREATE INDEX IF NOT EXISTS session_expires_at ON session (expires_at);
 - 注册服务客户端（`p2p_registry.go`）先换取会话凭证并缓存在内存里，遇到 401 重新换取。
 - **退出登录**：`multica auth logout` 在清除 Multica token **之前**，用这个 token 换取会话凭证，然后调 `DELETE /v1/devices` 删除本机设备。p2p-server 连不上时只打印警告，不阻止退出，设备 24 小时后自动过期。
 - daemon 正常停止或重启时**不删除**设备，避免每次重启后对端都要重新建连。
-- 桌面端的退出登录要在 PR 3 里确认是否经过上面的流程，没有的话补上同样的删除调用。
+- 桌面端的退出登录不走 CLI，而是直接改配置文件，所以新增隐藏命令 `multica daemon p2p-unregister`，由桌面端在清除 token 前调用。
+- 已知限制：退出登录时如果连不上 p2p-server，设备记录会保留 24 小时；这期间同一台机器同一个 profile 改用**另一个账号**登录，注册会返回 409，跨网互联要等旧记录过期后才恢复（局域网不受影响）。
 
 ### 7.8 桌面端
 
 - `apps/desktop/src/main/daemon-manager.ts` 里的 `desktopSpawnEnv()` 增加 `MULTICA_DAEMON_P2P_SERVER_URL`。
-- 地址在打包时写入：打包脚本读取环境变量 `MULTICA_DESKTOP_P2P_SERVER_URL`，没设置时为空，p2p 保持关闭。用户本机设置的 `MULTICA_DAEMON_P2P_SERVER_URL` 优先，便于测试。
+- 地址在构建时写入：沿用现有 `VITE_API_URL` 的机制，构建时设置 `VITE_P2P_SERVER_URL=http://<公网IP>:8090`（环境变量或 `apps/desktop/.env.*`）。没设置时 p2p 保持关闭。用户本机设置的 `MULTICA_DAEMON_P2P_SERVER_URL` 优先，便于测试。
+- 退出登录（`daemon:clear-token`）时先执行 `multica daemon p2p-unregister`，再清除 token。重新认证（reauthenticate）不删除设备。
 
 ## 8. 部署流水线
 
