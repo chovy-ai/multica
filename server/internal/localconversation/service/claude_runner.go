@@ -52,9 +52,18 @@ type SendRequest struct {
 	// Fingerprint identifies the request content for idempotent retries.
 	Fingerprint string
 	MessageID   string
-	Text        string
-	// Content is the SDK user message content; text-only when empty.
-	Content []map[string]any
+	// Text is the message as the user wrote it.
+	Text string
+	// Prompt is what the provider receives: Text plus attachment metadata.
+	Prompt        string
+	AttachmentIDs []string
+}
+
+func (r SendRequest) prompt() string {
+	if r.Prompt != "" {
+		return r.Prompt
+	}
+	return r.Text
 }
 
 const (
@@ -158,10 +167,7 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		r.finish(turn, "failed", &turnError{kind: "provider_unavailable", message: err.Error()})
 		return err
 	}
-	content := req.Content
-	if len(content) == 0 {
-		content = []map[string]any{{"type": "text", "text": req.Text}}
-	}
+	content := []map[string]any{{"type": "text", "text": req.prompt()}}
 	if _, err := adapter.Request(ctx, "send", map[string]any{"request_id": req.RequestID, "content": content}); err != nil {
 		var adapterErr *claude.AdapterError
 		if errors.As(err, &adapterErr) && (adapterErr.Dispatch == "not_dispatched" || adapterErr.Dispatch == "rejected") {

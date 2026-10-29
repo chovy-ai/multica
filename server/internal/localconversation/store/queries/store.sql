@@ -126,8 +126,8 @@ WHERE conversation_id = ? AND status = 'pending'
 ORDER BY created_at, id;
 
 -- name: InsertAttachment :exec
-INSERT INTO attachment (id, scope_id, conversation_id, path, size, media_type, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO attachment (id, scope_id, conversation_id, path, file_name, size, media_type, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetAttachment :one
 SELECT * FROM attachment WHERE id = ?;
@@ -192,3 +192,10 @@ SELECT * FROM folder_project WHERE scope_id = ? AND id = ?;
 
 -- name: FindConversationByCwd :one
 SELECT * FROM conversation WHERE scope_id = ? AND cwd = ? ORDER BY created_at LIMIT 1;
+
+-- name: InsertPreviewRoot :exec
+INSERT INTO preview_root (scope_id, path, created_at) VALUES (?, ?, ?)
+ON CONFLICT (scope_id, path) DO NOTHING;
+
+-- name: ListPreviewRoots :many
+SELECT path FROM preview_root WHERE scope_id = ? ORDER BY created_at, path;

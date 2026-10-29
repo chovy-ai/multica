@@ -164,7 +164,8 @@ type SendCommand struct {
 	ConversationID string
 	RequestID      string
 	Text           string
-	Content        []map[string]any
+	// AttachmentIDs are uploads of this scope sent with the message.
+	AttachmentIDs []string
 }
 
 // SendResult reports the accepted turn. Replayed is set when the request id
@@ -185,12 +186,16 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 	if result, done, err := s.replay(ctx, cmd.ScopeID, cmd.RequestID, fingerprint); done || err != nil {
 		return result, err
 	}
+	prompt, err := s.promptWithAttachments(ctx, cmd)
+	if err != nil {
+		return SendResult{}, err
+	}
 	runner, err := s.runner(ctx, conv)
 	if err != nil {
 		return SendResult{}, err
 	}
 	turnID := "turn-" + cmd.RequestID
-	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Content: cmd.Content})
+	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Prompt: prompt, AttachmentIDs: cmd.AttachmentIDs})
 	switch {
 	case errors.Is(err, store.ErrDuplicateRequest):
 		// A concurrent retry committed first.
@@ -344,10 +349,10 @@ func (s *Service) keepRunner(id string, r runner) runner {
 
 func sendFingerprint(cmd SendCommand) string {
 	data, _ := json.Marshal(struct {
-		ConversationID string           `json:"conversation_id"`
-		Text           string           `json:"text"`
-		Content        []map[string]any `json:"content"`
-	}{cmd.ConversationID, cmd.Text, cmd.Content})
+		ConversationID string   `json:"conversation_id"`
+		Text           string   `json:"text"`
+		AttachmentIDs  []string `json:"attachment_ids"`
+	}{cmd.ConversationID, cmd.Text, cmd.AttachmentIDs})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }

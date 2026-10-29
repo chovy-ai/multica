@@ -340,7 +340,7 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 			return Committed{}, fmt.Errorf("attachment %s belongs to another conversation", a.ID)
 		}
 		err := q.InsertAttachment(ctx, sqlitedb.InsertAttachmentParams{
-			ID: a.ID, ScopeID: a.ScopeID, ConversationID: a.ConversationID, Path: a.Name,
+			ID: a.ID, ScopeID: a.ScopeID, ConversationID: a.ConversationID, Path: a.Name, FileName: a.FileName,
 			Size: a.Size, MediaType: a.MediaType, CreatedAt: formatTime(a.CreatedAt),
 		})
 		if err != nil {

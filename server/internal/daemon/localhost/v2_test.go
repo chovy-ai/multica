@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -375,5 +376,58 @@ func TestV2ManagesConversationsAndFolderProjects(t *testing.T) {
 	}
 	if status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-2", "provider": "gemini"}, h); status != http.StatusBadRequest {
 		t.Fatalf("unknown provider = %d %v", status, body)
+	}
+}
+
+func TestV2UploadsAndServesFiles(t *testing.T) {
+	t.Parallel()
+
+	srv, svc := newV2Server(t)
+	h := v2Headers("user-1")
+	raw := func(method, path string, body string, header http.Header) *http.Response {
+		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		req.Header = header.Clone()
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { res.Body.Close() })
+		return res
+	}
+	upload := h.Clone()
+	upload.Set("Content-Type", "text/plain")
+	upload.Set("X-File-Name", url.QueryEscape("说明 1.txt"))
+	res := raw(http.MethodPost, "/local/v2/attachments", "hello world", upload)
+	var created map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&created)
+	if res.StatusCode != http.StatusCreated || created["name"] != "说明 1.txt" || created["size"].(float64) != 11 {
+		t.Fatalf("upload = %d %v", res.StatusCode, created)
+	}
+	ranged := h.Clone()
+	ranged.Set("Range", "bytes=6-")
+	res = raw(http.MethodGet, "/local/v2/attachments/"+created["id"].(string), "", ranged)
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusPartialContent || string(body) != "world" || res.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("download = %d %q %v", res.StatusCode, body, res.Header)
+	}
+	other := v2Headers("user-1")
+	other.Set(headerWorkspaceID, "ws-2")
+	if res := raw(http.MethodGet, "/local/v2/attachments/"+created["id"].(string), "", other); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("download from another workspace = %d", res.StatusCode)
+	}
+
+	cwd, _ := filepath.EvalSymlinks(t.TempDir())
+	if _, err := svc.Store().CreateConversation(context.Background(), store.NewConversation{ID: "conv-1", ScopeID: 1, Provider: "claude", Cwd: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "a.png"), []byte("png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res := raw(http.MethodGet, "/local/v2/sessions/conv-1/image?path="+url.QueryEscape(filepath.Join(cwd, "a.png")), "", h); res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "image/png" {
+		t.Fatalf("image = %d %v", res.StatusCode, res.Header)
+	}
+	status, failure := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-1/image?path="+url.QueryEscape(filepath.Join(t.TempDir(), "x.png")), nil, h)
+	if status != http.StatusBadRequest && status != http.StatusForbidden {
+		t.Fatalf("image outside = %d %v", status, failure)
 	}
 }

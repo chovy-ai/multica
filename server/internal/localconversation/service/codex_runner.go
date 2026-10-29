@@ -174,7 +174,7 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 	}
 	raw, err := server.Request(ctx, "turn/start", map[string]any{
 		"threadId": threadID, "effort": effortParam,
-		"input": []map[string]any{{"type": "text", "text": req.Text, "text_elements": []any{}}},
+		"input": []map[string]any{{"type": "text", "text": req.prompt(), "text_elements": []any{}}},
 	})
 	if err != nil {
 		if codex.IsClosed(err) || errors.Is(err, context.DeadlineExceeded) {

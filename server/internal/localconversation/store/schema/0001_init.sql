@@ -122,6 +122,7 @@ CREATE TABLE attachment (
     scope_id INTEGER NOT NULL,
     conversation_id TEXT NOT NULL DEFAULT '',
     path TEXT NOT NULL,
+    file_name TEXT NOT NULL DEFAULT '',
     size INTEGER NOT NULL,
     media_type TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -136,6 +137,13 @@ CREATE TABLE folder_project (
     created_at TEXT NOT NULL
 );
 CREATE INDEX folder_project_scope ON folder_project (scope_id);
+
+CREATE TABLE preview_root (
+    scope_id INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope_id, path)
+);
 
 CREATE TABLE command_receipt (
     scope_id INTEGER NOT NULL,

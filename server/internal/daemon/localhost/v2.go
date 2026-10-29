@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -82,6 +84,16 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		v.listFolderProjects(w, r, scopeID)
 	case path == "/folder-projects" && r.Method == http.MethodPost:
 		v.addFolderProject(w, r, scopeID)
+	case path == "/attachments" && r.Method == http.MethodPost:
+		v.upload(w, r, scopeID)
+	case len(parts) == 2 && parts[0] == "attachments" && r.Method == http.MethodGet:
+		v.attachment(w, r, scopeID, parts[1])
+	case path == "/preview/roots" && r.Method == http.MethodPost:
+		v.approvePreviewRoot(w, r, scopeID)
+	case strings.HasPrefix(path, "/preview/") && r.Method == http.MethodGet:
+		v.preview(w, r, scopeID, strings.TrimPrefix(path, "/preview/"))
+	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "image" && r.Method == http.MethodGet:
+		v.conversationImage(w, r, scopeID, parts[1])
 	case path == "/directory-source" && r.Method == http.MethodGet:
 		v.directorySource(w, r, scopeID)
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "snapshot" && r.Method == http.MethodGet:
@@ -189,10 +201,10 @@ func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id 
 }
 
 type commandBody struct {
-	Type      string           `json:"type"`
-	RequestID string           `json:"request_id"`
-	Text      string           `json:"text"`
-	Content   []map[string]any `json:"content"`
+	Type          string   `json:"type"`
+	RequestID     string   `json:"request_id"`
+	Text          string   `json:"text"`
+	AttachmentIDs []string `json:"attachment_ids"`
 	// answer: the question and the user's answers by question id.
 	InteractionID string          `json:"interaction_id"`
 	Answer        json.RawMessage `json:"answer"`
@@ -237,7 +249,7 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			writeV2Error(w, AppError("invalid_request", "request_id is required"))
 			return
 		}
-		result, err := v.svc.Send(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, Content: body.Content})
+		result, err := v.svc.Send(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, AttachmentIDs: body.AttachmentIDs})
 		if err != nil {
 			writeV2Error(w, err)
 			return
@@ -549,6 +561,10 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "already_answered"
 	case errors.Is(err, service.ErrInteractionClosed):
 		status, code = http.StatusConflict, "interaction_closed"
+	case errors.Is(err, service.ErrOutsideFolder):
+		status, code = http.StatusForbidden, "outside_folder"
+	case errors.Is(err, store.ErrUploadTooLarge):
+		status, code = http.StatusRequestEntityTooLarge, "file_too_large"
 	case errors.Is(err, service.ErrInvalidRequest):
 		status, code = http.StatusBadRequest, "invalid_request"
 	case errors.Is(err, service.ErrConversationStarted):
@@ -618,4 +634,123 @@ func (v *V2) directorySource(w http.ResponseWriter, r *http.Request, scopeID int
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": conv.ID})
+}
+
+// upload stores the request body as an attachment. The name travels
+// URL-encoded in X-File-Name and the type in Content-Type.
+func (v *V2) upload(w http.ResponseWriter, r *http.Request, scopeID int64) {
+	name, err := url.QueryUnescape(r.Header.Get("X-File-Name"))
+	if err != nil {
+		writeV2Error(w, AppError("invalid_request", "X-File-Name must be URL-encoded"))
+		return
+	}
+	body := http.MaxBytesReader(w, r.Body, store.MaxUploadBytes+1)
+	a, err := v.svc.Upload(r.Context(), scopeID, name, r.Header.Get("Content-Type"), body)
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		err = store.ErrUploadTooLarge
+	}
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": a.ID, "name": a.FileName, "mime_type": a.MediaType, "size": a.Size})
+}
+
+func (v *V2) attachment(w http.ResponseWriter, r *http.Request, scopeID int64, id string) {
+	a, path, err := v.svc.AttachmentFile(r.Context(), scopeID, id)
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	serveLocalFile(w, r, path, a.MediaType, a.FileName)
+}
+
+func (v *V2) approvePreviewRoot(w http.ResponseWriter, r *http.Request, scopeID int64) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	loc, err := v.svc.ApprovePreviewRoot(r.Context(), scopeID, body.Path)
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, loc)
+}
+
+// preview serves locate, list, file (metadata) and content. A
+// conversation_id adds that conversation's working directory to the
+// readable folders.
+func (v *V2) preview(w http.ResponseWriter, r *http.Request, scopeID int64, action string) {
+	q := r.URL.Query()
+	conv, root, path := q.Get("conversation_id"), q.Get("root"), q.Get("path")
+	switch action {
+	case "locate":
+		loc, err := v.svc.LocatePreview(r.Context(), scopeID, conv, path)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, loc)
+	case "list":
+		entries, err := v.svc.ListPreview(r.Context(), scopeID, conv, root, path)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"entries": nonNilSlice(entries)})
+	case "file", "content":
+		file, err := v.svc.PreviewFile(r.Context(), scopeID, conv, root, path)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		if action == "file" {
+			writeJSON(w, http.StatusOK, file)
+			return
+		}
+		serveLocalFile(w, r, file.Path, file.MimeType, file.Name)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (v *V2) conversationImage(w http.ResponseWriter, r *http.Request, scopeID int64, conversationID string) {
+	file, err := v.svc.ConversationImage(r.Context(), scopeID, conversationID, r.URL.Query().Get("path"))
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	serveLocalFile(w, r, file.Path, file.MimeType, file.Name)
+}
+
+// serveLocalFile streams a file with range support under its declared
+// type; browsers must not sniff another one.
+func serveLocalFile(w http.ResponseWriter, r *http.Request, path, mediaType, name string) {
+	f, err := os.Open(path)
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		writeV2Error(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": name}))
+	http.ServeContent(w, r, "", info.ModTime(), f)
+}
+
+func nonNilSlice[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }

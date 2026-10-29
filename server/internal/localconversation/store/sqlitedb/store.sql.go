@@ -138,7 +138,7 @@ func (q *Queries) FindConversationByCwd(ctx context.Context, arg FindConversatio
 }
 
 const getAttachment = `-- name: GetAttachment :one
-SELECT id, scope_id, conversation_id, path, size, media_type, created_at FROM attachment WHERE id = ?
+SELECT id, scope_id, conversation_id, path, file_name, size, media_type, created_at FROM attachment WHERE id = ?
 `
 
 func (q *Queries) GetAttachment(ctx context.Context, id string) (Attachment, error) {
@@ -149,6 +149,7 @@ func (q *Queries) GetAttachment(ctx context.Context, id string) (Attachment, err
 		&i.ScopeID,
 		&i.ConversationID,
 		&i.Path,
+		&i.FileName,
 		&i.Size,
 		&i.MediaType,
 		&i.CreatedAt,
@@ -365,8 +366,8 @@ func (q *Queries) GetTurn(ctx context.Context, id string) (Turn, error) {
 }
 
 const insertAttachment = `-- name: InsertAttachment :exec
-INSERT INTO attachment (id, scope_id, conversation_id, path, size, media_type, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO attachment (id, scope_id, conversation_id, path, file_name, size, media_type, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertAttachmentParams struct {
@@ -374,6 +375,7 @@ type InsertAttachmentParams struct {
 	ScopeID        int64
 	ConversationID string
 	Path           string
+	FileName       string
 	Size           int64
 	MediaType      string
 	CreatedAt      string
@@ -385,6 +387,7 @@ func (q *Queries) InsertAttachment(ctx context.Context, arg InsertAttachmentPara
 		arg.ScopeID,
 		arg.ConversationID,
 		arg.Path,
+		arg.FileName,
 		arg.Size,
 		arg.MediaType,
 		arg.CreatedAt,
@@ -583,6 +586,22 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) er
 		arg.Failed,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const insertPreviewRoot = `-- name: InsertPreviewRoot :exec
+INSERT INTO preview_root (scope_id, path, created_at) VALUES (?, ?, ?)
+ON CONFLICT (scope_id, path) DO NOTHING
+`
+
+type InsertPreviewRootParams struct {
+	ScopeID   int64
+	Path      string
+	CreatedAt string
+}
+
+func (q *Queries) InsertPreviewRoot(ctx context.Context, arg InsertPreviewRootParams) error {
+	_, err := q.db.ExecContext(ctx, insertPreviewRoot, arg.ScopeID, arg.Path, arg.CreatedAt)
 	return err
 }
 
@@ -872,6 +891,33 @@ func (q *Queries) ListPendingTurnInteractions(ctx context.Context, arg ListPendi
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPreviewRoots = `-- name: ListPreviewRoots :many
+SELECT path FROM preview_root WHERE scope_id = ? ORDER BY created_at, path
+`
+
+func (q *Queries) ListPreviewRoots(ctx context.Context, scopeID int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listPreviewRoots, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		items = append(items, path)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

@@ -13,6 +13,7 @@ type Attachment struct {
 	ScopeID        int64
 	ConversationID string
 	Path           string
+	FileName       string
 	Size           int64
 	MediaType      string
 	CreatedAt      string
@@ -100,6 +101,12 @@ type Message struct {
 	Steered        int64
 	Failed         int64
 	CreatedAt      string
+}
+
+type PreviewRoot struct {
+	ScopeID   int64
+	Path      string
+	CreatedAt string
 }
 
 type PromptQueueItem struct {

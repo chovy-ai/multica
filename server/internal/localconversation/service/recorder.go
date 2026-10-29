@@ -48,10 +48,10 @@ func (t *turnRecorder) startBatch(req SendRequest) store.Batch {
 		Receipt:        &store.CommandReceipt{ScopeID: t.scopeID, RequestID: req.RequestID, Fingerprint: req.Fingerprint, Result: req.TurnID, CreatedAt: now},
 		StartTurn:      &store.NewTurn{ID: req.TurnID, RequestID: req.RequestID, StartedAt: now},
 		Events: []store.NewEvent{
-			t.event(req.TurnID, "", "user.message", true, map[string]any{"message_id": req.MessageID, "request_id": req.RequestID, "content": req.Text}, now),
+			t.event(req.TurnID, "", "user.message", true, userMessagePayload(req), now),
 			t.event(req.TurnID, "", "turn.started", false, map[string]any{"request_id": req.RequestID, "input_message_id": req.MessageID}, now),
 		},
-		Messages: []store.NewMessage{{ID: req.MessageID, TurnID: req.TurnID, Role: "user", Content: req.Text, CreatedAt: now}},
+		Messages: []store.NewMessage{{ID: req.MessageID, TurnID: req.TurnID, Role: "user", Content: req.Text, AttachmentIDs: req.AttachmentIDs, CreatedAt: now}},
 		Summary:  &store.SummaryPatch{Status: &running, LastMessagePreview: &preview, UpdatedAt: now},
 	}
 }
@@ -146,4 +146,12 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n])
+}
+
+func userMessagePayload(req SendRequest) map[string]any {
+	payload := map[string]any{"message_id": req.MessageID, "request_id": req.RequestID, "content": req.Text}
+	if len(req.AttachmentIDs) > 0 {
+		payload["attachment_ids"] = req.AttachmentIDs
+	}
+	return payload
 }

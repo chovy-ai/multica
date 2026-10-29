@@ -1,14 +1,17 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -33,7 +36,9 @@ type NewAttachment struct {
 	ScopeID        int64
 	ConversationID string
 	// Name is the file name under FilesDir.
-	Name      string
+	Name string
+	// FileName is the name the user gave the file, for uploads.
+	FileName  string
 	Size      int64
 	MediaType string
 	CreatedAt time.Time
@@ -55,40 +60,98 @@ func (s *Store) WriteAttachmentFile(scopeID int64, conversationID, mediaType str
 	if len(data) == 0 || len(data) > MaxAttachmentBytes {
 		return NewAttachment{}, fmt.Errorf("local conversation store: attachment size %d outside 1..%d", len(data), MaxAttachmentBytes)
 	}
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
+	id, name, size, err := s.writeFile(bytes.NewReader(data), ext, MaxAttachmentBytes)
+	if err != nil {
 		return NewAttachment{}, err
 	}
-	id := hex.EncodeToString(buf)
+	return NewAttachment{ID: id, ScopeID: scopeID, ConversationID: conversationID, Name: name, Size: size, MediaType: mediaType, CreatedAt: now}, nil
+}
+
+// MaxUploadBytes bounds one file a user attaches to a message.
+const MaxUploadBytes = 25 << 20
+
+// ErrUploadTooLarge rejects an upload over MaxUploadBytes.
+var ErrUploadTooLarge = errors.New("local conversation store: the file exceeds 25 MB")
+
+// StoreUpload saves a file the user attaches to a message and commits it at
+// once, so a later send can reference it.
+func (s *Store) StoreUpload(ctx context.Context, scopeID int64, fileName, mediaType string, src io.Reader, now time.Time) (sqlitedb.Attachment, error) {
+	ext, ok := mediaExtensions[mediaType]
+	if !ok {
+		if e := strings.ToLower(filepath.Ext(fileName)); safeExtension.MatchString(e) {
+			ext = e
+		}
+	}
+	id, name, size, err := s.writeFile(src, ext, MaxUploadBytes)
+	if err != nil {
+		return sqlitedb.Attachment{}, err
+	}
+	a := sqlitedb.Attachment{ID: id, ScopeID: scopeID, Path: name, FileName: fileName, Size: size, MediaType: mediaType, CreatedAt: formatTime(now)}
+	err = sqlitedb.New(s.write).InsertAttachment(ctx, sqlitedb.InsertAttachmentParams{
+		ID: a.ID, ScopeID: a.ScopeID, Path: a.Path, FileName: a.FileName, Size: a.Size, MediaType: a.MediaType, CreatedAt: a.CreatedAt,
+	})
+	if err != nil {
+		_ = os.Remove(filepath.Join(s.FilesDir(), name))
+		return sqlitedb.Attachment{}, err
+	}
+	return a, nil
+}
+
+var safeExtension = regexp.MustCompile(`^\.[a-z0-9]{1,16}$`)
+
+// writeFile copies src to a private file under FilesDir: to a temporary
+// name, synced, then renamed into place, so a crash never leaves a partial
+// file under an attachment name. Empty files and files over limit fail.
+func (s *Store) writeFile(src io.Reader, ext string, limit int64) (id, name string, size int64, err error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", 0, err
+	}
+	id = hex.EncodeToString(buf)
 	dir := s.FilesDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return NewAttachment{}, err
+		return "", "", 0, err
 	}
 	tmp, err := os.CreateTemp(dir, tempPrefix+"*")
 	if err != nil {
-		return NewAttachment{}, err
+		return "", "", 0, err
 	}
 	defer os.Remove(tmp.Name())
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
-		return NewAttachment{}, err
+		return "", "", 0, err
 	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return NewAttachment{}, err
+	size, err = io.Copy(tmp, io.LimitReader(src, limit+1))
+	if err == nil && size > limit {
+		err = ErrUploadTooLarge
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return NewAttachment{}, err
+	if err == nil && size == 0 {
+		err = errors.New("local conversation store: the file is empty")
 	}
-	if err := tmp.Close(); err != nil {
-		return NewAttachment{}, err
+	if err == nil {
+		err = tmp.Sync()
 	}
-	name := id + ext
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", "", 0, err
+	}
+	name = id + ext
 	if err := os.Rename(tmp.Name(), filepath.Join(dir, name)); err != nil {
-		return NewAttachment{}, err
+		return "", "", 0, err
 	}
-	return NewAttachment{ID: id, ScopeID: scopeID, ConversationID: conversationID, Name: name, Size: int64(len(data)), MediaType: mediaType, CreatedAt: now}, nil
+	return id, name, size, nil
+}
+
+// AddPreviewRoot lets the scope preview files under a folder the user chose.
+func (s *Store) AddPreviewRoot(ctx context.Context, scopeID int64, path string, now time.Time) error {
+	return sqlitedb.New(s.write).InsertPreviewRoot(ctx, sqlitedb.InsertPreviewRootParams{ScopeID: scopeID, Path: path, CreatedAt: formatTime(now)})
+}
+
+// PreviewRoots lists the folders the scope may preview files under.
+func (s *Store) PreviewRoots(ctx context.Context, scopeID int64) ([]string, error) {
+	return sqlitedb.New(s.read).ListPreviewRoots(ctx, scopeID)
 }
 
 // Attachment returns a committed attachment and its file path. scopeID must
