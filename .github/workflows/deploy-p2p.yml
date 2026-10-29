@@ -1,0 +1,115 @@
+name: Deploy p2p-server
+
+# Builds p2p-server and deploys it to the relay host over SSH. Server setup,
+# secrets and rollback are described in deploy/p2p-server/README.md.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/cmd/p2p-server/**"
+      - "server/internal/p2pserver/**"
+      - "server/internal/daemon/p2p/identity.go"
+      - "server/go.mod"
+      - "server/go.sum"
+      - "deploy/p2p-server/**"
+      - ".github/workflows/deploy-p2p.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (default: the selected branch)"
+        required: false
+
+permissions:
+  contents: read
+
+# Never cancel a deploy halfway; queue the next one instead.
+concurrency:
+  group: deploy-p2p
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Resolve release id
+        id: meta
+        run: echo "sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "~1.27.3"
+          check-latest: true
+          cache-dependency-path: server/go.sum
+
+      - name: Test
+        working-directory: server
+        run: go test -race -count=1 ./internal/p2pserver/... ./cmd/p2p-server/...
+
+      - name: Build
+        working-directory: server
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ vars.P2P_GOARCH || 'amd64' }}
+        run: go build -trimpath -ldflags "-s -w -X main.version=${{ steps.meta.outputs.sha }}" -o ../dist/p2p-server ./cmd/p2p-server
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p2p-server
+          path: dist/p2p-server
+          retention-days: 14
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: p2p-server
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.P2P_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.P2P_SSH_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ]; then
+            echo "::error::P2P_SSH_KEY and P2P_SSH_KNOWN_HOSTS must be set in the production environment."
+            exit 1
+          fi
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 0600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Upload and activate
+        env:
+          SSH_HOST: ${{ secrets.P2P_SSH_HOST }}
+          SSH_USER: ${{ secrets.P2P_SSH_USER }}
+          SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          ssh_opts=(-i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=20)
+          target="$SSH_USER@$SSH_HOST"
+          dir="/opt/multica-p2p/releases/$SHA"
+          # activate hands an uploaded release to root, so a re-run of the
+          # same commit reuses it instead of uploading again.
+          if ssh "${ssh_opts[@]}" "$target" "test -f '$dir/p2p-server'"; then
+            echo "release $SHA already on the server; re-activating"
+          else
+            ssh "${ssh_opts[@]}" "$target" "mkdir -p '$dir'"
+            scp "${ssh_opts[@]}" p2p-server "$target:$dir/p2p-server.upload"
+            ssh "${ssh_opts[@]}" "$target" "chmod 0755 '$dir/p2p-server.upload' && mv -f '$dir/p2p-server.upload' '$dir/p2p-server'"
+          fi
+          ssh "${ssh_opts[@]}" "$target" "sudo /usr/local/sbin/multica-p2p-activate '$SHA'"
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
