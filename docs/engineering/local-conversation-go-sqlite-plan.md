@@ -158,7 +158,7 @@ Electron main 仍承担原生能力（Side workspace、原生选择框等）、D
 | `apps/desktop/src/renderer/src/platform/` | wire DTO 校验和转换、增量应用、历史分页 |
 | `packages/tutti-agent-gui-host/` | 本地增量事件接入，保留云端数据源行为 |
 
-从 `server/pkg/agent/codex.go` 提取通用协议能力之前，先区分任务调度逻辑与纯协议逻辑（第一步已在 #75 完成）。云端 backend 是"一个任务一次运行"，本地需要常驻多轮会话；协议层由两者共用，会话层分开实现。不能为了复用，把本地会话强行转换成云端运行。
+从 `server/pkg/agent/codex.go` 提取通用协议能力之前，先区分任务调度逻辑与纯协议逻辑（传输层已拆到 `server/pkg/codexappserver`）。云端 backend 是"一个任务一次运行"，本地需要常驻多轮会话；协议层由两者共用，会话层分开实现。不能为了复用，把本地会话强行转换成云端运行。
 
 `localconversation` 从第一阶段起定义 provider 接口，至少覆盖：启动或续接会话、提交轮次、steer、取消、运行中修改模型 / 推理强度 / 权限、回答交互请求、模型列表、原生历史读取与 fork，以及向服务层上报原始 provider 事件。事件归一化在服务层按 provider 实现，结果是同一套 v2 事件类型；Claude 适配器只上报原始 SDK 消息，不做归一化，因此不存在第二种语言的归一化实现。SDK 消息与 CLI stream-json 消息结构一致，Go 侧可复用 `pkg/agent/claude.go` 已有的消息解析。
 
@@ -734,7 +734,7 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 
 已定、不再讨论：Codex 由 Go 直连，Claude 使用 SDK + 每会话 Node 适配器；不做方案 B；不导入旧 JSON；本轮不验收 Windows；全部流式事件持久化且 macOS 开启 `fullfsync`；全局并发上限 20。
 
-主方向已经可以用于拆分实施。已完成 Codex 协议传输层拆分（#75）；Claude 适配器、SQLite 会话库、新 HTTP / WS 协议和共享 sidecar 删除均未实施。
+已完成的基础部分：Codex 协议传输层（`server/pkg/codexappserver`）、v2 与 Claude 适配器协议 schema（`server/internal/localconversation/protocol`）、SQLite 存储（`.../store`）、Claude 适配器（`apps/desktop/src/claude-host`）及其 Go 客户端与事件归一化（`.../provider/claude`）。尚未实施：会话服务层、Codex 本地常驻会话、HTTP / WS v2、Context MCP 迁移、Desktop 接入和共享 sidecar 删除。
 
 ## 附录 A：改动面清单
 
@@ -755,7 +755,7 @@ GUI host 的验证使用其实际 package scripts，接口新增同时补齐 sch
 
 | 位置 | 改动 |
 | --- | --- |
-| `server/pkg/codexappserver/`（#75 已新增） | 从 `pkg/agent/codex.go` 拆出的协议层；后续补充由上游 schema 生成的原生类型 |
+| `server/pkg/codexappserver/`（已新增） | 从 `pkg/agent/codex.go` 拆出的协议层；后续补充由上游 schema 生成的原生类型 |
 | `apps/desktop/src/claude-host/`（新增） | Claude 适配器：SDK 调用、版本协议、背压写入 |
 | `server/pkg/agent/codex.go`、`claude.go`、`claude_supplement.go`、`claude_models.go` | 改为使用共用协议层；云端行为不变 |
 | `server/internal/localconversation/`（新增） | 会话服务、provider、Context MCP、SQLite 存储 |
