@@ -1542,6 +1542,21 @@ func (q *Queries) ResolveInteraction(ctx context.Context, arg ResolveInteraction
 	return result.RowsAffected()
 }
 
+const setCommandReceiptResult = `-- name: SetCommandReceiptResult :exec
+UPDATE command_receipt SET result = ? WHERE scope_id = ? AND request_id = ?
+`
+
+type SetCommandReceiptResultParams struct {
+	Result    string
+	ScopeID   int64
+	RequestID string
+}
+
+func (q *Queries) SetCommandReceiptResult(ctx context.Context, arg SetCommandReceiptResultParams) error {
+	_, err := q.db.ExecContext(ctx, setCommandReceiptResult, arg.Result, arg.ScopeID, arg.RequestID)
+	return err
+}
+
 const setConversationTurnCount = `-- name: SetConversationTurnCount :exec
 UPDATE conversation SET turn_count = ? WHERE id = ?
 `

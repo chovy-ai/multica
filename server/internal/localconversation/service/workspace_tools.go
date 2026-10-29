@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/settings"
+	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 	"github.com/multica-ai/multica/server/internal/localconversation/workspace"
 )
@@ -73,4 +76,23 @@ func (l localActions) Cancel(ctx context.Context, id, turnID string) error {
 		}
 	}
 	return ErrNoRunningTurn
+}
+
+// settingsReceipts keeps Settings write outcomes as command receipts.
+type settingsReceipts struct {
+	store   *store.Store
+	scopeID int64
+	now     func() time.Time
+}
+
+func (r settingsReceipts) Claim(ctx context.Context, key, fingerprint string) (*settings.Receipt, error) {
+	prior, err := r.store.ClaimReceipt(ctx, store.CommandReceipt{ScopeID: r.scopeID, RequestID: key, Fingerprint: fingerprint, Result: `{"status":"pending"}`, CreatedAt: r.now()})
+	if err != nil || prior == nil {
+		return nil, err
+	}
+	return &settings.Receipt{Fingerprint: prior.Fingerprint, Result: prior.Result}, nil
+}
+
+func (r settingsReceipts) Finish(ctx context.Context, key, result string) error {
+	return r.store.SetReceiptResult(ctx, r.scopeID, key, result)
 }

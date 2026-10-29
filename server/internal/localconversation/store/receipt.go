@@ -52,3 +52,23 @@ func insertReceipt(ctx context.Context, q *sqlitedb.Queries, r CommandReceipt) e
 	}
 	return err
 }
+
+// ClaimReceipt records a pending operation under requestID before it runs.
+// When requestID was claimed before it returns that receipt instead; the
+// caller compares fingerprints.
+func (s *Store) ClaimReceipt(ctx context.Context, r CommandReceipt) (existing *sqlitedb.CommandReceipt, err error) {
+	err = insertReceipt(ctx, sqlitedb.New(s.write), r)
+	if errors.Is(err, ErrDuplicateRequest) {
+		prior, err := s.Receipt(ctx, r.ScopeID, r.RequestID)
+		if err != nil {
+			return nil, err
+		}
+		return &prior, nil
+	}
+	return nil, err
+}
+
+// SetReceiptResult records the outcome of a claimed operation.
+func (s *Store) SetReceiptResult(ctx context.Context, scopeID int64, requestID, result string) error {
+	return sqlitedb.New(s.write).SetCommandReceiptResult(ctx, sqlitedb.SetCommandReceiptResultParams{Result: result, ScopeID: scopeID, RequestID: requestID})
+}

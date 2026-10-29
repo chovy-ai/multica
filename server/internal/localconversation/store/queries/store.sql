@@ -230,3 +230,6 @@ FROM prompt_queue_item WHERE conversation_id = ?;
 
 -- name: ListQueuedConversations :many
 SELECT DISTINCT conversation_id FROM prompt_queue_item ORDER BY conversation_id;
+
+-- name: SetCommandReceiptResult :exec
+UPDATE command_receipt SET result = ? WHERE scope_id = ? AND request_id = ?;

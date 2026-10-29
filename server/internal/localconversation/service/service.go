@@ -15,6 +15,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/localconversation/catalog"
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
+	"github.com/multica-ai/multica/server/internal/localconversation/settings"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 	"github.com/multica-ai/multica/server/internal/localconversation/workspace"
@@ -544,6 +545,17 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 			WorkspaceID: scope.WorkspaceID, UserID: scope.UserID, ConversationID: conv.ID,
 			Request: requester, Local: localActions{s: s, scopeID: conv.ScopeID},
 		})...)
+		settingsOpts := settings.Options{
+			Scope:    settings.Scope{WorkspaceID: scope.WorkspaceID, UserID: scope.UserID},
+			Receipts: settingsReceipts{store: s.store, scopeID: conv.ScopeID, now: s.opts.Now},
+			Host: func(ctx context.Context, kind string, payload any) (json.RawMessage, error) {
+				return s.askHost(ctx, conv.ScopeID, kind, payload)
+			},
+		}
+		if requester != nil {
+			settingsOpts.Request = requester
+		}
+		tools = append(tools, settings.Tools(settingsOpts)...)
 		binding, err := s.context.Bind(context.Background(), contextmcp.Execution{
 			Instructions: contextmcp.ContextInstructions, Token: token, Tools: tools,
 		})
