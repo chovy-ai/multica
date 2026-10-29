@@ -25,6 +25,21 @@ const submit = (engine: ReturnType<typeof setup>["engine"], id: string) => engin
 const sendNow = (engine: ReturnType<typeof setup>["engine"], promptId: string) => engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: "session", promptId, awaitingTurnExpiresAtUnixMs: 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
 const visible = (engine: ReturnType<typeof setup>["engine"]) => engine.getSnapshot().promptQueue.recordsBySessionId.session?.prompts.filter((prompt) => prompt.visibleInQueue !== false).map((prompt) => prompt.id) ?? [];
 describe("desktop queue presentation", () => {
+  it.each([
+    { targetTurnId: "active", routing: "send_now" as const },
+    { capabilityRefs: [{ capability: "tutti" as const, source: "slash_command" as const }] },
+  ])("rejects unsupported submission before accepting or checkpointing it: %j", (unsupported) => {
+    const store = createDesktopPendingStore();
+    const { engine, options } = setup(true, store);
+    try {
+      expect(engine.submitPrompt({ agentSessionId: "session", clientSubmitId: "unsupported", content: [{ type: "text", text: "Keep my draft" }], ...unsupported })).toEqual({ accepted: false, queued: false });
+      expect(options.enqueue).not.toHaveBeenCalled();
+      expect(options.error).toHaveBeenCalledOnce();
+      expect(store.getState().queues).toEqual([]);
+      expect(engine.getSnapshot().promptQueue.recordsBySessionId.session).toBeUndefined();
+      expect(selectSessionIsSubmitting(engine.getSnapshot(), "session")).toBe(false);
+    } finally { engine.dispose(); }
+  });
   it("submits steering immediately and keeps it pending after acknowledgement until dispatch", async () => {
     const { engine, receive, options } = setup(true);
     let acknowledge!: (queue: LocalPromptQueue) => void;

@@ -34,6 +34,7 @@ import { isLocalReasoningEffort, localReasoningLevels, isLocalPermissionMode, ty
 import { RuntimeLedger } from "./ledger";
 import { composerOptions, projectDetail, projectPendingSession, projectSession } from "./projection";
 import { createDesktopQueueEngine } from "./desktop-queue-engine";
+import { promptSubmissionError } from "./prompt-submission-policy";
 import { createDesktopPendingStore } from "./desktop-pending-store";
 import { snapshotPromptQueues } from "./saved-prompt-queues";
 
@@ -701,7 +702,8 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     const sessionId = await backendSessionId(input.agentSessionId);
     const session = details.get(input.agentSessionId)?.session ?? workspace.sessions.find((item) => item.id === sessionId);
     if (!session) throw new Error("Conversation is not loaded");
-    if (input.targetTurnId || input.capabilityRefs?.length) unsupported("Active-turn guidance and capability references");
+    const submissionError = promptSubmissionError(input, init.locale);
+    if (submissionError) throw new MulticaAgentGuiError(submissionError, "unsupported");
     const encoded = encodeContent([...(input.runtimeContent ?? input.content)]);
     const display = snapshotPromptQueues({ nextCommandSequence: 0, recordsBySessionId: {
       [input.agentSessionId]: { agentSessionId: input.agentSessionId, workspaceId, prompts: [{ ...input, id: input.clientSubmitId, createdAtUnixMs: Date.now() }],
@@ -729,7 +731,8 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     await permissionHydration;
     await permissionWrites.catch(() => {});
     scope(input.workspaceId);
-    if (input.guidance || input.targetTurnId || input.capabilityRefs?.length) unsupported("Active-turn guidance and capability references");
+    const submissionError = promptSubmissionError(input, init.locale);
+    if (submissionError) throw new MulticaAgentGuiError(submissionError, "unsupported");
     const detail = details.get(input.agentSessionId);
     const session = detail?.session ?? workspace.sessions.find((entry) => entry.id === ledger.serverId(input.agentSessionId));
     if (!session) throw new MulticaAgentGuiError("Conversation is not loaded.", "session_not_loaded");

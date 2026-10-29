@@ -43,6 +43,8 @@ GUI 请求切换会话时，先记录选择顺序和宿主当前导航意图，�
 
 队列回归：`pnpm --filter @multica/desktop exec vitest run src/local-host/local-conversation-queue.test.ts src/renderer/src/platform/local-conversation-service.test.ts`，以及 `pnpm --filter @multica/tutti-agent-gui-host exec vitest run src/runtime/desktop-queue-engine.test.ts src/runtime/runtime.test.ts`。测试使用注入的假运行器和 HTTP 响应，不调用真实模型。
 
+当前连接不支持把消息注入正在运行的回合。Cmd/Ctrl+Enter 引导提交会在清空草稿、接收排队消息前拒绝，并提示使用普通发送或先回答当前问题；不把它静默改为中断执行。普通发送中显式 `@智能体` 的消息进入队列，不作为当前问题的回答；不带智能体提及的纯文本继续沿用问答回复路径。队列“直接发送”仍由宿主中断旧执行后启动新一轮。宿主通过受保护的构建适配接入统一提交校验，vendored Tutti 快照保持不变。快捷键和问答回归见 `packages/tutti-agent-gui-host/src/guidance-submission.test.tsx`。
+
 未发送的文字草稿由 GUI 宿主的 Zustand store 管理，每次编辑同步投影到窗口的 `sessionStorage`，新 GUI 文档在首次渲染前恢复。作用域包括 API 地址、账号、工作区、主对话流或对应 Side 面板，再沿用 GUI 的会话和首页草稿键；不同会话互不覆盖，首页切换运行器仍共用原有首页草稿。清空和已有的发送结算回调通过同一个 setter 更新存储，切换 tab 本身不会提交内容。构建适配只替换 GUI 的草稿状态所有者，vendored 源码快照保持不变。
 
 桌面确认接收前，提交内容和原提交编号同步保存在同作用域的窗口会话状态中。GUI 文档重建时只恢复为可操作的排队条目，不自动重发；用户显式重试沿用原编号，主进程按编号去重。收到接收回执或包含该编号的主进程队列快照后清除检查点；明确删除成功也清除，拒收和结果不明时继续保留。

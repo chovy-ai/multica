@@ -85,6 +85,31 @@ async function setup(data = backend()) {
 }
 
 describe("Multica Agent GUI runtime with the original session engine", () => {
+  it.each([false, true])("queues ordinary desktop messages and sends them now without guidance (agent mention: %s)", async (mentioned) => {
+    const data = backend(); data.sessions.push(session);
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") return { ...await original(method, params), local: true, queueOwner: "desktop" };
+      if (method === "queue.enqueue") return { revision: 1, paused: true, items: [params.item] };
+      if (method === "queue.update") return { revision: 2, paused: false, items: [] };
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true, queueOwner: "desktop", sessions: [session] });
+    handles.push(handle); await handle.initialize();
+    await handle.runtime.getSession(init.workspaceId, session.id);
+    const mention = mentioned ? createRichTextMentionMarkdown({ providerId: "agent-target", entityId: agent.id, label: "Agent", scope: { workspaceId: init.workspaceId } }) : "";
+    const engine = handle.runtime.getSessionEngine(init.workspaceId);
+    expect(engine.submitPrompt({ agentSessionId: session.id, clientSubmitId: "ordinary", content: [{ type: "text", text: `${mention}Help` }] }).accepted).toBe(true);
+    await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "queue.enqueue")).toHaveLength(1));
+    const admission = data.request.mock.calls.find(([method]) => method === "queue.enqueue")![1];
+    expect(admission.item.references ?? []).toEqual(mentioned ? [{ kind: "agent", id: agent.id }] : []);
+    expect(admission.item.targetTurnId).toBeUndefined();
+    expect(admission.item.capabilityRefs).toBeUndefined();
+    engine.dispatch({ type: "queue/sendNowRequested", agentSessionId: session.id, promptId: "ordinary", awaitingTurnExpiresAtUnixMs: Date.now() + 30000, cancelCommandId: "cancel", timeoutMs: 30000 });
+    await vi.waitFor(() => expect(data.request).toHaveBeenCalledWith("queue.update", { sessionId: session.id, action: "sendNow", requestId: "ordinary" }));
+    expect(data.request.mock.calls.filter(([method]) => method === "queue.enqueue")).toHaveLength(1);
+    expect(data.request.mock.calls.filter(([method]) => method === "session.send" || method === "host.showMessage")).toEqual([]);
+  });
   it("keeps first-send content recoverable for an explicit queue retry after admission failure", async () => {
     const data = backend();
     const original = data.request.getMockImplementation()!;
