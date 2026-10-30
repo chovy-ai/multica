@@ -206,6 +206,10 @@ export class DirectLocalV2Transport implements LocalV2Transport {
 
   setDeviceLink(enabled: boolean): Promise<unknown> { return this.own("PUT", "/local/device-link", { enabled }); }
 
+  servicePreview(): Promise<unknown> { return this.own("GET", "/local/service-preview"); }
+  setServicePreview(value: { enabled: boolean; ports: number[] }): Promise<unknown> { return this.own("PUT", "/local/service-preview", value); }
+  clearAgentServicePreviews(): Promise<unknown> { return this.own("DELETE", "/local/service-preview"); }
+
   // --- WebSocket ---
 
   subscribe(listener: (scope: LocalV2Scope, message: unknown) => void): () => void {

@@ -23,6 +23,12 @@ func AuthorizeDesktop(r *http.Request, token string) bool {
 	return (equal(bearer, token) && origin == "") || (equal(bearer, RendererToken(token)) && rendererOrigin(origin))
 }
 
+// AuthorizeMain admits only the native Desktop process, never renderer or file credentials.
+func AuthorizeMain(r *http.Request, token string) bool {
+	bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && loopbackHost(r) && r.Header.Get("Origin") == "" && equal(bearer, token)
+}
+
 var commandPath = regexp.MustCompile(`^/sessions/[^/]+/commands$`)
 
 // Admit authenticates a /local/v2 request this daemon forwards to another

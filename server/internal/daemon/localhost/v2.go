@@ -52,7 +52,11 @@ type V2 struct {
 	// reach its server.
 	serverOrigin string
 	// remoteOpen reports whether other devices may use this one.
-	remoteOpen func() bool
+	remoteOpen     func() bool
+	servicePreview interface {
+		Control(http.ResponseWriter, *http.Request, int64, string)
+		service.PreviewServices
+	}
 
 	mu sync.Mutex
 	// origins is the client that last acted on each conversation.
@@ -81,6 +85,25 @@ func (v *V2) SetServerOrigin(origin string) { v.serverOrigin = normalizeOrigin(o
 
 // SetRemoteOpen sets whether other devices may use this one now.
 func (v *V2) SetRemoteOpen(open func() bool) { v.remoteOpen = open }
+
+func (v *V2) SetServicePreview(handler interface {
+	Control(http.ResponseWriter, *http.Request, int64, string)
+	service.PreviewServices
+}) {
+	v.servicePreview = handler
+	v.svc.SetPreviewServices(handler)
+}
+func (v *V2) PreviewScope(r *http.Request) (int64, error) { return v.scope(r) }
+func (v *V2) CheckPreviewConversation(ctx context.Context, scopeID int64, id string) error {
+	c, err := v.svc.Store().Conversation(ctx, id)
+	if err != nil {
+		return err
+	}
+	if c.ScopeID != scopeID {
+		return store.ErrNotFound
+	}
+	return nil
+}
 
 func normalizeOrigin(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
@@ -142,7 +165,11 @@ func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 	kind := c.kind
 	r = r.WithContext(withCaller(r.Context(), c))
 	if path == "/hello" && r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": []string{"claude", "codex", "device-link"}})
+		capabilities := []string{"claude", "codex", "device-link"}
+		if v.servicePreview != nil {
+			capabilities = append(capabilities, "remote-service-preview-v1")
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": capabilities})
 		return
 	}
 	// Desktop stops provider processes before an update replaces the app.
@@ -179,6 +206,12 @@ func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	switch {
+	case path == "/preview/services" || strings.HasPrefix(path, "/preview/services/"):
+		if v.servicePreview == nil {
+			http.NotFound(w, r)
+			return
+		}
+		v.servicePreview.Control(w, r, scopeID, c.peer)
 	case path == "/ws-ticket" && r.Method == http.MethodPost:
 		writeJSON(w, http.StatusOK, ticketResponse(v.tickets.issue(kind, scopeFromHeaders(r.Header), r.Header.Get(headerClientID))))
 	case path == "/ws" && r.Method == http.MethodGet:

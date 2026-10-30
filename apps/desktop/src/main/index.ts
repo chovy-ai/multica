@@ -22,6 +22,7 @@ import { LocalV2Client, LocalV2Error } from "./local-conversation-v2";
 import { applyChosenPath, localV2HostHandler, remoteHostRequests } from "./local-v2-host";
 import type { LocalV2ChooseRequest } from "@multica/core/local-conversation/v2";
 import { ResourceWebPreview } from "./resource-web-preview";
+import { RemotePreviewNetwork } from "./remote-preview-network";
 import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
 import { multicaWorkspaceRequest } from "./multica-api-request";
@@ -750,7 +751,8 @@ if (!gotTheLock) {
     let resourcePreview: ResourceWebPreview | undefined;
     const getResourcePreview = () => {
       if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable");
-      return resourcePreview ??= new ResourceWebPreview(mainWindow, { createSource: () => createMacosChromeCookieImportAdapter({ isEnabled: () => true }) });
+      if (!localV2 || !runtimeConfigResult.ok) throw new Error("Local runtime is unavailable");
+      return resourcePreview ??= new ResourceWebPreview(mainWindow, { createSource: () => createMacosChromeCookieImportAdapter({ isEnabled: () => true }) }, new RemotePreviewNetwork(localV2, runtimeConfigResult.config.apiUrl, () => settingsUserId));
     };
     const sideWorkspaceControl = new SideWorkspaceControl({
       currentUser: () => settingsUserId,
@@ -982,6 +984,7 @@ if (!gotTheLock) {
         if (accountInvalidated) {
           sideWorkspaceControl.dispose();
           resourcePreview?.dispose();
+          resourcePreview = undefined;
           authSessionGeneration += 1;
           mainRendererMessages.clear("inbox:open");
         }

@@ -1378,6 +1378,19 @@
       "other_instance": "La commande est liée à une autre instance de Desktop ou de développement.",
       "dev_bundle_missing": "Le CLI de cette instance de développement est indisponible. Installez Go et relancez pnpm dev:desktop.",
       "dev_bound": "Lié à l’instance de développement actuelle et à son CLI."
+    },
+    "service_preview": {
+      "agent_ports": "Ports de service de l’Agent",
+      "revoke_agent_ports": "Arrêter le partage",
+      "title": "Aperçu des services locaux",
+      "allow": "Autoriser les autres appareils à afficher les services",
+      "description": "Lorsque la liaison est activée, les appareils du même compte peuvent accéder aux ports autorisés.",
+      "ports": "Ports autorisés",
+      "invalid_ports": "Saisissez de 1 à 64 ports entre 1 et 65535, séparés par des virgules.",
+      "failed": "Mise à jour impossible. Vérifiez le démon local et réessayez.",
+      "save": "Enregistrer les ports",
+      "confirm_title": "Autoriser l’accès à ces services locaux ?",
+      "confirm_description": "Les appareils du même compte peuvent envoyer des requêtes aux services des ports {{ports}}, y compris des requêtes modifiant les données."
     }
   },
   "members": {

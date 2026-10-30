@@ -66,6 +66,14 @@ It never reads or overwrites the default profile you use in the terminal. If you
 
 You can check runtime status and logs in Desktop's settings. If a tool isn't detected, first confirm it runs in a regular terminal and is logged in, then restart Desktop's daemon.
 
+## Remote service previews
+
+To preview another same-account device’s localhost service, update both devices and enable **Settings → This device → Device link** on the service host. Open that device’s source conversation, then its `http://localhost:3000/` link. HTTP, HTTPS, WebSocket and SSE traffic follows the P2P link; HTTPS certificate checks stay enabled.
+
+Agents start requested services using their normal terminal permissions, verify the actual port, then call `service_preview_register`. Opening a service with `side_browser_open` also registers it automatically. Ask the Agent to register an already running service, list registrations with `service_preview_list`, or remove one with `service_preview_remove`.
+
+Temporary registrations belong to the source conversation, expire after 30 minutes without preview activity, and are revoked after the service stops. Settings lists Agent service ports and can stop their sharing. Manual allowed ports remain available separately. If the remote device or proxy fails, the preview does not fall back to your own localhost.
+
 ## Updating Desktop
 
 Auto-update is on by default. The app checks for and downloads new versions in the background; once a download finishes you can restart to install immediately or let it install on the next quit. Under **Settings → Updates** you can turn off automatic checks or check for new versions manually.

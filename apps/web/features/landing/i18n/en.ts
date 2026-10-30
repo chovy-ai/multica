@@ -194,6 +194,10 @@ export function createEnDict(
     headline: "Questions & answers.",
     items: [
       {
+        question: "Can I preview a web service running on another device?",
+        answer: "Yes. Desktop can open a linked same-account device’s localhost service through P2P. Enable Device link on the service host. Agents register the actual listening port after starting a requested service; manual port settings remain available. Temporary registrations belong to the source conversation and are removed when the service stops. Both devices need a compatible version.",
+      },
+      {
         question: "How can I diagnose a slow local conversation?",
         answer:
           "In the desktop app, open Settings → This device → Labs to export one JSON with stage timings, Web frontend logs, the desktop daemon log tail and runtime versions. Codex and Claude Code can export the same sources through the built-in MCP. Common secrets are masked; review logs before sharing. Nothing is uploaded automatically.",

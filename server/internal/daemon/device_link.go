@@ -19,6 +19,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	"github.com/multica-ai/multica/server/internal/daemon/p2p"
+	"github.com/multica-ai/multica/server/internal/daemon/servicepreview"
 )
 
 // deviceLinkProtocol carries the local v2 API between this account's devices.
@@ -34,10 +35,12 @@ const relayTransferLimit = 5 << 20
 // conversations when the user turns it on, and forwards this device's
 // Desktop to theirs.
 type deviceLink struct {
-	path   string
-	v2     *localhost.V2
-	token  string
-	logger *slog.Logger
+	preview     *servicepreview.Manager
+	previewStop func()
+	path        string
+	v2          *localhost.V2
+	token       string
+	logger      *slog.Logger
 
 	mu      sync.Mutex
 	enabled bool
@@ -58,6 +61,8 @@ func newDeviceLink(profileDir string, v2 *localhost.V2, token string, logger *sl
 		}
 	}
 	v2.SetRemoteOpen(l.open)
+	l.preview = servicepreview.New(filepath.Join(profileDir, "service-preview.json"), l.open, v2.CheckPreviewConversation, logger)
+	v2.SetServicePreview(l.preview)
 	return l
 }
 
@@ -100,6 +105,11 @@ func (l *deviceLink) apply() {
 		return
 	}
 	if !want {
+		if l.previewStop != nil {
+			l.previewStop()
+			l.previewStop = nil
+		}
+		l.preview.Revoke()
 		l.stop()
 		_ = l.server.Close()
 		l.server, l.stop = nil, nil
@@ -107,6 +117,22 @@ func (l *deviceLink) apply() {
 	}
 	svc := l.svc
 	ln, stop := svc.Listen(deviceLinkProtocol)
+	previewListener, previewStop := svc.Listen(servicepreview.Protocol)
+	l.previewStop = previewStop
+	go func() {
+		for {
+			conn, err := previewListener.Accept()
+			if err != nil {
+				return
+			}
+			id, ok := p2p.PeerOf(conn)
+			if !ok {
+				_ = conn.Close()
+				continue
+			}
+			go l.preview.ServeStream(id.String(), conn)
+		}
+	}()
 	l.stop = stop
 	l.server = &http.Server{
 		Handler:           http.HandlerFunc(l.v2.ServeRemote),
@@ -158,6 +184,8 @@ func writeFileAtomic(path string, data []byte) error {
 
 // register mounts the loopback routes Desktop uses.
 func (l *deviceLink) register(mux *http.ServeMux) {
+	mux.HandleFunc("/local/service-preview", l.handlePreviewPolicy)
+	mux.HandleFunc("/local/preview/tunnel", l.handlePreviewTunnel)
 	mux.HandleFunc("/local/device-link", l.handleSetting)
 	mux.HandleFunc("/local/devices", l.handleDevices)
 	mux.HandleFunc("/local/devices/", l.handleForward)

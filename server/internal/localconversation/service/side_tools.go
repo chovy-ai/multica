@@ -51,7 +51,7 @@ type sideWrite struct {
 
 func (s *Service) sideToolsFor(conv sqlitedb.Conversation, current func() map[string]any, read func(context.Context, json.RawMessage) (contextmcp.Result, error)) []contextmcp.Tool {
 	t := &sideTools{s: s, conv: conv, current: current, read: read, writes: map[string]*sideWrite{}}
-	return t.tools()
+	return append(t.tools(), t.previewTools()...)
 }
 
 func (t *sideTools) workspace() (SideWorkspace, bool) {
@@ -396,6 +396,9 @@ func (t *sideTools) tools() []contextmcp.Tool {
 			raw, _ := in["url"].(string)
 			if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 				return contextmcp.Result{}, errors.New("Supply an http(s) url")
+			}
+			if err := t.prepareServicePreview(ctx, raw); err != nil {
+				return contextmcp.Result{}, err
 			}
 			return t.control(ctx, map[string]any{"op": "open", "tab": map[string]any{"kind": "web", "url": raw}, "select": true, "keep": in["keep"] == true, "requestId": in["request_id"]})
 		})

@@ -4,7 +4,6 @@ import { parseWithFallback } from "@multica/core/api/schema";
 import { z } from "zod";
 import { sideWorkspaceAckSchema, sideWorkspaceControlSchema, type SideWorkspaceAck, type SideWorkspaceCommand, type SideWorkspaceControlRequest } from "../shared/side-workspace";
 import { SideBrowserController } from "./side-browser-controller";
-import { isLoopbackUrl } from "../shared/loopback-url";
 import type { ResourceWebPreview } from "./resource-web-preview";
 
 // Read responses include server metadata such as updatedAt; sync commands stay strict.
@@ -63,7 +62,6 @@ export class SideWorkspaceControl {
     if (op === "open" && !request.tab) throw new Error("Specify a tab to open");
     if (op !== "browser") return this.command(request, signal);
     if (tab?.kind !== "web" || !request.action) throw new Error("Browser control requires an open webpage tab and an action");
-    if (device !== "local" && isLoopbackUrl(tab.url)) throw new Error("not_on_this_device: This local address belongs to the other device; it cannot be opened here");
     const owner = JSON.stringify([scope.userId, scope.workspaceId]);
     await this.command({ ...request, op: "select", action: undefined }, signal);
     // Recheck after asynchronous UI changes, before acquiring a real WebContents.
@@ -71,7 +69,7 @@ export class SideWorkspaceControl {
     if (!latest?.tabs.some((entry) => entry.id === tab.id && entry.kind === "web")) throw new Error("not_in_current_side: The tab has closed");
     if (scope.userId !== this.options.currentUser()) throw new Error("Side workspace account changed");
     if (this.endedTurns.has(turnKey)) throw new Error("The controlling Side execution has ended");
-    const contents = await this.options.preview().ensure(owner, tab.id, tab.url);
+    const contents = await this.options.preview().ensure(owner, tab.id, tab.url, device === "local" ? undefined : { deviceId: device, conversationId });
     await this.options.assertTurn(scope, conversationId, turnId, device);
     if (this.endedTurns.has(turnKey)) throw new Error("The controlling Side execution has ended");
     return this.browser.run(tab.id, contents, conversationId, turnId, request.action, signal);

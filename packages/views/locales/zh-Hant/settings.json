@@ -1368,6 +1368,19 @@
       "other_instance": "目前命令繫結了其他 Desktop 或開發實例。",
       "dev_bundle_missing": "目前開發實例的 CLI 不可用。安裝 Go 後重新執行 pnpm dev:desktop。",
       "dev_bound": "已繫結目前開發實例，與開發版 CLI 一致。"
+    },
+    "service_preview": {
+      "agent_ports": "Agent 服務連接埠",
+      "revoke_agent_ports": "停止共享",
+      "title": "本機服務預覽",
+      "allow": "允許其他裝置預覽本機服務",
+      "description": "開啟裝置互聯後，同一帳號的裝置可以存取指定連接埠上的本機服務。",
+      "ports": "允許的連接埠",
+      "invalid_ports": "請輸入 1–64 個連接埠，以逗號分隔，範圍為 1–65535。",
+      "failed": "無法更新服務預覽，請檢查本機守護程序後重試。",
+      "save": "儲存連接埠",
+      "confirm_title": "允許存取這些本機服務？",
+      "confirm_description": "同一帳號的裝置可以向連接埠 {{ports}} 上的服務傳送請求，包括會修改資料的請求。"
     }
   },
   "members": {

@@ -148,8 +148,9 @@ func TestRelayPublish_FenceHoldsAgainstThePublishingReplica(t *testing.T) {
 	t.Parallel()
 	relay, dedupe := &fanoutRelay{}, newSharedDedupe()
 	reg := newSendersRegistry()
+	// This asserts fencing, not scheduling within a shortened acceptance window.
 	router := inboxPublishRouter(t, relay, dedupe,
-		RelayConfig{AcceptanceWindow: 40 * time.Millisecond},
+		RelayConfig{},
 		NewOutbound(nil, reg, nil, slog.Default()))
 
 	instID := mustTestUUID(t)
