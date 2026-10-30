@@ -235,6 +235,7 @@ func TestCodexRunnerInterruptsTheRunningTurn(t *testing.T) {
 
 	f, r, server := newCodexFixture(t, CodexSession{}, nil)
 	codexSend(t, r, "t1")
+	server.notify(t, "turn/started", `{"threadId":"th-1","turn":{"id":"tu-1"}}`)
 	if err := r.Interrupt(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +245,49 @@ func TestCodexRunnerInterruptsTheRunningTurn(t *testing.T) {
 	server.notify(t, "turn/completed", `{"threadId":"th-1","turn":{"id":"tu-1","status":"interrupted"}}`)
 	if got := f.turnEvents(t, "t1"); got[len(got)-1] != "turn.completed  cancelled" {
 		t.Fatalf("events = %v", got)
+	}
+}
+
+// Codex rejects turn/interrupt until the turn starts, so a stop pressed
+// right after sending is sent when the turn starts.
+func TestCodexRunnerInterruptsATurnOnceItStarts(t *testing.T) {
+	t.Parallel()
+
+	for _, early := range []bool{false, true} {
+		t.Run(fmt.Sprintf("started before the turn/start response=%v", early), func(t *testing.T) {
+			t.Parallel()
+			var r *CodexRunner
+			f, r, server := newCodexFixture(t, CodexSession{}, nil)
+			if early {
+				// turn/started races the turn/start response and is replayed after it.
+				server.beforeTurnStart = func() {
+					server.notify(t, "turn/started", `{"threadId":"th-1","turn":{"id":"tu-1"}}`)
+				}
+				server.reply = func(method string, _ map[string]any) (json.RawMessage, bool) {
+					if method == "turn/start" && r != nil {
+						if err := r.Interrupt(context.Background()); err != nil {
+							t.Errorf("Interrupt: %v", err)
+						}
+					}
+					return nil, false
+				}
+			}
+			codexSend(t, r, "t1")
+			if !early {
+				if err := r.Interrupt(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				if got := fmt.Sprint(server.sent()); strings.Contains(got, "turn/interrupt") {
+					t.Fatalf("interrupted a turn Codex has not started: %s", got)
+				}
+				server.notify(t, "turn/started", `{"threadId":"th-1","turn":{"id":"tu-1"}}`)
+			}
+			eventually(t, "turn/interrupt", func() bool { return server.paramsOf("turn/interrupt")["turnId"] == "tu-1" })
+			server.notify(t, "turn/completed", `{"threadId":"th-1","turn":{"id":"tu-1","status":"interrupted"}}`)
+			if got := f.turnEvents(t, "t1"); got[len(got)-1] != "turn.completed  cancelled" {
+				t.Fatalf("events = %v", got)
+			}
+		})
 	}
 }
 
