@@ -81,6 +81,8 @@
 | 服务端不一致 | `api_url_mismatch` | {设备名} 连接的是另一个 Multica 服务端 | {device} is connected to a different Multica server |
 | 中继下的大文件 | `relay_transfer_limited` | 当前经中继连接，暂不能传输大于 5 MB 的文件 | Files over 5 MB are unavailable while connected through the relay |
 
+被访问端的 Desktop 没有打开时，只要守护进程在运行、登录账号没变，其他设备照常可以使用；被访问端此时看不到使用中标识。
+
 断线期间保留已加载内容和草稿，不把正在运行的任务标记为失败。连接恢复前禁用发送。重连后按 `after_seq` 续传，或重新读取快照；待处理的设置确认和 Side 控制在宽限期内保持有效。被访问端更新时进入 drain，期间发起执行返回 `draining`，复用现有文案。
 
 ### 被访问端：使用中标识
@@ -107,47 +109,7 @@
 
 ## 前置：渲染进程直连守护进程
 
-原则：渲染进程尽量直接连本机守护进程，只有做不到的事才经过主进程。这项改造独立成一个 PR，先于设备互联合入。设备互联在它之上实现，查看端不再需要按设备维护主进程代理。
-
-现在主进程承担两类工作：一是转发数据（`LocalV2Proxy`、`multica-local-file://` 协议），这部分改为直连；二是做渲染进程做不到的事，这部分保留。
-
-| 能力 | 走向 | 说明 |
-| --- | --- | --- |
-| JSON 请求（会话、命令、配置、预览元数据、导入…） | 直连 | `fetch` 带 `Authorization: Bearer {渲染进程 token}` |
-| WebSocket | 直连 | 浏览器 WebSocket 不能带请求头。先 `POST /local/v2/ws-ticket` 换一次性票据（30 秒、单次有效），再连 `ws://…/local/v2/ws?ticket=…` |
-| 文件读取（附件、会话图片、预览内容） | 直连 | `POST /local/v2/file-urls` 换签名 URL（绑定 scope 和路径，60 秒内可多次 Range 读取），`<img>`、`<video>` 直接使用。token 不进 URL |
-| 附件上传 | 直连 | `fetch` POST，带渲染进程 token |
-| 反向请求 | 直连接收 | 渲染进程从 WS 收到 `host.request`；需要原生能力的部分再经 IPC 交给主进程，结果由渲染进程 `host.reply` |
-| 获取端口和渲染进程 token | 主进程 | 渲染进程读不到 profile 文件。IPC `local-v2:endpoint` 返回 `{ base, token }`；收到 401 时再取一次（轮换） |
-| 扩大读取范围（`/folder-projects`、`/preview/roots`、`set_directory`） | 主进程 | 路径必须来自原生选择器，守护进程分不清路径是用户选的还是伪造的。只接受主进程 token |
-| 设置确认、设备设置操作 | 主进程 | 原生弹窗和登录凭据。主进程根据 operation 和 input 重新生成 `apply`，不使用经渲染进程转来的 `apply` |
-| Side 浏览器、网页预览 | 主进程 | `WebContentsView` |
-| 保存到本机 | 主进程 | 系统保存对话框；主进程用自己的 token 流式读取后写入 |
-| `/drain`、`/undrain`、`/stop-providers` | 主进程 | 更新流程，只接受主进程 token |
-
-守护进程改动（`daemon/localhost/auth.go`、`v2.go`）：
-
-- 两个 token：现有主进程 token 不变；新增渲染进程 token（每次启动轮换，写入 profile，0600），只能访问 `/local/v2` 的会话、文件和 WS 接口，以及 `/local/devices`。
-- Origin（2026-10-29 用 Electron 44.9.3 实测，窗口配置与 Desktop 相同：`sandbox: true`、`webSecurity: false`）：
-
-  | 请求 | 生产（`file://`） | 开发（`http://localhost:{port}`） |
-  | --- | --- | --- |
-  | `fetch` GET/POST（带 `Authorization`） | 不带 Origin，无预检 | 不带 Origin，无预检；`webSecurity: true` 时带 Origin 并先发预检 |
-  | WebSocket | `Origin: file://` | `Origin: http://localhost:{port}` |
-  | `<img src>` | 不带 Origin，也带不了请求头 | 同左 |
-
-  结论：HTTP 请求无法用 Origin 区分主进程和渲染进程，两者的权限只能靠两个 token 区分。渲染进程 token 接受「不带 Origin」、`file://` 和开发环境的 dev server 地址（由 Desktop 启动守护进程时传入）。主进程 token 仍要求不带 Origin。回环 Host 检查保留。
-- CORS：开发环境如果打开 `webSecurity`，需要对白名单 origin 响应预检，允许 `Authorization`、`Content-Type`、`X-File-Name`、`X-Multica-*`、`Range`。WS 的 `CheckOrigin` 使用同一个白名单，所以生产环境必须放行 `file://`。
-- 票据和签名：浏览器的 WebSocket 和 `<img>` 都带不了 scope 请求头和 `X-Multica-Client-ID`，所以票据和签名要把它们一起绑定。
-  - `ws-ticket` 一次性，绑定 `(API origin, userId, workspaceId, clientId, 路径)`。
-  - `file-urls` 用守护进程内存中的 HMAC 密钥签名 `(API origin, userId, workspaceId, 路径, exp)`。
-  - 入口层校验后，把绑定的值还原为请求头，再交给策略层和能力层，所以能力层看到的请求和带请求头的请求一样。
-- Origin 检查只放在入口层。现在 `NewV2` 的 upgrader 写死了 `CheckOrigin: Origin == ""`，要移到入口层。否则经 p2p 转发过来的 WS 会因为带着查看端的 `Origin: file://` 被被访问端拒绝。查看端的反向代理在入口校验通过后删除 `Origin`。
-
-Desktop 改动：
-
-- 删除 `apps/desktop/src/main/local-conversation-v2.ts` 的数据转发、`local-v2:request`/`send`/`message`/`connection` IPC 和 `multica-local-file://` 协议。主进程只保留 `local-v2:endpoint`、`local-v2:choose`、host request 的原生部分、保存到本机，以及 drain 流程用的主进程客户端。
-- 渲染进程新增直连的 `LocalV2Transport` 实现：HTTP、WS 票据、断线重连、availability、文件签名 URL、上传。`LocalV2Transport` 接口不变，页面不用改。
+见[渲染进程直连守护进程](./local-conversation-renderer-direct.md)，先于本方案合入。之后渲染进程直接连本机守护进程（渲染进程 token、WS 票据、签名 URL），主进程只做渲染进程做不到的事：原生选择器、设置确认、Side 浏览器、保存到本机、drain。本文在它的基础上增加 `remote` 调用方和 `/local/devices` 转发。
 
 ## 数据链路
 
@@ -238,7 +200,7 @@ v2 推送的是事件本身（含流式文本），不需要「changed → 重�
 
 ```text
 p2p 断开 → WS 关闭 → transport 断线 → 「正在重连」
- → 该 clientKey 的待处理 host request 保留 60 秒
+ → 该 clientKey 的待处理 host request 保留 60 秒；到期仍未重连则失败，不转给被访问端本机处理（凭据和弹窗属于发起方）
  → libp2p 重新连接 → transport 退避重连 WS（新票据，带原 clientId）→ 渲染进程重新订阅（after_seq）
      宽限期内的 host request 重新下发给新连接
      after_seq 仍可续传 → 补发事件；store_generation 变化或超出 → snapshot_required，重新读取快照
@@ -460,11 +422,6 @@ func (v *V2) serve(w, r, c caller) // allowed(c.kind, route) → 现有路由
 - 远端目录和文件选择 Dialog（调用 `/directories`，确认后调用 `choose-remote`）；设置「设备互联」tab 和 AlertDialog；`LocalRuntimeNotice` 按设备订阅并补充远端文案；翻译（en、zh-Hans、ja、ko）。
 - 云端任务会话链接的跨设备查找。
 
-### 主要风险
-
-- `ReverseProxy`、WebSocket 和 libp2p stream 半关闭的组合最容易出问题。第一个 PR 就用同一台机器的两个 profile，以 curl 和 websocat 验证 hello、WS 长连接、Range 读取和上传。
-- `renderer-web-preferences.ts` 计划以后恢复 `webSecurity` 并改用自定义协议加载页面。届时 Origin 会变成自定义协议的 origin，白名单要同步更新。
-
 ## 安全边界
 
 | 层级 | 检查 |
@@ -479,22 +436,21 @@ func (v *V2) serve(w, r, c caller) // allowed(c.kind, route) → 现有路由
 
 - 信任范围是「同一账号」。p2p-server 接受任何能通过 `/api/me` 的 token（包括 `mat_` 智能体任务 token 和 PAT），开关也只受本机 loopback token 保护。某台机器上被注入的智能体可以注册伪设备并打开开关，从而在该账号的其他已开启设备上执行任务和读取文件。
 - 远端选择的目录来自查看端渲染进程，不经原生选择器。
-- 渲染进程持有渲染进程 token。渲染进程被注入时，可以读取会话、在本机运行智能体，但不能扩大读取范围、关闭守护进程或执行 drain。
 
 第二期收紧。
 
 ## 实施顺序
 
-0. 前置 PR：渲染进程直连守护进程（两个 token、Origin 白名单和 CORS、WS 票据、签名 URL、直连 transport，删除主进程转发和 `multica-local-file://`）。
-1. 守护进程：p2p 适配器和直连优先、开关、入口层和策略表（含 origin 校验）、`clientKey` 路由和宽限期、`/directories`、`/local/devices` 和反向代理、错误码。用同一台机器的两个 profile，以 curl 验证 hello、ws、文件。
+0. 前置 PR：[渲染进程直连守护进程](./local-conversation-renderer-direct.md)。
+1. 守护进程：p2p 适配器和直连优先、开关、`remote` 入口和策略表的 remote 列（含 origin 校验）、`clientKey` 路由和宽限期、`/directories`、`/local/devices` 和反向代理、错误码。
+   - 验收：用同一台机器的两个 profile，以 curl 和 websocat 验证 hello、WS 长连接、Range 读取和上传，重点覆盖 `ReverseProxy`、WebSocket 和 libp2p stream 半关闭的组合；被访问端 Desktop 关闭时，用 curl 发消息，确认 Claude 和 Codex 都能运行；开关打开后，查看端 `/local/devices` 多久能看到该设备（identify 推送）。
 2. Desktop 主进程和 preload：`choose-remote`、保存到本机、远端反向请求的原生部分和 settings 分流、owner 带 deviceId、设备轮询、开关 IPC。
 3. 渲染进程和 views：transport 的 `basePath` 和 `clientId`、设备 context、路由、侧边栏插槽和选中规则、第 ⑤ 类 key、远端选择 Dialog、右键菜单和网页预览的远端行为、设置 tab、提示文案、翻译、云端任务会话链接。
 4. 验证：
    - Go：presence 的加入、宽限期后移除、排除接收方自己；适配器（含半关闭）、策略表（三种 caller × 路由）和 origin 校验、反向代理和错误码、`clientKey` 路由（两条连接同 scope 时确认发往发起方）、宽限期、直连迁移。
-   - 前置 PR：两种 token 的路由权限、Origin 白名单、票据单次有效、签名过期和路径篡改、401 后重取 token。
    - Desktop 主进程：`choose-remote` 拒绝本机 deviceId、设置确认不使用转来的 `apply`。
    - 渲染进程：使用中标识的显示和 Tooltip、侧边栏两种状态和选中规则、远端 tab、key 隔离、缺少设备 transport 时报错。
-   - 手动：先用同一台机器的两个 profile，再用两台不同网络的机器验证打洞和中继回退。浅色和深色主题截图保存在 `.tmp/device-link/`。
+   - 手动：先用同一台机器的两个 profile，再用两台不同网络的机器验证打洞（5 秒等待是否够用）和中继回退，记录 `connection` 的直连占比；与中继服务端确认 `Limit=nil` 和带宽成本。浅色和深色主题截图保存在 `.tmp/device-link/`。
 
 ## 第二期
 
