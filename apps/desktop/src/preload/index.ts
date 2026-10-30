@@ -20,10 +20,8 @@ import {
   type IssueWindowRequest,
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
-import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 // The sandboxed preload can require only electron: import types alone from packages.
-import type { LocalV2Transport } from "@multica/core/local-conversation/v2";
-import type { LocalHostAvailability } from "../shared/local-host-availability";
+import type { LocalV2Bridge } from "../shared/local-v2-bridge";
 import type {
   DaemonStatus,
   LocalRuntimeProbe,
@@ -104,21 +102,6 @@ function subscribeToMainRendererChannel<T>(
   };
 }
 
-/**
- * File content for local conversations streams over the main process's
- * multica-local-file protocol. URLs carry a per-launch key only the main
- * window's preload can obtain, so sandboxed preview frames cannot use them.
- */
-let localFileKey: string | undefined;
-const localFileUrl = (path: string, scope: LocalConversationScope) => {
-  localFileKey ??= ipcRenderer.sendSync("local-conversation:file-key") as string;
-  return `multica-local-file://local/${path}?${new URLSearchParams({ k: localFileKey, userId: scope.userId, workspaceId: scope.workspaceId })}`;
-};
-async function localFileError(response: Response): Promise<Error> {
-  try { const body = await response.json() as { error?: { message?: string } }; return new Error(body.error?.message ?? `Local file request failed (HTTP ${response.status})`); }
-  catch { return new Error(`Local file request failed (HTTP ${response.status})`); }
-}
-
 const desktopAPI = {
   localFileContextMenu: {
     show: (scope, input) => ipcRenderer.invoke("local-file:context-menu", scope, input),
@@ -142,6 +125,7 @@ const desktopAPI = {
   sideWorkspace: {
     onCommand: (listener) => { const handler = (_event: Electron.IpcRendererEvent, command: import("../shared/side-workspace").SideWorkspaceCommand) => listener(command); ipcRenderer.on("side-workspace:command", handler); return () => ipcRenderer.removeListener("side-workspace:command", handler); },
     ack: (reply) => ipcRenderer.invoke("side-workspace:ack", reply),
+    reconcile: (scope, conversationId) => ipcRenderer.invoke("side-workspace:reconcile", scope, conversationId),
     onActivity: (listener) => { const handler = (_event: Electron.IpcRendererEvent, activity: Parameters<typeof listener>[0]) => listener(activity); ipcRenderer.on("side-workspace:activity", handler); return () => ipcRenderer.removeListener("side-workspace:activity", handler); },
   } satisfies import("../shared/side-workspace").SideWorkspaceClient,
   resourcePreview: {
@@ -151,35 +135,11 @@ const desktopAPI = {
     cancelChromeProfileImport: (scope, requestId) => ipcRenderer.invoke("resource-preview:cancel-chrome-import", scope, requestId),
     subscribe: (listener) => { const handler = (_event: Electron.IpcRendererEvent, state: import("../shared/resource-preview").WebPreviewState) => listener(state); ipcRenderer.on("resource-preview:changed", handler); return () => ipcRenderer.removeListener("resource-preview:changed", handler); },
   } satisfies import("../shared/resource-preview").ResourcePreviewClient,
-  localHost: {
-    availability: () => ipcRenderer.invoke("local-conversation:availability") as Promise<LocalHostAvailability | null>,
-    subscribe: (listener: (value: LocalHostAvailability) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: LocalHostAvailability) => listener(value);
-      ipcRenderer.on("local-conversation:availability", handler);
-      return () => ipcRenderer.removeListener("local-conversation:availability", handler);
-    },
-  },
   localV2: {
-    request: (scope, method, path, body) => ipcRenderer.invoke("local-v2:request", scope, method, path, body),
-    send: (scope, message) => ipcRenderer.invoke("local-v2:send", scope, message),
+    endpoint: () => ipcRenderer.invoke("local-v2:endpoint"),
     choose: (scope, request) => ipcRenderer.invoke("local-v2:choose", scope, request),
-    subscribe: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; message: unknown }) => listener(payload.scope, payload.message);
-      ipcRenderer.on("local-v2:message", handler);
-      return () => ipcRenderer.removeListener("local-v2:message", handler);
-    },
-    onConnection: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; connected: boolean }) => listener(payload.scope, payload.connected);
-      ipcRenderer.on("local-v2:connection", handler);
-      return () => ipcRenderer.removeListener("local-v2:connection", handler);
-    },
-    fileUrl: (scope, path) => `${localFileUrl("v2/file", scope)}&${new URLSearchParams({ target: path })}`,
-    upload: async (scope, file) => {
-      const response = await fetch(localFileUrl("v2/attachments", scope), { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } });
-      if (!response.ok) throw await localFileError(response);
-      return response.json();
-    },
-  } satisfies LocalV2Transport,
+    hostRequest: (scope, kind, payload) => ipcRenderer.invoke("local-v2:host-request", scope, kind, payload),
+  } satisfies LocalV2Bridge,
   /** App version + normalized OS. Read once at preload time so the renderer
    *  can use it synchronously when initializing the API client. */
   appInfo,

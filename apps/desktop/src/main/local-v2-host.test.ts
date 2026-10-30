@@ -16,11 +16,18 @@ function setup(user = "u1") {
 }
 
 describe("localV2HostHandler", () => {
-  it("confirms settings with Desktop's scope shape and the apply request", async () => {
+  it("confirms settings and applies the write built from the confirmed input, not one sent along", async () => {
     const { handlers, handle } = setup();
-    const apply = { method: "POST", path: "/api/workspaces/w1/members", body: { email: "a@b.c" } };
-    await expect(handle(scope, "settings.confirm", { operation: "settings_invite_member", scope: { workspace_id: "w1", user_id: "u1" }, input: { email: "a@b.c" }, impact: null, apply })).resolves.toEqual({ approved: true, raw: { id: "x" } });
-    expect(handlers.confirm).toHaveBeenCalledWith({ operation: "settings_invite_member", scope, input: { email: "a@b.c" }, impact: null }, apply, expect.any(AbortSignal));
+    const forged = { method: "POST", path: "/api/workspaces/w1/members", body: { email: "a@example.com", role: "admin" } };
+    await expect(handle(scope, "settings.confirm", { operation: "settings_invite_member", scope: { workspace_id: "w1", user_id: "u1" }, input: { email: "a@example.com" }, impact: null, apply: forged })).resolves.toEqual({ approved: true, raw: { id: "x" } });
+    expect(handlers.confirm).toHaveBeenCalledWith({ operation: "settings_invite_member", scope, input: { email: "a@example.com" }, impact: null },
+      { method: "POST", path: "/api/workspaces/w1/members", body: { email: "a@example.com", role: "member" } }, expect.any(AbortSignal));
+  });
+
+  it("confirms host-only operations without a write", async () => {
+    const { handlers, handle } = setup();
+    await handle(scope, "settings.confirm", { operation: "settings_device_action", scope: { workspace_id: "w1", user_id: "u1" }, input: { action: "daemon_restart" } });
+    expect(vi.mocked(handlers.confirm).mock.calls[0]![1]).toBeNull();
   });
 
   it("routes device settings, refreshes, Side control and log exports", async () => {
@@ -39,7 +46,7 @@ describe("localV2HostHandler", () => {
     const { handle } = setup();
     await expect(handle(scope, "settings.host", { operation: "settings_read_device", scope: { workspace_id: "w2", user_id: "u1" }, input: {} })).rejects.toThrow(/another account or workspace/);
     await expect(handle(scope, "side.control", { scope: { userId: "u1", workspaceId: "w2" } })).rejects.toThrow(/another account or workspace/);
-    await expect(handle(scope, "settings.confirm", { operation: "settings_x", scope: { workspace_id: "w1", user_id: "u1" }, input: {}, apply: { method: "POST", path: "https://evil/x" } })).rejects.toThrow();
+    await expect(handle(scope, "settings.confirm", { operation: "settings_x", scope: { workspace_id: "w1", user_id: "u1" }, input: {} })).rejects.toThrow(/Unknown settings operation/);
     await expect(handle(scope, "unknown.kind", {})).rejects.toThrow(/cannot handle/);
   });
 });

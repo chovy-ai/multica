@@ -7,6 +7,7 @@ import { useTabStore } from "../stores/tab-store";
 import { localV2 } from "./local-v2";
 import { applySideCommand, hasSideWorkspaceView, prepareSideTab, readSideLayout, sideLayoutKey, sideSnapshot, syncSideWorkspace } from "../pages/local-side-workspace-sync";
 import { sideWorkspaceControlSchema } from "../../../shared/side-workspace";
+import { localV2Transport } from "./local-v2-transport";
 
 /** Restores snapshots even when Desktop starts on a page other than conversations. */
 export function DesktopSideWorkspaceBridge() {
@@ -19,7 +20,7 @@ export function DesktopSideWorkspaceBridge() {
   const active = useRef({ userId, workspaceId, enabled }); active.current = { userId, workspaceId, enabled };
   useEffect(() => {
     if (!enabled || !userId || !workspaceId) return;
-    const scope = { userId, workspaceId }, transport = window.desktopAPI.localV2;
+    const scope = { userId, workspaceId }, transport = localV2Transport();
     const fullSync = () => {
       if (hasSideWorkspaceView(scope)) return;
       const prefix = sideLayoutKey(scope, "");
@@ -40,7 +41,7 @@ export function DesktopSideWorkspaceBridge() {
         if (!active.current.enabled || active.current.userId !== request.scope.userId || getCurrentWsId() !== request.scope.workspaceId) throw new Error("Select the originating account and workspace before controlling Side tabs");
       };
       check();
-      const transport = window.desktopAPI.localV2;
+      const transport = localV2Transport();
       const opened = await prepareSideTab(request, transport); check();
       const key = sideLayoutKey(request.scope, request.conversationId);
       const { layout, tabId } = applySideCommand(readSideLayout(key), request, opened);

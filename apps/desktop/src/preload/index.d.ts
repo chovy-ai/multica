@@ -23,11 +23,7 @@ interface DesktopAPI {
   terminalCli: import("../shared/terminal-cli").TerminalCliClient;
   developerLogs: import("../shared/developer-logs").DeveloperLogsClient;
   settingsHost?: import("../shared/settings-host").SettingsHostClient;
-  localV2: import("@multica/core/local-conversation/v2").LocalV2Transport;
-  localHost: {
-    availability(): Promise<import("../shared/local-host-availability").LocalHostAvailability | null>;
-    subscribe(listener: (value: import("../shared/local-host-availability").LocalHostAvailability) => void): () => void;
-  };
+  localV2: import("../shared/local-v2-bridge").LocalV2Bridge;
   sideWorkspace: import("../shared/side-workspace").SideWorkspaceClient;
   resourcePreview: import("../shared/resource-preview").ResourcePreviewClient;
   /** App version + normalized OS, captured synchronously at preload time. */

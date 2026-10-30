@@ -190,3 +190,16 @@ func TestV2FileKeyStreamsOnlyFileRoutes(t *testing.T) {
 		t.Errorf("file key for another account = %d", s)
 	}
 }
+
+// Desktop's main process derives the same credentials; see
+// apps/desktop/src/main/local-conversation-v2.test.ts.
+func TestV2RendererCredentialsMatchDesktop(t *testing.T) {
+	t.Parallel()
+
+	if got := RendererToken("t1"); got != "a3bbe791d1c50e8cd0afe1d4872f001ce6d986f07404c22d9254a3f2c0de8331" {
+		t.Errorf("renderer token = %s", got)
+	}
+	if got := FileKey("t1"); got != "64bde9d6264771573838ef0ad3a2d3a1f80f25f6a9fda3220160d0e854cdd843" {
+		t.Errorf("file key = %s", got)
+	}
+}

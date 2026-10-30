@@ -3,9 +3,7 @@ import { sideWorkspaceSyncSchema } from "@multica/core/local-conversation/protoc
 import { LocalTimingLog } from "./local-timing-log";
 import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
 import { DeveloperLogExporter } from "./developer-log-export";
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, protocol, screen } from "electron";
-import { randomBytes } from "node:crypto";
-import { LOCAL_FILE_SCHEME, localFileScheme } from "./local-file-protocol";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, screen } from "electron";
 import { homedir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -21,9 +19,9 @@ import {
 import { setupLocalDirectory } from "./local-directory";
 import { setupTerminalCli } from "./terminal-cli-ipc";
 import { registerDesktopProtocol, setupBrowserLogin } from "./browser-login-ipc";
-import { LocalV2Error, LocalV2Proxy } from "./local-conversation-v2";
+import { LocalV2Client, LocalV2Error } from "./local-conversation-v2";
 import { localV2HostHandler } from "./local-v2-host";
-import { isLocalV2FilePath, isLocalV2RendererPost, localV2ClientMessageSchema, type LocalV2ChooseRequest } from "@multica/core/local-conversation/v2";
+import type { LocalV2ChooseRequest } from "@multica/core/local-conversation/v2";
 import { ResourceWebPreview } from "./resource-web-preview";
 import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
 import { createDesktopSettingsHost } from "./desktop-settings-host";
@@ -165,8 +163,8 @@ function freezeBreadcrumbPath(): string {
 }
 
 let mainWindow: BrowserWindow | null = null;
-let localV2: LocalV2Proxy | null = null;
-let localAvailability: import("../shared/local-host-availability").LocalHostAvailability | null = null;
+let localV2: LocalV2Client | null = null;
+let localV2Host: ReturnType<typeof localV2HostHandler> | null = null;
 let localTimingLog: LocalTimingLog | undefined;
 let developerLogs: DeveloperLogExporter | undefined;
 const issueWindows = new Set<BrowserWindow>();
@@ -606,11 +604,6 @@ const DEV_APP_NAME = process.env.DESKTOP_APP_SUFFIX
   ? `Multica Canary ${process.env.DESKTOP_APP_SUFFIX}`
   : "Multica Canary";
 
-// Local conversation file content streams through this scheme (see the
-// preload's file transport); it must be privileged before the app is ready.
-const LOCAL_FILE_KEY = randomBytes(32).toString("hex");
-protocol.registerSchemesAsPrivileged([localFileScheme]);
-
 if (is.dev) {
   app.setName(DEV_APP_NAME);
   app.setPath("userData", join(app.getPath("appData"), DEV_APP_NAME));
@@ -694,30 +687,17 @@ if (!gotTheLock) {
         return multicaWorkspaceRequest({ apiUrl: localApiUrl, token: credentials.token, workspaceId: scope.workspaceId }, method, path, body, signal);
       });
       localTimingLog = new LocalTimingLog(join(app.getPath("userData"), "local-conversations", "diagnostics"));
-      localV2 = new LocalV2Proxy({
-        apiUrl: localApiUrl,
-        endpoint: () => desktopRuntimeRegistry().endpoint(localApiUrl),
-        message: (scope, message) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-v2:message", { scope, message }); },
-        connection: (scope, connected) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-v2:connection", { scope, connected }); },
-        availability: (value) => {
-          localAvailability = value;
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("local-conversation:availability", value);
+      localV2 = new LocalV2Client({ apiUrl: localApiUrl, endpoint: () => desktopRuntimeRegistry().endpoint(localApiUrl) });
+      localV2Host = localV2HostHandler({
+        currentUser: () => settingsUserId,
+        side: (request, signal) => sideWorkspaceControl.handle(request, signal),
+        confirm: (request, apply, signal) => settingsHost.confirmAndApply!(request, apply, signal),
+        settingsHost: (request, signal) => settingsHost.host!(request, signal),
+        developerLogs: (scope, query, signal) => {
+          if (!developerLogs) throw new SettingsOperationError("settings_host_unavailable", "Developer logs are unavailable");
+          return developerLogs.export(scope, query, signal);
         },
-        hostRequest: localV2HostHandler({
-          currentUser: () => settingsUserId,
-          side: (request, signal) => sideWorkspaceControl.handle(request, signal),
-          confirm: (request, apply, signal) => settingsHost.confirmAndApply!(request, apply, signal),
-          settingsHost: (request, signal) => settingsHost.host!(request, signal),
-          developerLogs: (scope, query, signal) => {
-            if (!developerLogs) throw new SettingsOperationError("settings_host_unavailable", "Developer logs are unavailable");
-            return developerLogs.export(scope, query, signal);
-          },
-        }),
       });
-      // Probe until the service works; requests and connections report changes after that.
-      const probe = () => { void localV2?.probe(); };
-      probe();
-      setInterval(() => { if (localAvailability?.state !== "connected") probe(); }, 15_000).unref();
       developerLogs = new DeveloperLogExporter({
         log: localTimingLog,
         exportsRoot: join(app.getPath("userData"), "local-conversations", "diagnostics", "exports"),
@@ -788,6 +768,12 @@ if (!gotTheLock) {
       activity: (tabId, conversationId, turnId, active) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("side-workspace:activity", { tabId, conversationId, turnId, active }); },
     });
     mainWindow?.once("closed", () => sideWorkspaceControl.dispose());
+    // After the renderer records a layout in the daemon, the browser tabs follow
+    // what the daemon accepted, read back with main's own credential.
+    ipcMain.handle("side-workspace:reconcile", async (event, scope: LocalConversationScope, conversationId: string) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || scope?.userId !== settingsUserId) throw new Error("Side workspace requires the active main window");
+      await sideWorkspaceControl.reconcileFrom(scope, conversationId);
+    });
     ipcMain.handle("side-workspace:ack", (event, reply) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("Side acknowledgement requires the main window");
       sideWorkspaceControl.ack(reply);
@@ -824,14 +810,19 @@ if (!gotTheLock) {
       if (error instanceof LocalV2Error) throw new Error(`${error.kind}: ${error.message}`);
       throw error;
     };
-    ipcMain.handle("local-v2:request", async (event, scope: LocalConversationScope, method: "GET" | "POST", path: string, body?: unknown) => {
-      if (method !== "GET" && method !== "POST") throw new Error("Invalid local conversation request");
-      if (method === "POST" && !isLocalV2RendererPost(path, body)) throw new Error("invalid_request: Choose this folder in Multica first");
-      const result = await mainFrame(event, scope).request(scope, method, path, body).catch(ipcError);
-      // The browser tabs follow the layout the daemon accepted.
-      const command = body as { type?: unknown; workspace?: { revision?: unknown } } | undefined;
-      if (command?.type === "side_workspace_sync" && (result as { revision?: unknown })?.revision === command.workspace?.revision) sideWorkspaceControl.reconcile(sideWorkspaceSyncSchema.parse(command.workspace));
-      return result;
+    // The renderer reaches the daemon directly with credentials derived from the profile token.
+    ipcMain.handle("local-v2:endpoint", (event) => {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localV2) throw new Error("Local conversations require the active main window");
+      return localV2.rendererEndpoint().catch(ipcError);
+    });
+    // Host requests arrive on the renderer's WebSocket; main performs the native part.
+    ipcMain.handle("local-v2:host-request", async (event, scope: LocalConversationScope, kind: string, payload: Record<string, unknown>) => {
+      mainFrame(event, scope);
+      if (!localV2Host) throw new Error("Local conversations require the active main window");
+      return localV2Host(scope, kind, payload ?? {}).catch((error: unknown) => {
+        const code = (error as { code?: unknown })?.code;
+        throw new Error(`${typeof code === "string" ? code : "host_request_failed"}: ${error instanceof Error ? error.message : String(error)}`);
+      });
     });
     ipcMain.handle("local-v2:choose", async (event, scope: LocalConversationScope, request: LocalV2ChooseRequest) => {
       const proxy = mainFrame(event, scope);
@@ -850,25 +841,6 @@ if (!gotTheLock) {
           : Promise.reject(new Error("Invalid local conversation request"));
       return apply.catch(ipcError);
     });
-    ipcMain.handle("local-v2:send", (event, scope: LocalConversationScope, message: unknown) => {
-      const parsed = localV2ClientMessageSchema.parse(message);
-      return mainFrame(event, scope).send(scope, parsed);
-    });
-    ipcMain.handle("local-conversation:availability", (event) => event.sender === mainWindow?.webContents ? localAvailability : null);
-    ipcMain.on("local-conversation:file-key", (event) => {
-      event.returnValue = event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame ? LOCAL_FILE_KEY : "";
-    });
-    protocol.handle(LOCAL_FILE_SCHEME, async (request) => {
-      const url = new URL(request.url);
-      const scope = { userId: url.searchParams.get("userId") ?? "", workspaceId: url.searchParams.get("workspaceId") ?? "" };
-      if (!localV2 || url.searchParams.get("k") !== LOCAL_FILE_KEY || !scope.userId || scope.userId !== settingsUserId || !scope.workspaceId) return new Response("Forbidden", { status: 403 });
-      const route = url.pathname.replace(/^\/+/, "");
-      const target = url.searchParams.get("target") ?? "";
-      if (request.method === "POST" && route === "v2/attachments") return localV2.file(request, scope, "/attachments");
-      if (request.method === "GET" && route === "v2/file" && isLocalV2FilePath(target)) return localV2.file(request, scope, target);
-      return new Response("Not found", { status: 404 });
-    });
-
     electronApp.setAppUserModelId(
       is.dev ? "ai.multica.desktop.dev" : "ai.multica.desktop",
     );
@@ -997,7 +969,6 @@ if (!gotTheLock) {
 
       if (sourceWindow === mainWindow) {
         settingsUserId = userId;
-        void localV2?.probe();
         publishDeveloperLogsManifest?.();
         const accountInvalidated = authSessionCoordinator.reportMain(userId);
         if (accountInvalidated) {
@@ -1133,7 +1104,6 @@ if (!gotTheLock) {
       // when quitting installs a downloaded update or the AppImage mount disappears.
       const proxy = localV2;
       const stopped = proxy && (process.env.APPIMAGE || updateInstallsOnQuit()) ? proxy.stopProviders().catch(() => {}) : Promise.resolve();
-      void stopped.finally(() => proxy?.close());
       void Promise.all([stopped, localTimingLog?.flush(), ...[...webDiagnosticLogs.values()].map((log) => log.flush())]).finally(() => app.quit());
     });
 

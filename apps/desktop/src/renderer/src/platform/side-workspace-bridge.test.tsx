@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SideWorkspaceCommand } from "../../../shared/side-workspace";
 import { DesktopSideWorkspaceBridge } from "./side-workspace-bridge";
 import { sideLayoutKey, type SideLayout } from "../pages/local-side-workspace-sync";
+vi.mock("./local-v2-transport", () => ({ localV2Transport: () => window.desktopAPI.localV2 }));
 const fake = vi.hoisted(() => ({ openTab: vi.fn(), navigateActiveSession: vi.fn() }));
 vi.mock("@multica/core/auth", () => ({ useAuthStore: (selector: (value: unknown) => unknown) => selector({ user: { id: "user" }, status: "authenticated" }) }));
 vi.mock("@multica/core/workspace", () => ({ useWorkspaceList: () => ({ workspaces: [{ id: "workspace", slug: "test" }], ready: true, unavailable: false }) }));
@@ -24,7 +25,7 @@ beforeEach(() => {
   });
   Object.defineProperty(window, "desktopAPI", { configurable: true, value: {
     localV2: { request, send: vi.fn(), subscribe: () => () => {}, onConnection: (listener: typeof connection) => { connection = listener; return () => {}; } },
-    sideWorkspace: { onCommand: (listener: typeof command) => { command = listener; return () => {}; }, ack },
+    sideWorkspace: { onCommand: (listener: typeof command) => { command = listener; return () => {}; }, ack, reconcile: vi.fn(async () => {}) },
   } });
 });
 afterEach(() => { cleanup(); localStorage.clear(); });

@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ZodType } from "zod";
-import { isLocalV2RendererPost, localV2ClientMessageSchema, localV2ServerMessageSchema, localV2SnapshotSchema } from "./v2";
+import { localV2ClientMessageSchema, localV2ServerMessageSchema, localV2SnapshotSchema } from "./v2";
 
 const root = join(__dirname, "../../../server/internal/localconversation/protocol/testdata/local-v2");
 const schemas: Record<string, ZodType> = { server_message: localV2ServerMessageSchema, client_message: localV2ClientMessageSchema };
@@ -44,15 +44,5 @@ describe("local conversation v2 wire schemas", () => {
     });
     expect(snapshot.pending_interactions).toEqual([]);
     expect(snapshot.conversation.project_id).toBeNull();
-  });
-});
-
-describe("isLocalV2RendererPost", () => {
-  it("keeps path-granting writes behind the OS picker", () => {
-    expect(isLocalV2RendererPost("/preview/roots", { path: "/" })).toBe(false);
-    expect(isLocalV2RendererPost("/folder-projects", { path: "/" })).toBe(false);
-    expect(isLocalV2RendererPost("/sessions/c1/commands", { type: "set_directory", cwd: "/" })).toBe(false);
-    expect(isLocalV2RendererPost("/sessions/c1/commands", { type: "send", text: "hi" })).toBe(true);
-    expect(isLocalV2RendererPost("/sessions", { provider: "codex" })).toBe(true);
   });
 });

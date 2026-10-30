@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LocalHostAvailability } from "../../../shared/local-host-availability";
 import { LocalRuntimeNotice } from "./local-runtime-notice";
+vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: () => window.desktopAPI.localV2 }));
 
 let qc: QueryClient;
 afterEach(() => { cleanup(); qc.clear(); });
@@ -17,8 +18,8 @@ function setup(legacy: boolean, availability: LocalHostAvailability | null = { s
     if (legacy) throw new Error("http_404: Local conversation request failed (HTTP 404)");
     return { providers: [] };
   });
-  const localHost = { availability: vi.fn(async () => availability), subscribe: (listener: (value: LocalHostAvailability) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localV2: { request, send: vi.fn(), subscribe: () => () => {}, onConnection: () => () => {} }, localHost } });
+  const transport = { request, send: vi.fn(), subscribe: () => () => {}, onConnection: () => () => {}, availability: () => availability, onAvailability: (listener: (value: LocalHostAvailability) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localV2: transport } });
   return Object.assign(request, { publish: (value: LocalHostAvailability) => listeners.forEach((listener) => listener(value)) });
 }
 it("keeps an actionable restart notice visible without remounting or clearing the conversation", async () => {

@@ -87,6 +87,11 @@ export class SideWorkspaceControl {
     pending.resolve({ ...reply, snapshot });
   }
   reconcile(snapshot: SideWorkspaceSnapshot) { this.browser.reconcile(snapshot.conversationId, new Set(snapshot.tabs.filter((tab) => tab.kind === "web").map((tab) => tab.id))); }
+  /** Closes browser tabs the conversation's stored layout no longer has. */
+  async reconcileFrom(scope: LocalConversationScope, conversationId: string) {
+    const snapshot = await this.options.snapshot(scope, conversationId);
+    if (snapshot) this.reconcile(snapshot);
+  }
   dispose() {
     this.browser.dispose();
     for (const pending of this.pending.values()) pending.reject(new Error("Side workspace disconnected"));

@@ -10,6 +10,7 @@ import { useProjectVisibilityStore } from "../stores/local-conversation-project-
 import { useConversationLayoutStore } from "../stores/local-conversation-layout";
 import type { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ComponentProps } from "react";
+vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: () => window.desktopAPI.localV2 }));
 
 const mock = vi.hoisted(() => ({ request: vi.fn(), replace: vi.fn(), pathname: "/test/conversations", selected: "source", error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), panel: vi.fn(), copyText: vi.fn(), compact: false, locale: "zh-Hans", projects: [] as Project[], folders: [] as LocalFolderProject[], folderError: null as Error | null }));
 vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: mock.copyText }));
@@ -100,12 +101,13 @@ function installDaemon() {
       return null;
     },
     send: async () => {}, onConnection: () => () => {}, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
+    availability: () => ({ state: "connected" }), onAvailability: () => () => {},
     subscribe: (listener: (scope: unknown, message: unknown) => void) => {
       v2Listeners.add(listener);
       return () => v2Listeners.delete(listener);
     },
   };
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected" }), subscribe: () => () => {} }, localV2, pickDirectory: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localV2, pickDirectory: vi.fn() } });
 }
 
 let qc: QueryClient;
