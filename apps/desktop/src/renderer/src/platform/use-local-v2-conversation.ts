@@ -2,7 +2,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { localV2ServerMessageSchema, type LocalV2Scope } from "@multica/core/local-conversation/v2";
 import { V2Conversation } from "@multica/tutti-agent-gui-host/v2-conversation";
 import { localV2 } from "./local-v2";
-import { localV2Transport } from "./local-v2-transport";
+import { useLocalDevice, type LocalDevice } from "./local-device";
 
 export interface LiveConversation {
   conversation?: V2Conversation;
@@ -33,11 +33,15 @@ const idle: Entry["state"] = { version: 0, error: null };
  * One live copy per conversation: its snapshot, then its events. A gap or a
  * lost subscription reads the snapshot again; the last user unsubscribes.
  */
-function entry(scope: LocalV2Scope, id: string): Entry {
-  const key = JSON.stringify([scope.userId, scope.workspaceId, id]);
+function entryKey(device: LocalDevice, scope: LocalV2Scope, id: string | null | undefined) {
+  return JSON.stringify([device.id, scope.userId, scope.workspaceId, id]);
+}
+
+function entry(device: LocalDevice, scope: LocalV2Scope, id: string): Entry {
+  const key = entryKey(device, scope, id);
   let current = entries.get(key);
   if (current) return current;
-  const client = localV2(localV2Transport(), scope);
+  const client = localV2(device.transport, scope);
   const value: Entry = {
     state: idle, listeners: new Set(), users: 0, loading: false,
     load() {
@@ -74,7 +78,8 @@ function release(key: string, value: Entry) {
 
 /** A conversation kept current while enabled, shared by every view of it. */
 export function useLocalV2Conversation(scope: LocalV2Scope, id: string | null | undefined, enabled = true): LiveConversation {
-  const target = id ? entry(scope, id) : undefined;
+  const device = useLocalDevice();
+  const target = id ? entry(device, scope, id) : undefined;
   const state = useSyncExternalStore(
     useCallback((listener: () => void) => { if (!target) return () => {}; target.listeners.add(listener); return () => { target.listeners.delete(listener); }; }, [target]),
     () => target?.state ?? idle,
@@ -84,8 +89,8 @@ export function useLocalV2Conversation(scope: LocalV2Scope, id: string | null | 
     // The first user reads a fresh snapshot; until it arrives the last one stays shown.
     clearTimeout(target.release);
     if (!target.users++) target.load();
-    return () => { if (!--target.users) release(JSON.stringify([scope.userId, scope.workspaceId, id]), target); };
-  }, [enabled, target, scope.userId, scope.workspaceId, id]);
+    return () => { if (!--target.users) release(entryKey(device, scope, id), target); };
+  }, [enabled, target, device, scope, id]);
   return { conversation: state.conversation, version: state.version, error: state.error, pending: !!id && !state.conversation && !state.error,
     retry: () => { if (target) { target.state = { ...target.state, error: null }; target.load(); } } };
 }

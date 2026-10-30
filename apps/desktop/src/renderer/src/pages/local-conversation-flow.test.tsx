@@ -5,25 +5,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { localMessageDisplayContent, type LocalConversation, type LocalFolderProject, type LocalUserQuestion } from "@multica/core/local-conversation/protocol";
 import type { Project } from "@multica/core/types";
 import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
+import layout from "../../../../../../packages/views/locales/zh-Hans/layout.json";
 import { LocalConversationFlowPage } from "./local-conversation-flow";
 import { useProjectVisibilityStore } from "../stores/local-conversation-project-visibility";
 import { useConversationLayoutStore } from "../stores/local-conversation-layout";
 import type { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ComponentProps } from "react";
-vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: () => window.desktopAPI.localV2 }));
+const transportFor = vi.hoisted(() => ({ calls: [] as string[] }));
+vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: (deviceId = "local") => { transportFor.calls.push(deviceId); return window.desktopAPI.localV2; } }));
+vi.mock("../platform/linked-devices", () => ({ useLinkedDevices: () => [{ peer_id: "peer-1", device_name: "Mac Studio", connection: "direct" }], deviceName: (_devices: unknown, id: string) => id === "peer-1" ? "Mac Studio" : id }));
 
 const mock = vi.hoisted(() => ({ request: vi.fn(), replace: vi.fn(), pathname: "/test/conversations", selected: "source", error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), panel: vi.fn(), copyText: vi.fn(), compact: false, locale: "zh-Hans", projects: [] as Project[], folders: [] as LocalFolderProject[], folderError: null as Error | null }));
 vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: mock.copyText }));
 vi.mock("@multica/core/projects/queries", () => ({ projectListOptions: () => ({ queryKey: ["test-projects"], queryFn: async () => mock.projects }) }));
 vi.mock("sonner", () => ({ toast: { error: mock.error, success: mock.success, info: mock.info, warning: mock.warning } }));
 vi.mock("@multica/core/auth", () => ({ useAuthStore: (selector: (state: unknown) => unknown) => selector({ user: { id: "user" } }) }));
-vi.mock("@multica/core/paths", () => ({ useCurrentWorkspace: () => ({ id: "workspace" }), useRequiredWorkspaceSlug: () => "test", useWorkspacePaths: () => ({ conversationFlow: () => "/test/conversations" }) }));
+vi.mock("@multica/core/paths", () => ({ useCurrentWorkspace: () => ({ id: "workspace" }), useRequiredWorkspaceSlug: () => "test", useWorkspacePaths: () => ({ conversationFlow: () => "/test/conversations", conversationFlowDevice: (id: string) => `/test/conversations/devices/${id}` }) }));
 vi.mock("@multica/core/platform", () => ({ getCurrentSlug: () => "test" }));
 vi.mock("@multica/views/navigation", () => ({
   useNavigation: () => ({ pathname: mock.pathname, searchParams: new URLSearchParams({ session: mock.selected }), replace: mock.replace }),
   AppLink: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a>,
 }));
-vi.mock("@multica/views/i18n", () => ({ useLocale: () => mock.locale, useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: { title: string }) => selector(chat).replace("{{title}}", options?.title ?? "") }) }));
+vi.mock("@multica/views/i18n", () => ({ useLocale: () => mock.locale, useT: (namespace?: string) => ({ t: (selector: (resource: typeof chat) => string, options?: { title?: string; device?: string }) => selector((namespace === "layout" ? layout : chat) as typeof chat).replace("{{title}}", options?.title ?? "").replace("{{device}}", options?.device ?? "") }) }));
 vi.mock("@multica/ui/hooks/use-mobile", () => ({ useIsCompact: () => mock.compact }));
 vi.mock("@multica/views/runtimes/provider-logo", () => ({ ProviderLogo: () => null }));
 vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: (props: ComponentProps<typeof TuttiAgentGuiPanel>) => {
@@ -35,6 +38,7 @@ vi.mock("../platform/local-conversation-service", () => ({ localConversationKey:
 let summarySeq = 0;
 /** Publishes the list again, as the daemon does after any change. */
 let publishList: () => Promise<void> = async () => {};
+let publishMessage: (message: unknown) => void = () => {};
 let daemonRequests: { method: string; path: string; body?: Record<string, unknown> }[] = [];
 /** Reads of the conversation list. */
 const listReads = () => daemonRequests.filter((entry) => entry.method === "GET" && entry.path.startsWith("/sessions?"));
@@ -72,6 +76,7 @@ function installDaemon() {
     v2Listeners.forEach((listener) => listener(scope, { version: 2, type: "scope.summaries", scope_seq: summarySeq, summaries }));
   };
   publishList = () => refresh({ userId: "user", workspaceId: "workspace" });
+  publishMessage = (message) => v2Listeners.forEach((listener) => listener({ userId: "user", workspaceId: "workspace" }, message));
   const localV2 = {
     request: async (scope: unknown, method: string, path: string, body?: Record<string, unknown>) => {
       daemonRequests.push({ method, path, body });
@@ -140,6 +145,34 @@ function activateWithPointer(element: HTMLElement) {
   fireEvent.pointerUp(element, { pointerType: "mouse", button: 0 });
   fireEvent.click(element, { button: 0, detail: 1 });
 }
+
+describe("Device link", () => {
+  it("shows another device's conversations under its own route and title", async () => {
+    mock.pathname = "/test/conversations/devices/peer-1"; mock.selected = "";
+    transportFor.calls = [];
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source] : []);
+    render(page());
+    const list = await screen.findByTestId("local-conversation-sessions");
+    await waitFor(() => expect(within(list).getAllByRole("link").length).toBeGreaterThan(0));
+    expect(transportFor.calls).toContain("peer-1");
+    expect(transportFor.calls).not.toContain("local");
+    expect(within(list).getAllByRole("link")[0]).toHaveAttribute("href", expect.stringMatching(/^\/test\/conversations\/devices\/peer-1\?/));
+    expect(document.title).toBe("对话流（Mac Studio）");
+  });
+
+  it("marks this device's conversations another device has open", async () => {
+    mock.selected = "";
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? [source] : []);
+    render(page());
+    const list = await screen.findByTestId("local-conversation-sessions");
+    await waitFor(() => expect(within(list).getAllByRole("link").length).toBeGreaterThan(0));
+    const presence = (devices: { peer_id: string; device_name: string }[]) => act(async () => { publishMessage({ version: 2, type: "scope.presence", conversation_id: source.id, devices }); });
+    await presence([{ peer_id: "peer-1", device_name: "MacBook" }]);
+    expect(within(list).getByRole("status", { name: new RegExp(`^MacBook 正在使用：`) })).toHaveAttribute("title", "MacBook 正在使用");
+    await presence([]);
+    expect(within(list).queryByRole("status", { name: /正在使用/ })).not.toBeInTheDocument();
+  });
+});
 
 describe("project conversation pagination", () => {
   function rows(count = 17) { return Array.from({ length: count }, (_, index) => ({ ...source, id: `row-${index}`, title: `Paged conversation ${index}` })); }

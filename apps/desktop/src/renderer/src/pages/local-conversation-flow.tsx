@@ -1,9 +1,9 @@
 import { localV2, localV2Error, LocalV2RequestError } from "../platform/local-v2";
 import { localV2SummarySchema } from "@multica/core/local-conversation/v2";
 import { LocalRuntimeNotice } from "./local-runtime-notice";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Archive, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, FolderKanban, FolderMinus, FolderOpen, FolderPlus, GitFork, Loader2, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square } from "lucide-react";
+import { ArrowLeft, Archive, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, FolderKanban, FolderMinus, FolderOpen, FolderPlus, GitFork, Loader2, MonitorSmartphone, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
@@ -36,6 +36,10 @@ type RestoreDraftRequest = NonNullable<ComponentProps<typeof TuttiAgentGuiPanel>
 import { projectVisibilityScopeKey, useProjectVisibilityStore } from "../stores/local-conversation-project-visibility";
 import { SESSION_LIST_MIN_WIDTH, SESSION_LIST_MAX_WIDTH, useConversationLayoutStore } from "../stores/local-conversation-layout";
 import { localV2Transport } from "../platform/local-v2-transport";
+import { LocalDeviceProvider, useLocalDevice, type LocalDevice } from "../platform/local-device";
+import { deviceName, useLinkedDevices } from "../platform/linked-devices";
+import { pickRemoteFolder, RemoteFolderPicker } from "./remote-folder-picker";
+import { useDocumentTitle } from "../hooks/use-document-title";
 
 const EMPTY_PROJECT_IDS: string[] = [];
 function folderProject(project: { id: string; title: string; path: string; created_at: string }): LocalFolderProject {
@@ -47,7 +51,30 @@ function localProjectsRequireRestart(error: unknown): boolean {
   return error instanceof LocalV2RequestError && error.kind === "http_404";
 }
 
+const DEVICE_ROUTE = /\/conversations\/devices\/([^/?#]+)/;
+
+/** A device folder the user picked on another device's page, applied by main. */
+async function chooseOnDevice(deviceId: string, scope: { userId: string; workspaceId: string }, request: Parameters<typeof pickRemoteFolder>[2]) {
+  const path = await pickRemoteFolder(deviceId, scope, request);
+  return path === null ? null : window.desktopAPI.localV2.chooseRemote(deviceId, scope, request, path);
+}
+
+/**
+ * Conversations of this device, or of another device of the account over
+ * Device link (`/conversations/devices/{peer}`). The page is the same; only
+ * where data comes from and where agents run changes.
+ */
 export function LocalConversationFlowPage() {
+  const { pathname } = useNavigation();
+  const match = DEVICE_ROUTE.exec(pathname);
+  const deviceId = match ? decodeURIComponent(match[1]!) : "local";
+  const devices = useLinkedDevices(deviceId !== "local");
+  const name = deviceId === "local" ? "" : deviceName(devices, deviceId);
+  const device = useMemo<LocalDevice>(() => ({ id: deviceId, name, transport: deviceId === "local" ? localV2Transport() : localV2Transport(deviceId, (scope, request) => chooseOnDevice(deviceId, scope, request)) }), [deviceId, name]);
+  return <LocalDeviceProvider device={device}><LocalConversationFlow key={deviceId} /></LocalDeviceProvider>;
+}
+
+function LocalConversationFlow() {
   const workspace = useCurrentWorkspace();
   const slug = useRequiredWorkspaceSlug();
   const userId = useAuthStore((state) => state.user?.id);
@@ -80,13 +107,21 @@ export function LocalConversationFlowPage() {
     window.addEventListener("blur", finish);
   };
   const qc = useQueryClient();
-  const transport = localV2Transport();
+  const device = useLocalDevice();
+  const { transport } = device;
+  const remote = device.id !== "local";
+  const flowPath = remote ? paths.conversationFlowDevice(device.id) : paths.conversationFlow();
+  const { t: tLayout } = useT("layout");
+  useDocumentTitle(remote ? tLayout(($) => $.nav.conversation_flow_device, { device: device.name }) : tLayout(($) => $.nav.conversation_flow));
   const sideWorkspace = useRef<SideWorkspaceHandle>(null);
   const [sideOpen, setSideOpen] = useState(false);
   const [referenceDraft, setReferenceDraft] = useState<RestoreDraftRequest | null>(null);
   const [locateRequest, setLocateRequest] = useState<{ sessionId: string; turnId?: string; quote?: string; sequence: number } | null>(null);
   const scope = { userId: userId || "", workspaceId: workspace?.id || "" };
   const v2 = localV2(transport, scope);
+  // Other devices with a conversation open; shown on this device's own page only.
+  const [, setPresenceVersion] = useState(0);
+  useEffect(() => remote ? undefined : v2.onPresence(() => setPresenceVersion((version) => version + 1)), [v2, remote]);
   const visibilityScope = projectVisibilityScopeKey(scope);
   const hiddenProjectPreferences = useProjectVisibilityStore((state) => state.hiddenByScope[visibilityScope] ?? EMPTY_PROJECT_IDS);
   const setProjectHidden = useProjectVisibilityStore((state) => state.setProjectHidden);
@@ -110,28 +145,28 @@ export function LocalConversationFlowPage() {
   const [contextSelection, setContextSelection] = useState("");
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const [focusSequence, setFocusSequence] = useState(0);
-  const providers = useQuery({ queryKey: [...localConversationKey(scope), "providers"], queryFn: async () => (await v2.request("GET", "/providers") as { providers: { id: LocalProviderId; name: string; available: boolean }[] }).providers, enabled: !!workspace && !!userId });
+  const providers = useQuery({ queryKey: [...localConversationKey(scope, device.id), "providers"], queryFn: async () => (await v2.request("GET", "/providers") as { providers: { id: LocalProviderId; name: string; available: boolean }[] }).providers, enabled: !!workspace && !!userId });
   const projectQuery = useQuery({ ...projectListOptions(scope.workspaceId), enabled: !!workspace && !!userId });
   const projects = (projectQuery.data ?? []).filter((project) => project.workspace_id === scope.workspaceId);
-  const folderQuery = useQuery({ queryKey: [...localConversationKey(scope), "folder-projects"], queryFn: async () => (await v2.request("GET", "/folder-projects") as { projects: { id: string; title: string; path: string; created_at: string }[] }).projects.map(folderProject), enabled: !!workspace && !!userId,
+  const folderQuery = useQuery({ queryKey: [...localConversationKey(scope, device.id), "folder-projects"], queryFn: async () => (await v2.request("GET", "/folder-projects") as { projects: { id: string; title: string; path: string; created_at: string }[] }).projects.map(folderProject), enabled: !!workspace && !!userId,
     retry: (count, error) => !localProjectsRequireRestart(error) && count < 2 });
   const folderProjects = folderQuery.data ?? [];
   const hiddenProjectIds = hiddenProjectPreferences.filter((id) => folderProjects.some((project) => project.id === id));
   const selectedId = searchParams.get("session");
   const sessions = useLocalConversationPages(transport, scope, folderProjects, hiddenProjectIds, archived, search, !!workspace && !!userId && folderQuery.isSuccess);
-  const selectedQuery = useQuery({ queryKey: [...localConversationKey(scope), "selected", selectedId], queryFn: async () => sessionEntry((await v2.snapshot(selectedId!)).conversation), enabled: !!workspace && !!userId && !!selectedId, retry: false, refetchOnMount: "always" });
+  const selectedQuery = useQuery({ queryKey: [...localConversationKey(scope, device.id), "selected", selectedId], queryFn: async () => sessionEntry((await v2.snapshot(selectedId!)).conversation), enabled: !!workspace && !!userId && !!selectedId, retry: false, refetchOnMount: "always" });
   const listed = sessions.data?.find((entry) => entry.id === selectedId);
   const selected = listed ?? selectedQuery.data;
   const selectedRef = useRef(selectedId); selectedRef.current = selectedId;
   const provider = selected?.provider ?? (searchParams.get("provider") === "claude" ? "claude" : "codex");
-  const active = pathname === paths.conversationFlow() && getCurrentSlug() === slug;
+  const active = pathname === flowPath && getCurrentSlug() === slug;
   const intent = `${userId}:${workspace?.id}:${selectedId}:${provider}`;
   const currentIntent = useRef(intent);
   currentIntent.current = intent;
   const latest = useRef({ select: (_id: string | null, _provider?: LocalProviderId) => {}, locate: (_id: string, _turnId?: string, _quote?: string) => {} });
   const select = (id: string | null, choice: LocalProviderId = provider) => {
     const query = new URLSearchParams({ provider: choice }); if (id) query.set("session", id);
-    replace(`${paths.conversationFlow()}?${query}`); setShowList(false);
+    replace(`${flowPath}?${query}`); setShowList(false);
   };
   latest.current.select = select;
   latest.current.locate = (id, turnId, quote) => {
@@ -146,7 +181,7 @@ export function LocalConversationFlowPage() {
       select(id, entry.provider); setLocateRequest({ sessionId: id, turnId, quote, sequence });
     };
     if (source) locate(source);
-    else void qc.fetchQuery({ queryKey: [...localConversationKey(scope), "selected", id], queryFn: async () => sessionEntry((await v2.snapshot(id)).conversation) }).then(locate).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+    else void qc.fetchQuery({ queryKey: [...localConversationKey(scope, device.id), "selected", id], queryFn: async () => sessionEntry((await v2.snapshot(id)).conversation) }).then(locate).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
   };
   const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: chinese ? "zh-CN" : "en", getSelectionIntent: () => currentIntent.current, getSelectedSessionId: () => selectedRef.current, onLocalSelect: (id, choice) => latest.current.select(id, choice), onOpenSide: (id, sourceId) => sideWorkspace.current?.openSide(id, sourceId), onOpenResource: (id, url) => { void sideWorkspace.current?.openResource(id, url, id).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error))); }, onLocateSource: (sessionId, turnId, quote) => latest.current.locate(sessionId, turnId, quote) }, transport), [transport, chinese]);
   useEffect(() => {
@@ -175,7 +210,7 @@ export function LocalConversationFlowPage() {
       const added = await transport.choose(scope, { purpose: "folder_project", ...(folderProjects.at(-1) ? { defaultPath: folderProjects.at(-1)!.path } : {}) }) as { id: string; title: string; path: string; created_at: string } | null;
       if (!added) return;
       const project = folderProject(added);
-      await qc.invalidateQueries({ queryKey: localConversationKey(scope) });
+      await qc.invalidateQueries({ queryKey: localConversationKey(scope, device.id) });
       if (currentIntent.current === startedIntent) {
         setSearch(""); setArchived(false); setProjectHidden(scope, project.id, false);
         setCollapsedProjects((previous) => { const next = new Set(previous); next.delete(project.id); return next; });
@@ -206,7 +241,7 @@ export function LocalConversationFlowPage() {
     try {
       const { id, projectId, ...fields } = params;
       v2.receiveSummary(localV2SummarySchema.parse(await v2.command(id, { type: "update", ...fields, ...(projectId !== undefined ? { project_id: projectId } : {}) })));
-      await qc.invalidateQueries({ queryKey: localConversationKey(scope) });
+      await qc.invalidateQueries({ queryKey: localConversationKey(scope, device.id) });
       if (params.archived !== undefined && selectedId === params.id && currentIntent.current === startedIntent) latest.current.select(null, provider);
       return true;
     } catch (error) { onError(error); return false; } finally { setUpdatingId(null); }
@@ -293,7 +328,7 @@ export function LocalConversationFlowPage() {
       const selection = window.getSelection();
       setContextSelection(selection && event.currentTarget.contains(selection.anchorNode) && event.currentTarget.contains(selection.focusNode) ? selection.toString() : "");
     }}>
-    <AppLink ref={(node) => { if (node) sessionLinks.current.set(entry.id, node); else sessionLinks.current.delete(entry.id); }} href={`${paths.conversationFlow()}?${new URLSearchParams({ provider: entry.provider, session: entry.id })}`} aria-current={selectedId === entry.id ? "true" : undefined}
+    <AppLink ref={(node) => { if (node) sessionLinks.current.set(entry.id, node); else sessionLinks.current.delete(entry.id); }} href={`${flowPath}?${new URLSearchParams({ provider: entry.provider, session: entry.id })}`} aria-current={selectedId === entry.id ? "true" : undefined}
       onClick={(event) => { event.preventDefault(); select(entry.id, entry.provider); }}
       className={`flex min-w-0 items-start gap-3 rounded-lg px-3 py-3 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring ${entryRunning || background ? "pr-16" : `group-hover:pr-11 group-focus-within:pr-11 ${updatingId === entry.id ? "pr-11" : ""}`} ${selectedId === entry.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}>
       <span aria-hidden="true" className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/50 text-foreground"><ProviderLogo provider={entry.provider} className="size-5" /></span>
@@ -311,6 +346,10 @@ export function LocalConversationFlowPage() {
       {waitingForAnswer ? <IconButton size="icon-xs" label={t($ => $.desktop.local_conversation.waiting_for_answer_label, { title: entry.title })} onClick={() => select(entry.id, entry.provider)}>
         <CircleHelp aria-hidden="true" className="size-4 text-muted-foreground" />
       </IconButton> : entryRunning && <Spinner aria-label={chinese ? `会话运行中：${entry.title}` : `Conversation running: ${entry.title}`} className="shrink-0 text-muted-foreground motion-reduce:animate-none" />}
+      {!remote && (() => {
+        const users = v2.presence(entry.id).map((user) => user.device_name || user.peer_id.slice(-6)).join(chinese ? "、" : ", ");
+        return users && <span role="status" aria-label={chinese ? `${users} 正在使用：${entry.title}` : `In use on ${users}: ${entry.title}`} title={chinese ? `${users} 正在使用` : `In use on ${users}`} className="flex shrink-0 items-center text-muted-foreground"><MonitorSmartphone aria-hidden="true" className="size-4" /></span>;
+      })()}
       {!entryRunning && background > 0 && <span role="status" aria-label={chinese ? `后台运行中：${entry.title}（${background}）` : `Background tasks: ${entry.title} (${background})`} title={chinese ? "后台运行中" : "Running in background"} className="flex shrink-0 items-center text-muted-foreground"><Clock3 aria-hidden="true" className="size-4" /></span>}
     </div>
     </ContextMenuTrigger>
@@ -351,7 +390,7 @@ export function LocalConversationFlowPage() {
           <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
             <h1 className="min-w-0 flex-1 truncate text-body font-semibold">{labels.sessions}</h1>
             <div className="flex shrink-0 items-center gap-1">
-              <LocalConversationImportButton key={`${scope.userId}:${scope.workspaceId}`} scope={scope} client={transport} projects={projects} chinese={chinese} onImported={() => { void qc.invalidateQueries({ queryKey: localConversationKey(scope) }); }} />
+              <LocalConversationImportButton key={`${scope.userId}:${scope.workspaceId}`} scope={scope} client={transport} projects={projects} chinese={chinese} onImported={() => { void qc.invalidateQueries({ queryKey: localConversationKey(scope, device.id) }); }} />
               <IconButton label={projectLabels.new} disabled={addingProject} aria-busy={addingProject} onClick={() => { void addProject(); }}>{addingProject ? <Loader2 className="animate-spin" /> : <FolderPlus />}</IconButton>
               <IconButton label={labels.new} disabled={!providers.data?.some((entry) => entry.available)} disabledReason={labels.unavailable} onClick={() => create()}><Plus /></IconButton>
             </div>
@@ -426,6 +465,7 @@ export function LocalConversationFlowPage() {
             </div>
           </div>
           <LocalRuntimeNotice scope={scope} chinese={chinese} />
+          {remote && <RemoteFolderPicker chinese={chinese} />}
           <TuttiAgentGuiPanel locateRequest={locateRequest ?? undefined} restoreDraftRequest={referenceDraft} key={`${workspace.id}:${userId}`} serviceFactory={factory} workspaceId={workspace.id} workspaceSlug={slug} userId={userId}
             activeSessionId={selectedId} selectedAgentId={localTargetId(provider)} active={active && mainVisible && (!compact || !showList)} composerFocusSequence={focusSequence || undefined}
             newConversationRequest={newConversationRequest}

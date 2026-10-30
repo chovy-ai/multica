@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { localV2HostHandler, type LocalV2HostHandlers } from "./local-v2-host";
+import { applyChosenPath, localV2HostHandler, remoteHostRequests, type LocalV2HostHandlers } from "./local-v2-host";
 
 const scope = { userId: "u1", workspaceId: "w1" };
 
@@ -48,5 +48,32 @@ describe("localV2HostHandler", () => {
     await expect(handle(scope, "side.control", { scope: { userId: "u1", workspaceId: "w2" } })).rejects.toThrow(/another account or workspace/);
     await expect(handle(scope, "settings.confirm", { operation: "settings_x", scope: { workspace_id: "w1", user_id: "u1" }, input: {} })).rejects.toThrow(/Unknown settings operation/);
     await expect(handle(scope, "unknown.kind", {})).rejects.toThrow(/cannot handle/);
+  });
+});
+
+describe("remoteHostRequests", () => {
+  it("lets another device confirm settings but keeps this device's own to itself", async () => {
+    const { handlers, handle } = setup();
+    const remote = remoteHostRequests(handle);
+    await remote(scope, "settings.confirm", { operation: "settings_invite_member", scope: { workspace_id: "w1", user_id: "u1" }, input: { email: "a@example.com" } });
+    expect(handlers.confirm).toHaveBeenCalled();
+    await remote(scope, "settings.host", { operation: "settings_open", scope: { workspace_id: "w1", user_id: "u1" }, input: {} });
+    await expect(remote(scope, "settings.host", { operation: "settings_update_device", scope: { workspace_id: "w1", user_id: "u1" }, input: {} })).rejects.toMatchObject({ code: "device_settings_elsewhere" });
+    await expect(remote(scope, "developer_logs.export", {})).rejects.toMatchObject({ code: "unsupported_host_request" });
+    await expect(remote(scope, "side.control", {})).rejects.toMatchObject({ code: "unsupported_host_request" });
+    expect(handlers.developerLogs).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyChosenPath", () => {
+  it("sends each choice to its route on the chosen device", async () => {
+    const request = vi.fn(async () => ({}));
+    await applyChosenPath({ request }, scope, { purpose: "folder_project" }, "/repo", "peer-1");
+    await applyChosenPath({ request }, scope, { purpose: "conversation_directory", conversationId: "c 1" }, "/repo", "local");
+    expect(request.mock.calls).toEqual([
+      [scope, "POST", "/folder-projects", { path: "/repo" }, "peer-1"],
+      [scope, "POST", "/sessions/c%201/commands", { type: "set_directory", cwd: "/repo" }, "local"],
+    ]);
+    await expect(applyChosenPath({ request }, scope, { purpose: "other" }, "/repo", "local")).rejects.toThrow();
   });
 });

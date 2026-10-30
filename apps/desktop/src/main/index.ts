@@ -20,7 +20,7 @@ import { setupLocalDirectory } from "./local-directory";
 import { setupTerminalCli } from "./terminal-cli-ipc";
 import { registerDesktopProtocol, setupBrowserLogin } from "./browser-login-ipc";
 import { LocalV2Client, LocalV2Error } from "./local-conversation-v2";
-import { localV2HostHandler } from "./local-v2-host";
+import { applyChosenPath, localV2HostHandler, remoteHostRequests } from "./local-v2-host";
 import type { LocalV2ChooseRequest } from "@multica/core/local-conversation/v2";
 import { ResourceWebPreview } from "./resource-web-preview";
 import { createMacosChromeCookieImportAdapter } from "@tutti-os/browser-node/chrome-cookie-import/macos";
@@ -816,10 +816,12 @@ if (!gotTheLock) {
       return localV2.rendererEndpoint().catch(ipcError);
     });
     // Host requests arrive on the renderer's WebSocket; main performs the native part.
-    ipcMain.handle("local-v2:host-request", async (event, scope: LocalConversationScope, kind: string, payload: Record<string, unknown>) => {
+    ipcMain.handle("local-v2:host-request", async (event, deviceId: string, scope: LocalConversationScope, kind: string, payload: Record<string, unknown>) => {
       mainFrame(event, scope);
       if (!localV2Host) throw new Error("Local conversations require the active main window");
-      return localV2Host(scope, kind, payload ?? {}).catch((error: unknown) => {
+      if (typeof deviceId !== "string" || !deviceId) throw new Error("invalid_request: A host request names its device");
+      const handle = deviceId === "local" ? localV2Host : remoteHostRequests(localV2Host);
+      return handle(scope, kind, payload ?? {}).catch((error: unknown) => {
         const code = (error as { code?: unknown })?.code;
         throw new Error(`${typeof code === "string" ? code : "host_request_failed"}: ${error instanceof Error ? error.message : String(error)}`);
       });
@@ -834,12 +836,15 @@ if (!gotTheLock) {
       });
       const path = result.canceled ? undefined : result.filePaths[0];
       if (!path) return null;
-      const apply = request.purpose === "preview" ? proxy.request(scope, "POST", "/preview/roots", { path })
-        : request.purpose === "folder_project" ? proxy.request(scope, "POST", "/folder-projects", { path })
-        : request.purpose === "conversation_directory" && typeof request.conversationId === "string"
-          ? proxy.request(scope, "POST", `/sessions/${encodeURIComponent(request.conversationId)}/commands`, { type: "set_directory", cwd: path })
-          : Promise.reject(new Error("Invalid local conversation request"));
-      return apply.catch(ipcError);
+      return applyChosenPath(proxy, scope, request, path, "local").catch(ipcError);
+    });
+    // Another device has no OS picker here: the user chose in that page's
+    // folder picker, and only main may send the path, with its own token.
+    ipcMain.handle("local-v2:choose-remote", async (event, deviceId: string, scope: LocalConversationScope, request: LocalV2ChooseRequest, path: string) => {
+      const proxy = mainFrame(event, scope);
+      if (typeof deviceId !== "string" || !deviceId || deviceId === "local") throw new Error("invalid_request: Choose this device's folders in its own picker");
+      if (typeof path !== "string" || !path) throw new Error("invalid_request: Choose a folder");
+      return applyChosenPath(proxy, scope, request, path, deviceId).catch(ipcError);
     });
     electronApp.setAppUserModelId(
       is.dev ? "ai.multica.desktop.dev" : "ai.multica.desktop",

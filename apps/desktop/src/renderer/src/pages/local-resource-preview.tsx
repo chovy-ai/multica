@@ -9,11 +9,12 @@ import type { LocalConversationScope, LocalPreviewLocation } from "@multica/core
 import type { WebPreviewState, WebPreviewCommand } from "../../../shared/resource-preview";
 import { ChromeProfileImport } from "./chrome-profile-import";
 import { localV2Preview } from "../platform/local-v2-preview";
-import { localV2Transport } from "../platform/local-v2-transport";
+import { useLocalDevice } from "../platform/local-device";
 
 export function PreviewFolder({ location, selected, scope, sessionId, onSelect, chinese, defaultExpanded = true }: { location: LocalPreviewLocation; selected?: string; scope: LocalConversationScope; sessionId?: string; onSelect: (file: LocalPreviewLocation) => void; chinese: boolean; defaultExpanded?: boolean }) {
+  const device = useLocalDevice();
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const query = useQuery({ queryKey: ["resource-folder", scope.userId, scope.workspaceId, location.root, location.path], queryFn: () => localV2Preview(localV2Transport(), scope).list(location, sessionId), enabled: expanded });
+  const query = useQuery({ queryKey: ["resource-folder", device.id, scope.userId, scope.workspaceId, location.root, location.path], queryFn: () => localV2Preview(device.transport, scope).list(location, sessionId), enabled: expanded });
   return <div role="group" className="min-w-0">
     <Button variant="ghost" size="sm" className="w-full justify-start" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}<Folder className="size-4 shrink-0" /><span className="truncate">{location.name}</span></Button>
     {expanded && <div className="ml-3 border-l pl-1">{query.isPending ? <Loader2 className="m-2 size-4 animate-spin" /> : query.isError ? <Button variant="ghost" size="xs" onClick={() => { void query.refetch(); }}>{chinese ? "重试" : "Retry"}</Button> : query.data.map((entry) => entry.kind === "directory" ? <PreviewFolder defaultExpanded={false} key={entry.path} location={entry} selected={selected} scope={scope} sessionId={sessionId} chinese={chinese} onSelect={onSelect} /> : <Button key={entry.path} variant="ghost" size="sm" className={`w-full justify-start ${selected === entry.path ? "bg-surface-selected hover:bg-surface-selected" : ""}`} title={entry.name} onClick={() => onSelect(entry)}><File className="size-4 shrink-0" /><span className="truncate">{entry.name}</span></Button>)}{query.data?.length === 1000 && <p className="p-2 text-caption text-muted-foreground">{chinese ? "仅显示前 1000 项" : "Showing the first 1,000 items"}</p>}</div>}
@@ -21,8 +22,9 @@ export function PreviewFolder({ location, selected, scope, sessionId, onSelect, 
 }
 
 export function LocalFilePreview({ location, scope, sessionId, line, chinese }: { location: LocalPreviewLocation; scope: LocalConversationScope; sessionId?: string; line?: number; chinese: boolean }) {
+  const device = useLocalDevice();
   const [source, setSource] = useState(false);
-  const query = useQuery({ queryKey: ["resource-file", scope.userId, scope.workspaceId, location.root, location.path], queryFn: () => localV2Preview(localV2Transport(), scope).read(location, sessionId) });
+  const query = useQuery({ queryKey: ["resource-file", device.id, scope.userId, scope.workspaceId, location.root, location.path], queryFn: () => localV2Preview(device.transport, scope).read(location, sessionId) });
   const highlight = useRef<HTMLSpanElement>(null);
   useEffect(() => { highlight.current?.scrollIntoView({ block: "center" }); }, [line, query.data]);
   const file = query.data;

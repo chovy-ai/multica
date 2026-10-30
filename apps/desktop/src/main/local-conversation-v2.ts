@@ -46,14 +46,18 @@ export class LocalV2Client {
     return { Authorization: `Bearer ${token}`, "X-Multica-API-Origin": this.options.apiUrl, "X-Multica-User-ID": scope.userId, "X-Workspace-ID": scope.workspaceId };
   }
 
-  /** One JSON request. A rotated token is re-read once. */
-  async request(scope: LocalConversationScope, method: string, path: string, body?: unknown): Promise<unknown> {
+  /**
+   * One JSON request to this device, or with deviceId to another device of
+   * the account through this daemon. A rotated token is re-read once.
+   */
+  async request(scope: LocalConversationScope, method: string, path: string, body?: unknown, deviceId = "local"): Promise<unknown> {
     if (!path.startsWith("/") || path.includes("..")) throw new LocalV2Error("invalid_request", "Invalid local conversation path", 400);
     for (let attempt = 0; attempt < 2; attempt++) {
       const endpoint = await this.endpoint(attempt > 0);
       let response: Response;
       try {
-        response = await fetch(`http://${endpoint.base}/local/v2${path}`, {
+        const base = deviceId === "local" ? "" : `/local/devices/${encodeURIComponent(deviceId)}`;
+        response = await fetch(`http://${endpoint.base}${base}/local/v2${path}`, {
           method, headers: { ...this.headers(scope, endpoint.token), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });

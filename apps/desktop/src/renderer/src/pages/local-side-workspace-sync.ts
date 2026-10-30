@@ -38,7 +38,9 @@ export function readSideLayout(key: string): SideLayout {
 export async function syncSideWorkspace(transport: LocalV2Transport, scope: LocalConversationScope, snapshot: SideWorkspaceSnapshot) {
   const result = await localV2(transport, scope).command(snapshot.conversationId, { type: "side_workspace_sync", workspace: snapshot }) as { revision?: unknown } | null;
   // The browser tabs follow the layout the daemon accepted.
-  if (result?.revision === snapshot.revision) await window.desktopAPI.sideWorkspace?.reconcile(scope, snapshot.conversationId);
+  // Another device's Side browser tabs are not driven by this device's main process.
+  const local = ((transport as { deviceId?: string }).deviceId ?? "local") === "local";
+  if (local && result?.revision === snapshot.revision) await window.desktopAPI.sideWorkspace?.reconcile(scope, snapshot.conversationId);
 }
 export async function prepareSideTab(request: SideWorkspaceControlRequest, transport: LocalV2Transport): Promise<SideTab | undefined> {
   if (request.op !== "open") return;

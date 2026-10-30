@@ -33,9 +33,10 @@ import { ChatPage } from "@multica/views/chat";
 import { LocalConversationFlowPage } from "./pages/local-conversation-flow";
 import { SettingsPage } from "@multica/views/settings";
 import { useT } from "@multica/views/i18n";
-import { Download, FlaskConical, Server } from "lucide-react";
+import { Download, FlaskConical, MonitorSmartphone, Server } from "lucide-react";
 import { LabsSettingsTab } from "./components/labs-settings-tab";
 import { DaemonSettingsTab } from "./components/daemon-settings-tab";
+import { DeviceLinkSettingsTab, useDeviceLinkSetting } from "./components/device-link-settings-tab";
 import { UpdatesSettingsTab } from "./components/updates-settings-tab";
 import { WorkspaceRouteLayout } from "./components/workspace-route-layout";
 import { DesktopRouteErrorPage } from "./components/route-error-page";
@@ -47,6 +48,8 @@ import { DesktopRouteErrorPage } from "./components/route-error-page";
  */
 function DesktopSettingsRoute() {
   const { t } = useT("settings");
+  // Device link needs this device's p2p link; without it there is nothing to set.
+  const deviceLink = useDeviceLinkSetting();
   return (
     <SettingsPage
       extraDeviceTabs={[
@@ -62,6 +65,12 @@ function DesktopSettingsRoute() {
           icon: Server,
           content: <DaemonSettingsTab />,
         },
+        ...(deviceLink.data?.available ? [{
+          value: "device-link",
+          label: t(($) => $.desktop.device_link.title),
+          icon: MonitorSmartphone,
+          content: <DeviceLinkSettingsTab />,
+        }] : []),
         {
           value: "updates",
           label: t(($) => $.desktop.tabs.updates),
@@ -237,6 +246,7 @@ export const appRoutes: RouteObject[] = [
           { path: "inbox", element: <InboxPage />, handle: { title: "Inbox" } },
           { path: "chat", element: <ChatPage />, handle: { title: "Chat" } },
           { path: "conversations", element: <LocalConversationFlowPage />, handle: { title: "Conversations" } },
+          { path: "conversations/devices/:peerId", element: <LocalConversationFlowPage />, handle: { title: "Conversations" } },
           {
             path: "attachments/:id/preview",
             element: <AttachmentPreviewRoute />,

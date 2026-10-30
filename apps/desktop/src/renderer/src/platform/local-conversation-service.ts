@@ -9,7 +9,8 @@ import { projectForDirectory } from "./local-conversation-projects";
 import { blobBase64 } from "./local-preview-file";
 import { localV2, type LocalV2ScopeClient } from "./local-v2";
 
-export const localConversationKey = (scope: LocalV2Scope) => ["local-conversations", scope.userId, scope.workspaceId] as const;
+/** Query keys of a device's conversations; deviceId is "local" or another device's peer ID. */
+export const localConversationKey = (scope: LocalV2Scope, deviceId = "local") => ["local-conversations", deviceId, scope.userId, scope.workspaceId] as const;
 export const localTargetId = (provider: string) => `local:${provider}`;
 export function localProviderId(target: string): LocalProviderId {
   if (target === "local:codex") return "codex";

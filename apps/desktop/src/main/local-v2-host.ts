@@ -30,6 +30,32 @@ export function settingsApply(operation: string, scope: SettingsScope, input: Re
 
 const HOST_TIMEOUT_MS = 90_000;
 
+/** Settings host operations that act on Desktop's window, not on the device. */
+const VIEW_SETTINGS = new Set(["settings_open", "settings_assert_scope", "settings_cancel", "settings_capabilities", "settings_refresh"]);
+
+/**
+ * Host requests from another device's agents. Settings confirmations and
+ * views happen here, with this Desktop's account; this device's own
+ * settings, its logs and the Side browser are not for another device.
+ */
+export function remoteHostRequests(handle: ReturnType<typeof localV2HostHandler>): ReturnType<typeof localV2HostHandler> {
+  return async (scope, kind, payload) => {
+    if (kind === "settings.host" && !VIEW_SETTINGS.has(String(payload.operation))) throw new SettingsOperationError("device_settings_elsewhere", "This setting can only be changed on the device itself");
+    if (kind === "developer_logs.export" || kind === "side.control") throw new SettingsOperationError("unsupported_host_request", `Desktop cannot handle ${kind} for another device`);
+    return handle(scope, kind, payload);
+  };
+}
+
+/** Sends a path the user chose to the daemon of a device; only main may. */
+export function applyChosenPath(client: { request(scope: LocalConversationScope, method: string, path: string, body?: unknown, deviceId?: string): Promise<unknown> }, scope: LocalConversationScope, request: { purpose?: unknown; conversationId?: unknown }, path: string, deviceId: string): Promise<unknown> {
+  if (request?.purpose === "preview") return client.request(scope, "POST", "/preview/roots", { path }, deviceId);
+  if (request?.purpose === "folder_project") return client.request(scope, "POST", "/folder-projects", { path }, deviceId);
+  if (request?.purpose === "conversation_directory" && typeof request.conversationId === "string") {
+    return client.request(scope, "POST", `/sessions/${encodeURIComponent(request.conversationId)}/commands`, { type: "set_directory", cwd: path }, deviceId);
+  }
+  return Promise.reject(new Error("Invalid local conversation request"));
+}
+
 /**
  * Performs the daemon's v2 host requests, which the renderer receives on its
  * WebSocket and passes to main, with Desktop's existing handlers.
