@@ -1321,6 +1321,19 @@ describe("local conversations over protocol v2", () => {
     expect(data.request.mock.calls.filter(([method]) => method === "session.load")).toHaveLength(1);
   });
 
+  it("continues a stopped turn from the empty composer", async () => {
+    const { data, handle } = await localRuntime();
+    expect(handle.continuable(session.id)).toBe(false);
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => method === "session.load"
+      ? { ...await original(method, params), tasks: [{ id: "turn-1", status: "cancelled", created_at: time }] }
+      : original(method, params));
+    data.emit({ type: "local.reload", sessionId: session.id });
+    await vi.waitFor(() => expect(handle.continuable(session.id)).toBe(true));
+    handle.continueSession(session.id);
+    await vi.waitFor(() => expect(data.request.mock.calls.some(([method, params]) => ["session.send", "queue.enqueue"].includes(method) && JSON.stringify(params).includes("Continue"))).toBe(true));
+  });
+
   it("reloads the snapshot after a gap or an ended subscription", async () => {
     const { data } = await localRuntime();
     data.emit({ type: "local.events", sessionId: session.id, message: batch([event(5, "turn.started", { request_id: "r1" })]) });

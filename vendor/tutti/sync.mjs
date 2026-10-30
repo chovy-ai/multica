@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const vendorRoot = dirname(fileURLToPath(import.meta.url));
 const manifestPath = join(vendorRoot, "source-manifest.json");
+// Local changes to upstream files, applied in name order after copying.
+const patchesRoot = join(vendorRoot, "patches");
 const sourceCommit = "207beeea554435618dffd3b579d0ffe112b065c4";
 const packagePaths = [
   "packages/agent/gui",
@@ -38,11 +40,17 @@ if (process.argv[2] === "--verify") {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   for (const entry of [...manifest.files, ...manifest.metadataOverlays]) {
     const content = await readFile(join(vendorRoot, entry.vendorPath));
-    if (sha256(content) !== entry.sha256) {
+    if (sha256(content) !== (entry.patchedSha256 ?? entry.sha256)) {
       throw new Error(`Vendored file differs from manifest: ${entry.vendorPath}`);
     }
   }
-  console.log(`Verified ${manifest.files.length} unchanged upstream files and ${manifest.metadataOverlays.length} package metadata overlays at ${manifest.upstream.commit}.`);
+  for (const entry of manifest.patches ?? []) {
+    if (sha256(await readFile(join(patchesRoot, entry.name))) !== entry.sha256) {
+      throw new Error(`Vendor patch differs from manifest: ${entry.name}`);
+    }
+  }
+  const patched = manifest.files.filter((entry) => entry.patchedSha256).length;
+  console.log(`Verified ${manifest.files.length - patched} unchanged upstream files, ${patched} locally patched files and ${manifest.metadataOverlays.length} package metadata overlays at ${manifest.upstream.commit}.`);
 } else {
   if (!process.argv[2]) throw new Error("Usage: node vendor/tutti/sync.mjs <upstream-checkout> | --verify");
   const sourceRoot = resolve(process.argv[2]);
@@ -117,6 +125,23 @@ if (process.argv[2] === "--verify") {
     files.push({ sourcePath, vendorPath, bytes: content.length, sha256: sha256(content) });
   }
 
+  // Patches are diffs relative to this directory; git apply needs the path of
+  // this directory inside its repository.
+  const patches = [];
+  const patchNames = (await readdir(patchesRoot).catch(() => [])).filter((name) => name.endsWith(".patch")).sort();
+  const prefix = execFileSync("git", ["rev-parse", "--show-prefix"], { cwd: vendorRoot, encoding: "utf8" }).trim();
+  for (const name of patchNames) {
+    const patch = await readFile(join(patchesRoot, name));
+    execFileSync("git", ["apply", `--directory=${prefix}`, join(patchesRoot, name)], { cwd: vendorRoot });
+    patches.push({ name, sha256: sha256(patch) });
+    for (const [, path] of patch.toString("utf8").matchAll(/^\+\+\+ b\/(.+)$/gm)) {
+      const entry = files.find((file) => file.vendorPath === path);
+      if (!entry) throw new Error(`Vendor patch ${name} changes an unvendored file: ${path}`);
+      entry.patchedSha256 = sha256(await readFile(join(vendorRoot, path)));
+      (entry.patches ??= []).push(name);
+    }
+  }
+
   for (const packagePath of packagePaths) {
     const upstream = JSON.parse(await readFile(join(vendorRoot, packagePath, "package.upstream.json"), "utf8"));
     const versions = importerVersions.get(packagePath) ?? {};
@@ -170,12 +195,13 @@ if (process.argv[2] === "--verify") {
   const manifest = {
     upstream: { repository: "https://github.com/tutti-os/tutti", commit: sourceCommit, license: "Apache-2.0" },
     packagePaths,
-    metadataPolicy: "Source exports and UI files are unchanged. Local private manifests omit upstream build/test tooling, pin real web dependencies and required peers to upstream lock resolutions, retain only type development dependencies, and omit the optional React Native peer. Agent GUI adds its existing type-only client and event contracts as local dependencies. Rich Text promotes four runtime-imported Tiptap extensions from upstream development dependencies and supplies their ProseMirror peer. Original manifests are preserved as package.upstream.json.",
+    metadataPolicy: "Source exports and UI files are unchanged except for the patches listed below, which record each file's upstream and patched hashes. Local private manifests omit upstream build/test tooling, pin real web dependencies and required peers to upstream lock resolutions, retain only type development dependencies, and omit the optional React Native peer. Agent GUI adds its existing type-only client and event contracts as local dependencies. Rich Text promotes four runtime-imported Tiptap extensions from upstream development dependencies and supplies their ProseMirror peer. Original manifests are preserved as package.upstream.json.",
     omittedPolicy: "Agent instruction files are omitted because this is code and asset vendoring, not an upstream repository checkout.",
     omittedFiles,
+    patches,
     files,
     metadataOverlays,
   };
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  console.log(`Vendored ${files.length} upstream files across ${packagePaths.length} packages at ${sourceCommit}.`);
+  console.log(`Vendored ${files.length} upstream files across ${packagePaths.length} packages at ${sourceCommit} with ${patches.length} local patches.`);
 }

@@ -45,7 +45,10 @@ import type {
   TuttiPlanIssuePanelLabels
 } from "../../../workspaceWorkflow";
 import type { TuttiWorkflowDockLabels } from "../TuttiWorkflowDock";
-import type { AgentGUIComposerFooterAccessoryRenderer } from "./AgentGUIComposerFooterAccessory.types";
+import type {
+  AgentGUIComposerEmptySubmit,
+  AgentGUIComposerFooterAccessoryRenderer
+} from "./AgentGUIComposerFooterAccessory.types";
 import type { AgentGUISessionLaunchMode } from "../model/agentSessionLaunchMode";
 import type { AgentProjectDropdownOptions } from "../AgentComposerProjectMenu";
 import type { AgentGUISideConversationPresentation } from "../../../agentSideConversationPresentation";
@@ -786,6 +789,7 @@ export interface AgentGUINodeViewProps extends AgentGUIComposerExternalPromptPro
   resolveWorkspaceReferenceInitialTarget?: AgentWorkspaceReferenceInitialTargetResolver | null;
   workspaceAppIcons?: readonly AgentMessageMarkdownWorkspaceAppIcon[];
   renderComposerFooterAccessory?: AgentGUIComposerFooterAccessoryRenderer;
+  composerEmptySubmit?: AgentGUIComposerEmptySubmit | null;
 }
 export type { AgentGUIDetailPaneProps } from "./AgentGUIDetailPane.types";
 

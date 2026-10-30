@@ -170,4 +170,25 @@ describe("V2Conversation", () => {
     expect([...conversation.messages.keys()]).toEqual(["fork~m1"]);
     expect(project(conversation).messages.filter((message) => JSON.stringify(message.payload).includes("READY"))).toHaveLength(1);
   });
+
+  it.each([
+    ["a stopped turn", "cancelled", null, true],
+    ["a turn cut off by a restart", "failed", "daemon_restarted", true],
+    ["a turn whose provider exited", "failed", "provider_exited", true],
+    ["a failed turn", "failed", "provider_error", false],
+    ["a completed turn", "completed", null, false],
+    ["a running turn", "running", null, false],
+  ])("continues %s: %s", (_name, status, kind, expected) => {
+    const turn = (id: string, startedAt: string, value: string, error: string | null) => ({
+      id, turn_index: 0, request_id: id, status: value, started_at: startedAt, messages: [], events: [],
+      ...(value === "running" ? {} : { completed_at: startedAt }), ...(error ? { error: { kind: error, message: "x" } } : {}),
+    });
+    const conversation = V2Conversation.fromSnapshot(localV2SnapshotSchema.parse({
+      version: 2, store_generation: "g1", snapshot_seq: 1, has_older_turns: false, pending_interactions: [],
+      conversation: { conversation_id: "conv-1", summary_seq: 1, provider: "codex", title: "t", status: "idle", pinned: false, archived: false, updated_at: at },
+      // Only the latest turn decides.
+      turns: [turn("old", "2026-10-29T00:00:00Z", "cancelled", null), turn("latest", "2026-10-29T01:00:00Z", status as string, kind as string | null)],
+    }));
+    expect(conversation.continuable()).toBe(expected);
+  });
 });

@@ -53,6 +53,7 @@ import {
   type AgentGUIConversationRailResizeInteraction
 } from "./view/useAgentGUIConversationRailResizePointerMove";
 export type {
+  AgentGUIComposerEmptySubmit,
   AgentGUIComposerFooterAccessoryContext,
   AgentGUIComposerFooterAccessoryRenderer
 } from "./view/AgentGUIComposerFooterAccessory.types";
@@ -154,7 +155,8 @@ export function AgentGUINodeView({
   resolveMentionReferenceTarget = null,
   resolveWorkspaceReferenceInitialTarget = null,
   workspaceAppIcons = EMPTY_WORKSPACE_APP_ICONS,
-  renderComposerFooterAccessory
+  renderComposerFooterAccessory,
+  composerEmptySubmit = null
 }: AgentGUINodeViewProps): React.JSX.Element {
   "use memo";
   const isAgentProviderReady = isAgentGUIProviderReady(
@@ -739,6 +741,7 @@ export function AgentGUINodeView({
                 workspaceAppIcons={effectiveWorkspaceAppIcons}
                 workspaceUserProjectI18n={workspaceUserProjectI18n}
                 renderComposerFooterAccessory={renderComposerFooterAccessory}
+                composerEmptySubmit={composerEmptySubmit}
               />
             </AgentConversationClockProvider>
           </section>

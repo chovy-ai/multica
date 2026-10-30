@@ -95,6 +95,17 @@ export class V2Conversation {
     return conversation;
   }
 
+  /**
+   * Whether the latest turn was stopped by the user or cut off by a restart,
+   * so the provider can continue it, and no turn is running.
+   */
+  continuable(): boolean {
+    const turns = [...this.turns.values()];
+    if (turns.some((turn) => turn.status === "running")) return false;
+    const latest = turns.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0];
+    return latest?.status === "cancelled" || (latest?.status === "failed" && INTERRUPTED_TURN_ERRORS.has(latest.error?.kind ?? ""));
+  }
+
   apply(events: readonly LocalV2Event[]): V2ApplyResult {
     for (const event of events) {
       if (event.seq <= this.seq) continue;
@@ -196,6 +207,9 @@ export class V2Conversation {
     }
   }
 }
+
+/** Turn errors that mean the turn was cut off rather than failed by itself. */
+const INTERRUPTED_TURN_ERRORS = new Set(["daemon_restarted", "provider_exited", "interrupt_unconfirmed"]);
 
 function turnStatus(value: string): V2TurnStatus {
   return value === "completed" || value === "failed" || value === "cancelled" ? value : "running";

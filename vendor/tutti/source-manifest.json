@@ -28,7 +28,7 @@
     "packages/events/stream-core",
     "packages/configs/tsconfig"
   ],
-  "metadataPolicy": "Source exports and UI files are unchanged. Local private manifests omit upstream build/test tooling, pin real web dependencies and required peers to upstream lock resolutions, retain only type development dependencies, and omit the optional React Native peer. Agent GUI adds its existing type-only client and event contracts as local dependencies. Rich Text promotes four runtime-imported Tiptap extensions from upstream development dependencies and supplies their ProseMirror peer. Original manifests are preserved as package.upstream.json.",
+  "metadataPolicy": "Source exports and UI files are unchanged except for the patches listed below, which record each file's upstream and patched hashes. Local private manifests omit upstream build/test tooling, pin real web dependencies and required peers to upstream lock resolutions, retain only type development dependencies, and omit the optional React Native peer. Agent GUI adds its existing type-only client and event contracts as local dependencies. Rich Text promotes four runtime-imported Tiptap extensions from upstream development dependencies and supplies their ProseMirror peer. Original manifests are preserved as package.upstream.json.",
   "omittedPolicy": "Agent instruction files are omitted because this is code and asset vendoring, not an upstream repository checkout.",
   "omittedFiles": [
     "packages/agent/gui/AGENTS.md",
@@ -36,6 +36,12 @@
     "packages/connector/renderer/AGENTS.md",
     "packages/ui/system/AGENTS.md",
     "packages/ui/system/src/components/avatar/AGENTS.md"
+  ],
+  "patches": [
+    {
+      "name": "agent-gui-composer-empty-submit.patch",
+      "sha256": "50cbb5c54bea326800a638ebe1ed3aae6e0c0e5d840dbab9b0427b3d73c12d82"
+    }
   ],
   "files": [
     {
@@ -1404,13 +1410,21 @@
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/AgentGUINode.tsx",
       "vendorPath": "packages/agent/gui/agent-gui/agentGuiNode/AgentGUINode.tsx",
       "bytes": 23930,
-      "sha256": "d8abf0cc58bfe78f0324ce9843057f53656b274dfc93e7ee27b53cd63d58b474"
+      "sha256": "d8abf0cc58bfe78f0324ce9843057f53656b274dfc93e7ee27b53cd63d58b474",
+      "patchedSha256": "c794a106f39c3b3c560afe18b2adb3d284066d7ad446de4fc1ff82877a851e3c",
+      "patches": [
+        "agent-gui-composer-empty-submit.patch"
+      ]
     },
     {
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/AgentGUINode.types.ts",
       "vendorPath": "packages/agent/gui/agent-gui/agentGuiNode/AgentGUINode.types.ts",
       "bytes": 23830,
-      "sha256": "d33fe4113096f88b9dc2b27db05f1a7335b11a3b00081316799deaf9f5d1ba40"
+      "sha256": "d33fe4113096f88b9dc2b27db05f1a7335b11a3b00081316799deaf9f5d1ba40",
+      "patchedSha256": "31d96903e6558fbd551163e8be8eb5105c2804dd99658d4fad755e545981f86b",
+      "patches": [
+        "agent-gui-composer-empty-submit.patch"
+      ]
     },
     {
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/AgentGUINode.usage.spec.ts",
@@ -1434,7 +1448,11 @@
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/AgentGUINodeView.tsx",
       "vendorPath": "packages/agent/gui/agent-gui/agentGuiNode/AgentGUINodeView.tsx",
       "bytes": 32635,
-      "sha256": "392b3d2e2267ae903293ec6f511a12c13b74ddd4c361ee83492d435205dbecb4"
+      "sha256": "392b3d2e2267ae903293ec6f511a12c13b74ddd4c361ee83492d435205dbecb4",
+      "patchedSha256": "a56efbe331a3c6d86e2b755fc130e83a892bf6ccedf124067bb102fdf9233ed3",
+      "patches": [
+        "agent-gui-composer-empty-submit.patch"
+      ]
     },
     {
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/AgentGUIOwnerAvatar.tsx",
@@ -2406,7 +2424,11 @@
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/composer/useComposerPresentation.tsx",
       "vendorPath": "packages/agent/gui/agent-gui/agentGuiNode/composer/useComposerPresentation.tsx",
       "bytes": 14095,
-      "sha256": "d45f4998172731a0f2acfffc89ae4e6333e935c2e7dd100b1f6720f2e613a1a8"
+      "sha256": "d45f4998172731a0f2acfffc89ae4e6333e935c2e7dd100b1f6720f2e613a1a8",
+      "patchedSha256": "ddcd9b5666f342e6421386ab461b758bc7c0dd32f0efacced83d38dff6e64055",
+      "patches": [
+        "agent-gui-composer-empty-submit.patch"
+      ]
     },
     {
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/composer/useComposerProviderTargets.ts",
@@ -3966,7 +3988,11 @@
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIComposerFooterAccessory.types.ts",
       "vendorPath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIComposerFooterAccessory.types.ts",
       "bytes": 438,
-      "sha256": "55283d7e6d022d17d6a6cfecdfbe33e8a336224ef19f608e3273e2c283c21a24"
+      "sha256": "55283d7e6d022d17d6a6cfecdfbe33e8a336224ef19f608e3273e2c283c21a24",
+      "patchedSha256": "60e239fee16025b061e500e4953559897c55e90c3f279db0e2a33d6e823cc468",
+      "patches": [
+        "agent-gui-composer-empty-submit.patch"
+      ]
     },
     {
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIContentToast.tsx",
@@ -4080,13 +4106,21 @@
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIDetailPane.tsx",
       "vendorPath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIDetailPane.tsx",
       "bytes": 31486,
-      "sha256": "0014f0fcb18dd3d05ff142a1b073eaf4292750efcb38041ced0066938e8dbaa0"
+      "sha256": "0014f0fcb18dd3d05ff142a1b073eaf4292750efcb38041ced0066938e8dbaa0",
+      "patchedSha256": "cd351b04b3dedf1e77a09f49c25f3684966851e49efcc651e66cba4c9de26a18",
+      "patches": [
+        "agent-gui-composer-empty-submit.patch"
+      ]
     },
     {
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIDetailPane.types.ts",
       "vendorPath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIDetailPane.types.ts",
       "bytes": 4222,
-      "sha256": "5aa76d2faab893423ea976e0cc40bb7255a2b2c0a54a4462e9228a8c3da31fd4"
+      "sha256": "5aa76d2faab893423ea976e0cc40bb7255a2b2c0a54a4462e9228a8c3da31fd4",
+      "patchedSha256": "a848e325a8f7296fc2e013734e8608d6438960d83b2797b21db8dfe54d4c4ccd",
+      "patches": [
+        "agent-gui-composer-empty-submit.patch"
+      ]
     },
     {
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIDetailTimeline.renderBudget.spec.tsx",
@@ -4140,7 +4174,11 @@
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUINodeView.types.ts",
       "vendorPath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUINodeView.types.ts",
       "bytes": 30751,
-      "sha256": "0c5b1700593e3e373203c877aa6bfa85f7ff56f64f758f12f001cdcd158ca709"
+      "sha256": "0c5b1700593e3e373203c877aa6bfa85f7ff56f64f758f12f001cdcd158ca709",
+      "patchedSha256": "d0819d5e26b63fed50b5442fe0705f88b4ed049259546c4a324ca9c4431fbc71",
+      "patches": [
+        "agent-gui-composer-empty-submit.patch"
+      ]
     },
     {
       "sourcePath": "packages/agent/gui/agent-gui/agentGuiNode/view/AgentGUIProjectActionConfirmationDialog.spec.ts",

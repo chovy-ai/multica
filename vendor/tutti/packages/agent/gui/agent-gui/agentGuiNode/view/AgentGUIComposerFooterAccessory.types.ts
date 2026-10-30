@@ -14,3 +14,9 @@ export type AgentGUIComposerFooterAccessoryContext = Pick<
 export type AgentGUIComposerFooterAccessoryRenderer = (
   context: AgentGUIComposerFooterAccessoryContext
 ) => ReactNode;
+
+/** Host-owned action for the send button while the composer is empty. */
+export interface AgentGUIComposerEmptySubmit {
+  label: string;
+  onSubmit: () => void;
+}

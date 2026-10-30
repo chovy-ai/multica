@@ -91,7 +91,8 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
   onRequestGitBranches,
   onRequestComposerFocus,
   workspaceAppIcons = EMPTY_WORKSPACE_APP_ICONS,
-  renderComposerFooterAccessory
+  renderComposerFooterAccessory,
+  composerEmptySubmit = null
 }: AgentGUIDetailPaneProps): React.JSX.Element {
   "use memo";
   const viewModel = {
@@ -509,7 +510,10 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
       ),
       onSubmitEmpty: tuttiWorkflowComposer.planReviewSendActive
         ? tuttiWorkflowComposer.acceptPendingPlan
-        : undefined,
+        : composerEmptySubmit?.onSubmit,
+      emptySubmitLabel: tuttiWorkflowComposer.planReviewSendActive
+        ? undefined
+        : composerEmptySubmit?.label,
       onSubmitGuidance: submitGuidancePromptAndScrollToBottom,
       onPromptImagesUnsupported: showPromptImagesUnsupported,
       onSendQueuedPromptNext: sendQueuedPromptNext,
