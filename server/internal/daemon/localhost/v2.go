@@ -267,6 +267,13 @@ func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 			return
 		}
 		writeJSON(w, http.StatusOK, usage)
+	case len(parts) == 3 && parts[0] == "attachments" && parts[2] == "metadata" && r.Method == http.MethodGet:
+		a, _, err := v.svc.AttachmentFile(r.Context(), scopeID, parts[1])
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"name": a.FileName, "mime_type": a.MediaType, "size": a.Size})
 	case path == "/attachments" && r.Method == http.MethodPost:
 		v.upload(w, r, scopeID)
 	case len(parts) == 2 && parts[0] == "attachments" && r.Method == http.MethodGet:
@@ -299,6 +306,19 @@ func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 		listDirectories(w, r.URL.Query().Get("path"))
 	case path == "/directory-source" && r.Method == http.MethodGet:
 		v.directorySource(w, r, scopeID)
+	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "history" && r.Method == http.MethodGet:
+		before, err := strconv.ParseInt(r.URL.Query().Get("before_index"), 10, 64)
+		if err != nil {
+			writeV2Error(w, AppError("invalid_request", "A history cursor is required"))
+			return
+		}
+		turns, err := v.svc.History(r.Context(), scopeID, parts[1], before)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		older := len(turns) > 0 && turns[0].Turn.TurnIndex > 0
+		writeJSON(w, http.StatusOK, map[string]any{"store_generation": v.svc.Generation(), "turns": turnDTOs(turns), "has_older_turns": older})
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "snapshot" && r.Method == http.MethodGet:
 		v.snapshot(w, r, scopeID, parts[1])
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "commands" && r.Method == http.MethodPost:
@@ -370,27 +390,7 @@ func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id 
 		writeV2Error(w, err)
 		return
 	}
-	turns := make([]map[string]any, len(snap.Turns))
-	for i, t := range snap.Turns {
-		messages := make([]map[string]any, len(t.Messages))
-		for j, m := range t.Messages {
-			var attachments []string
-			_ = json.Unmarshal([]byte(m.AttachmentIds), &attachments)
-			messages[j] = map[string]any{"id": m.ID, "role": m.Role, "content": m.Content, "attachment_ids": attachments, "steered": m.Steered == 1, "failed": m.Failed == 1, "created_at": m.CreatedAt}
-		}
-		events := make([]map[string]any, len(t.Events))
-		for j, e := range t.Events {
-			events[j] = eventDTO(store.CommittedFromRow(e))
-		}
-		turn := map[string]any{"id": t.Turn.ID, "turn_index": t.Turn.TurnIndex, "request_id": t.Turn.RequestID, "status": t.Turn.Status, "started_at": t.Turn.StartedAt, "messages": messages, "events": events}
-		if t.Turn.CompletedAt.Valid {
-			turn["completed_at"] = t.Turn.CompletedAt.String
-		}
-		if t.Turn.ErrorKind != "" {
-			turn["error"] = map[string]any{"kind": t.Turn.ErrorKind, "message": t.Turn.Error}
-		}
-		turns[i] = turn
-	}
+	turns := turnDTOs(snap.Turns)
 	pending := make([]map[string]any, len(snap.PendingInteractions))
 	for i, in := range snap.PendingInteractions {
 		pending[i] = map[string]any{"interaction_id": in.ID, "turn_id": in.TurnID, "kind": in.Kind, "request": json.RawMessage(in.Payload), "created_at": in.CreatedAt}
@@ -415,6 +415,31 @@ func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id 
 		"created_at": c.CreatedAt, "forked_from_id": c.ForkedFromID, "forked_from_turn_id": c.ForkedFromTurnID,
 		"imported_from_session_id": c.ImportedFromSessionID,
 	})
+}
+
+func turnDTOs(views []store.TurnView) []map[string]any {
+	turns := make([]map[string]any, len(views))
+	for i, t := range views {
+		messages := make([]map[string]any, len(t.Messages))
+		for j, m := range t.Messages {
+			var attachments []string
+			_ = json.Unmarshal([]byte(m.AttachmentIds), &attachments)
+			messages[j] = map[string]any{"id": m.ID, "role": m.Role, "content": m.Content, "attachment_ids": attachments, "steered": m.Steered == 1, "failed": m.Failed == 1, "created_at": m.CreatedAt}
+		}
+		events := make([]map[string]any, len(t.Events))
+		for j, e := range t.Events {
+			events[j] = eventDTO(store.CommittedFromRow(e))
+		}
+		turn := map[string]any{"id": t.Turn.ID, "turn_index": t.Turn.TurnIndex, "request_id": t.Turn.RequestID, "status": t.Turn.Status, "started_at": t.Turn.StartedAt, "messages": messages, "events": events}
+		if t.Turn.CompletedAt.Valid {
+			turn["completed_at"] = t.Turn.CompletedAt.String
+		}
+		if t.Turn.ErrorKind != "" {
+			turn["error"] = map[string]any{"kind": t.Turn.ErrorKind, "message": t.Turn.Error}
+		}
+		turns[i] = turn
+	}
+	return turns
 }
 
 type commandBody struct {

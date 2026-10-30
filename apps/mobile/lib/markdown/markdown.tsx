@@ -103,6 +103,8 @@ interface Props {
    * case.
    */
   compact?: boolean;
+  onResourcePress?: (url: string) => boolean;
+  selectionAction?: { label: string; onSelect(text: string): void };
 }
 
 export function Markdown({
@@ -110,6 +112,8 @@ export function Markdown({
   attachments,
   selectable = true,
   compact = false,
+  onResourcePress,
+  selectionAction,
 }: Props) {
   const wsSlug = useWorkspaceStore((s) => s.currentWorkspaceSlug);
   const baseStyle = useMarkdownStyle();
@@ -135,6 +139,7 @@ export function Markdown({
 
   const onLinkPress = useCallback(
     ({ url }: { url: string }) => {
+      if (onResourcePress?.(url)) return;
       // `mention://` is an internal scheme — never hand it to the system.
       // No app is registered for it, so `Linking.openURL("mention://...")`
       // would surface iOS's "Cannot open URL" prompt or silently fail
@@ -170,7 +175,7 @@ export function Markdown({
         // Silent: failing loudly is worse than a no-op tap.
       });
     },
-    [wsSlug],
+    [wsSlug, onResourcePress],
   );
 
   if (segments.length === 0) return null;
@@ -194,6 +199,7 @@ export function Markdown({
                 markdownStyle={markdownStyle}
                 onLinkPress={onLinkPress}
                 selectable={selectable}
+                contextMenuItems={selectionAction ? [{ text: selectionAction.label, onPress: ({ text }) => selectionAction.onSelect(text) }] : undefined}
               />
             );
           case "code":

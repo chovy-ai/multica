@@ -440,6 +440,18 @@ func (s *Service) Snapshot(ctx context.Context, scopeID int64, conversationID st
 	return s.store.Snapshot(ctx, conversationID, snapshotTurns)
 }
 
+// History returns settled turns before an exclusive turn index.
+func (s *Service) History(ctx context.Context, scopeID int64, conversationID string, before int64) ([]store.TurnView, error) {
+	conv, err := s.scopedConversation(ctx, scopeID, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if before < 0 || before > conv.TurnCount {
+		return nil, fmt.Errorf("%w: invalid history cursor", ErrInvalidRequest)
+	}
+	return s.store.TurnsBefore(ctx, conversationID, before, snapshotTurns)
+}
+
 // Subscribe starts a catch-up subscription to a conversation in scope.
 func (s *Service) Subscribe(ctx context.Context, scopeID int64, conversationID string, afterSeq int64) (*Subscription, int64, error) {
 	if _, err := s.scopedConversation(ctx, scopeID, conversationID); err != nil {

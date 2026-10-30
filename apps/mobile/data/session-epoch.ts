@@ -20,6 +20,13 @@
  * the API client's 401 handler.
  */
 let epoch = 0;
+const listeners = new Set<() => void>();
+
+/** Release account-bound native connections before asynchronous Keychain work. */
+export function onSessionInvalidated(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
 
 /** Read the current epoch. Capture this BEFORE the first await. */
 export function currentSessionEpoch(): number {
@@ -34,6 +41,7 @@ export function currentSessionEpoch(): number {
  */
 export function invalidateSessionEpoch(): void {
   epoch++;
+  for (const listener of listeners) listener();
 }
 
 /** True when the session has been invalidated or replaced since `at`. */

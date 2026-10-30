@@ -196,10 +196,18 @@ export interface ApiClientOptions {
 
 class ApiClient {
   private token: string | null = null;
+  private tokenListeners = new Set<() => void>();
   private options: ApiClientOptions = {};
 
   setToken(token: string | null) {
+    if (this.token === token) return;
     this.token = token;
+    for (const listener of this.tokenListeners) listener();
+  }
+
+  onTokenChange(listener: () => void): () => void {
+    this.tokenListeners.add(listener);
+    return () => { this.tokenListeners.delete(listener); };
   }
 
   /** The bearer token in use, or null when signed out. Session renewal reads

@@ -36,6 +36,9 @@ if [ -n "${MULTICA_TEST_FAIL_PREBUILD:-}" ]; then
       ;;
   esac
 fi
+if [ -n "${MULTICA_TEST_FAIL_DEVICE_LINK:-}" ] && [ "$*" = 'run build:device-link' ]; then
+  exit 1
+fi
 EOF
 chmod +x "$BIN_DIR/pnpm"
 
@@ -54,19 +57,18 @@ fail() {
 "$SCRIPT_DIR/ios-run.sh"
 
 expected_prebuild='exec expo prebuild -p ios --no-install'
-[ "$(sed -n '1p' "$CALLS_FILE")" = "$expected_prebuild" ] ||
-  fail "first call should be the prebuild, got: $(sed -n '1p' "$CALLS_FILE")"
-[ "$(sed -n '2p' "$CALLS_FILE")" = 'exec expo run:ios' ] ||
-  fail "second call should be run:ios, got: $(sed -n '2p' "$CALLS_FILE")"
-[ "$(wc -l <"$CALLS_FILE")" -eq 2 ] || fail "expected exactly 2 calls"
+[ "$(sed -n '1p' "$CALLS_FILE")" = 'run build:device-link' ] || fail "native device-link build must run first"
+[ "$(sed -n '2p' "$CALLS_FILE")" = "$expected_prebuild" ] || fail "prebuild must run after native build"
+[ "$(sed -n '3p' "$CALLS_FILE")" = 'exec expo run:ios' ] || fail "run:ios must run last"
+[ "$(wc -l <"$CALLS_FILE")" -eq 3 ] || fail "expected exactly 3 calls"
 
 # --- arguments forward to run:ios only --------------------------------------
 : >"$CALLS_FILE"
 "$SCRIPT_DIR/ios-run.sh" --device --configuration Release
 
-[ "$(sed -n '1p' "$CALLS_FILE")" = "$expected_prebuild" ] ||
+[ "$(sed -n '2p' "$CALLS_FILE")" = "$expected_prebuild" ] ||
   fail "prebuild must not receive run:ios arguments"
-[ "$(sed -n '2p' "$CALLS_FILE")" = 'exec expo run:ios --device --configuration Release' ] ||
+[ "$(sed -n '3p' "$CALLS_FILE")" = 'exec expo run:ios --device --configuration Release' ] ||
   fail "run:ios should receive the forwarded arguments"
 
 # --- a failed prebuild aborts before run:ios --------------------------------
@@ -79,5 +81,14 @@ set -e
 [ "$status" -ne 0 ] || fail "a failed prebuild should make the wrapper exit non-zero"
 grep -q 'run:ios' "$CALLS_FILE" &&
   fail "run:ios must not run after a failed prebuild"
+
+# --- a failed native build aborts before prebuild ----------------------------
+: >"$CALLS_FILE"
+set +e
+MULTICA_TEST_FAIL_DEVICE_LINK=1 "$SCRIPT_DIR/ios-run.sh" >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail "a failed device-link build must stop the wrapper"
+[ "$(wc -l <"$CALLS_FILE")" -eq 1 ] || fail "Expo must not run after a failed device-link build"
 
 echo "ios-run.test.sh: all assertions passed"

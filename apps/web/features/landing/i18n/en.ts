@@ -104,7 +104,7 @@ export function createEnDict(
       label: "RUNTIMES",
       title: "One dashboard for all your compute",
       description:
-        "Local daemons and cloud runtimes, managed from a single panel. Real-time monitoring of online/offline status, usage charts, and activity heatmaps. Auto-detects 28 supported coding tools on your machine.",
+        "Local daemons and cloud runtimes, managed from a single panel. Real-time monitoring of online/offline status, usage charts, and activity heatmaps. Auto-detects 28 supported coding tools on your machine. On iOS, AI Sessions connects to your computer’s Codex and Claude Code conversations through Device link.",
       cards: [
         {
           title: "Unified runtime panel",

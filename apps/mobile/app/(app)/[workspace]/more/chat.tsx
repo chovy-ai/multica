@@ -83,6 +83,7 @@ import {
 } from "@/lib/dispatch-reason";
 import { useT } from "@/lib/i18n";
 import { useAgentPresence } from "@/lib/use-agent-presence";
+import { IconButton } from "@/components/ui/icon-button";
 import { Header } from "@/components/ui/header";
 import { ChatTitleButton } from "@/components/chat/chat-title-button";
 import { ChatSessionActions } from "@/components/chat/chat-session-actions";
@@ -95,7 +96,7 @@ import { RuntimeRequiredBanner } from "@/components/chat/runtime-required-banner
 import { useChatSelectStore } from "@/data/chat-select-store";
 import { isAgentRuntimeBound } from "@/lib/is-agent-runtime-bound";
 
-export default function ChatTab() {
+export default function ChatScreen() {
   const qc = useQueryClient();
   const { t } = useT("chat");
   const sendFailureMessage = useCallback((err: unknown) => {
@@ -505,6 +506,7 @@ export default function ChatTab() {
   return (
     <View className="flex-1 bg-background">
       <Header
+        left={<IconButton name="chevron-back" accessibilityLabel={t("navigation:back")} onPress={() => router.back()} />}
         center={
           <ChatTitleButton
             currentSession={activeSession}

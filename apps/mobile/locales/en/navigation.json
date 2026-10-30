@@ -4,13 +4,15 @@
     "inbox": "Inbox",
     "my_issues": "My Issues",
     "chat": "Chat",
-    "more": "More"
+    "more": "More",
+    "ai_sessions": "AI Sessions"
   },
   "more_menu": {
     "pinned": "Pinned",
     "issues": "Issues",
     "projects": "Projects",
-    "account_settings": "Account settings"
+    "account_settings": "Account settings",
+    "chat": "Chat"
   },
   "routes": {
     "issues": "Issues",
@@ -33,6 +35,7 @@
     "runs": "Runs",
     "execution_record": "Execution record",
     "add_resource": "Add resource",
-    "recent": "Recent"
+    "recent": "Recent",
+    "chat": "Chat"
   }
 }

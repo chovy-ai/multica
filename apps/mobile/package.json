@@ -17,7 +17,8 @@
     "ios:device:prod:release": "dotenv -e .env.production.local -e .env.production -- cross-env APP_ENV=production ./scripts/ios-run.sh --device --configuration Release",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run && bash scripts/ios-run.test.sh"
+    "test": "vitest run && bash scripts/ios-run.test.sh",
+    "build:device-link": "bash scripts/build-device-link.sh"
   },
   "dependencies": {
     "@expo/dom-webview": "~57.0.1",

@@ -30,7 +30,6 @@ import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
 import {
   useInboxUnreadCount,
-  useChatUnreadMessageCount,
 } from "@/lib/unread-counts";
 import { MoreTabDropdownAnchor } from "@/components/nav/more-tab-dropdown";
 import { useT } from "@/lib/i18n";
@@ -51,14 +50,11 @@ export default function TabsLayout() {
 
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const inboxUnread = useInboxUnreadCount(wsId);
-  const chatUnread = useChatUnreadMessageCount(wsId);
 
   // Truncation aligned with web's sidebar badges: 99+ for both. `undefined`
   // makes React Navigation hide the badge, so zero-count is a free no-op.
   const inboxBadge =
     inboxUnread > 0 ? (inboxUnread > 99 ? "99+" : String(inboxUnread)) : undefined;
-  const chatBadge =
-    chatUnread > 0 ? (chatUnread > 99 ? "99+" : String(chatUnread)) : undefined;
 
   // Imperative handle into the More tab's dropdown — listeners.tabPress
   // calls .open(); the @rn-primitives Trigger measures itself inside
@@ -103,11 +99,9 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="chat"
+          name="ai-sessions"
           options={{
-            title: t("tabs.chat"),
-            tabBarBadge: chatBadge,
-            tabBarBadgeStyle: BADGE_STYLE,
+            title: t("tabs.ai_sessions"),
             tabBarIcon: ({ color, size, focused }) => (
               <Image
                 source={focused ? "sf:bubble.left.fill" : "sf:bubble.left"}

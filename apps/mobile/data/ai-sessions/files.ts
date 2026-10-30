@@ -1,0 +1,22 @@
+import { requireOptionalNativeModule } from "expo";
+import type { AISessionClient } from "./client";
+
+interface NativeFiles { clearFiles(): Promise<void>; openFile(url: string, headers: Record<string, string>, name: string, share: boolean): Promise<void> }
+const native = requireOptionalNativeModule<NativeFiles>("MulticaDeviceLink");
+
+export function clearDeviceFiles() { void native?.clearFiles().catch(() => {}); }
+
+export async function openDeviceFile(client: AISessionClient, path: string, name = "", share = false) {
+  if (!native) throw new Error("native_unavailable");
+  await native.openFile(client.url(path), client.headers(), name, share);
+}
+
+export function remoteWebURL(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
+    if (host === "localhost" || host.endsWith(".localhost") || /^127\./.test(host) || ["::1", "[::1]", "0.0.0.0"].includes(host)) return null;
+    return url.href;
+  } catch { return null; }
+}
