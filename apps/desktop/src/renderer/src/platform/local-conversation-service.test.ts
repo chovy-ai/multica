@@ -20,6 +20,7 @@ let routes: Route[];
 let requests: { method: string; path: string; body?: Record<string, unknown> }[];
 let sent: unknown[];
 let messages: ((scopeValue: typeof scope, message: unknown) => void)[];
+let connections: Set<(scopeValue: typeof scope, connected: boolean) => void>;
 const disposers: (() => void)[] = [];
 
 function transport(): LocalV2Transport {
@@ -31,14 +32,14 @@ function transport(): LocalV2Transport {
     },
     send: async (_scope, message) => { sent.push(message); },
     subscribe: (listener) => { messages.push(listener); return () => {}; },
-    onConnection: () => () => {},
+    onConnection: (listener) => { connections.add(listener); return () => { connections.delete(listener); }; },
     fileUrl: (_scope, path) => `v2:${path}`,
     upload: async (_scope, file) => ({ id: "att-1", name: file.name, mime_type: file.type, size: file.size }),
     choose: vi.fn(),
   };
 }
 
-function setup(options: { getSelectionIntent?: () => string } = {}, deviceId?: string) {
+function setup(options: { getSelectionIntent?: () => string; getSelectedSessionId?: () => string | null } = {}, deviceId?: string) {
   const callbacks = { onLocalSelect: vi.fn(), onOpenSide: vi.fn(), onShowMessage: vi.fn() };
   const qc = new QueryClient();
   const service = createLocalConversationParentService({ queryClient: qc, workspaceId: "ws", workspaceSlug: "workspace", userId: "user", isCurrent: () => true, resolveAvatar: (value) => value,
@@ -49,7 +50,7 @@ function setup(options: { getSelectionIntent?: () => string } = {}, deviceId?: s
 
 beforeEach(() => {
   vi.resetAllMocks();
-  routes = []; requests = []; sent = []; messages = [];
+  routes = []; requests = []; sent = []; messages = []; connections = new Set();
   mock.api.getBaseUrl.mockReturnValue("https://example.test");
   mock.api.listAgents.mockResolvedValue([{ id: "design", workspace_id: "ws", owner_id: "user", name: "Design reviewer", description: "", runtime_id: "cloud-runtime", runtime_bound: true, runtime_config: {}, visibility: "workspace", archived_at: null, permission_mode: "private", invocation_targets: [] }]);
   mock.api.listMembers.mockResolvedValue([{ user_id: "user", role: "owner" }]);
@@ -66,6 +67,23 @@ beforeEach(() => {
 afterEach(() => { disposers.splice(0).forEach((dispose) => dispose()); });
 
 describe("local conversation parent service over v2", () => {
+  it("reloads the selected conversation on reconnect even when its first snapshot failed before subscribing", async () => {
+    routes.unshift((_method, path) => path === "/sessions/c1/snapshot" ? new Error("device_unreachable: the network changed") : undefined);
+    const { service } = setup({ getSelectedSessionId: () => "c1" }, "peer-1");
+    await expect(service.request("local.snapshot", { sessionId: "c1" })).rejects.toThrow("network changed");
+    const events: unknown[] = []; service.subscribe((event) => events.push(event));
+    for (const listener of connections) listener({ ...scope, workspaceId: "other" }, true);
+    expect(events).toEqual([]);
+    for (const listener of connections) listener(scope, false);
+    expect(events).toEqual([{ type: "connection", connected: false }]);
+    for (const listener of connections) listener(scope, true);
+    expect(events).toContainEqual({ type: "connection", connected: true });
+    expect(events).toContainEqual({ type: "local.reload", sessionId: "c1" });
+    service.dispose(); events.length = 0;
+    for (const listener of connections) listener(scope, true);
+    expect(events).toEqual([]);
+  });
+
   it("loads providers, folder projects and every conversation with its running turn", async () => {
     const { service } = setup();
     const state = await service.load();

@@ -139,6 +139,80 @@ describe("DirectLocalV2Transport", () => {
     expect(connection).toHaveBeenCalledWith(scope, false);
   });
 
+  it("retries a failed initial handshake when the peer becomes reachable", async () => {
+    const { daemon, transport } = await setup(undefined, { deviceId: "peer-1" });
+    const upgrade = daemon.server.listeners("upgrade")[0]!;
+    daemon.server.removeAllListeners("upgrade");
+    let unavailable = true;
+    daemon.server.on("upgrade", (req, socket, head) => {
+      if (unavailable) { socket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n"); socket.destroy(); return; }
+      upgrade(req, socket, head);
+    });
+    const connection = vi.fn(); transport.onConnection(connection);
+    await expect(transport.send(scope, { version: 2, type: "subscribe_scope", after_scope_seq: 0 })).rejects.toThrow();
+    unavailable = false;
+    await until(() => daemon.sockets.length === 1);
+    expect(connection).toHaveBeenLastCalledWith(scope, true);
+    expect(daemon.requests.filter((request) => request.url?.endsWith("/ws-ticket")).length).toBeGreaterThan(1);
+    expect(daemon.received).toEqual([]);
+  });
+
+  it("preserves account errors instead of reporting them as a network outage", async () => {
+    const { daemon, transport } = await setup(undefined, { deviceId: "peer-1" });
+    daemon.server.removeAllListeners("request");
+    daemon.server.on("request", (_req, res) => { res.writeHead(403, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { kind: "account_mismatch", message: "another account" } })); });
+    await expect(transport.send(scope, { version: 2, type: "subscribe_scope", after_scope_seq: 0 })).rejects.toThrow("account_mismatch");
+    expect(transport.availability()).toEqual({ state: "unavailable", reason: "account_mismatch" });
+  });
+
+  it("cancels a pending handshake on release without resurrecting the scope", async () => {
+    const { daemon, transport } = await setup();
+    daemon.server.removeAllListeners("upgrade");
+    let waiting = false;
+    let closeWaiting = () => {};
+    daemon.server.on("upgrade", (_req, socket) => { waiting = true; closeWaiting = () => { socket.destroy(); }; });
+    try {
+      const pending = expect(transport.send(scope, { version: 2, type: "subscribe_scope", after_scope_seq: 0 })).rejects.toThrow();
+      await until(() => waiting);
+      transport.release(scope);
+      await pending;
+      const tickets = () => daemon.requests.filter((request) => request.url?.endsWith("/ws-ticket")).length;
+      const before = tickets();
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      expect(tickets()).toBe(before);
+      expect(daemon.sockets).toHaveLength(0);
+    } finally { closeWaiting(); }
+  });
+
+  it("times out a stalled handshake and obtains a fresh ticket for its retry", async () => {
+    vi.useFakeTimers();
+    const sockets: HandshakeSocket[] = [];
+    class HandshakeSocket extends EventTarget {
+      static OPEN = 1; static CONNECTING = 0;
+      readyState = 0;
+      constructor(_url: string) { super(); sockets.push(this); }
+      close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+      send = vi.fn();
+    }
+    const request = vi.fn(async () => new Response(JSON.stringify({ ticket: "fresh-ticket" }), { headers: { "Content-Type": "application/json" } }));
+    const transport = new DirectLocalV2Transport({
+      bridge: { endpoint: vi.fn(async () => ({ base: "127.0.0.1:1", apiUrl: "https://api.multica.ai", token: "r1", fileKey: "fk" })), choose: vi.fn(), chooseRemote: vi.fn(), hostRequest: vi.fn() },
+      WebSocket: HandshakeSocket as unknown as NonNullable<DirectLocalV2Options["WebSocket"]>, fetch: request,
+    });
+    try {
+      const pending = expect(transport.send(scope, { version: 2, type: "subscribe_scope", after_scope_seq: 0 })).rejects.toThrow("handshake timed out");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await pending;
+      expect(sockets[0]!.readyState).toBe(3);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(sockets).toHaveLength(2);
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(sockets.every((socket) => socket.send.mock.calls.length === 0)).toBe(true);
+    } finally { transport.release(scope); await vi.advanceTimersByTimeAsync(0); vi.useRealTimers(); }
+  });
+
   it("reaches another device under this daemon's /local/devices route with a stable client ID", async () => {
     const chooseRemote = vi.fn<NonNullable<DirectLocalV2Options["chooseRemote"]>>(async () => ({ id: "f1" }));
     const { daemon, transport, bridge } = await setup(undefined, { deviceId: "peer 1", chooseRemote });

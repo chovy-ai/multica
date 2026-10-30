@@ -15,6 +15,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 )
 
 // testAccount is a mutable server-side device list.
@@ -249,6 +251,54 @@ func TestDeviceSeenBeforeRegistrationConnectsAfterRefresh(t *testing.T) {
 		return a.host.Network().Connectedness(idB) == network.Connected
 	}) {
 		t.Fatal("newly registered device seen earlier was not dialed")
+	}
+}
+
+func TestPeerReconnectsAtNewAddressAfterDisconnect(t *testing.T) {
+	keyA, idA := newKey(t)
+	keyB, idB := newKey(t)
+	acctA, acctB := &testAccount{}, &testAccount{}
+	acctA.set(Peer{ID: idA}, Peer{ID: idB})
+	acctB.set(Peer{ID: idA}, Peer{ID: idB})
+	a := startDevice(t, keyA, acctA, "")
+	b := startDevice(t, keyB, acctB, "")
+	acctA.set(Peer{ID: idA}, Peer{ID: idB, RegisteredAddrs: b.host.Addrs()})
+	if err := a.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return b.host.Network().Connectedness(idA) == network.Connected }) {
+		t.Fatal("initial connection failed")
+	}
+	// The same device publishes new listeners as its old network goes away.
+	next := startDevice(t, keyB, acctB, "")
+	acctA.set(Peer{ID: idA}, Peer{ID: idB, RegisteredAddrs: next.host.Addrs()})
+	b.host.Network().(*swarm.Swarm).ListenClose(b.host.Network().ListenAddresses()...)
+	if err := b.host.Network().ClosePeer(idA); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, minKickInterval+5*time.Second, func() bool { return next.host.Network().Connectedness(idA) == network.Connected }) {
+		t.Fatal("did not refresh addresses and reconnect before the hourly discovery tick")
+	}
+}
+
+func TestUnresponsivePeerConnectionIsClosedForReconnect(t *testing.T) {
+	keyA, idA := newKey(t)
+	keyB, idB := newKey(t)
+	acct := &testAccount{}
+	acct.set(Peer{ID: idA}, Peer{ID: idB})
+	a, b := startDevice(t, keyA, acct, ""), startDevice(t, keyB, acct, "")
+	introduce(a, b)
+	if !waitFor(t, 5*time.Second, func() bool { return a.host.Network().Connectedness(idB) == network.Connected }) {
+		t.Fatal("initial connection failed")
+	}
+	// Keep the transport open but stop answering pings, as a stale network path does.
+	b.host.SetStreamHandler(ping.ID, func(st network.Stream) { defer st.Close(); _, _ = io.Copy(io.Discard, st) })
+	conns := a.host.Network().ConnsToPeer(idB)
+	a.checkPeer(idB)
+	for _, c := range conns {
+		if !c.IsClosed() {
+			t.Fatal("unresponsive connection remained cached")
+		}
 	}
 }
 

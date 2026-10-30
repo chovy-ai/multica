@@ -295,6 +295,15 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     workspaceTimer = setTimeout(() => { workspaceTimer = undefined; publish({ type: "invalidate", scope: "workspace" }); }, 50);
   });
   const unsubscribeCloud = cloud.subscribe((event) => { if (event.type === "invalidate" && event.scope === "workspace") { cloudDirty = true; publish(event); } });
+  const unsubscribeConnection = transport.onConnection((value, connected) => {
+    if (disposed || !options.isCurrent() || value.userId !== scope.userId || value.workspaceId !== scope.workspaceId) return;
+    publish({ type: "connection", connected });
+    if (!connected) return;
+    // A failed first snapshot has no event subscription to signal its recovery.
+    const selected = options.getSelectedSessionId?.();
+    if (selected && !subscriptions.has(selected)) publish({ type: "local.reload", sessionId: selected });
+    publish({ type: "invalidate", scope: "workspace" });
+  });
   return { load, request: request as <M extends AgentGuiRpcMethod>(method: M, params: AgentGuiRpcMethods[M]["params"]) => Promise<AgentGuiRpcMethods[M]["result"]>,
     publish, subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     reconnect: () => { cloudDirty = true; cloud.reconnect(); publish({ type: "invalidate", scope: "workspace" }); },
@@ -302,7 +311,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       disposed = true;
       for (const id of [...subscriptions.keys()]) unsubscribe(id);
       if (workspaceTimer) clearTimeout(workspaceTimer);
-      unsubscribeSummaries(); unsubscribeCloud(); cloud.dispose(); listeners.clear();
+      unsubscribeSummaries(); unsubscribeCloud(); unsubscribeConnection(); cloud.dispose(); listeners.clear();
     },
   };
 }

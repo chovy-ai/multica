@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	ma "github.com/multiformats/go-multiaddr"
@@ -44,6 +45,9 @@ const (
 	// relayRecheckInterval is how often a registry without a relay is asked
 	// again.
 	relayRecheckInterval = 10 * time.Minute
+	peerProbeInterval    = 15 * time.Second
+	peerProbeTimeout     = 5 * time.Second
+	peerRetryMax         = 30 * time.Second
 )
 
 var relayRetrySchedule = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute, 10 * time.Minute}
@@ -95,6 +99,8 @@ type Service struct {
 
 	refreshMu   sync.Mutex
 	lastRefresh time.Time
+	dialMu      sync.Mutex
+	dialing     map[peer.ID]bool
 
 	discoveredMu sync.Mutex
 	discovered   map[peer.ID]peer.AddrInfo
@@ -102,6 +108,7 @@ type Service struct {
 	relayFetch RelayFunc
 	onAddrs    func()
 	relayLost  chan struct{}
+	probePeers chan struct{}
 
 	relayMu       sync.Mutex
 	relayInfo     *peer.AddrInfo
@@ -143,10 +150,12 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 		kick:       make(chan struct{}, 1),
+		dialing:    map[peer.ID]bool{},
 		discovered: map[peer.ID]peer.AddrInfo{},
 		relayFetch: cfg.Relay,
 		onAddrs:    cfg.OnAddrsChanged,
 		relayLost:  make(chan struct{}, 1),
+		probePeers: make(chan struct{}, 1),
 	}
 	if s.interval <= 0 {
 		s.interval = defaultRefreshInterval
@@ -173,7 +182,8 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		s.Close()
 		return nil, fmt.Errorf("p2p: subscribe to address updates: %w", err)
 	}
-	s.wg.Add(2)
+	h.Network().Notify(&network.NotifyBundle{DisconnectedF: s.onDisconnected})
+	s.wg.Add(3)
 	go func() {
 		defer s.wg.Done()
 		s.refreshLoop()
@@ -183,8 +193,11 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		defer addrSub.Close()
 		s.addrsLoop(addrSub.Out())
 	}()
+	go func() {
+		defer s.wg.Done()
+		s.checkPeersLoop()
+	}()
 	if s.relayFetch != nil {
-		h.Network().Notify(&network.NotifyBundle{DisconnectedF: s.onDisconnected})
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
@@ -197,7 +210,9 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 
 // Close stops discovery and the host, closing every connection.
 func (s *Service) Close() error {
+	s.dialMu.Lock()
 	s.cancel()
+	s.dialMu.Unlock()
 	if s.mdns != nil {
 		s.mdns.Close()
 	}
@@ -271,17 +286,113 @@ func (s *Service) connect(info peer.AddrInfo) {
 	if s.host.Network().Connectedness(info.ID) == network.Connected {
 		return
 	}
+	s.dialMu.Lock()
+	if s.ctx.Err() != nil || s.dialing[info.ID] {
+		s.dialMu.Unlock()
+		return
+	}
+	s.dialing[info.ID] = true
 	s.wg.Add(1)
+	s.dialMu.Unlock()
 	go func() {
 		defer s.wg.Done()
-		ctx, cancel := context.WithTimeout(network.WithAllowLimitedConn(s.ctx, "multica-device-link"), connectTimeout)
-		defer cancel()
-		// Direct addresses are tried before the relay circuit; once relayed,
-		// DCUtR tries to upgrade to a direct connection.
-		if err := s.host.Connect(ctx, info); err != nil && s.ctx.Err() == nil {
-			s.logger.Debug("p2p: connect failed", "peer_id", info.ID.String(), "error", err)
+		defer func() { s.dialMu.Lock(); delete(s.dialing, info.ID); s.dialMu.Unlock() }()
+		for delay := minKickInterval; s.ctx.Err() == nil; delay = min(delay*2, peerRetryMax) {
+			p, allowed := s.allow.get(info.ID)
+			if !allowed || s.host.Network().Connectedness(info.ID) == network.Connected {
+				return
+			}
+			// Rebuild the target each attempt: a device keeps its identity when its network changes.
+			target := peer.AddrInfo{ID: info.ID, Addrs: append([]ma.Multiaddr(nil), p.RegisteredAddrs...)}
+			s.discoveredMu.Lock()
+			target.Addrs = append(target.Addrs, s.discovered[info.ID].Addrs...)
+			s.discoveredMu.Unlock()
+			if len(target.Addrs) == 0 {
+				return
+			}
+			// This loop owns the bounded retry delay; old transport backoff must not hide recovery.
+			if sw, ok := s.host.Network().(*swarm.Swarm); ok {
+				sw.Backoff().Clear(info.ID)
+			}
+			ctx, cancel := context.WithTimeout(network.WithAllowLimitedConn(s.ctx, "multica-device-link"), connectTimeout)
+			err := s.host.Connect(ctx, target)
+			cancel()
+			if err == nil || s.ctx.Err() != nil {
+				return
+			}
+			s.logger.Debug("p2p: connect failed; retrying", "peer_id", info.ID.String(), "error", err, "retry_in", delay)
+			s.requestRefresh()
+			timer := time.NewTimer(delay)
+			select {
+			case <-s.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
 	}()
+}
+
+// Probe established paths too: a network switch can leave a TCP connection
+// looking connected until a read/write eventually times out.
+func (s *Service) checkPeersLoop() {
+	ticker := time.NewTicker(peerProbeInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+		case <-s.probePeers:
+		}
+		s.relayMu.Lock()
+		var relayID peer.ID
+		if s.relayInfo != nil {
+			relayID = s.relayInfo.ID
+		}
+		s.relayMu.Unlock()
+		if relayID != "" {
+			s.checkPeer(relayID)
+		}
+		for _, p := range s.allow.list() {
+			if s.ctx.Err() != nil {
+				return
+			}
+			s.checkPeer(p.ID)
+		}
+	}
+}
+
+func (s *Service) checkPeer(id peer.ID) {
+	if !s.allow.allowed(id) && !s.isRelay(id) {
+		return
+	}
+	conns := s.host.Network().ConnsToPeer(id)
+	if len(conns) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(network.WithAllowLimitedConn(s.ctx, "multica-peer-probe"), peerProbeTimeout)
+	var err error
+	select {
+	case result, ok := <-ping.Ping(ctx, s.host, id):
+		if !ok {
+			err = errors.New("p2p: ping ended before a response")
+		} else {
+			err = result.Error
+		}
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	cancel()
+	if err == nil || s.ctx.Err() != nil {
+		return
+	}
+	s.logger.Info("p2p: peer path stopped responding; reconnecting", "peer_id", id.String(), "error", err)
+	// A replacement connection established during the probe is left alone.
+	for _, c := range conns {
+		_ = c.Close()
+	}
+	s.requestRefresh()
 }
 
 func (s *Service) requestRefresh() {
@@ -407,6 +518,11 @@ func (s *Service) addrsLoop(events <-chan any) {
 			fire = timer.C
 		case <-fire:
 			fire = nil
+			s.requestRefresh()
+			select {
+			case s.probePeers <- struct{}{}:
+			default:
+			}
 			if s.onAddrs != nil {
 				s.onAddrs()
 			}
@@ -441,7 +557,13 @@ func (s *Service) withCircuitAddrs(addrs []ma.Multiaddr) []ma.Multiaddr {
 }
 
 func (s *Service) onDisconnected(n network.Network, c network.Conn) {
-	if !s.isRelay(c.RemotePeer()) || n.Connectedness(c.RemotePeer()) == network.Connected {
+	if s.ctx.Err() != nil || n.Connectedness(c.RemotePeer()) == network.Connected {
+		return
+	}
+	if s.allow.allowed(c.RemotePeer()) {
+		s.requestRefresh()
+	}
+	if !s.isRelay(c.RemotePeer()) {
 		return
 	}
 	select {

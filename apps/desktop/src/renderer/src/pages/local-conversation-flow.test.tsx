@@ -309,6 +309,46 @@ describe("project conversation pagination", () => {
 });
 
 describe("restoring the selected conversation after a tab switch", () => {
+  it("reloads a failed remote selection when that device reconnects without clearing the route", async () => {
+    mock.pathname = "/test/conversations/devices/peer-1";
+    const original = mock.request.getMockImplementation()!;
+    let online = false;
+    mock.request.mockImplementation(async (scope, method, params) => {
+      if (method === "listPage") return [];
+      if (method === "read") {
+        if (!online) throw new Error("device_unreachable: the network changed");
+        return source;
+      }
+      return original(scope, method, params);
+    });
+    render(page());
+    const reads = () => mock.request.mock.calls.filter(([, method]) => method === "read").length;
+    await waitFor(() => expect(reads()).toBeGreaterThan(0));
+    const before = reads(); online = true;
+    await act(async () => publishConnection({ userId: "user", workspaceId: "different" }, true));
+    expect(reads()).toBe(before);
+    await act(async () => publishConnection({ userId: "user", workspaceId: "workspace" }, true));
+    expect(await screen.findByRole("link", { name: /Original/ })).toBeVisible();
+    expect(reads()).toBeGreaterThan(before);
+    expect(mock.replace).not.toHaveBeenCalled();
+  });
+
+  it("recovers the conversation list error after reconnecting", async () => {
+    const original = mock.request.getMockImplementation()!;
+    let online = false;
+    mock.request.mockImplementation(async (scope, method, params) => {
+      if (method === "listPage" && !online) throw new Error("device_unreachable: the network changed");
+      return original(scope, method, params);
+    });
+    render(page());
+    const list = screen.getByTestId("local-conversation-sessions");
+    await within(list).findByRole("button", { name: "重试" });
+    online = true;
+    await act(async () => publishConnection({ userId: "user", workspaceId: "workspace" }, true));
+    expect(await within(list).findByRole("link", { name: /Original/ })).toBeVisible();
+    expect(within(list).queryByRole("button", { name: "重试" })).not.toBeInTheDocument();
+  });
+
   it("leaves image markers out of local session previews without changing saved history", async () => {
     source.messages = [{ id: "image-message", role: "user", content: "Can you see it?\n\n[Image attachment: screen.png]", attachmentIds: ["image"], turnId: "turn", createdAt: source.createdAt }];
     render(page());
