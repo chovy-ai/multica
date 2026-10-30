@@ -72,6 +72,7 @@ func NewV2(svc *service.Service, token, profileDir string) *V2 {
 		tickets: tickets{items: map[string]ticket{}, now: time.Now}, origins: map[string]string{}, presence: map[int64]map[string]map[string]RemotePeer{}}
 	v.hosts.origin = v.origin
 	svc.SetHost(v.hosts.request)
+	svc.OnTurnEnd(v.turnEnded)
 	return v
 }
 
@@ -467,7 +468,12 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			writeJSON(w, http.StatusAccepted, result)
 			return
 		}
+		// Marked before the turn starts, so an instant turn end still clears it.
+		v.startedRun(scopeID, id, callerOf(r.Context()), true)
 		result, err := v.svc.Send(r.Context(), service.SendCommand{ScopeID: scopeID, ConversationID: id, RequestID: body.RequestID, Text: body.Text, Prompt: body.Prompt, AttachmentIDs: body.AttachmentIDs, References: body.References})
+		if err != nil || result.Replayed {
+			v.startedRun(scopeID, id, callerOf(r.Context()), false)
+		}
 		if err != nil {
 			writeV2Error(w, err)
 			return

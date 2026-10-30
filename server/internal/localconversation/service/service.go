@@ -104,6 +104,8 @@ type Service struct {
 	titles    titleRuns
 	delivery  deliveries
 	host      Host
+	// turnEnd learns that a conversation's turn ended; see OnTurnEnd.
+	turnEnd func(conversationID string)
 	side      sideWorkspaces
 	imports   imports
 	// closed is closed when Close begins.
@@ -711,6 +713,13 @@ type HostError struct {
 }
 
 func (e *HostError) Error() string { return e.Message }
+
+// OnTurnEnd calls fn after each turn of a conversation ends.
+func (s *Service) OnTurnEnd(fn func(conversationID string)) {
+	s.mu.Lock()
+	s.turnEnd = fn
+	s.mu.Unlock()
+}
 
 // SetHost connects the service to the Desktop transport.
 func (s *Service) SetHost(h Host) {
