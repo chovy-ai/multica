@@ -8,8 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/procgroup"
 )
 
 const instructions = `Generate a concise conversation title from the first user message supplied as quoted JSON data.
@@ -75,7 +76,7 @@ func Generate(ctx context.Context, req Request) (string, error) {
 	cmd.Stdin = bytes.NewReader(input)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procgroup.Own(cmd)
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
@@ -84,7 +85,7 @@ func Generate(ctx context.Context, req Request) (string, error) {
 	select {
 	case err = <-done:
 	case <-ctx.Done():
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		procgroup.Kill(cmd)
 		<-done
 		return "", ctx.Err()
 	}

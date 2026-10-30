@@ -12,8 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"syscall"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/procgroup"
 )
 
 // errNoAnswer is returned when the CLI exits or times out before answering.
@@ -123,7 +124,7 @@ func runProbe(
 	cmd := exec.Command(req.executable, args...)
 	cmd.Dir = req.dir
 	cmd.Env = req.env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procgroup.Own(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return probeResult{}, err
@@ -139,7 +140,7 @@ func runProbe(
 	readerDone := make(chan struct{})
 	defer func() {
 		_ = stdin.Close()
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		procgroup.Kill(cmd)
 		<-readerDone
 		_ = cmd.Wait()
 	}()
