@@ -54,9 +54,9 @@ describe("localV2HostHandler", () => {
 describe("remoteHostRequests", () => {
   it("lets another device confirm settings and control its Side, but keeps this device's own to itself", async () => {
     const { handlers, handle } = setup();
-    const remote = remoteHostRequests(handle, "peer-1");
+    const remote = remoteHostRequests(handle, "peer-1", async () => "Mac Studio");
     await remote(scope, "settings.confirm", { operation: "settings_invite_member", scope: { workspace_id: "w1", user_id: "u1" }, input: { email: "a@example.com" } });
-    expect(handlers.confirm).toHaveBeenCalled();
+    expect(handlers.confirm).toHaveBeenCalledWith(expect.objectContaining({ source: "Mac Studio" }), expect.anything(), expect.any(AbortSignal));
     await remote(scope, "settings.host", { operation: "settings_open", scope: { workspace_id: "w1", user_id: "u1" }, input: {} });
     await expect(remote(scope, "settings.host", { operation: "settings_update_device", scope: { workspace_id: "w1", user_id: "u1" }, input: {} })).rejects.toMatchObject({ code: "device_settings_elsewhere" });
     await expect(remote(scope, "developer_logs.export", {})).rejects.toMatchObject({ code: "unsupported_host_request" });

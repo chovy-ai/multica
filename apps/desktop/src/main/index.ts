@@ -823,9 +823,9 @@ if (!gotTheLock) {
       mainFrame(event, scope);
       if (!localV2Host) throw new Error("Local conversations require the active main window");
       if (typeof deviceId !== "string" || !deviceId) throw new Error("invalid_request: A host request names its device");
-      const handle = deviceId === "local" ? localV2Host : remoteHostRequests(localV2Host, deviceId);
+      const handle = deviceId === "local" ? localV2Host : remoteHostRequests(localV2Host, deviceId, () => localV2!.deviceName(deviceId));
       // Only main names another device, after the request came from that device's socket.
-      const { deviceId: _named, ...request } = payload ?? {};
+      const { deviceId: _named, source: _source, ...request } = payload ?? {};
       return handle(scope, kind, request).catch((error: unknown) => {
         const code = (error as { code?: unknown })?.code;
         throw new Error(`${typeof code === "string" ? code : "host_request_failed"}: ${error instanceof Error ? error.message : String(error)}`);

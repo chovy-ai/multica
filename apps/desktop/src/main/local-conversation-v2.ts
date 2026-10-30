@@ -75,6 +75,15 @@ export class LocalV2Client {
     throw new LocalV2Error("forbidden", "The local daemon refused the connection", 403);
   }
 
+  /** The name another device of the account registered, for dialogs about it. */
+  async deviceName(deviceId: string): Promise<string> {
+    const endpoint = await this.endpoint();
+    const response = await fetch(`http://${endpoint.base}/local/devices`, { headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(5000) });
+    const body = await response.json().catch(() => null) as { devices?: { peer_id?: unknown; device_name?: unknown }[] } | null;
+    const name = body?.devices?.find((device) => device.peer_id === deviceId)?.device_name;
+    return typeof name === "string" && name ? name : deviceId;
+  }
+
   /** Streams a file route of this device or, with deviceId, another one. */
   async file(scope: LocalConversationScope, path: string, deviceId = "local"): Promise<Response> {
     const endpoint = await this.endpoint();

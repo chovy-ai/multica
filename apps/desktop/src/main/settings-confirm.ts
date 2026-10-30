@@ -2,7 +2,8 @@ import type { SettingsScope, SettingsRequest } from "@multica/core/settings/oper
 import { SettingsOperationError } from "../shared/settings-operation-error";
 
 export interface SettingsHostRequest { operation: string; scope: SettingsScope; input: Record<string, unknown> }
-export type SettingsConfirmRequest = SettingsHostRequest & { impact?: unknown };
+/** source names another device whose agent asked; absent for this device. */
+export type SettingsConfirmRequest = SettingsHostRequest & { impact?: unknown; source?: string };
 export type SettingsApplyOutcome = { approved: false } | { approved: true; raw: unknown };
 /**
  * Asks a human and, only on approval, performs `apply` on the host side, so

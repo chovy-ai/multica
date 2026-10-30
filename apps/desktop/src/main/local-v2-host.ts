@@ -15,7 +15,7 @@ export interface LocalV2HostHandlers {
 }
 
 const daemonScope = z.object({ workspace_id: z.string(), user_id: z.string() });
-const settingsPayload = z.object({ operation: z.string().regex(/^settings_[a-z_]+$/), scope: daemonScope, input: z.record(z.string(), z.unknown()), impact: z.unknown().optional() });
+const settingsPayload = z.object({ operation: z.string().regex(/^settings_[a-z_]+$/), scope: daemonScope, input: z.record(z.string(), z.unknown()), impact: z.unknown().optional(), source: z.string().max(200).optional() });
 
 /**
  * The write a confirmed operation performs, built here from the operation
@@ -39,8 +39,9 @@ const VIEW_SETTINGS = new Set(["settings_open", "settings_assert_scope", "settin
  * that device's page here; this device's own settings and logs are not for
  * another device.
  */
-export function remoteHostRequests(handle: ReturnType<typeof localV2HostHandler>, deviceId: string): ReturnType<typeof localV2HostHandler> {
+export function remoteHostRequests(handle: ReturnType<typeof localV2HostHandler>, deviceId: string, deviceName: () => Promise<string>): ReturnType<typeof localV2HostHandler> {
   return async (scope, kind, payload) => {
+    if (kind === "settings.confirm") return handle(scope, kind, { ...payload, source: await deviceName().catch(() => deviceId) });
     if (kind === "settings.host" && !VIEW_SETTINGS.has(String(payload.operation))) throw new SettingsOperationError("device_settings_elsewhere", "This setting can only be changed on the device itself");
     if (kind === "developer_logs.export") throw new SettingsOperationError("unsupported_host_request", `Desktop cannot handle ${kind} for another device`);
     if (kind === "side.control") return handle(scope, kind, { ...payload, deviceId });
