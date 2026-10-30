@@ -105,21 +105,51 @@
 
 host request 只保留需要人操作的请求。今后新增涉及机器数据的能力，写在守护进程中，不写进 Electron 主进程，否则每项能力都要为远端 tab 单独补一次。
 
+## 前置：渲染进程直连守护进程
+
+原则：渲染进程尽量直接连本机守护进程，只有做不到的事才经过主进程。这项改造独立成一个 PR，先于设备互联合入。设备互联在它之上实现，查看端不再需要按设备维护主进程代理。
+
+现在主进程承担两类工作：一是转发数据（`LocalV2Proxy`、`multica-local-file://` 协议），这部分改为直连；二是做渲染进程做不到的事，这部分保留。
+
+| 能力 | 走向 | 说明 |
+| --- | --- | --- |
+| JSON 请求（会话、命令、配置、预览元数据、导入…） | 直连 | `fetch` 带 `Authorization: Bearer {渲染进程 token}` |
+| WebSocket | 直连 | 浏览器 WebSocket 不能带请求头。先 `POST /local/v2/ws-ticket` 换一次性票据（30 秒、单次有效），再连 `ws://…/local/v2/ws?ticket=…` |
+| 文件读取（附件、会话图片、预览内容） | 直连 | `POST /local/v2/file-urls` 换签名 URL（绑定 scope 和路径，60 秒内可多次 Range 读取），`<img>`、`<video>` 直接使用。token 不进 URL |
+| 附件上传 | 直连 | `fetch` POST，带渲染进程 token |
+| 反向请求 | 直连接收 | 渲染进程从 WS 收到 `host.request`；需要原生能力的部分再经 IPC 交给主进程，结果由渲染进程 `host.reply` |
+| 获取端口和渲染进程 token | 主进程 | 渲染进程读不到 profile 文件。IPC `local-v2:endpoint` 返回 `{ base, token }`；收到 401 时再取一次（轮换） |
+| 扩大读取范围（`/folder-projects`、`/preview/roots`、`set_directory`） | 主进程 | 路径必须来自原生选择器，守护进程分不清路径是用户选的还是伪造的。只接受主进程 token |
+| 设置确认、设备设置操作 | 主进程 | 原生弹窗和登录凭据。主进程根据 operation 和 input 重新生成 `apply`，不使用经渲染进程转来的 `apply` |
+| Side 浏览器、网页预览 | 主进程 | `WebContentsView` |
+| 保存到本机 | 主进程 | 系统保存对话框；主进程用自己的 token 流式读取后写入 |
+| `/drain`、`/undrain`、`/stop-providers` | 主进程 | 更新流程，只接受主进程 token |
+
+守护进程改动（`daemon/localhost/auth.go`、`v2.go`）：
+
+- 两个 token：现有主进程 token 不变；新增渲染进程 token（每次启动轮换，写入 profile，0600），只能访问 `/local/v2` 的会话、文件和 WS 接口，以及 `/local/devices`。
+- Origin：主进程 token 仍要求不带 Origin；渲染进程 token 只接受 Desktop 自己的 origin（生产环境 `loadFile` 为 `null`，开发环境为 dev server 地址，由 Desktop 启动守护进程时传入）。回环 Host 检查保留。
+- CORS：对白名单 origin 响应预检，允许 `Authorization`、`Content-Type`、`X-File-Name`、`X-Multica-*`、`Range`；WS 的 `CheckOrigin` 同样使用白名单。
+- 票据和签名：`ws-ticket` 一次性；`file-urls` 用守护进程内存中的 HMAC 密钥签名 `(scope, path, exp)`。
+
+Desktop 改动：
+
+- 删除 `apps/desktop/src/main/local-conversation-v2.ts` 的数据转发、`local-v2:request`/`send`/`message`/`connection` IPC 和 `multica-local-file://` 协议。主进程只保留 `local-v2:endpoint`、`local-v2:choose`、host request 的原生部分、保存到本机，以及 drain 流程用的主进程客户端。
+- 渲染进程新增直连的 `LocalV2Transport` 实现：HTTP、WS 票据、断线重连、availability、文件签名 URL、上传。`LocalV2Transport` 接口不变，页面不用改。
+
 ## 数据链路
 
 ```text
 MacBook（查看端）                                         Mac Studio（被访问端）
-渲染进程  设备专属 LocalV2Transport（context 注入）
-  → IPC local-v2:request / send (deviceId, scope, …)
-Electron 主进程  按 deviceId 选择 LocalV2Proxy
-  → 回环 HTTP/WS /local/devices/{peerId}/local/v2/...（校验本机 token）
-本机守护进程  ReverseProxy，删除 Authorization，去掉 /local/devices/{peerId} 前缀
+渲染进程  设备专属 LocalV2Transport（basePath=/local/devices/{peerId}，context 注入）
+  → 回环 HTTP/WS /local/devices/{peerId}/local/v2/...（渲染进程 token、WS 票据或签名 URL）
+本机守护进程  鉴权 → ReverseProxy，删除 Authorization 和票据参数，去掉 /local/devices/{peerId} 前缀
   → p2p.Dial(peerId, /multica/local-api/1)  ══优先直连══▶  p2p.Listen
                                                           V2.ServeRemote
                                                             → localconversation service
 ```
 
-Desktop 与守护进程之间的 `/local/v2` 原样承载在 p2p 流上的 HTTP 中。版本检查、WebSocket、按 seq 续传、文件 Range 读取和上传都直接复用。
+渲染进程与守护进程之间的 `/local/v2` 原样承载在 p2p 流上的 HTTP 中。版本检查、WebSocket、按 seq 续传、文件 Range 读取和上传都直接复用。
 
 ### 0. 设备发现
 
@@ -131,12 +161,12 @@ Desktop 与守护进程之间的 `/local/v2` 原样承载在 p2p 流上的 HTTP 
 ### 1. 握手
 
 ```text
-打开远端 tab → 主进程为该设备获取 LocalV2Proxy(base=/local/devices/{peerId})，引用计数 +1
+打开远端 tab → 渲染进程为该设备创建 transport(basePath=/local/devices/{peerId})
  → GET …/local/v2/hello      版本不一致 → incompatible
  → 请求和 WS 带 scope 请求头（API origin、userId、workspaceId）
        被访问端 scope()：userId ≠ .desktop-user-id → account_mismatch
                         API origin ≠ 被访问端 ServerBaseURL → api_url_mismatch
- → 每个请求和 WS 带 X-Multica-Client-ID（proxy 实例生成，重连不变）；被访问端记为 {peerId}/{clientId}
+ → 每个请求和 WS 带 X-Multica-Client-ID（transport 实例生成，重连不变）；被访问端记为 {peerId}/{clientId}
  → WS …/local/v2/ws
  → subscribe_scope {after_scope_seq}；打开会话时 subscribe {after_seq, store_generation}
 ```
@@ -145,7 +175,7 @@ Desktop 与守护进程之间的 `/local/v2` 原样承载在 p2p 流上的 HTTP 
 
 ```text
 渲染进程 LocalV2ScopeClient.request(method, path) → transport(deviceId)
- → IPC local-v2:request(deviceId, …) → proxy(deviceId) → HTTP
+ → 本机守护进程 /local/devices/{peerId}/local/v2/... → ReverseProxy
  → 隧道 → ServeRemote → V2.ServeHTTP → service → 原路返回
 send、answer、入队时，被访问端把该会话的发起方记为这个 clientKey，供第 5 节路由
 ```
@@ -154,8 +184,8 @@ send、answer、入队时，被访问端把该会话的发起方记为这个 cli
 
 ```text
 service 提交事件 → hub 按订阅分发（每个订阅 4 MiB 缓冲，超出则 resubscribe）
- → WS conversation.events / scope.summaries → 隧道 → 查看端 proxy
- → IPC local-v2:message(deviceId) → 渲染进程按 seq 应用
+ → WS conversation.events / scope.summaries → 隧道 → 查看端守护进程（透传）
+ → 渲染进程的 WS → 按 seq 应用
 ```
 
 v2 推送的是事件本身（含流式文本），不需要「changed → 重新读取」，也不需要在隧道上额外合并。
@@ -163,10 +193,11 @@ v2 推送的是事件本身（含流式文本），不需要「changed → 重�
 ### 4. 文件
 
 ```text
-读取：multica-local-file://local/v2/file?deviceId=…&target=/attachments/{id}|/sessions/{id}/image?path=…|/preview/content?…
- → protocol.handle 按 deviceId 选择 proxy → proxy.file（Range 透传）→ 被访问端 serveLocalFile
-上传：multica-local-file://local/v2/attachments?deviceId=… → POST …/local/v2/attachments → 附件 id
-保存到本机：IPC local-v2:save-file(deviceId, scope, target) → 主进程 showSaveDialog → proxy.file 流式写入本机文件
+读取：渲染进程 POST /local/v2/file-urls（发给本机守护进程，路径带 /local/devices/{peerId} 前缀）→ 签名 URL
+ → <img src> 等直接请求 → 本机守护进程校验签名 → ReverseProxy（Range 透传）→ 被访问端 serveLocalFile
+     签名由本机守护进程签发和校验；被访问端只看 p2p 身份
+上传：渲染进程 fetch POST …/local/devices/{peerId}/local/v2/attachments → 附件 id
+保存到本机：IPC local-v2:save-file(deviceId, scope, target) → 主进程 showSaveDialog → 主进程用主进程 token 流式读取并写入本机文件
 仅经中继时：读取超过 5 MB（按 Content-Length）或上传超过 5 MB → relay_transfer_limited
 ```
 
@@ -175,7 +206,7 @@ v2 推送的是事件本身（含流式文本），不需要「changed → 重�
 ```text
 被访问端执行中需要查看端（settings.confirm、settings.host、settings.refresh、side.control、developer_logs.export）
  → service.askHost(scope, conversationId, kind) → hosts.request 优先发给该会话发起方 clientKey 的连接
- → 隧道 → 查看端 proxy(deviceId) → 远端 host 处理函数（第 ③ 类）→ host.reply → 隧道 → service 继续
+ → 隧道 → 查看端渲染进程的 WS → 按第 ③ 类处理（需要原生能力时经 IPC 交给主进程）→ host.reply → 隧道 → service 继续
 ```
 
 现在 `hosts.request` 发给该 scope「最后一次 subscribe 的连接」。远端和本机同账号同工作区，属于同一个 scope，所以 B 设备发起的运行可能把确认弹到 A 上。改为按会话的发起方路由，找不到时才使用现有规则。
@@ -194,14 +225,14 @@ v2 推送的是事件本身（含流式文本），不需要「changed → 重�
 ### 7. 断线、迁移到直连和恢复
 
 ```text
-p2p 断开 → WS 关闭 → proxy connection(false) → 「正在重连」
+p2p 断开 → WS 关闭 → transport 断线 → 「正在重连」
  → 该 clientKey 的待处理 host request 保留 60 秒
- → libp2p 重新连接 → proxy 退避重连 WS（带原 clientId）→ 渲染进程重新订阅（after_seq）
+ → libp2p 重新连接 → transport 退避重连 WS（新票据，带原 clientId）→ 渲染进程重新订阅（after_seq）
      宽限期内的 host request 重新下发给新连接
      after_seq 仍可续传 → 补发事件；store_generation 变化或超出 → snapshot_required，重新读取快照
-中继升级为直连 → 查看端守护进程关闭走中继的隧道流 → proxy 立即重连（不显示断线提示），新流走直连
+中继升级为直连 → 查看端守护进程关闭走中继的隧道流 → transport 立即重连（不显示断线提示），新流走直连
 被访问端关闭开关 → 移除协议并断开远端连接 → device_link_off → 下次轮询时侧边栏入口消失
-关闭最后一个该设备的 tab → 引用计数归零，60 秒后关闭 proxy
+关闭最后一个该设备的 tab → 关闭该设备的 transport
 ```
 
 ### 8. 使用中标识
@@ -220,7 +251,7 @@ presence 只在内存中，不写入 SQLite，不占用 `summary_seq`。
 
 - 直连顺序：局域网 mDNS → 登记的直连地址（含 NAT 端口映射和观察到的公网地址）→ 中继，随后 DCUtR 打洞。
 - 建立隧道前：如果到该设备只有中继连接，`p2p.Dial` 最多等待 5 秒，等打洞得到直连后再开流；超时才使用中继。
-- 打洞成功后：守护进程订阅连接事件，出现非 circuit 连接时，关闭这台设备上所有走中继的隧道流（包括 HTTP 连接池里的空闲连接），proxy 立即在直连上重建 WebSocket。libp2p 新开流时优先选择直连。
+- 打洞成功后：守护进程订阅连接事件，出现非 circuit 连接时，关闭这台设备上所有走中继的隧道流（包括 HTTP 连接池里的空闲连接），transport 立即在直连上重建 WebSocket。libp2p 新开流时优先选择直连。
 - 仍然只有中继时：会话读写照常；单个文件读取或上传超过 5 MB 时返回 `relay_transfer_limited`。
 - `/local/devices` 返回 `connection`，并写入诊断日志，便于统计中继占比。侧边栏不显示连接类型。
 
@@ -243,13 +274,13 @@ presence 只在内存中，不写入 SQLite，不占用 `summary_seq`。
 
 远端禁止：`/drain`、`/undrain`、`/stop-providers`（被访问端本机的更新流程）。
 
-### ② 文件：经主进程的协议
+### ② 文件：签名 URL
 
-`multica-local-file://` 的 URL 带上 `deviceId`，主进程据此选择 proxy。路径白名单沿用 `isLocalV2FilePath`。
+渲染进程向本机守护进程申请签名 URL，路径带 `/local/devices/{peerId}` 前缀。可签名的路径沿用 `isLocalV2FilePath` 的白名单，改为在守护进程中校验。
 
-### ③ 反向请求：由查看端的 proxy 按设备处理
+### ③ 反向请求：由查看端渲染进程按设备处理
 
-| kind | 本地 proxy | 远端 proxy |
+| kind | 本地 tab | 远端 tab |
 | --- | --- | --- |
 | `side.control` | 现有处理 | 照常处理，预览 owner 带 deviceId，`side_workspace_sync` 的 reconcile 按设备进行；回环地址拦截 |
 | `settings.confirm` | 现有处理 | 照常确认，弹窗标明来源设备；查看端根据 operation 和 input 重新生成 `apply`，不直接执行被访问端给出的 `apply` |
@@ -287,7 +318,7 @@ presence 只在内存中，不写入 SQLite，不占用 `summary_seq`。
 
 ## 实现
 
-分三个 PR：守护进程 → Desktop 主进程和 preload → 渲染进程和 views。
+前置 PR 之后分三个 PR：守护进程 → Desktop 主进程和 preload → 渲染进程和 views。
 
 ### 守护进程（Go）
 
@@ -325,7 +356,7 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
 
 #### 反向请求路由（`daemon/localhost/v2_host.go`、`localconversation/service`）
 
-- `clientKey`：客户端为每个 `LocalV2Proxy` 实例生成一个 UUID，HTTP 和 WS 都放在 `X-Multica-Client-ID` 请求头中，重连时自然沿用。服务端加上前缀：本机是 `local/`，远端是 `{peerId}/`，所以远端伪造不出本机的 key。
+- `clientKey`：渲染进程为每个 transport 实例生成一个 UUID，HTTP 和 WS 都放在 `X-Multica-Client-ID` 请求头中，重连时自然沿用。服务端加上前缀：本机是 `local/`，远端是 `{peerId}/`，所以远端伪造不出本机的 key。
 - 按会话路由：`ContextBinder` 按 provider 进程绑定，settings 工具的 `Host` 闭包拿不到 turn，所以不按 turn 路由。service 在内存里维护 `conversationID → clientKey`，在 `send`、`answer`、入队时更新为发起方。`askHost` 增加 `conversationID` 参数，`hosts.request` 先找该 clientKey 的连接，找不到时沿用「最后一次 subscribe 的连接」。两台设备同时操作同一个会话不处理，所以按会话路由足够。
 - 宽限期：现在 `hosts.attach` 的 detach 会立即让该连接的待处理请求失败。改为移入 `orphaned[clientKey]` 并计时 60 秒；同一 clientKey 的新连接 attach 时，用原 `request_id` 重新发送 `host.request`；到期才返回 `ErrHostUnavailable`。
 
@@ -349,7 +380,7 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
   - 打开时：`svc.Listen("/multica/local-api/1")`，用 `http.Server{Handler: d.localV2.ServeRemote, ConnContext: withPeer, ReadHeaderTimeout: 10s, IdleTimeout: 90s}` 服务。
   - 关闭时：调用 `Listen` 返回的 stop、`srv.Close()`，并断开所有远端 `wsConn`。
   - p2p 未启用或守护进程不提供本地对话时，接口返回 `unavailable`。
-- 在 `health.go` 的 mux 上注册以下接口，都先调用 `Authorize`：
+- 在 `health.go` 的 mux 上注册以下接口，按前置改造的规则鉴权（渲染进程 token、WS 票据或签名 URL；`choose-remote` 的 POST 需要主进程 token）：
   - `GET`/`PUT /local/device-link`。
   - `GET /local/devices`：`Peers()` 中已连接、且 `Peerstore().SupportsProtocols` 包含该协议的设备，返回 `{ peerId, deviceName, connection }`。
   - `/local/devices/{peerId}/...`：每台设备一个 `httputil.ReverseProxy`。
@@ -359,7 +390,7 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
     Rewrite: func(r *httputil.ProxyRequest) {
         r.Out.URL.Scheme, r.Out.URL.Host = "http", "device-link"
         r.Out.URL.Path = strings.TrimPrefix(r.In.URL.Path, "/local/devices/"+peerID)
-        r.Out.Header.Del("Authorization")
+        r.Out.Header.Del("Authorization") // 并删除 ticket、签名参数
     },
     Transport:     &http.Transport{DialContext: dialPeer, IdleConnTimeout: 90 * time.Second},
     FlushInterval: -1,
@@ -378,31 +409,17 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
 
 ### Desktop 主进程和 preload
 
-- `LocalV2Proxy`（`apps/desktop/src/main/local-conversation-v2.ts`）：
-  - 选项增加 `basePath`（默认空，远端为 `/local/devices/{peerId}`）和 `remote`。`/local/v2${path}` 统一改为 `${basePath}/local/v2${path}`。
-  - 构造时生成 `clientId`，`headers()` 带上 `X-Multica-Client-ID`。
-  - `remote` 为 true 时，`drain`、`undrain`、`stopProviders` 直接抛错。
-  - `BLOCKING` 增加 `device_unreachable`、`device_link_off`、`api_url_mismatch`；availability 增加对应 reason。只有本机回环接口返回 403 时才重读 token。
-- `device-proxies.ts`（新文件）：`peerId → LocalV2Proxy`，生命周期跟随远端 tab（`tab:attach`/`tab:detach` 维护引用计数），不跟随设备列表；计数归零 60 秒后关闭。
-- `index.ts`：
-  - 单例 `localV2` 改为按 deviceId 取 proxy（本机为 `"local"`）。约 20 处引用，单独一个 commit。
-  - `mainFrame(event, deviceId, scope)` 返回对应 proxy。
-  - IPC 显式带 deviceId，不从 scope 推断，缺失时报错：`local-v2:request`、`local-v2:send`、`local-v2:choose`；推给渲染进程的 `local-v2:message`、`local-v2:connection`、`local-conversation:availability` 也带 deviceId。
-  - 文件协议从 URL 读取 `deviceId`。
-  - `local-file-context-menu`、`side-workspace`、`resource-preview` 的 owner 带 deviceId。
-- 远端 host 处理函数：复用 `localV2HostHandler`（`local-v2-host.ts`），按第 ③ 类处理：
-  - `settings.confirm`：忽略 payload 里的 `apply`，由 `packages/core/settings/operations.ts` 根据 operation 和 input 重新生成；
-  - 设备类 `settings.host`、`developer_logs.export`：拒绝；
-  - `side.control`：预览 owner 带 deviceId。
-- 新增 IPC：
-  - `local-v2:choose-remote(deviceId, scope, request, path)`：拒绝 `"local"`，按 purpose 发出与 `local-v2:choose` 相同的 POST；
-  - `local-v2:save-file(deviceId, scope, target)`：`showSaveDialog` 后把 `proxy.file()` 流式写入本机；
-  - `device-link:get`、`device-link:set`、`device-link:devices`。
-- preload：`localV2.forDevice(deviceId)` 返回 `LocalV2Transport`；现有 `localV2` 等同于 `forDevice("local")`。
+在前置改造之后，主进程只增加做不到直连的部分：
+
+- 远端 host request 的原生部分：复用 `localV2HostHandler`（`local-v2-host.ts`），按第 ③ 类处理：`settings.confirm` 由 `packages/core/settings/operations.ts` 根据 operation 和 input 重新生成 `apply`；设备类 `settings.host`、`developer_logs.export` 拒绝；`side.control` 的预览 owner 带 deviceId。
+- `local-v2:choose-remote(deviceId, scope, request, path)`：拒绝 `"local"`，用主进程 token 向 `/local/devices/{peerId}/local/v2/...` 发出与 `local-v2:choose` 相同的 POST。
+- `local-v2:save-file(deviceId, scope, target)`：`showSaveDialog` 后用主进程 token 流式读取并写入本机。
+- `local-file-context-menu`、`side-workspace`、`resource-preview` 的 owner 带 deviceId。
+- `device-link:get`、`device-link:set`、`device-link:devices`。
 
 ### 渲染进程和 views
 
-- `LocalV2Transport`（`packages/core/local-conversation/v2.ts`）已经以参数形式注入各页面和工具函数，不需要改接口。
+- 直连 transport 增加 `basePath`（本机为空，远端为 `/local/devices/{peerId}`）和 `clientId`（实例生成的 UUID，放在 `X-Multica-Client-ID`）。错误 `device_unreachable`、`device_link_off`、`api_url_mismatch` 进入 availability。
 - `LocalDeviceProvider` 提供 `{ deviceId, deviceName, transport }`。`LocalConversationFlowPage` 从路由读取 peerId 后提供；`useLocalDevice()` 拿不到时抛错，不回落到本机。以下 6 处直接读取 `window.desktopAPI` 的地方改为使用它：`local-conversation-flow.tsx`、`local-resource-preview.tsx`、`local-runtime-notice.tsx`、`local-side-workspace.tsx`、`side-workspace-bridge.tsx`、`use-local-v2-conversation.ts`。
 - `LocalV2ScopeClient` 的缓存 key 改为 `(deviceId, scope)`；`LocalConversationScope` 不增加字段。第 ⑤ 类的其他 key 改为显式带 deviceId。
 - 使用中标识：`localV2ServerMessageSchema` 增加 `scope.presence`；`LocalV2ScopeClient` 增加 `presence(id)` 和变更通知；会话列表行显示 `MonitorSmartphone` 图标和 Tooltip。
@@ -414,14 +431,14 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
 ### 主要风险
 
 - `ReverseProxy`、WebSocket 和 libp2p stream 半关闭的组合最容易出问题。第一个 PR 就用同一台机器的两个 profile，以 curl 和 websocat 验证 hello、WS 长连接、Range 读取和上传。
-- `index.ts` 中 `localV2` 的引用多，改动机械但面广。
+- 前置改造中，WS 票据、签名 URL 和 CORS 要在打包后的 `file://` 页面上实测 Origin 的实际取值，开发环境和生产环境都要覆盖。
 
 ## 安全边界
 
 | 层级 | 检查 |
 | --- | --- |
-| 查看端回环接口 | 现有 token、只允许 loopback Host、不能带 Origin |
-| 转发前 | 删除本机 token |
+| 查看端回环接口 | loopback Host；主进程 token 不能带 Origin；渲染进程 token、WS 票据和签名 URL 只接受 Desktop 的 origin，且不能访问 drain 和扩大读取范围的接口 |
+| 转发前 | 删除本机 token、票据和签名参数 |
 | p2p 连接 | gater 只放行同账号设备，基于握手时证明的公钥身份 |
 | 被访问端入口 | 开关打开才注册协议；路径白名单；禁止 drain 和停止 provider；每次请求校验 userId 和 API origin |
 | 被访问端执行环境 | 使用被访问端守护进程自己的环境，远端不能传入 env |
@@ -430,17 +447,20 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
 
 - 信任范围是「同一账号」。p2p-server 接受任何能通过 `/api/me` 的 token（包括 `mat_` 智能体任务 token 和 PAT），开关也只受本机 loopback token 保护。某台机器上被注入的智能体可以注册伪设备并打开开关，从而在该账号的其他已开启设备上执行任务和读取文件。
 - 远端选择的目录来自查看端渲染进程，不经原生选择器。
+- 渲染进程持有渲染进程 token。渲染进程被注入时，可以读取会话、在本机运行智能体，但不能扩大读取范围、关闭守护进程或执行 drain。
 
 第二期收紧。
 
 ## 实施顺序
 
+0. 前置 PR：渲染进程直连守护进程（两个 token、Origin 白名单和 CORS、WS 票据、签名 URL、直连 transport，删除主进程转发和 `multica-local-file://`）。
 1. 守护进程：p2p 适配器和直连优先、开关、`ServeRemote`（含 origin 校验）、`clientKey` 路由和宽限期、`/directories`、`/local/devices` 和反向代理、错误码。用同一台机器的两个 profile，以 curl 验证 hello、ws、文件。
-2. Desktop 主进程和 preload：`basePath`、`clientId`、错误映射、`DeviceProxies` 和引用计数、显式 deviceId 的 IPC、文件协议、`choose-remote`、保存到本机、反向请求和 settings 分流、设备轮询、开关 IPC。
-3. 渲染进程和 views：设备专属 transport 和 context、路由、侧边栏插槽和选中规则、第 ⑤ 类 key、远端选择 Dialog、右键菜单和网页预览的远端行为、设置 tab、提示文案、翻译、云端任务会话链接。
+2. Desktop 主进程和 preload：`choose-remote`、保存到本机、远端反向请求的原生部分和 settings 分流、owner 带 deviceId、设备轮询、开关 IPC。
+3. 渲染进程和 views：transport 的 `basePath` 和 `clientId`、设备 context、路由、侧边栏插槽和选中规则、第 ⑤ 类 key、远端选择 Dialog、右键菜单和网页预览的远端行为、设置 tab、提示文案、翻译、云端任务会话链接。
 4. 验证：
    - Go：presence 的加入、宽限期后移除、只推送给本机连接；适配器（含半关闭）、`ServeRemote` 白名单和 origin 校验、反向代理和错误码、`clientKey` 路由（两条连接同 scope 时确认发往发起方）、宽限期、直连迁移。
-   - Desktop 主进程：`basePath` 拼接、远端 proxy 不调用 drain、`choose-remote` 拒绝本机 deviceId。
+   - 前置 PR：两种 token 的路由权限、Origin 白名单、票据单次有效、签名过期和路径篡改、401 后重取 token。
+   - Desktop 主进程：`choose-remote` 拒绝本机 deviceId、设置确认不使用转来的 `apply`。
    - 渲染进程：使用中标识的显示和 Tooltip、侧边栏两种状态和选中规则、远端 tab、key 隔离、缺少设备 transport 时报错。
    - 手动：先用同一台机器的两个 profile，再用两台不同网络的机器验证打洞和中继回退。浅色和深色主题截图保存在 `.tmp/device-link/`。
 
