@@ -8,6 +8,7 @@ const RECONNECT_MIN_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 120_000;
 const PROBE_INTERVAL_MS = 15_000;
+const HANDSHAKE_TIMEOUT_MS = 20_000;
 
 /** A failed request, carried as "kind: message" like every local v2 error. */
 const failure = (kind: string, message: string) => new Error(`${kind}: ${message}`);
@@ -104,7 +105,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     let response: Response;
     try {
       const endpoint = await this.endpoint(true);
-      response = await this.fetch(this.url(endpoint, "/hello"), { headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(5000) });
+      response = await this.fetch(this.url(endpoint, "/hello"), { headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(this.deviceId === "local" ? 5000 : HANDSHAKE_TIMEOUT_MS) });
     } catch { this.report({ state: "unavailable", reason: "daemon_offline" }); return; }
     if (response.status === 404) { this.report({ state: "unavailable", reason: "unsupported" }); return; }
     if (!response.ok) {
@@ -234,13 +235,42 @@ export class DirectLocalV2Transport implements LocalV2Transport {
       try {
         const { ticket } = await this.json(scope, "POST", "/ws-ticket") as { ticket: string };
         const endpoint = await this.endpoint();
+        if (this.sockets.get(key) !== current) throw failure("scope_released", "The conversation connection was released");
         const ws = new this.WS(`ws://${endpoint.base}${this.basePath}/local/v2/ws?${new URLSearchParams({ ticket })}`);
+        current.ws = ws;
         await new Promise<void>((resolve, reject) => {
-          ws.addEventListener("open", () => resolve(), { once: true });
-          ws.addEventListener("error", () => reject(failure("daemon_offline", "Start the local daemon to use local conversations")), { once: true });
+          let settled = false;
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true; clearTimeout(timer);
+            ws.removeEventListener("open", opened); ws.removeEventListener("close", closed);
+            if (error) {
+              reject(error);
+              // Keep the error listener for the close of a still-connecting socket.
+              if (ws.readyState === this.WS.CONNECTING) ws.close();
+            } else { ws.removeEventListener("error", failed); resolve(); }
+          };
+          const opened = () => finish();
+          const closed = () => finish(failure("device_unreachable", "The connection closed before the handshake completed"));
+          const failed = () => finish(failure(this.deviceId === "local" ? "daemon_offline" : "device_unreachable", "Could not connect to the conversation service"));
+          const timer = setTimeout(() => finish(failure("device_unreachable", "The conversation connection handshake timed out")), HANDSHAKE_TIMEOUT_MS);
+          ws.addEventListener("open", opened, { once: true });
+          ws.addEventListener("close", closed, { once: true });
+          ws.addEventListener("error", failed, { once: true });
         });
+        if (this.sockets.get(key) !== current || ws.readyState !== this.WS.OPEN) {
+          ws.close(); throw failure("scope_released", "The conversation connection was released");
+        }
         this.attach(current, ws);
         return ws;
+      } catch (error) {
+        current.ws = undefined;
+        if (this.sockets.get(key) === current) {
+          if (this.availabilityValue?.state !== "unavailable") this.outcome(this.deviceId === "local" ? "daemon_offline" : "device_unreachable");
+          for (const listener of this.connectionListeners) listener(scope, false);
+          this.reconnect(current);
+        }
+        throw error;
       } finally { current.connecting = undefined; }
     })();
   }
@@ -259,7 +289,9 @@ export class DirectLocalV2Transport implements LocalV2Transport {
       for (const listener of this.messageListeners) listener(socket.scope, message);
     });
     ws.addEventListener("close", () => {
-      if (socket.ws === ws) socket.ws = undefined;
+      if (this.sockets.get(this.key(socket.scope)) !== socket || socket.ws !== ws) return;
+      socket.ws = undefined;
+      this.outcome(this.deviceId === "local" ? "daemon_offline" : "device_unreachable");
       for (const listener of this.connectionListeners) listener(socket.scope, false);
       this.reconnect(socket);
     }, { once: true });
@@ -295,6 +327,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     this.sockets.delete(this.key(scope));
     if (socket.timer) clearTimeout(socket.timer);
     socket.ws?.close();
+    for (const listener of this.connectionListeners) listener(scope, false);
   }
 }
 

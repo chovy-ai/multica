@@ -26,7 +26,13 @@ export function useLocalConversationPages(transport: LocalV2Transport, scope: Lo
     setStatus((current) => ({ ...current, fetching: true }));
     client.loadSummaries().then(() => setStatus({ pending: false, error: null, fetching: false }), (error: unknown) => setStatus({ pending: false, error: error instanceof Error ? error : new Error(String(error)), fetching: false }));
   }, [client]);
-  useEffect(() => { if (enabled) load(); }, [enabled, load]);
+  useEffect(() => {
+    if (!enabled) return;
+    load();
+    return transport.onConnection((value, connected) => {
+      if (connected && value.userId === scope.userId && value.workspaceId === scope.workspaceId) load();
+    });
+  }, [enabled, load, transport, scope.userId, scope.workspaceId]);
   // Sides open beside their source; a conversation joins the list with its first message.
   const sessions: LocalSessionEntry[] = version.filter((summary) => !summary.side_source_id && summary.turn_count > 0).map(sessionEntry)
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));

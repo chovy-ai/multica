@@ -15,6 +15,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/multica-ai/multica/server/internal/p2pserver"
@@ -239,6 +240,36 @@ func TestReservationIsRestoredAfterRelayDisconnect(t *testing.T) {
 		return reserved() && relay.Host().Network().Connectedness(idA) == network.Connected
 	}) {
 		t.Fatalf("reservation not restored: %+v", a.Status().Relay)
+	}
+}
+
+func TestUnresponsiveRelayConnectionRenewsReservation(t *testing.T) {
+	key, id := newKey(t)
+	relay, _ := startRelay(t, id)
+	a, err := Start(context.Background(), Config{
+		Key: key, Fetch: (&relayAccount{}).fetch, ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"},
+		RefreshInterval: time.Hour, Relay: relayFunc(relay), Logger: testLogger,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Close() })
+	reserved := func() bool { st := a.Status().Relay; return st != nil && st.Reserved }
+	if !waitFor(t, 15*time.Second, reserved) {
+		t.Fatal("no reservation")
+	}
+	conns := a.host.Network().ConnsToPeer(relay.Host().ID())
+	relay.Host().SetStreamHandler(ping.ID, func(st network.Stream) { defer st.Close(); _, _ = io.Copy(io.Discard, st) })
+	a.checkPeer(relay.Host().ID())
+	for _, c := range conns {
+		if !c.IsClosed() {
+			t.Fatal("unresponsive relay connection remained cached")
+		}
+	}
+	if !waitFor(t, 15*time.Second, func() bool {
+		return reserved() && relay.Host().Network().Connectedness(id) == network.Connected
+	}) {
+		t.Fatal("relay reservation was not restored after the failed probe")
 	}
 }
 
