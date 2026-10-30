@@ -261,7 +261,8 @@ CREATE INDEX IF NOT EXISTS session_expires_at ON session (expires_at);
 ### 7.8 桌面端
 
 - `apps/desktop/src/main/daemon-manager.ts` 里的 `desktopSpawnEnv()` 增加 `MULTICA_DAEMON_P2P_SERVER_URL`。
-- 地址在构建时写入：沿用现有 `VITE_API_URL` 的机制，构建时设置 `VITE_P2P_SERVER_URL=http://<公网IP>:8090`（环境变量或 `apps/desktop/.env.*`）。没设置时 p2p 保持关闭。用户本机设置的 `MULTICA_DAEMON_P2P_SERVER_URL` 优先，便于测试。
+- 桌面端默认使用已部署的 `http://101.33.221.22:8090`，配置位于 `apps/desktop/src/main/p2p-server-env.ts`。构建时可用 `VITE_P2P_SERVER_URL` 覆盖；用户本机设置的 `MULTICA_DAEMON_P2P_SERVER_URL` 优先级最高。独立 CLI 未设置地址时仍关闭 p2p。
+- 默认地址使用 HTTP，注册时的登录凭证会经未加密的 HTTP 传输；需要传输加密时应覆盖为 HTTPS 注册服务地址。连接注册服务后，用户仍须在「设置 → 本设备 → 设备互联」中确认允许其他设备访问，才会共享本机会话。
 - 退出登录（`daemon:clear-token`）时先执行 `multica daemon p2p-unregister`，再清除 token。重新认证（reauthenticate）不删除设备。
 
 ## 8. 部署流水线
