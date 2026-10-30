@@ -159,6 +159,48 @@ describe("isolated Agent GUI document lifetime", () => {
     expect(channels[0]!.port1.postMessage).toHaveBeenCalledWith({ type: "response", id: "background-image", result: undefined });
   });
 
+  it.each(["unfocused", "hidden-tab", "hidden-window"])("restores local data and event subscriptions when starting %s", async (state) => {
+    mock.foreground = state !== "unfocused";
+    if (state === "hidden-window") vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    render(<TuttiAgentGuiPanel {...props} active={state !== "hidden-tab"} activeSessionId="session" />, { wrapper: TestProvider });
+    await ready();
+    const service = mock.services[0]!, port = channels[0]!.port1;
+    const result = { detail: { messages: [{ content: "Saved conversation" }] }, snapshot: { snapshot_seq: 12 } };
+    service.request.mockResolvedValueOnce(result);
+    for (const [method, params, value] of [
+      ["local.snapshot", { sessionId: "session" }, result],
+      ["local.subscribe", { sessionId: "session", afterSeq: 12, generation: "store" }, undefined],
+      ["local.unsubscribe", { sessionId: "session" }, undefined],
+    ] as const) {
+      await act(async () => { port.onmessage!(new MessageEvent("message", { data: { type: "request", id: method, method, params } })); });
+      expect(service.request).toHaveBeenCalledWith(method, params);
+      expect(port.postMessage).toHaveBeenCalledWith({ type: "response", id: method, result: value });
+    }
+    expect(port.postMessage.mock.calls.some(([message]) => message.error?.code === "inactive_host")).toBe(false);
+  });
+
+  it("keeps loading local data through focus and tab changes without replacing the conversation document", async () => {
+    const view = render(<TuttiAgentGuiPanel {...props} activeSessionId="session" />, { wrapper: TestProvider });
+    const frame = await ready(), source = frame.src;
+    const service = mock.services[0]!, port = channels[0]!.port1;
+    let resolve!: (value: unknown) => void;
+    service.request.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    await act(async () => { port.onmessage!(new MessageEvent("message", { data: { type: "request", id: "loading", method: "local.snapshot", params: { sessionId: "session" } } })); });
+    mock.foreground = false;
+    await act(async () => { view.rerender(<TuttiAgentGuiPanel {...props} active={false} activeSessionId="session" />); });
+    const result = { snapshot: { snapshot_seq: 13 } };
+    await act(async () => { resolve(result); });
+    expect(port.postMessage).toHaveBeenCalledWith({ type: "response", id: "loading", result });
+    await act(async () => { port.onmessage!(new MessageEvent("message", { data: { type: "request", id: "resubscribe", method: "local.subscribe", params: { sessionId: "session", afterSeq: 13, generation: "store" } } })); });
+    expect(service.request).toHaveBeenCalledWith("local.subscribe", { sessionId: "session", afterSeq: 13, generation: "store" });
+    mock.foreground = true;
+    await act(async () => { view.rerender(<TuttiAgentGuiPanel {...props} activeSessionId="session" />); });
+    expect(frame.src).toBe(source);
+    expect(channels).toHaveLength(1);
+    expect(service.dispose).not.toHaveBeenCalled();
+    expect(port.close).not.toHaveBeenCalled();
+  });
+
   it("keeps an exposed window visible without OS focus while rejecting background writes", async () => {
     mock.foreground = false;
     const view = render(<TuttiAgentGuiPanel {...props} />, { wrapper: TestProvider });
