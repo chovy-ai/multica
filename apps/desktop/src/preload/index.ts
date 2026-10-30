@@ -21,7 +21,8 @@ import {
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
 import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
-import { localV2UploadSchema, type LocalV2Transport } from "@multica/core/local-conversation/v2";
+// The sandboxed preload can require only electron: import types alone from packages.
+import type { LocalV2Transport } from "@multica/core/local-conversation/v2";
 import type { LocalHostAvailability } from "../shared/local-host-availability";
 import type {
   DaemonStatus,
@@ -176,7 +177,7 @@ const desktopAPI = {
     upload: async (scope, file) => {
       const response = await fetch(localFileUrl("v2/attachments", scope), { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } });
       if (!response.ok) throw await localFileError(response);
-      return localV2UploadSchema.parse(await response.json());
+      return response.json();
     },
   } satisfies LocalV2Transport,
   /** App version + normalized OS. Read once at preload time so the renderer

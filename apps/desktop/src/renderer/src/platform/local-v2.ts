@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import { parseWithFallback } from "@multica/core/api/schema";
 import {
-  LOCAL_V2_VERSION, localV2ServerMessageSchema, localV2SessionListSchema, localV2SnapshotSchema,
+  LOCAL_V2_VERSION, localV2ServerMessageSchema, localV2SessionListSchema, localV2SnapshotSchema, localV2UploadSchema,
   type LocalV2Scope, type LocalV2Snapshot, type LocalV2Summary, type LocalV2Transport,
 } from "@multica/core/local-conversation/v2";
 
@@ -65,7 +65,7 @@ export class LocalV2ScopeClient {
   }
 
   fileUrl(path: string): string { return this.transport.fileUrl(this.scope, path); }
-  upload(file: File) { return this.transport.upload(this.scope, file); }
+  async upload(file: File) { return localV2UploadSchema.parse(await this.transport.upload(this.scope, file)); }
 
   /** Every conversation of the scope, loaded once and kept current. */
   summaries(): LocalV2Summary[] { return this.summaryList; }
