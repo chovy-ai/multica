@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sideWorkspaceSyncSchema, type LocalConversationScope, type SideWorkspaceSnapshot } from "@multica/core/local-conversation/protocol";
 import { sideWorkspaceAckSchema, sideWorkspaceControlSchema, type SideWorkspaceAck, type SideWorkspaceCommand, type SideWorkspaceControlRequest } from "../shared/side-workspace";
 import { SideBrowserController } from "./side-browser-controller";
+import { isLoopbackUrl } from "../shared/loopback-url";
 import type { ResourceWebPreview } from "./resource-web-preview";
 
 interface Options {
@@ -52,6 +53,7 @@ export class SideWorkspaceControl {
     if (op === "open" && !request.tab) throw new Error("Specify a tab to open");
     if (op !== "browser") return this.command(request, signal);
     if (tab?.kind !== "web" || !request.action) throw new Error("Browser control requires an open webpage tab and an action");
+    if (device !== "local" && isLoopbackUrl(tab.url)) throw new Error("not_on_this_device: This local address belongs to the other device; it cannot be opened here");
     const owner = JSON.stringify([scope.userId, scope.workspaceId]);
     await this.command({ ...request, op: "select", action: undefined }, signal);
     // Recheck after asynchronous UI changes, before acquiring a real WebContents.
