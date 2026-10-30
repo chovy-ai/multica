@@ -184,7 +184,7 @@ MacBook（查看端）                                         Mac Studio（被�
 ```text
 渲染进程 LocalV2ScopeClient.request(method, path) → transport(deviceId)
  → 本机守护进程 /local/devices/{peerId}/local/v2/... → ReverseProxy
- → 隧道 → ServeRemote → V2.ServeHTTP → service → 原路返回
+ → 隧道 → ServeRemote（p2p 入口）→ serve（策略表）→ service → 原路返回
 send、answer、入队时，被访问端把该会话的发起方记为这个 clientKey，供第 5 节路由
 ```
 
@@ -482,7 +482,7 @@ func (v *V2) serve(w, r, c caller) // allowed(c.kind, route) → 现有路由
 ## 实施顺序
 
 0. 前置 PR：渲染进程直连守护进程（两个 token、Origin 白名单和 CORS、WS 票据、签名 URL、直连 transport，删除主进程转发和 `multica-local-file://`）。
-1. 守护进程：p2p 适配器和直连优先、开关、`ServeRemote`（含 origin 校验）、`clientKey` 路由和宽限期、`/directories`、`/local/devices` 和反向代理、错误码。用同一台机器的两个 profile，以 curl 验证 hello、ws、文件。
+1. 守护进程：p2p 适配器和直连优先、开关、入口层和策略表（含 origin 校验）、`clientKey` 路由和宽限期、`/directories`、`/local/devices` 和反向代理、错误码。用同一台机器的两个 profile，以 curl 验证 hello、ws、文件。
 2. Desktop 主进程和 preload：`choose-remote`、保存到本机、远端反向请求的原生部分和 settings 分流、owner 带 deviceId、设备轮询、开关 IPC。
 3. 渲染进程和 views：transport 的 `basePath` 和 `clientId`、设备 context、路由、侧边栏插槽和选中规则、第 ⑤ 类 key、远端选择 Dialog、右键菜单和网页预览的远端行为、设置 tab、提示文案、翻译、云端任务会话链接。
 4. 验证：
