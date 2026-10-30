@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
-import type { SettingsRequest } from "@multica/core/settings/operations";
+import { SETTINGS_OPERATIONS, type SettingsRequest, type SettingsScope } from "@multica/core/settings/operations";
 import { developerLogQuerySchema, type DeveloperLogQuery } from "../shared/developer-logs";
 import { SettingsOperationError } from "../shared/settings-operation-error";
 import type { SettingsConfirmRequest, SettingsHostRequest, SettingsApplyOutcome } from "./settings-confirm";
@@ -15,13 +15,24 @@ export interface LocalV2HostHandlers {
 }
 
 const daemonScope = z.object({ workspace_id: z.string(), user_id: z.string() });
-const settingsPayload = z.object({ operation: z.string().regex(/^settings_[a-z_]+$/), scope: daemonScope, input: z.record(z.string(), z.unknown()), impact: z.unknown().optional(),
-  apply: z.object({ method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]), path: z.string().startsWith("/api/"), body: z.unknown().optional() }).optional() });
+const settingsPayload = z.object({ operation: z.string().regex(/^settings_[a-z_]+$/), scope: daemonScope, input: z.record(z.string(), z.unknown()), impact: z.unknown().optional() });
+
+/**
+ * The write a confirmed operation performs, built here from the operation
+ * and input the dialog shows. Host requests reach main through the
+ * renderer, so a request the daemon sent along is never applied.
+ */
+export function settingsApply(operation: string, scope: SettingsScope, input: Record<string, unknown>): SettingsRequest | null {
+  const op = SETTINGS_OPERATIONS.find((entry) => entry.name === operation);
+  if (!op) throw new SettingsOperationError("unknown_operation", `Unknown settings operation ${operation}`);
+  return op.request?.(scope, z.object(op.schema).parse(input)) ?? null;
+}
 
 const HOST_TIMEOUT_MS = 90_000;
 
 /**
- * Performs the daemon's v2 host requests with Desktop's existing handlers.
+ * Performs the daemon's v2 host requests, which the renderer receives on its
+ * WebSocket and passes to main, with Desktop's existing handlers.
  * Every request must name the account and workspace of the socket it
  * arrived on, and that account must still be signed in.
  */
@@ -36,8 +47,8 @@ export function localV2HostHandler(handlers: LocalV2HostHandlers) {
     };
     switch (kind) {
       case "settings.confirm": {
-        const { apply, ...request } = settings();
-        return handlers.confirm(request, (apply ?? null) as SettingsRequest | null, signal);
+        const request = settings();
+        return handlers.confirm(request, settingsApply(request.operation, request.scope, request.input), signal);
       }
       case "settings.host": {
         const { operation, scope: requestScope, input } = settings();

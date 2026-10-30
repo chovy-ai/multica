@@ -31,5 +31,7 @@ export interface SideWorkspaceAck { id: string; snapshot?: SideWorkspaceSnapshot
 export interface SideWorkspaceClient {
   onCommand(listener: (command: SideWorkspaceCommand) => void): () => void;
   ack(reply: SideWorkspaceAck): Promise<void>;
+  /** Makes the Side browser follow the layout the daemon stored for a conversation. */
+  reconcile(scope: { userId: string; workspaceId: string }, conversationId: string): Promise<void>;
   onActivity(listener: (activity: { conversationId: string; tabId: string; turnId?: string; active: boolean }) => void): () => void;
 }

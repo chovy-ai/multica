@@ -2,6 +2,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { localV2ServerMessageSchema, type LocalV2Scope } from "@multica/core/local-conversation/v2";
 import { V2Conversation } from "@multica/tutti-agent-gui-host/v2-conversation";
 import { localV2 } from "./local-v2";
+import { localV2Transport } from "./local-v2-transport";
 
 export interface LiveConversation {
   conversation?: V2Conversation;
@@ -36,7 +37,7 @@ function entry(scope: LocalV2Scope, id: string): Entry {
   const key = JSON.stringify([scope.userId, scope.workspaceId, id]);
   let current = entries.get(key);
   if (current) return current;
-  const client = localV2(window.desktopAPI.localV2, scope);
+  const client = localV2(localV2Transport(), scope);
   const value: Entry = {
     state: idle, listeners: new Set(), users: 0, loading: false,
     load() {

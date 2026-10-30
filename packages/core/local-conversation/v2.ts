@@ -127,8 +127,8 @@ export const localV2ErrorSchema = z.object({ error: errorSchema });
 export interface LocalV2Scope { userId: string; workspaceId: string }
 
 /**
- * Desktop's v2 transport as the renderer sees it: the main process keeps
- * the daemon token and one WebSocket per scope.
+ * Desktop's v2 transport as the renderer sees it: HTTP and one WebSocket per
+ * scope straight to the daemon, with the OS picker left to the main process.
  */
 export interface LocalV2Transport {
   /** A JSON request to `/local/v2{path}`. */
@@ -150,6 +150,13 @@ export interface LocalV2Transport {
   choose(scope: LocalV2Scope, request: LocalV2ChooseRequest): Promise<unknown>;
 }
 
+/**
+ * What Desktop's main process gives the renderer to reach the daemon: its
+ * loopback address and credentials derived from the profile token, never
+ * the token itself.
+ */
+export interface LocalV2RendererEndpoint { base: string; apiUrl: string; token: string; fileKey: string }
+
 export type LocalV2ChooseRequest =
   | { purpose: "preview"; kind: "file" | "directory" }
   | { purpose: "folder_project"; defaultPath?: string }
@@ -157,11 +164,6 @@ export type LocalV2ChooseRequest =
 
 export const localV2UploadSchema = z.object({ id: z.string(), name: z.string(), mime_type: z.string(), size: z.number() });
 export type LocalV2Upload = z.infer<typeof localV2UploadSchema>;
-
-/** Daemon file routes the renderer may stream. */
-export function isLocalV2FilePath(path: string): boolean {
-  return /^\/attachments\/[\w-]{1,128}$/.test(path) || /^\/sessions\/[\w:.~-]{1,160}\/image\?path=/.test(path) || /^\/preview\/content\?/.test(path);
-}
 
 /** A page of the provider's native history that can be imported. */
 export const localV2ImportPageSchema = z.object({
@@ -178,14 +180,3 @@ export const localV2ImportResultSchema = z.object({
   imported: z.array(importOutcomeSchema).default([]), skipped: z.array(importOutcomeSchema).default([]), failed: z.array(importOutcomeSchema).default([]),
 });
 export type LocalV2ImportResult = z.infer<typeof localV2ImportResultSchema>;
-
-/**
- * Renderer writes the main process forwards. Adding a readable root, a
- * folder project or a working directory takes a path the user chose in the
- * OS picker, so those go through `choose` instead.
- */
-export function isLocalV2RendererPost(path: string, body: unknown): boolean {
-  if (path === "/preview/roots" || path === "/folder-projects") return false;
-  if (/^\/sessions\/[^/]+\/commands$/.test(path)) return (body as { type?: unknown } | null)?.type !== "set_directory";
-  return true;
-}

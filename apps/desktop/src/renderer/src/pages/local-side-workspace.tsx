@@ -22,6 +22,7 @@ import type { LocalConversationScope, LocalProviderId } from "@multica/core/loca
 import { FileLinkPreviewError, fileLinkErrorMessage, resolutionSource, resolveConversationFile } from "./local-resource-resolution";
 import { createLocalConversationParentService, localConversationKey, localTargetId } from "../platform/local-conversation-service";
 import { LocalFilePreview, PreviewFolder, WebResourcePreview } from "./local-resource-preview";
+import { localV2Transport } from "../platform/local-v2-transport";
 
 export interface SideWorkspaceHandle { openSide(id: string, sourceId?: string): void; openResource(sessionId: string, url: string, sourceId?: string): Promise<void>; toggle(): void }
 interface Props {
@@ -44,7 +45,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
   const layoutsRef = useRef(layouts); layoutsRef.current = layouts;
   const layout = layouts[key] ?? (sessionId ? readLayout(key) : emptyLayout());
   // Sides the list has not loaded yet are read once; reading records their summary.
-  const v2 = localV2(window.desktopAPI.localV2, props.scope);
+  const v2 = localV2(localV2Transport(), props.scope);
   const known = useSyncExternalStore(useCallback((listener: () => void) => v2.onSummaries(listener), [v2]), () => v2.summaries());
   const listed = new Set(props.sessions.map((entry) => entry.id));
   const extra = known.filter((summary) => !listed.has(summary.conversation_id) && layout.tabs.some((tab) => tab.kind === "side" && tab.sessionId === summary.conversation_id)).map(sessionEntry);
@@ -90,7 +91,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     const prefix = sideLayoutKey(latest.current.scope, "");
     if (!owner.startsWith(prefix)) return;
     const snapshot = sideSnapshot(owner.slice(prefix.length), value, visible);
-    await syncSideWorkspace(window.desktopAPI.localV2, latest.current.scope, snapshot);
+    await syncSideWorkspace(localV2Transport(), latest.current.scope, snapshot);
     return snapshot;
   }, []);
   useEffect(() => {
@@ -111,7 +112,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     };
     fullSync();
     // A restarted daemon has lost the layouts.
-    return window.desktopAPI.localV2.onConnection((scope, connected) => { if (connected && scope.userId === latest.current.scope.userId && scope.workspaceId === latest.current.scope.workspaceId) fullSync(); });
+    return localV2Transport().onConnection((scope, connected) => { if (connected && scope.userId === latest.current.scope.userId && scope.workspaceId === latest.current.scope.workspaceId) fullSync(); });
   }, [props.scope.userId, props.scope.workspaceId, key, sync]);
   useEffect(() => registerSideWorkspaceView({ userId: props.scope.userId, workspaceId: props.scope.workspaceId }), [props.scope.userId, props.scope.workspaceId]);
   useEffect(() => () => { if (key !== "new") void sync(key, layoutsRef.current[key] ?? readLayout(key), false).catch(() => {}); }, [key, sync]);
@@ -123,7 +124,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     if (request.scope.userId !== current.scope.userId || request.scope.workspaceId !== current.scope.workspaceId) return;
     void (async () => {
       const owner = sideLayoutKey(current.scope, request.conversationId);
-      const opened = await prepareSideTab(request, window.desktopAPI.localV2);
+      const opened = await prepareSideTab(request, localV2Transport());
       if (!mounted.current || latest.current.scope.userId !== current.scope.userId || latest.current.scope.workspaceId !== current.scope.workspaceId) throw new Error("Side workspace changed");
       const previous = layoutsRef.current[owner] ?? readLayout(owner);
       const { layout: next, tabId } = applySideCommand(previous, request, opened);
@@ -173,8 +174,8 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
       if (isCurrent()) { setOpeningFiles((count) => count + 1); setError(""); }
       updateLayout(owner, (current) => ({ ...current, open: true }));
       try {
-        const source = resolutionSource(V2Conversation.fromSnapshot(await localV2(window.desktopAPI.localV2, scope).snapshot(sessionId)));
-        const preview = localV2Preview(window.desktopAPI.localV2, scope);
+        const source = resolutionSource(V2Conversation.fromSnapshot(await localV2(localV2Transport(), scope).snapshot(sessionId)));
+        const preview = localV2Preview(localV2Transport(), scope);
         const { file, line } = await resolveConversationFile({ source, value,
           read: (path) => preview.read({ path }, sessionId),
           list: (path) => preview.list({ root: source.cwd, path }, sessionId),
@@ -198,7 +199,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     const started = epoch.current;
     const isCurrent = () => mounted.current && epoch.current === started;
     try {
-      const client = localV2(window.desktopAPI.localV2, props.scope);
+      const client = localV2(localV2Transport(), props.scope);
       let sourceId = props.source?.id ?? sessionId;
       if (!sourceId) {
         const created = localV2SummarySchema.parse(await client.request("POST", "/sessions", { id: crypto.randomUUID(), provider: props.provider, title: "" }));
@@ -219,7 +220,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
   const chooseFile = async (kind: "file" | "directory") => {
     const started = epoch.current;
     try {
-      const location = await localV2Preview(window.desktopAPI.localV2, props.scope).choose(kind);
+      const location = await localV2Preview(localV2Transport(), props.scope).choose(kind);
       if (location && mounted.current && (key !== "new" || epoch.current === started)) add({ id: `file:${crypto.randomUUID()}`, kind: "file", location });
     } catch (error) { if (mounted.current && epoch.current === started) showError(error); }
   };
@@ -257,7 +258,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
           </div>
           {Object.values(browserActivity).some((activity) => activity.conversationId === sessionId) && <div role="status" className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2 text-caption text-muted-foreground"><span>{props.chinese ? "助手操作中 · 使用当前网页登录状态" : "Assistant is using this page and its signed-in session"}</span><Button variant="outline" size="xs" onClick={() => {
             const activity = Object.values(browserActivity).find((activity) => activity.conversationId === sessionId);
-            if (activity) void localV2(window.desktopAPI.localV2, props.scope).command(activity.conversationId, { type: "interrupt" }).catch(showError);
+            if (activity) void localV2(localV2Transport(), props.scope).command(activity.conversationId, { type: "interrupt" }).catch(showError);
           }}>{props.chinese ? "停止" : "Stop"}</Button></div>}
           {openingFiles > 0 && <div role="status" className="flex items-center gap-2 border-b px-3 py-2 text-caption text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />{props.chinese ? "正在定位文件…" : "Locating file…"}</div>}
           {error && <div role="alert" className="flex items-center justify-between border-b px-3 py-2 text-caption text-destructive"><span>{error}</span><IconButton label={props.chinese ? "关闭错误提示" : "Dismiss error"} onClick={() => setError("")}><X /></IconButton></div>}
@@ -280,7 +281,7 @@ function SideConversation(props: Props & { sessionId: string; onSide(id: string)
   const latest = useRef(props); latest.current = props;
   const session = props.sessions.find((entry) => entry.id === props.sessionId);
   const activity = useSideActivity(props.scope, props.sessionId, props.visible);
-  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: props.chinese ? "zh-CN" : "en", storagePrefix: `side:${props.sessionId}:`, getSelectedSessionId: () => props.sessionId, onLocalSelect: (id) => { if (id && id !== props.sessionId) latest.current.onSide(id); }, onOpenSide: (id) => latest.current.onSide(id), onOpenResource: (id, url) => { void latest.current.onResource(id, url).catch((error: unknown) => latest.current.onShowMessage(error instanceof Error ? error.message : String(error), "error")); }, onLocateSource: (id, turnId, quote) => latest.current.onSelectSource(id, turnId, quote) }, window.desktopAPI.localV2), [props.sessionId, props.chinese]);
+  const factory = useCallback((options: ParentServiceOptions) => createLocalConversationParentService({ ...options, locale: props.chinese ? "zh-CN" : "en", storagePrefix: `side:${props.sessionId}:`, getSelectedSessionId: () => props.sessionId, onLocalSelect: (id) => { if (id && id !== props.sessionId) latest.current.onSide(id); }, onOpenSide: (id) => latest.current.onSide(id), onOpenResource: (id, url) => { void latest.current.onResource(id, url).catch((error: unknown) => latest.current.onShowMessage(error instanceof Error ? error.message : String(error), "error")); }, onLocateSource: (id, turnId, quote) => latest.current.onSelectSource(id, turnId, quote) }, localV2Transport()), [props.sessionId, props.chinese]);
   return <div className="flex h-full min-h-0 flex-col">
     <LocalRuntimeNotice scope={props.scope} chinese={props.chinese} />
     {session?.side && <div className="shrink-0 border-b px-3 py-3 text-caption text-muted-foreground"><div className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{props.chinese ? "来自主对话" : "From main chat"} · {props.sessions.find((entry) => entry.id === session.side!.sourceId)?.title}</span><Button variant="link" size="xs" onClick={() => props.onSelectSource(session.side!.sourceId, session.side!.turnId, session.side!.quote)}><ArrowLeft className="size-3.5" />{props.chinese ? "定位来源" : "Locate source"}</Button></div>{session.side.quote && <blockquote className="mt-2 max-h-28 overflow-auto border-l-2 pl-3 text-body text-foreground">{session.side.quote}</blockquote>}</div>}

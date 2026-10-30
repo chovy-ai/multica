@@ -35,6 +35,7 @@ import type { ComponentProps } from "react";
 type RestoreDraftRequest = NonNullable<ComponentProps<typeof TuttiAgentGuiPanel>["restoreDraftRequest"]>;
 import { projectVisibilityScopeKey, useProjectVisibilityStore } from "../stores/local-conversation-project-visibility";
 import { SESSION_LIST_MIN_WIDTH, SESSION_LIST_MAX_WIDTH, useConversationLayoutStore } from "../stores/local-conversation-layout";
+import { localV2Transport } from "../platform/local-v2-transport";
 
 const EMPTY_PROJECT_IDS: string[] = [];
 function folderProject(project: { id: string; title: string; path: string; created_at: string }): LocalFolderProject {
@@ -79,7 +80,7 @@ export function LocalConversationFlowPage() {
     window.addEventListener("blur", finish);
   };
   const qc = useQueryClient();
-  const transport = window.desktopAPI.localV2;
+  const transport = localV2Transport();
   const sideWorkspace = useRef<SideWorkspaceHandle>(null);
   const [sideOpen, setSideOpen] = useState(false);
   const [referenceDraft, setReferenceDraft] = useState<RestoreDraftRequest | null>(null);

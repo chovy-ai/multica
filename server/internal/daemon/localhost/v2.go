@@ -46,14 +46,18 @@ type V2 struct {
 	profileDir string
 	upgrader   websocket.Upgrader
 	hosts      hosts
+	tickets    tickets
 }
 
-// NewV2 serves svc. Requests must carry token and the profile's account.
+// NewV2 serves svc. Requests must carry token, or a renderer credential
+// derived from it, and the profile's account.
 func NewV2(svc *service.Service, token, profileDir string) *V2 {
 	v := &V2{svc: svc, token: token, profileDir: profileDir, upgrader: websocket.Upgrader{
 		ReadBufferSize: 64 << 10, WriteBufferSize: 64 << 10,
-		CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == "" },
-	}, hosts: hosts{byScope: map[int64][]*wsConn{}, pending: map[string]chan v2HostReply{}}}
+		// authenticate already checked the Origin for the caller's credential.
+		CheckOrigin: func(*http.Request) bool { return true },
+	}, hosts: hosts{byScope: map[int64][]*wsConn{}, pending: map[string]chan v2HostReply{}},
+		tickets: tickets{items: map[string]ticket{}, now: time.Now}}
 	svc.SetHost(v.hosts.request)
 	return v
 }
@@ -62,11 +66,17 @@ func NewV2(svc *service.Service, token, profileDir string) *V2 {
 func (v *V2) Register(mux *http.ServeMux) { mux.Handle("/local/v2/", v) }
 
 func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !Authorize(r, v.token) {
+	kind, ok := v.authenticate(r)
+	if !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/local/v2")
+	if !allowed(kind, r.Method, path, "") {
+		writeV2Error(w, AppError("forbidden", "This caller cannot use this local conversation route"))
+		return
+	}
+	r = r.WithContext(withCaller(r.Context(), kind))
 	if path == "/hello" && r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": []string{"claude", "codex"}})
 		return
@@ -105,6 +115,8 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	switch {
+	case path == "/ws-ticket" && r.Method == http.MethodPost:
+		writeJSON(w, http.StatusOK, ticketResponse(v.tickets.issue(kind, scopeFromHeaders(r.Header))))
 	case path == "/ws" && r.Method == http.MethodGet:
 		v.serveWS(w, r, scopeID)
 	case path == "/sessions" && r.Method == http.MethodGet:
@@ -362,6 +374,10 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 	var body commandBody
 	if err := decodeBody(r, &body); err != nil {
 		writeV2Error(w, err)
+		return
+	}
+	if !allowed(callerOf(r.Context()), r.Method, "/sessions/"+id+"/commands", body.Type) {
+		writeV2Error(w, AppError("forbidden", "Choose this folder in Multica first"))
 		return
 	}
 	switch body.Type {
@@ -749,7 +765,7 @@ func writeV2Error(w http.ResponseWriter, err error) {
 	case appErrorCode(err) != "":
 		code = appErrorCode(err)
 		status = http.StatusBadRequest
-		if code == "not_signed_in" || code == "account_mismatch" {
+		if code == "not_signed_in" || code == "account_mismatch" || code == "forbidden" {
 			status = http.StatusForbidden
 		}
 	case errors.Is(err, store.ErrNotFound):

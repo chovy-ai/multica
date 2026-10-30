@@ -6,6 +6,7 @@ import type { LocalConversation, LocalConversationScope } from "@multica/core/lo
 import { LocalSideWorkspace, type SideWorkspaceHandle } from "./local-side-workspace";
 import { sessionEntry } from "../platform/local-conversation-projects";
 import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
+vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: () => window.desktopAPI.localV2 }));
 
 vi.mock("@multica/views/i18n", () => ({ useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: Record<string, string | number>) => selector(chat).replace(/{{(\w+)}}/g, (_, key) => String(options?.[key] ?? "")) }) }));
 vi.mock("@multica/views/conversation-flow/panel", () => ({ TuttiAgentGuiPanel: ({ activeSessionId, active }: { activeSessionId: string; active: boolean }) => <textarea aria-label={`Side draft ${activeSessionId}`} data-active={String(active)} /> }));
@@ -91,8 +92,9 @@ beforeEach(() => {
   changes.add((changed, id) => messages.forEach((listener) => listener(changed, { version: 2, type: "subscription.status", conversation_id: id, status: "resubscribe" })));
   const localV2 = { request: daemon, send: vi.fn(async () => {}), subscribe: (listener: (scope: LocalConversationScope, message: unknown) => void) => { messages.add(listener); return () => messages.delete(listener); },
     onConnection: () => () => {}, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
+    availability: () => ({ state: "connected" }), onAvailability: () => () => {},
     choose: async (scopeValue: LocalConversationScope, choice: { kind: string }) => request(scopeValue, "previewChoose", { kind: choice.kind }) };
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected" }), subscribe: () => () => {} }, localV2, resourcePreview: preview, openExternal: vi.fn() } });
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localV2, resourcePreview: preview, openExternal: vi.fn() } });
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {

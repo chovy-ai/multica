@@ -144,7 +144,7 @@ export class LocalV2ScopeClient {
       this.notifySummaries();
       return;
     }
-    if (message.type === "host.request") return; // answered by the main process
+    if (message.type === "host.request") return; // answered by the transport
     if (message.type === "subscription.status" && !message.conversation_id) {
       // The scope stream fell behind: read the list again.
       if (message.status === "resubscribe" || message.status === "snapshot_required") this.reloadSummaries();
