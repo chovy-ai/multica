@@ -291,6 +291,10 @@ func (l *deviceLink) handleForward(w http.ResponseWriter, r *http.Request) {
 		deviceLinkError(w, http.StatusNotFound, "device_unknown", "This device is not signed in to your account")
 		return
 	}
+	if r.URL.Path == "/local/v2/link-events" && r.Method == http.MethodGet {
+		serveDeviceLinkEvents(w, r, svc, id)
+		return
+	}
 	if svc.Connection(id) == p2p.ConnectionRelayed && r.ContentLength > relayTransferLimit {
 		deviceLinkError(w, http.StatusRequestEntityTooLarge, "relay_transfer_limited", "Files over 5 MB cannot move while the devices are connected through the relay")
 		return

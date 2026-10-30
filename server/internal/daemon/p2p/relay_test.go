@@ -170,9 +170,10 @@ func TestDevicesWithoutDirectRouteConnectThroughRelay(t *testing.T) {
 		t.Fatalf("connection = %q, want relayed", c)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// An available relay must carry application traffic without waiting for hole punching.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	s, err := b.Open(ctx, idA, echo)
+	s, err := b.Dial(ctx, idA, echo)
 	if err != nil {
 		t.Fatalf("open through relay: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestDevicesWithoutDirectRouteConnectThroughRelay(t *testing.T) {
 	payload := bytes.Repeat([]byte("multica "), 64<<10)
 	go func() {
 		s.Write(payload)
-		s.CloseWrite()
+		s.(streamConn).CloseWrite()
 	}()
 	got, err := io.ReadAll(s)
 	if err != nil || !bytes.Equal(got, payload) {
