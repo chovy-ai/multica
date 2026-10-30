@@ -192,7 +192,7 @@ func TestQueueRejectsAnItemPastCapacity(t *testing.T) {
 	}
 }
 
-func TestQueueResumesAfterRestart(t *testing.T) {
+func TestQueueWaitsForTheUserAfterRestart(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "c.sqlite")
@@ -210,5 +210,16 @@ func TestQueueResumesAfterRestart(t *testing.T) {
 	}
 
 	again := newServiceFixture(t, path)
-	eventually(t, "the queued message after restart", func() bool { return fmt.Sprint(again.sends(t)) == "[after restart]" })
+	view, err := again.svc.Queue(ctx, again.scopeID, "conv-1")
+	if err != nil || !view.Paused || view.Error != queuePausedByRestart || len(view.Items) != 1 {
+		t.Fatalf("queue after restart = %+v, %v; want it paused with its message", view, err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if sent := again.sends(t); len(sent) != 0 {
+		t.Fatalf("sent %v before the user resumed the queue", sent)
+	}
+	if _, err := again.svc.UpdateQueue(ctx, again.scopeID, "conv-1", "resume", ""); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the queued message after resume", func() bool { return fmt.Sprint(again.sends(t)) == "[after restart]" })
 }

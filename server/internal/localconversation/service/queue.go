@@ -277,6 +277,22 @@ func (s *Service) UpdateQueue(ctx context.Context, scopeID int64, conversationID
 	return view, nil
 }
 
+// queuePausedByRestart explains a queue paused when the daemon started.
+const queuePausedByRestart = "Multica restarted; resume the queue to send these messages"
+
+// pauseQueueAfterRestart pauses a queue a previous daemon left with
+// messages, so nothing is sent until the user resumes it.
+func (s *Service) pauseQueueAfterRestart(ctx context.Context, conversationID string) error {
+	unlock := s.queues.lock(conversationID)
+	defer unlock()
+	state, err := s.store.Queue(ctx, conversationID)
+	if err != nil || state.Paused || len(state.Items) == 0 {
+		return err
+	}
+	_, err = s.commitQueue(ctx, conversationID, store.QueueChange{Revision: state.Revision + 1, Paused: true, Error: queuePausedByRestart}, len(state.Items))
+	return err
+}
+
 // commitQueue records a queue change with its queue.updated event and the
 // summary's queue count. The caller holds the conversation's queue lock.
 func (s *Service) commitQueue(ctx context.Context, conversationID string, change store.QueueChange, count int) (QueueView, error) {
