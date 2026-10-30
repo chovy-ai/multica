@@ -1,13 +1,14 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
-import type { LocalConversation, LocalPreviewFile, LocalPreviewLocation } from "@multica/core/local-conversation/protocol";
+import type { LocalPreviewFile, LocalPreviewLocation } from "@multica/core/local-conversation/protocol";
+import { LocalV2RequestError } from "../platform/local-v2";
 import { FileLinkPreviewError, fileLinkErrorMessage, resolveConversationFile } from "./local-resource-resolution";
 
 function fixture(contents = "See `output/batch/walkthrough.md`.") {
   const files = new Map<string, LocalPreviewFile>();
   const folders: LocalPreviewLocation[] = ["project", "other"].map((name) => ({ root: "/workspace", path: `/workspace/${name}`, name, kind: "directory" }));
-  const source: Pick<LocalConversation, "cwd" | "messages"> = { cwd: "/workspace", messages: [{ id: "reply", role: "assistant", content: contents, turnId: "turn", createdAt: "2026-10-25" }] };
-  const read = vi.fn(async (path: string) => { const file = files.get(path); if (!file) throw new Error(`Error invoking remote method 'local-conversation:request': Error: ENOENT: no such file, realpath '${path}'`); return file; });
+  const source = { cwd: "/workspace", texts: [contents], toolInputs: [] as Record<string, unknown>[] };
+  const read = vi.fn(async (path: string) => { const file = files.get(path); if (!file) throw new LocalV2RequestError("not_found", `${path} does not exist`); return file; });
   const list = vi.fn(async () => folders);
   const add = (path: string) => files.set(path, { path, name: path.split("/").at(-1)!, text: "Verified report", size: 15, truncated: false, mimeType: "text/plain" });
   const open = (value = "walkthrough.md") => resolveConversationFile({ source, value, read, list });
@@ -35,9 +36,7 @@ it.each([
   { command: "sed -n 56,90p /workspace/server/internal/daemon/runtime_mcp.go" },
 ])("resolves a short reference from an absolute tool input: %j", async (input) => {
   const f = fixture("Read `runtime_mcp.go`.");
-  const source = { ...f.source, turns: [{ id: "turn", status: "completed" as const, createdAt: "2026-10-25", events: [
-    { type: "tool_use" as const, seq: 1, tool: "Read", input, created_at: "2026-10-25" },
-  ] }] };
+  const source = { ...f.source, toolInputs: [input] };
   f.add("/workspace/server/internal/daemon/runtime_mcp.go");
   expect(await resolveConversationFile({ source, value: "runtime_mcp.go#L56", read: f.read, list: f.list })).toMatchObject({
     file: { path: "/workspace/server/internal/daemon/runtime_mcp.go" }, line: 56,
@@ -48,16 +47,12 @@ it("does not choose between tool references to different files with the same nam
   const f = fixture("Read `runtime_mcp.go`.");
   const paths = ["/workspace/first/runtime_mcp.go", "/workspace/second/runtime_mcp.go"];
   paths.forEach(f.add);
-  const source = { ...f.source, turns: [{ id: "turn", status: "completed" as const, createdAt: "2026-10-25", events: paths.map((path, seq) => (
-    { type: "tool_use" as const, seq, input: { file_path: path }, created_at: "2026-10-25" }
-  )) }] };
+  const source = { ...f.source, toolInputs: paths.map((path) => ({ file_path: path })) };
   await expect(resolveConversationFile({ source, value: "runtime_mcp.go", read: f.read, list: f.list })).rejects.toMatchObject({ kind: "ambiguous" });
 });
 it("bounds tool history and never infers uniqueness from an incomplete scan", async () => {
   const f = fixture("Read `runtime_mcp.go`.");
-  const source = { ...f.source, turns: [{ id: "turn", status: "completed" as const, createdAt: "2026-10-25", events: [
-    { type: "tool_use" as const, seq: 1, input: { command: "x".repeat(2_000_001) }, created_at: "2026-10-25" },
-  ] }] };
+  const source = { ...f.source, toolInputs: [{ command: "x".repeat(2_000_001) }] };
   await expect(resolveConversationFile({ source, value: "runtime_mcp.go", read: f.read, list: f.list })).rejects.toMatchObject({ kind: "incomplete" });
   expect(f.read).toHaveBeenCalledTimes(1);
 });
@@ -84,7 +79,7 @@ it("does not search when a short name has no supporting path reference", async (
   await expect(f.open()).rejects.toMatchObject({ kind: "missing" }); expect(f.list).not.toHaveBeenCalled();
 });
 it("retains access-denied boundaries and does not turn them into lookup attempts", async () => {
-  const f = fixture(); f.read.mockRejectedValue(new Error("The file is outside the selected folder"));
+  const f = fixture(); f.read.mockRejectedValue(new LocalV2RequestError("outside_folder", "The file is outside the selected folder"));
   await expect(f.open()).rejects.toMatchObject({ kind: "denied" }); expect(f.list).not.toHaveBeenCalled();
 });
 it("stops instead of accepting a truncated project listing", async () => {

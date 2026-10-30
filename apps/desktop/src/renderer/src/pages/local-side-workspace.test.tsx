@@ -1,10 +1,10 @@
-import { LOCAL_CONVERSATION_METHODS, LOCAL_CONVERSATION_PROTOCOL_VERSION } from "@multica/core/local-conversation/protocol";
 import { createRef } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { LocalConversation, LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import { LocalSideWorkspace, type SideWorkspaceHandle } from "./local-side-workspace";
+import { sessionEntry } from "../platform/local-conversation-projects";
 import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 
 vi.mock("@multica/views/i18n", () => ({ useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: Record<string, string | number>) => selector(chat).replace(/{{(\w+)}}/g, (_, key) => String(options?.[key] ?? "")) }) }));
@@ -15,6 +15,61 @@ let sessions: LocalConversation[];
 let request: ReturnType<typeof vi.fn<(scope: unknown, method: string, params: Record<string, unknown>) => Promise<unknown>>>;
 const preview = { request: vi.fn(), subscribe: vi.fn(() => () => {}) };
 const changes = new Set<(scope: LocalConversationScope, id: string) => void>();
+const at = "2026-10-24T00:00:00Z";
+const time = (value: string) => value.includes("T") ? value : `${value}T00:00:00Z`;
+
+/** The cases keep v1-shaped fixtures; this is the daemon's v2 view of them. */
+function summary(entry: LocalConversation) {
+  return { conversation_id: entry.id, summary_seq: 1, provider: entry.provider, title: entry.title, cwd: entry.cwd, project_id: null, pinned: entry.pinned, archived: entry.archived,
+    status: entry.turns.some((turn) => turn.status === "running") ? "running" : "idle", last_message_preview: entry.messages.at(-1)?.content ?? "",
+    turn_count: Math.max(entry.turns.length, entry.messages.length ? 1 : 0), updated_at: time(entry.updatedAt), created_at: time(entry.createdAt),
+    ...(entry.side ? { side_source_id: entry.side.sourceId, ...(entry.side.quote ? { side_quote: entry.side.quote } : {}) } : {}) };
+}
+function snapshot(entry: LocalConversation) {
+  let seq = 0;
+  const item = (turnId: string, id: string, kind: string, status: string, state: Record<string, unknown>) => [
+    { seq: ++seq, turn_id: turnId, item_id: id, type: "item.started", final: false, created_at: at, payload: { kind } },
+    { seq: ++seq, turn_id: turnId, item_id: id, type: status === "in_progress" ? "item.updated" : "item.completed", final: status !== "in_progress", created_at: at, payload: { kind, status, ...state } },
+  ];
+  const turns = entry.turns.map((turn, index) => {
+    const answer = entry.messages.filter((message) => message.role === "assistant" && message.turnId === turn.id).at(-1)?.content
+      ?? turn.events.filter((event) => event.type === "text").map((event) => event.content ?? "").join("");
+    const tools = turn.events.flatMap((event) => event.type === "tool_use" ? item(turn.id, `${turn.id}-${event.seq}`, "tool_call", "completed", { tool: event.tool, input: event.input }) : []);
+    return { id: turn.id, turn_index: index, request_id: turn.id, status: turn.status, started_at: time(turn.createdAt), ...(turn.status === "running" ? {} : { completed_at: at }),
+      ...(turn.error ? { error: { kind: "provider", message: turn.error } } : {}), messages: [],
+      events: [...tools, ...(answer ? item(turn.id, `${turn.id}-text`, "assistant_text", turn.status === "running" ? "in_progress" : "completed", { text: answer }) : [])] };
+  });
+  return { version: 2, store_generation: "g", snapshot_seq: seq, conversation: summary(entry), turns };
+}
+const previewTexts = new Map<string, string>();
+/** Daemon errors arrive with their kind; the fixtures name them like Node did. */
+function daemonError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  throw new Error(/ENOENT/.test(message) ? `not_found: ${message}` : /outside/.test(message) ? `outside_folder: ${message}` : message);
+}
+async function daemon(scopeValue: LocalConversationScope, method: string, path: string, body?: Record<string, unknown>): Promise<unknown> {
+  const url = new URL(path, "http://daemon"), q = url.searchParams;
+  const session = /^\/sessions\/([^/]+)\/(snapshot|commands)$/.exec(url.pathname);
+  try {
+    if (session?.[2] === "snapshot") {
+      const entry = await request(scopeValue, "read", { id: session[1] }) as LocalConversation | undefined;
+      if (!entry) throw new Error("not_found: Local conversation not found");
+      return snapshot(entry);
+    }
+    if (session && body?.type === "create_side") return summary(await request(scopeValue, "sideCreate", { id: session[1], requestId: body.request_id }) as LocalConversation);
+    if (session && body?.type === "side_workspace_sync") return request(scopeValue, "sideWorkspaceSync", body.workspace as Record<string, unknown>);
+    if (session && body?.type === "interrupt") return request(scopeValue, "cancel", { id: session[1] });
+    if (url.pathname === "/sessions" && method === "POST") return summary(await request(scopeValue, "create", { provider: body!.provider }) as LocalConversation);
+    const location = { ...(q.get("root") ? { root: q.get("root")! } : {}), path: q.get("path")!, ...(q.get("conversation_id") ? { id: q.get("conversation_id")! } : {}) };
+    if (url.pathname === "/preview/list") return { entries: await request(scopeValue, "previewList", location) };
+    if (url.pathname === "/preview/file") {
+      const file = await request(scopeValue, "previewRead", location) as { root?: string; path: string; name: string; mimeType: string; size: number; text?: string };
+      previewTexts.set(url.search, file.text ?? "");
+      return { root: file.root ?? "/project", path: file.path, name: file.name, mime_type: file.mimeType, size: file.size };
+    }
+  } catch (error) { daemonError(error); }
+  throw new Error(`http_404: ${method} ${path}`);
+}
 beforeEach(() => {
   localStorage.clear(); vi.clearAllMocks(); changes.clear();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -29,12 +84,20 @@ beforeEach(() => {
     return undefined;
   });
   preview.request.mockImplementation(async (_scope, command) => command.action === "close" || command.action === "hide" ? null : { id: command.id, url: command.url, title: "Example", loading: false, canGoBack: false, canGoForward: false });
-  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected", sidecar: "ready" }), subscribe: () => () => {} }, localConversations: { request: (scope: unknown, method: string, params: Record<string, unknown>) => method === "capabilities" ? Promise.resolve({ protocolVersion: LOCAL_CONVERSATION_PROTOCOL_VERSION, methods: Object.keys(LOCAL_CONVERSATION_METHODS) }) : request(scope, method, params), subscribe: (listener: (scope: LocalConversationScope, id: string) => void) => { changes.add(listener); return () => changes.delete(listener); } }, resourcePreview: preview, openExternal: vi.fn() } });
+  previewTexts.clear();
+  vi.stubGlobal("fetch", async (url: string) => new Response(previewTexts.get(new URL(url.replace(/^v2:/, "http://daemon")).search) ?? ""));
+  const messages = new Set<(scope: LocalConversationScope, message: unknown) => void>();
+  // A change notice from a case makes the conversation's subscription read it again.
+  changes.add((changed, id) => messages.forEach((listener) => listener(changed, { version: 2, type: "subscription.status", conversation_id: id, status: "resubscribe" })));
+  const localV2 = { request: daemon, send: vi.fn(async () => {}), subscribe: (listener: (scope: LocalConversationScope, message: unknown) => void) => { messages.add(listener); return () => messages.delete(listener); },
+    onConnection: () => () => {}, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
+    choose: async (scopeValue: LocalConversationScope, choice: { kind: string }) => request(scopeValue, "previewChoose", { kind: choice.kind }) };
+  Object.defineProperty(window, "desktopAPI", { configurable: true, value: { localHost: { availability: async () => ({ state: "connected" }), subscribe: () => () => {} }, localV2, resourcePreview: preview, openExternal: vi.fn() } });
 });
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {
   const ref = createRef<SideWorkspaceHandle>(); const onSelectSource = vi.fn(), onShowMessage = vi.fn();
-  const element = (source: LocalConversation | undefined, sessionId: string | null = source?.id ?? null) => <QueryClientProvider client={queryClient}><LocalSideWorkspace ref={ref} scope={scope} slug="test" source={source} sessionId={sessionId} provider="codex" sessions={sessions} chinese active onSelectSource={onSelectSource} onOpenTask={() => {}} onShowMessage={onShowMessage} onReference={() => {}}>{(visible) => <textarea aria-label="Main draft" data-visible={String(visible)} />}</LocalSideWorkspace></QueryClientProvider>;
+  const element = (source: LocalConversation | undefined, sessionId: string | null = source?.id ?? null) => <QueryClientProvider client={queryClient}><LocalSideWorkspace ref={ref} scope={scope} slug="test" source={source && sessionEntry(summary(source) as never)} sessionId={sessionId} provider="codex" sessions={sessions.map((entry) => sessionEntry(summary(entry) as never))} chinese active onSelectSource={onSelectSource} onOpenTask={() => {}} onShowMessage={onShowMessage} onReference={() => {}}>{(visible) => <textarea aria-label="Main draft" data-visible={String(visible)} />}</LocalSideWorkspace></QueryClientProvider>;
   const view = render(element(sessions[0]));
   return { ...view, ref, onSelectSource, onShowMessage, select: (source: LocalConversation | null) => view.rerender(element(source ?? undefined)), selectId: (id: string) => view.rerender(element(undefined, id)) };
 }
@@ -162,7 +225,7 @@ it("keeps the authorized root when a tool reference resolves outside the source 
   const { ref } = setup();
   await act(async () => { await ref.current!.openResource("main", "runtime_mcp.go"); });
   expect(await screen.findByText("package daemon")).toBeVisible();
-  expect(request).toHaveBeenCalledWith(scope, "previewRead", { root: "/selected repo", path, name: "runtime_mcp.go", kind: "file", id: "main" });
+  expect(request).toHaveBeenCalledWith(scope, "previewRead", { root: "/selected repo", path, id: "main" });
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 it("shows one recoverable file error and preserves the main draft instead of stacking IPC toasts", async () => {
@@ -170,7 +233,7 @@ it("shows one recoverable file error and preserves the main draft instead of sta
   request.mockImplementation(async (_scope, method) => {
     if (method === "read") return sessions[0];
     if (method === "previewRead") {
-      if (missing) throw new Error("Error invoking remote method 'local-conversation:request': Error: ENOENT: realpath '/project/walkthrough.md'");
+      if (missing) throw new Error("Error invoking remote method 'local-v2:request': Error: ENOENT: realpath '/project/walkthrough.md'");
       return { name: "test.ts", path: "/project/test.ts", mimeType: "text/plain", text: "ready", size: 5, truncated: false };
     }
     return undefined;

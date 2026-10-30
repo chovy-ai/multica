@@ -4,8 +4,8 @@ import { getCurrentWsId, getCurrentSlug } from "@multica/core/platform";
 import { paths } from "@multica/core/paths";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { useTabStore } from "../stores/tab-store";
-import { getLocalConversationClient } from "./local-conversation-client";
-import { applySideCommand, hasSideWorkspaceView, prepareSideTab, readSideLayout, sideLayoutKey, sideSnapshot } from "../pages/local-side-workspace-sync";
+import { localV2 } from "./local-v2";
+import { applySideCommand, hasSideWorkspaceView, prepareSideTab, readSideLayout, sideLayoutKey, sideSnapshot, syncSideWorkspace } from "../pages/local-side-workspace-sync";
 import { sideWorkspaceControlSchema } from "../../../shared/side-workspace";
 
 /** Restores snapshots even when Desktop starts on a page other than conversations. */
@@ -19,19 +19,18 @@ export function DesktopSideWorkspaceBridge() {
   const active = useRef({ userId, workspaceId, enabled }); active.current = { userId, workspaceId, enabled };
   useEffect(() => {
     if (!enabled || !userId || !workspaceId) return;
-    const scope = { userId, workspaceId }, client = getLocalConversationClient(window.desktopAPI.localConversations);
+    const scope = { userId, workspaceId }, transport = window.desktopAPI.localV2;
     const fullSync = () => {
       if (hasSideWorkspaceView(scope)) return;
       const prefix = sideLayoutKey(scope, "");
       for (let index = 0; index < localStorage.length; index++) {
         const key = localStorage.key(index);
-        if (key?.startsWith(prefix)) void client.request(scope, "sideWorkspaceSync", sideSnapshot(key.slice(prefix.length), readSideLayout(key), false)).catch(() => {});
+        if (key?.startsWith(prefix)) void syncSideWorkspace(transport, scope, sideSnapshot(key.slice(prefix.length), readSideLayout(key), false)).catch(() => {});
       }
     };
     fullSync();
-    const availability = window.desktopAPI.localHost.subscribe((value) => { if (value.state === "connected" && value.sidecar === "ready") fullSync(); });
-    const changed = client.subscribe((changed, id) => { if (!id && changed.userId === userId && changed.workspaceId === workspaceId) fullSync(); });
-    return () => { availability(); changed(); };
+    // A restarted daemon has lost the layouts.
+    return transport.onConnection((changed, connected) => { if (connected && changed.userId === userId && changed.workspaceId === workspaceId) fullSync(); });
   }, [userId, workspaceId, enabled]);
   useEffect(() => window.desktopAPI.sideWorkspace?.onCommand((command) => {
     const request = sideWorkspaceControlSchema.parse(command.request);
@@ -41,17 +40,17 @@ export function DesktopSideWorkspaceBridge() {
         if (!active.current.enabled || active.current.userId !== request.scope.userId || getCurrentWsId() !== request.scope.workspaceId) throw new Error("Select the originating account and workspace before controlling Side tabs");
       };
       check();
-      const client = getLocalConversationClient(window.desktopAPI.localConversations);
-      const opened = await prepareSideTab(request, client); check();
+      const transport = window.desktopAPI.localV2;
+      const opened = await prepareSideTab(request, transport); check();
       const key = sideLayoutKey(request.scope, request.conversationId);
       const { layout, tabId } = applySideCommand(readSideLayout(key), request, opened);
       localStorage.setItem(key, JSON.stringify(layout));
       const snapshot = sideSnapshot(request.conversationId, layout, false);
-      await client.request(request.scope, "sideWorkspaceSync", snapshot); check();
+      await syncSideWorkspace(transport, request.scope, snapshot); check();
       if (request.op === "select" || (request.op === "open" && request.select !== false)) {
         const slug = getCurrentSlug(); if (!slug) throw new Error("No selected workspace");
-        const source = await client.request(request.scope, "read", { id: request.conversationId }); check();
-        const path = `${paths.workspace(slug).conversationFlow()}?${new URLSearchParams({ session: source.id, provider: source.provider })}`;
+        const source = (await localV2(transport, request.scope).snapshot(request.conversationId)).conversation; check();
+        const path = `${paths.workspace(slug).conversationFlow()}?${new URLSearchParams({ session: source.conversation_id, provider: source.provider })}`;
         useTabStore.getState().openTab(path, "", { activate: true });
         // openTab deduplicates by pathname and intentionally retains the old query.
         useTabStore.getState().navigateActiveSession(path, { replace: true });

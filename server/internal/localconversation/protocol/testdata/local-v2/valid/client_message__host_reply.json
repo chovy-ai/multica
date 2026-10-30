@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "type": "host.reply",
+  "request_id": "h-1",
+  "result": {
+    "approved": true
+  }
+}

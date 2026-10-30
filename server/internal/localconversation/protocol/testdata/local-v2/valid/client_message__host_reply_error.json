@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "type": "host.reply",
+  "request_id": "h-2",
+  "error": {
+    "kind": "declined",
+    "message": "The user declined"
+  }
+}

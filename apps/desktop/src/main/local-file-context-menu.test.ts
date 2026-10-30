@@ -1,11 +1,9 @@
 // @vitest-environment node
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { LocalConversationClient } from "@multica/core/local-conversation/protocol";
-import { LocalResourceReader } from "../local-host/local-resource-reader";
 import { setupLocalFileContextMenu } from "./local-file-context-menu";
 
 type Item = { label?: string; role?: string; type?: string; click?: () => void };
@@ -33,7 +31,7 @@ let destroyed: boolean;
 const webContents = { mainFrame: {} };
 const event = { sender: webContents, senderFrame: webContents.mainFrame };
 const scope = { userId: "user", workspaceId: "workspace" };
-const request = vi.fn<LocalConversationClient["request"]>();
+const request = vi.fn<(scope: unknown, path: string) => Promise<unknown>>();
 type Handler = (event: unknown, scope: unknown, input: unknown) => Promise<void>;
 const show = (url: string, hasSelection = false, sourceEvent: unknown = event) =>
   (mock.handle.mock.calls[0]![1] as Handler)(sourceEvent, scope, { sessionId: "source-session", url, hasSelection });
@@ -47,11 +45,19 @@ beforeEach(async () => {
   vi.clearAllMocks(); mock.items.length = 0; mock.locale = ["en-US"]; user = "user"; destroyed = false;
   base = await realpath(await mkdtemp(join(tmpdir(), "multica-file-menu-")));
   cwd = join(base, "project"); await mkdir(cwd);
-  const reader = new LocalResourceReader(join(base, "preferences"));
-  request.mockImplementation(async (_scope, method, params) => {
-    if (method === "read") return { cwd } as never;
-    if (method === "previewLocate") return await reader.locate((params as { path: string }).path, cwd) as never;
-    throw new Error(`Unexpected request: ${method}`);
+  // The daemon's routes, served by the same folder rules.
+  request.mockImplementation(async (_scope, path) => {
+    const url = new URL(path, "http://daemon");
+    if (url.pathname === "/sessions/source-session/snapshot") return { conversation: { cwd } };
+    if (url.pathname === "/preview/locate") {
+      // The daemon resolves links and reads only inside the conversation's folder.
+      const target = url.searchParams.get("path")!;
+      const canonical = await realpath(target).catch(() => null);
+      if (!canonical) throw new Error(target.startsWith(cwd + sep) ? `not_found: ${target} does not exist` : "outside_folder: the file is outside the selected folders");
+      if (!canonical.startsWith(cwd + sep)) throw new Error("outside_folder: the file is outside the selected folders");
+      return { root: cwd, path: canonical, name: canonical.split(sep).at(-1), kind: "file" };
+    }
+    throw new Error(`Unexpected request: ${path}`);
   });
   setupLocalFileContextMenu({
     getWindow: () => ({ webContents, isDestroyed: () => destroyed }) as never,
@@ -67,8 +73,9 @@ it("copies and reveals the canonical target without reading a large binary insta
   expect(mock.items.map((item) => item.label)).toEqual(["Copy Path", revealLabel]);
   click("Copy Path"); await vi.waitFor(() => expect(mock.writeText).toHaveBeenCalledExactlyOnceWith(path));
   click(revealLabel); await vi.waitFor(() => expect(mock.reveal).toHaveBeenCalledExactlyOnceWith(path));
-  expect(request.mock.calls.every(([, method]) => method === "read" || method === "previewLocate")).toBe(true);
-  expect(request).toHaveBeenCalledWith(scope, "previewLocate", { id: "source-session", path });
+  // Only metadata routes: the file's content is never read.
+  expect(request.mock.calls.every(([, route]) => /^\/(sessions\/[^/]+\/snapshot|preview\/locate\?)/.test(route))).toBe(true);
+  expect(request).toHaveBeenCalledWith(scope, `/preview/locate?${new URLSearchParams({ conversation_id: "source-session", path })}`);
 });
 
 it.each(["./archive.zip", "archive.zip", "./checksum.sha256:12:4"])("resolves %s against the source cwd and retains normal Copy", async (url) => {
@@ -91,11 +98,11 @@ it.each(["https://example.com/file.zip", "file://other-host/tmp/file.zip", "java
 });
 
 it("reports missing files and rejects links escaping the source root", async () => {
-  await expect(show("./missing.zip")).rejects.toThrow("ENOENT");
+  await expect(show("./missing.zip")).rejects.toThrow("not_found");
   const outside = join(base, "outside.zip"); await writeFile(outside, "outside");
-  await expect(show(outside)).rejects.toThrow("Choose this folder");
+  await expect(show(outside)).rejects.toThrow("outside_folder");
   await symlink(outside, join(cwd, "escape.zip"));
-  await expect(show("./escape.zip")).rejects.toThrow("Choose this folder");
+  await expect(show("./escape.zip")).rejects.toThrow("outside_folder");
   expect(mock.popup).not.toHaveBeenCalled();
 });
 

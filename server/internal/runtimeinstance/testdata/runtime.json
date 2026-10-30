@@ -9,7 +9,7 @@
   "apiUrl": "https://api.example.test",
   "cliVersion": "0.7.0",
   "cliCommit": "bcdfa010e9a7ed312247eb0ac5dcbf31b23f8ca9",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "sidecarProtocolVersion": 2,
   "localConversations": true,
   "startedAt": "2026-10-28T10:00:00Z"

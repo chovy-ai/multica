@@ -9,10 +9,13 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@multica/ui/components/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@multica/ui/components/ui/dropdown-menu";
 import { ProviderLogo } from "@multica/views/runtimes/provider-logo";
-import type { LocalConversationClient, LocalConversationScope, LocalImportResult, LocalProviderId } from "@multica/core/local-conversation/protocol";
+import type { LocalProviderId } from "@multica/core/local-conversation/protocol";
+import { parseWithFallback } from "@multica/core/api/schema";
+import { localV2ImportPageSchema, localV2ImportResultSchema, type LocalV2ImportPage, type LocalV2ImportResult, type LocalV2Scope, type LocalV2Transport } from "@multica/core/local-conversation/v2";
+import { localV2 } from "../platform/local-v2";
 
 export function LocalConversationImportButton({ scope, client, projects, chinese, onImported }: {
-  scope: LocalConversationScope; client: LocalConversationClient; projects: { id: string; title: string }[]; chinese: boolean; onImported(): void;
+  scope: LocalV2Scope; client: LocalV2Transport; projects: { id: string; title: string }[]; chinese: boolean; onImported(): void;
 }) {
   const [open, setOpen] = useState(false);
   const labelId = useId();
@@ -24,16 +27,18 @@ export function LocalConversationImportButton({ scope, client, projects, chinese
   const [selectingAll, setSelectingAll] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<LocalImportResult | null>(null);
+  const [result, setResult] = useState<LocalV2ImportResult | null>(null);
+  const v2 = localV2(client, scope);
   const cancelled = useRef(false);
   const qc = useQueryClient();
   const queryKey = ["local-native-history", scope.userId, scope.workspaceId, provider];
   const history = useInfiniteQuery({ queryKey, initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => client.request(scope, "importScan", { provider, ...(pageParam ? { cursor: pageParam } : {}) }),
-    getNextPageParam: (page) => page.nextCursor ?? undefined, enabled: open, retry: false, staleTime: 0 });
+    queryFn: async ({ pageParam }) => parseWithFallback<LocalV2ImportPage>(await v2.request("GET", `/imports?provider=${provider}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`),
+      localV2ImportPageSchema, { sessions: [], next_cursor: null }, { endpoint: "local-v2.imports" }),
+    getNextPageParam: (page) => page.next_cursor ?? undefined, enabled: open, retry: false, staleTime: 0 });
   const entries = [...new Map(history.data?.pages.flatMap((page) => page.sessions).map((entry) => [entry.id, entry]) ?? []).values()];
   const visible = entries.filter((entry) => `${entry.title} ${entry.cwd}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
-  const eligible = visible.filter((entry) => !entry.importedId);
+  const eligible = visible.filter((entry) => !entry.imported_id);
   const labels = chinese ? {
     title: "导入本机会话", description: "将 Codex 或 Claude Code 历史复制为独立会话，保留原会话。历史图片仅保留在原生上下文中。",
     source: "会话来源", project: "导入到项目", unassigned: "未分配项目", search: "搜索标题或工作目录", all: "选择全部历史", selectPage: "全选当前列表", more: "加载更多", empty: "没有找到本机会话", loading: "正在读取本机历史…", retry: "重试", imported: "已导入", import: "导入所选", importing: "正在导入", stop: "停止导入", close: "关闭", stopped: "已停止，已完成的导入已保留。", failed: "导入失败，请重试", done: "导入完成", selected: "已选择", scanned: "已读取", tooMany: "会话较多，请分批导入", noMatch: "没有匹配的会话",
@@ -42,7 +47,7 @@ export function LocalConversationImportButton({ scope, client, projects, chinese
     source: "Conversation source", project: "Import into project", unassigned: "No project", search: "Search title or working directory", all: "Select all history", selectPage: "Select current list", more: "Load more", empty: "No local conversations found", loading: "Reading local history…", retry: "Retry", imported: "Imported", import: "Import selected", importing: "Importing", stop: "Stop import", close: "Close", stopped: "Stopped. Completed imports were kept.", failed: "Could not import; retry", done: "Import complete", selected: "Selected", scanned: "Loaded", tooMany: "Import this history in smaller batches", noMatch: "No matching conversations",
   };
   const errorMessage = (value: unknown) => value instanceof Error
-    ? value.message === "Unknown local conversation request" ? (chinese ? "重启 Multica 后可使用本机会话导入。" : "Restart Multica to load local conversation import.") : value.message
+    ? "kind" in value && value.kind === "http_404" ? (chinese ? "重启 Multica 后可使用本机会话导入。" : "Restart Multica to load local conversation import.") : value.message
     : labels.failed;
   const report = (value: unknown) => setError(errorMessage(value));
   const toggle = (id: string) => setSelected((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
@@ -51,25 +56,25 @@ export function LocalConversationImportButton({ scope, client, projects, chinese
     try {
       let data = history.data;
       const cursors = new Set<string>();
-      while (!cancelled.current && data?.pages.at(-1)?.nextCursor) {
-        const cursor = data.pages.at(-1)!.nextCursor!;
+      while (!cancelled.current && data?.pages.at(-1)?.next_cursor) {
+        const cursor = data.pages.at(-1)!.next_cursor!;
         if (cursors.has(cursor) || data.pages.length > 200) throw new Error(labels.tooMany);
         cursors.add(cursor); data = (await history.fetchNextPage({ throwOnError: true })).data;
       }
-      setSelected(new Set(data?.pages.flatMap((page) => page.sessions).filter((entry) => !entry.importedId).map((entry) => entry.id)));
+      setSelected(new Set(data?.pages.flatMap((page) => page.sessions).filter((entry) => !entry.imported_id).map((entry) => entry.id)));
     } catch (value) { if (!cancelled.current) report(value); }
     finally { if (cancelled.current) setError(chinese ? "已停止读取历史。" : "Stopped reading history."); setSelectingAll(false); }
   };
   const startImport = async () => {
     setBusy(true); setProgress(0); setError(null); setResult(null); cancelled.current = false;
-    const ids = [...selected], combined: LocalImportResult = { imported: [], skipped: [], failed: [] };
+    const ids = [...selected], combined: LocalV2ImportResult = { imported: [], skipped: [], failed: [] };
     try {
       for (let offset = 0; offset < ids.length && !cancelled.current; offset += 25) {
-        const batch = await client.request(scope, "importSessions", { provider, ids: ids.slice(offset, offset + 25), projectId });
+        const batch = localV2ImportResultSchema.parse(await v2.request("POST", "/imports", { provider, ids: ids.slice(offset, offset + 25), project_id: projectId }));
         combined.imported.push(...batch.imported); combined.skipped.push(...batch.skipped); combined.failed.push(...batch.failed);
         setProgress(Math.min(ids.length, offset + 25));
       }
-      setResult(combined); setSelected(new Set(combined.failed.map((entry) => entry.sourceId)));
+      setResult(combined); setSelected(new Set(combined.failed.map((entry) => entry.source_id)));
       if (!cancelled.current && !combined.failed.length) {
         toast.success(chinese ? `已导入 ${combined.imported.length} 个会话${combined.skipped.length ? `，跳过 ${combined.skipped.length} 个重复会话` : ""}` : `Imported ${combined.imported.length} conversations${combined.skipped.length ? `; skipped ${combined.skipped.length} duplicates` : ""}`);
         setOpen(false);
@@ -100,15 +105,15 @@ export function LocalConversationImportButton({ scope, client, projects, chinese
       </div>
       <div className="max-h-80 min-h-32 overflow-y-auto rounded-lg border p-1">
         {history.isPending ? <p role="status" className="p-4 text-caption text-muted-foreground">{labels.loading}</p> : history.isError ? <div role="alert" className="p-3 text-caption"><p>{errorMessage(history.error)}</p><Button size="sm" variant="ghost" onClick={() => { void history.refetch(); }}>{labels.retry}</Button></div> : !visible.length ? <p className="p-4 text-caption text-muted-foreground">{search ? labels.noMatch : labels.empty}</p> : visible.map((entry) => <label key={entry.id} className="flex cursor-pointer items-center gap-3 rounded-md p-2 hover:bg-muted">
-          <Checkbox aria-labelledby={`${labelId}-${entry.id}`} disabled={disabled || !!entry.importedId} checked={!!entry.importedId || selected.has(entry.id)} onCheckedChange={() => toggle(entry.id)} />
+          <Checkbox aria-labelledby={`${labelId}-${entry.id}`} disabled={disabled || !!entry.imported_id} checked={!!entry.imported_id || selected.has(entry.id)} onCheckedChange={() => toggle(entry.id)} />
           <span className="min-w-0 flex-1"><span id={`${labelId}-${entry.id}`} className="block truncate text-label font-medium" title={entry.title}>{entry.title}</span><span className="block truncate text-caption text-muted-foreground" title={entry.cwd}>{entry.cwd}</span></span>
-          <span className="shrink-0 text-micro text-muted-foreground">{entry.importedId ? labels.imported : new Date(entry.updatedAt).toLocaleDateString(chinese ? "zh-CN" : "en-US")}</span>
+          <span className="shrink-0 text-micro text-muted-foreground">{entry.imported_id ? labels.imported : new Date(entry.updated_at).toLocaleDateString(chinese ? "zh-CN" : "en-US")}</span>
         </label>)}
         {history.hasNextPage && <Button variant="ghost" size="sm" disabled={disabled || history.isFetchingNextPage} onClick={() => { void history.fetchNextPage(); }}>{labels.more}</Button>}
       </div>
-      {(error || result?.failed.length) ? <div role="alert" className="max-h-28 overflow-auto text-caption text-destructive">{error}<ul>{result?.failed.map((failure) => <li key={failure.sourceId}>{entries.find((entry) => entry.id === failure.sourceId)?.title ?? failure.sourceId}: {failure.error}</li>)}</ul></div> : null}
+      {(error || result?.failed.length) ? <div role="alert" className="max-h-28 overflow-auto text-caption text-destructive">{error}<ul>{result?.failed.map((failure) => <li key={failure.source_id}>{entries.find((entry) => entry.id === failure.source_id)?.title ?? failure.source_id}: {failure.error}</li>)}</ul></div> : null}
       {busy && <p role="status" className="text-caption text-muted-foreground">{labels.importing} {progress} / {selected.size}</p>}
-      <DialogFooter>{disabled ? <Button variant="outline" onClick={() => { cancelled.current = true; void client.request(scope, "importCancel", {}).catch(report); }}>{labels.stop}</Button> : <Button variant="outline" onClick={() => setOpen(false)}>{labels.close}</Button>}<Button disabled={disabled || !selected.size} onClick={() => { void startImport(); }}>{busy && <Loader2 className="animate-spin" />}{labels.import} ({selected.size})</Button></DialogFooter>
+      <DialogFooter>{disabled ? <Button variant="outline" onClick={() => { cancelled.current = true; void v2.request("POST", "/imports/cancel").catch(report); }}>{labels.stop}</Button> : <Button variant="outline" onClick={() => setOpen(false)}>{labels.close}</Button>}<Button disabled={disabled || !selected.size} onClick={() => { void startImport(); }}>{busy && <Loader2 className="animate-spin" />}{labels.import} ({selected.size})</Button></DialogFooter>
     </DialogContent>
   </Dialog>;
 }

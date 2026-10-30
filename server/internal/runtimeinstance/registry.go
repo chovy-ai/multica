@@ -28,16 +28,18 @@ var validID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 var validCommit = regexp.MustCompile(`^[a-f0-9]{7,40}$`)
 
 type Launch struct {
-	SchemaVersion   int    `json:"schemaVersion"`
-	InstanceID      string `json:"instanceId"`
-	OwnerID         string `json:"ownerId"`
-	Kind            string `json:"kind"`
-	AppPath         string `json:"appPath"`
-	CLIPath         string `json:"cliPath"`
-	CLIVersion      string `json:"cliVersion"`
-	CLICommit       string `json:"cliCommit"`
-	ElectronPath    string `json:"electronPath"`
-	EntryPath       string `json:"entryPath"`
+	SchemaVersion int    `json:"schemaVersion"`
+	InstanceID    string `json:"instanceId"`
+	OwnerID       string `json:"ownerId"`
+	Kind          string `json:"kind"`
+	AppPath       string `json:"appPath"`
+	CLIPath       string `json:"cliPath"`
+	CLIVersion    string `json:"cliVersion"`
+	CLICommit     string `json:"cliCommit"`
+	ElectronPath  string `json:"electronPath"`
+	// ClaudeEntryPath is the per-conversation Claude adapter the daemon runs
+	// with ElectronPath for local conversations.
+	ClaudeEntryPath string `json:"claudeEntryPath"`
 	Profile         string `json:"profile"`
 	APIURL          string `json:"apiUrl"`
 	ProtocolVersion int    `json:"protocolVersion"`
@@ -101,7 +103,7 @@ func (l Launch) Validate() error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return errors.New("invalid runtime API origin")
 	}
-	for _, path := range []string{l.AppPath, l.CLIPath, l.ElectronPath, l.EntryPath} {
+	for _, path := range []string{l.AppPath, l.CLIPath, l.ElectronPath, l.ClaudeEntryPath} {
 		if !filepath.IsAbs(path) || strings.ContainsRune(path, 0) {
 			return errors.New("runtime paths must be absolute")
 		}
@@ -110,7 +112,7 @@ func (l Launch) Validate() error {
 }
 
 func (r Runtime) Validate() error {
-	if r.SchemaVersion != SchemaVersion || !ValidID(r.InstanceID) || !validID.MatchString(r.OwnerID) || !validID.MatchString(r.RunID) || r.Profile != ProfileName || r.PID < 1 || r.Port < 1 || r.Port > 65535 || r.APIVersion != 1 || r.SidecarProtocolVersion != 2 || r.CLIVersion == "" || !validCommit.MatchString(r.CLICommit) {
+	if r.SchemaVersion != SchemaVersion || !ValidID(r.InstanceID) || !validID.MatchString(r.OwnerID) || !validID.MatchString(r.RunID) || r.Profile != ProfileName || r.PID < 1 || r.Port < 1 || r.Port > 65535 || r.APIVersion != 2 || r.SidecarProtocolVersion != 2 || r.CLIVersion == "" || !validCommit.MatchString(r.CLICommit) {
 		return errors.New("incompatible runtime registration")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, r.StartedAt); err != nil {
@@ -224,7 +226,7 @@ func (l Launch) ValidateExecutable(exe string) error {
 	if !SameFile(exe, l.CLIPath) {
 		return errors.New("runtime instance belongs to another CLI; use its registered executable")
 	}
-	for _, path := range []string{l.CLIPath, l.ElectronPath, l.EntryPath} {
+	for _, path := range []string{l.CLIPath, l.ElectronPath, l.ClaudeEntryPath} {
 		info, err := os.Stat(path)
 		if err != nil {
 			return fmt.Errorf("runtime component unavailable: %w", err)

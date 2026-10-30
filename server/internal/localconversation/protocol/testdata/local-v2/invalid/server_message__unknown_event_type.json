@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "type": "conversation.events",
+  "conversation_id": "conv-1",
+  "from_seq": 1,
+  "to_seq": 1,
+  "events": [
+    {
+      "seq": 1,
+      "turn_id": "turn-1",
+      "turn_seq": 1,
+      "item_id": null,
+      "type": "text.delta",
+      "final": false,
+      "created_at": "2026-10-29T12:00:00Z",
+      "payload": {
+        "text": "x"
+      }
+    }
+  ]
+}

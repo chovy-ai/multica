@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	"github.com/multica-ai/multica/server/internal/daemon/p2p"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/internal/localconversation/service"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -434,11 +435,15 @@ type repoCacheBackend interface {
 // Daemon is the local agent runtime that polls for and executes tasks.
 type Daemon struct {
 	cfg        Config
-	local      *localhost.Server
 	client     *Client
 	repoCache  repoCacheBackend
 	skillCache *SkillBundleCache
 	logger     *slog.Logger
+
+	// localV2 serves Go-owned local conversations when Desktop ships the
+	// Claude adapter; nil otherwise.
+	localV2       *localhost.V2
+	conversations *service.Service
 
 	// gitCALastErr is the last applyGitCACerts failure, so a persistent one
 	// (e.g. on Windows) is logged once rather than on every repo refresh.
@@ -2133,21 +2138,19 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 		return err
 	}
 
-	d.local = localhost.NewServer(localhost.Config{
-		Sidecar:    d.cfg.LocalHost,
-		DataDir:    filepath.Join(d.cfg.ProfileDir, "local-conversations"),
-		ProfileDir: d.cfg.ProfileDir,
-		CLIPath:    d.cfg.LocalHostCLIPath,
-		Token:      d.cfg.LocalAPIToken,
-		Logger:     d.logger.With("component", "local-host"),
-	})
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if err := d.local.Close(stopCtx); err != nil {
-			d.logger.Warn("local conversation service did not stop cleanly", "error", err)
+	if sidecar := d.cfg.LocalHost; sidecar != nil && sidecar.ClaudeEntry != "" {
+		if err := d.openLocalConversations(ctx, *sidecar); err != nil {
+			d.logger.Warn("local conversation v2 service disabled", "error", err)
+		} else {
+			defer func() {
+				stopCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if err := d.conversations.Close(stopCtx); err != nil {
+					d.logger.Warn("local conversation v2 service did not stop cleanly", "error", err)
+				}
+			}()
 		}
-	}()
+	}
 
 	// Bind and serve the health port before the (potentially slow) preflight,
 	// so `daemon start` and the desktop see a live "starting" daemon instead
@@ -5250,16 +5253,16 @@ func quiesceForRestart(ctx context.Context, gate localRestartGate, logger *slog.
 }
 
 func (d *Daemon) quiesceLocalForRestart(ctx context.Context) bool {
-	return d.local == nil || quiesceForRestart(ctx, d.local, d.logger)
+	return d.conversations == nil || quiesceForRestart(ctx, d.conversations, d.logger)
 }
 
 // resumeLocalAfterAbortedRestart undoes quiesceLocalForRestart when the
 // restart is not going to happen after all.
 func (d *Daemon) resumeLocalAfterAbortedRestart(ctx context.Context) {
-	if d.local == nil {
+	if d.conversations == nil {
 		return
 	}
-	if err := d.local.Undrain(ctx); err != nil {
+	if err := d.conversations.Undrain(ctx); err != nil {
 		d.logger.Warn("local conversation service did not resume after an aborted restart", "error", err)
 	}
 }

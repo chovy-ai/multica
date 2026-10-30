@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multica.ai/schema/local-conversation/claude-adapter-v1.json",
+  "title": "Go daemon <-> Claude adapter protocol v1",
+  "description": "Newline-delimited JSON over the adapter's stdin/stdout. One adapter process serves one Claude conversation, or one one-shot operation. Every message carries version 1; either side exits on a missing or unsupported version. Draft for P0 review; see section 4.4 of the plan.",
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "version": { "const": 1 },
+    "permission_mode": { "enum": ["default", "auto", "full-access"] },
+
+    "daemon_message": {
+      "description": "Daemon -> adapter. Requests carry an id answered by exactly one result or error.",
+      "oneOf": [
+        { "$ref": "#/$defs/start" },
+        { "$ref": "#/$defs/send" },
+        { "$ref": "#/$defs/interrupt" },
+        { "$ref": "#/$defs/set_model" },
+        { "$ref": "#/$defs/set_permission_mode" },
+        { "$ref": "#/$defs/apply_flag_settings" },
+        { "$ref": "#/$defs/set_mcp_servers" },
+        { "$ref": "#/$defs/stop_task" },
+        { "$ref": "#/$defs/answer" },
+        { "$ref": "#/$defs/close" },
+        { "$ref": "#/$defs/fork_session" },
+        { "$ref": "#/$defs/list_sessions" },
+        { "$ref": "#/$defs/get_session_messages" },
+        { "$ref": "#/$defs/get_session_info" },
+        { "$ref": "#/$defs/supported_models" }
+      ]
+    },
+    "request_base": {
+      "type": "object",
+      "required": ["version", "type", "id"],
+      "properties": { "version": { "$ref": "#/$defs/version" }, "id": { "$ref": "#/$defs/id" } }
+    },
+    "mcp_servers": {
+      "type": "object",
+      "description": "Passed to the SDK `mcpServers` option unchanged. The daemon supplies the Context MCP URL and per-turn credential.",
+      "additionalProperties": { "type": "object" }
+    },
+    "start": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object",
+      "required": ["type", "cwd", "executable"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "version": true, "id": true,
+        "type": { "const": "start" },
+        "executable": { "type": "string", "description": "Absolute path of the claude CLI; the adapter never searches PATH." },
+        "cwd": { "type": "string" },
+        "resume": { "type": "string", "description": "Native session to resume. Forks are created beforehand with fork_session." },
+        "model": { "type": ["string", "null"] },
+        "reasoning_effort": { "type": ["string", "null"] },
+        "permission_mode": { "$ref": "#/$defs/permission_mode" },
+        "append_system_prompt": { "type": "string" },
+        "mcp_servers": { "$ref": "#/$defs/mcp_servers" },
+        "allowed_tools": { "type": "array", "items": { "type": "string" } },
+        "settings": { "type": "object", "description": "Claude settings passed to the SDK `settings` option, prepared by the daemon (plugin configuration)." },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "send": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object",
+      "required": ["type", "request_id", "content"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "version": true, "id": true,
+        "type": { "const": "send" },
+        "request_id": { "$ref": "#/$defs/id", "description": "Echoed as the SDK user message uuid so the daemon can bind the turn." },
+        "content": { "type": "array", "items": { "type": "object" }, "description": "SDK user message content blocks (text, image)." }
+      }
+    },
+    "interrupt": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object",
+      "required": ["type"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "version": true, "id": true,
+        "type": { "const": "interrupt" },
+        "deadline_ms": { "type": "integer", "minimum": 1, "description": "Cooperative interrupt budget before the adapter closes the Query transport." }
+      }
+    },
+    "set_model": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "model"], "unevaluatedProperties": false,
+      "properties": { "version": true, "id": true, "type": { "const": "set_model" }, "model": { "type": ["string", "null"] } }
+    },
+    "set_permission_mode": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "mode"], "unevaluatedProperties": false,
+      "properties": { "version": true, "id": true, "type": { "const": "set_permission_mode" }, "mode": { "$ref": "#/$defs/permission_mode" } }
+    },
+    "apply_flag_settings": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "settings"], "unevaluatedProperties": false,
+      "properties": { "version": true, "id": true, "type": { "const": "apply_flag_settings" }, "settings": { "type": "object" } }
+    },
+    "set_mcp_servers": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "servers"], "unevaluatedProperties": false,
+      "properties": { "version": true, "id": true, "type": { "const": "set_mcp_servers" }, "servers": { "$ref": "#/$defs/mcp_servers" } }
+    },
+    "stop_task": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "task_id"], "unevaluatedProperties": false,
+      "properties": { "version": true, "id": true, "type": { "const": "stop_task" }, "task_id": { "type": "string" } }
+    },
+    "answer": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "interaction_id", "status"], "unevaluatedProperties": false,
+      "properties": {
+        "version": true, "id": true,
+        "type": { "const": "answer" },
+        "interaction_id": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["answered", "cancelled"] },
+        "answer": { "type": "object" }
+      }
+    },
+    "close": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type"], "unevaluatedProperties": false,
+      "properties": { "version": true, "id": true, "type": { "const": "close" } }
+    },
+    "fork_session": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "session_id"], "unevaluatedProperties": false,
+      "properties": {
+        "version": true, "id": true,
+        "type": { "const": "fork_session" },
+        "session_id": { "type": "string" },
+        "dir": { "type": "string" },
+        "title": { "type": "string" },
+        "up_to_message_id": { "type": "string" }
+      }
+    },
+    "list_sessions": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type"], "unevaluatedProperties": false,
+      "properties": {
+        "version": true, "id": true,
+        "type": { "const": "list_sessions" },
+        "dir": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "offset": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "get_session_messages": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "session_id"], "unevaluatedProperties": false,
+      "properties": {
+        "version": true, "id": true,
+        "type": { "const": "get_session_messages" },
+        "session_id": { "type": "string" },
+        "dir": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1 },
+        "offset": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "get_session_info": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "session_id"], "unevaluatedProperties": false,
+      "properties": {
+        "version": true, "id": true,
+        "type": { "const": "get_session_info" },
+        "session_id": { "type": "string" },
+        "dir": { "type": "string" }
+      }
+    },
+    "supported_models": {
+      "allOf": [{ "$ref": "#/$defs/request_base" }],
+      "type": "object", "required": ["type", "executable"], "unevaluatedProperties": false,
+      "properties": { "version": true, "id": true, "type": { "const": "supported_models" }, "executable": { "type": "string" } }
+    },
+
+    "adapter_message": {
+      "description": "Adapter -> daemon.",
+      "oneOf": [
+        { "$ref": "#/$defs/ready" },
+        { "$ref": "#/$defs/result" },
+        { "$ref": "#/$defs/error_message" },
+        { "$ref": "#/$defs/sdk_message" },
+        { "$ref": "#/$defs/interaction_request" }
+      ]
+    },
+    "ready": {
+      "type": "object",
+      "required": ["version", "type", "sdk_version"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "type": { "const": "ready" },
+        "sdk_version": { "type": "string" },
+        "cli_version": { "type": "string" },
+        "capabilities": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["version", "type", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "type": { "const": "result" },
+        "id": { "$ref": "#/$defs/id" },
+        "data": {}
+      }
+    },
+    "error_message": {
+      "type": "object",
+      "required": ["version", "type", "code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "type": { "const": "error" },
+        "id": { "$ref": "#/$defs/id", "description": "Absent for errors not tied to a request, such as a Query that ended unexpectedly." },
+        "code": { "type": "string", "description": "Stable code, e.g. unsupported_version, not_started, sdk_error, cli_missing, write_backlog." },
+        "message": { "type": "string" },
+        "dispatch": {
+          "enum": ["rejected", "not_dispatched", "outcome_unknown"],
+          "description": "For send: whether the prompt reached the provider. The daemon decides command receipts from this field, never from message text."
+        }
+      }
+    },
+    "sdk_message": {
+      "type": "object",
+      "required": ["version", "type", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "type": { "const": "sdk_message" },
+        "query_generation": { "type": "integer", "minimum": 0, "description": "Increments when the adapter replaces its Query; lets the daemon drop output of a replaced Query." },
+        "message": { "type": "object", "required": ["type"], "description": "Unmodified SDKMessage from the Agent SDK iterator." }
+      }
+    },
+    "interaction_request": {
+      "type": "object",
+      "required": ["version", "type", "interaction_id", "kind", "request"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "type": { "const": "interaction_request" },
+        "interaction_id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["permission", "question"] },
+        "request": { "type": "object", "description": "Tool name and input for permission; questions for question." }
+      }
+    }
+  }
+}

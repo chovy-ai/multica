@@ -1,14 +1,18 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Alert, AlertDescription } from "@multica/ui/components/ui/alert";
 import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
-import { getLocalConversationClient, localRuntimeRestartMessage } from "../platform/local-conversation-client";
 import { localHostAvailabilityMessage, type LocalHostAvailability } from "../../../shared/local-host-availability";
+import { localV2, LocalV2RequestError } from "../platform/local-v2";
+
+export function localRuntimeRestartMessage(chinese: boolean): string {
+  return chinese ? "桌面后台需要更新，请在运行中的任务结束后完全退出并重新打开 Multica。刷新页面无法完成更新。" : "The desktop runtime needs updating. After running tasks finish, fully quit and reopen Multica. Reloading the page does not update it.";
+}
 
 export function LocalRuntimeNotice({ scope, chinese }: { scope: LocalConversationScope; chinese: boolean }) {
-  const client = getLocalConversationClient(window.desktopAPI.localConversations);
-  const outdated = useSyncExternalStore(client.subscribeCompatibility, () => client.needsRestart(scope));
-  const { userId, workspaceId } = scope;
-  useEffect(() => { void client.check({ userId, workspaceId }).catch(() => { /* Ordinary IPC errors are surfaced by the requesting operation. */ }); }, [client, userId, workspaceId]);
+  // A daemon older than the local v2 API answers its routes with 404.
+  const probe = useQuery({ queryKey: ["local-v2-providers", scope.userId, scope.workspaceId], queryFn: () => localV2(window.desktopAPI.localV2, scope).request("GET", "/providers"), retry: false, staleTime: 60_000 });
+  const outdated = probe.error instanceof LocalV2RequestError && probe.error.kind === "http_404";
   const [availability, setAvailability] = useState<LocalHostAvailability | null>(null);
   useEffect(() => {
     let current = true;

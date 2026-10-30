@@ -1,519 +1,179 @@
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+// @vitest-environment node
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LocalConversationService } from "../../../local-host/local-conversation-service";
-import type { runLocalProvider } from "../../../local-host/local-provider-runner";
-import { createLocalConversationParentService } from "./local-conversation-service";
-import type { LocalConversationClient } from "@multica/core/local-conversation/protocol";
 import { CREATE_TASK_MENTION_ID } from "@multica/core/local-conversation/protocol";
+import type { LocalV2Transport } from "@multica/core/local-conversation/v2";
+import { createLocalConversationParentService } from "./local-conversation-service";
 
 const mock = vi.hoisted(() => ({ api: {
-  getBaseUrl: vi.fn(),
-  listAgents: vi.fn(), listMembers: vi.fn(), listRuntimes: vi.fn(), listChatSessions: vi.fn(), listPendingChatTasks: vi.fn(),
-  createChatSession: vi.fn(), sendChatMessage: vi.fn(), listChatMessagesPage: vi.fn(), listTaskMessages: vi.fn(), listAgentTasksPage: vi.fn(),
-  cancelTaskById: vi.fn(), getIssue: vi.fn(),
+  getBaseUrl: vi.fn(), listAgents: vi.fn(), listMembers: vi.fn(), listRuntimes: vi.fn(), listChatSessions: vi.fn(), listPendingChatTasks: vi.fn(), getIssue: vi.fn(),
 } }));
 vi.mock("@multica/core/api", async (original) => ({ ...await original<typeof import("@multica/core/api")>(), api: mock.api }));
-const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
+
+const scope = { userId: "user", workspaceId: "ws" };
+const at = "2026-10-29T00:00:00Z";
+const summary = (id: string, fields: Record<string, unknown> = {}) => ({ conversation_id: id, summary_seq: 1, provider: "codex", title: id, status: "idle", cwd: "/repo", project_id: null, pinned: false, archived: false, updated_at: at, ...fields });
+const snapshot = (id: string, fields: Record<string, unknown> = {}) => ({ version: 2, store_generation: "g", snapshot_seq: 4, conversation: summary(id), turns: [], settings: { model: "gpt", reasoning_effort: "high", permission_mode: "default" }, queue: { revision: 2, paused: false, items: [] }, created_at: at, ...fields });
+
+type Route = (method: string, path: string, body?: Record<string, unknown>) => unknown;
+let routes: Route[];
+let requests: { method: string; path: string; body?: Record<string, unknown> }[];
+let sent: unknown[];
+let messages: ((scopeValue: typeof scope, message: unknown) => void)[];
+const disposers: (() => void)[] = [];
+
+function transport(): LocalV2Transport {
+  return {
+    request: async (_scope, method, path, body) => {
+      requests.push({ method, path, body: body as Record<string, unknown> | undefined });
+      for (const route of routes) { const value = route(method, path, body as Record<string, unknown> | undefined); if (value !== undefined) return value instanceof Error ? Promise.reject(value) : value; }
+      throw new Error(`http_404: ${method} ${path}`);
+    },
+    send: async (_scope, message) => { sent.push(message); },
+    subscribe: (listener) => { messages.push(listener); return () => {}; },
+    onConnection: () => () => {},
+    fileUrl: (_scope, path) => `v2:${path}`,
+    upload: async (_scope, file) => ({ id: "att-1", name: file.name, mime_type: file.type, size: file.size }),
+    choose: vi.fn(),
+  };
+}
+
+function setup(options: { getSelectionIntent?: () => string } = {}) {
+  const callbacks = { onLocalSelect: vi.fn(), onOpenSide: vi.fn(), onShowMessage: vi.fn() };
+  const qc = new QueryClient();
+  const service = createLocalConversationParentService({ queryClient: qc, workspaceId: "ws", workspaceSlug: "workspace", userId: "user", isCurrent: () => true, resolveAvatar: (value) => value,
+    onSelectSession: vi.fn(), onOpenTask: vi.fn(), ...callbacks, ...options }, transport());
+  disposers.push(() => { service.dispose(); qc.clear(); });
+  return { service, ...callbacks };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
+  routes = []; requests = []; sent = []; messages = [];
   mock.api.getBaseUrl.mockReturnValue("https://example.test");
-  mock.api.listAgents.mockResolvedValue(["design", "code"].map((id) => ({ id, workspace_id: "ws", owner_id: "user", name: `${id} reviewer`, description: "Defined workspace agent", runtime_id: "cloud-runtime", runtime_bound: true, runtime_config: {}, visibility: "workspace", archived_at: null, permission_mode: "private", invocation_targets: [] })));
+  mock.api.listAgents.mockResolvedValue([{ id: "design", workspace_id: "ws", owner_id: "user", name: "Design reviewer", description: "", runtime_id: "cloud-runtime", runtime_bound: true, runtime_config: {}, visibility: "workspace", archived_at: null, permission_mode: "private", invocation_targets: [] }]);
   mock.api.listMembers.mockResolvedValue([{ user_id: "user", role: "owner" }]);
   mock.api.listRuntimes.mockResolvedValue([{ id: "cloud-runtime", provider: "codex" }]);
-  mock.api.listChatSessions.mockResolvedValue([{ id: "old-cloud-history", agent_id: "design", workspace_id: "ws" }]);
+  mock.api.listChatSessions.mockResolvedValue([]);
   mock.api.listPendingChatTasks.mockResolvedValue({ tasks: [] });
-  mock.api.createChatSession.mockImplementation(async ({ agent_id }) => ({ id: `cloud-${agent_id}`, agent_id, workspace_id: "ws" }));
-  mock.api.sendChatMessage.mockImplementation(async (id) => ({ task_id: `task-${id}`, message_id: `message-${id}`, created_at: "2026-01-01" }));
-  mock.api.listChatMessagesPage.mockImplementation(async (id) => ({ messages: [{ id: `result-${id}`, chat_session_id: id, role: "assistant", task_id: `task-${id}`, content: `RESULT_${id}`, created_at: "2026-01-01" }], has_more: false }));
-  mock.api.listAgentTasksPage.mockImplementation(async (id) => ({ tasks: [{ id: `task-cloud-${id}`, chat_session_id: `cloud-${id}`, status: "completed" }], nextCursor: null }));
-  mock.api.listTaskMessages.mockResolvedValue([]);
-});
-async function setup(getSelectionIntent?: () => string) {
-  const base = await realpath(await mkdtemp(join(tmpdir(), "multica-local-bridge-")));
-  const root = join(base, "local-conversations");
-  const listeners = new Set<Parameters<LocalConversationClient["subscribe"]>[0]>();
-  const run = vi.fn<typeof runLocalProvider>(async () => ({ output: "LOCAL_RESULT", sessionId: "native-thread" }));
-  const usage = { read: vi.fn(async () => ({ provider: "claude" as const, context: { usedTokens: 120, limitTokens: 1000, model: null, updatedAt: null }, account: { status: "unavailable" as const, plan: null, windows: [], updatedAt: null } })), reset: vi.fn() };
-  const chooseDirectory = vi.fn<() => Promise<string | null>>(async () => null);
-  // The conversation host drives cloud agent turns; route its HTTP calls to the API mocks.
-  const cloud = async (method: string, path: string, body?: Record<string, unknown> | FormData) => {
-    const json = body as Record<string, unknown> | undefined;
-    let match: RegExpExecArray | null;
-    if (method === "POST" && path === "/api/chat/sessions") return mock.api.createChatSession({ agent_id: json!.agent_id, title: json!.title });
-    if (method === "POST" && (match = /^\/api\/chat\/sessions\/([^/]+)\/messages$/.exec(path))) return mock.api.sendChatMessage(decodeURIComponent(match[1]!), json!.content, json!.attachment_ids ?? []);
-    if ((match = /^\/api\/chat\/sessions\/([^/]+)\/messages\/page/.exec(path))) return mock.api.listChatMessagesPage(decodeURIComponent(match[1]!));
-    if ((match = /^\/api\/tasks\/([^/]+)\/messages$/.exec(path))) return mock.api.listTaskMessages(decodeURIComponent(match[1]!));
-    if ((match = /^\/api\/agents\/([^/]+)\/tasks/.exec(path))) return (await mock.api.listAgentTasksPage(decodeURIComponent(match[1]!))).tasks;
-    if (method === "POST" && (match = /^\/api\/tasks\/([^/]+)\/cancel$/.exec(path))) return mock.api.cancelTaskById(decodeURIComponent(match[1]!));
-    throw new Error(`Unexpected cloud request ${method} ${path}`);
-  };
-  const service = new LocalConversationService({ root, apiUrl: "https://example.test", run, usage, find: async () => "/test/fake", chooseDirectory, notify: (scope, id) => listeners.forEach((listener) => listener(scope, id)), queueCloudClient: async () => cloud });
-  service.setCurrentUser("user");
-  // Stands in for the daemon's HTTP file endpoint over the same service.
-  const files: LocalConversationClient["files"] = {
-    upload: async (scope, file) => {
-      await mkdir(root, { recursive: true });
-      const upload = join(root, `upload-${crypto.randomUUID()}`);
-      await writeFile(upload, new Uint8Array(await file.arrayBuffer()));
-      return service.adoptFile(scope, upload, file.name, file.type || "application/octet-stream");
-    },
-    read: async (scope, ref) => new Blob([new Uint8Array(await readFile((await service.resolveFile(scope, ref)).path))]),
-    url: (_scope, ref) => `test-file://${ref}`,
-  };
-  const client: LocalConversationClient = { request: (scope, method, params) => service.request(scope, method, params), subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, files };
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
-  const values = new Map<string, string>();
-  const onLocalSelect = vi.fn();
-  const onOpenSide = vi.fn();
-  const onOpenResource = vi.fn();
-  const onShowMessage = vi.fn();
-  const bridge = createLocalConversationParentService({ queryClient: qc, workspaceId: "ws", workspaceSlug: "workspace", userId: "user", isCurrent: () => true, resolveAvatar: (value) => value,
-    onSelectSession: vi.fn(), onLocalSelect, onOpenSide, onOpenResource, getSelectionIntent, onOpenTask: vi.fn(), onShowMessage,
-    storage: { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem: (key) => { values.delete(key); } },
-  }, client);
-  cleanups.push(async () => { bridge.dispose(); qc.clear(); await service.stop(); await rm(base, { recursive: true, force: true }); });
-  return { bridge, run, service, usage, client, onLocalSelect, onOpenSide, onOpenResource, onShowMessage, base, chooseDirectory };
-}
-describe("local providers and official agent invocation routing", () => {
-  it("counts session and task history reads separately without logging conversation content", async () => {
-    const { service, bridge, run } = await setup();
-    run.mockImplementation(async (_input, emit) => { emit({ type: "text", content: "PRIVATE_RESULT" }); return { output: "PRIVATE_RESULT", sessionId: "fake-thread" }; });
-    const scope = { userId: "user", workspaceId: "ws" };
-    const entry = await service.request(scope, "create", { provider: "codex", title: "PRIVATE_TITLE" });
-    const sent = await service.request(scope, "send", { id: entry.id, content: "PRIVATE_PROMPT" });
-    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
-    const now = Date.now();
-    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 1500);
-    const log = vi.spyOn(console, "debug").mockImplementation(() => {});
-    try {
-      await bridge.request("session.load", { sessionId: entry.id });
-      clock.mockReturnValue(now + 3000);
-      await bridge.request("task.messages", { taskId: sent.turnId });
-      const records = log.mock.calls.filter(([prefix]) => prefix === "[local-history]").map(([, record]) => JSON.parse(record as string));
-      expect(records).toHaveLength(2);
-      expect(records[0]).toMatchObject({ sources: { sessionLoad: 1 }, activeReads: 0, peakReads: 1, failures: 0 });
-      expect(records[1]).toMatchObject({ sources: { taskMessages: 1 }, activeReads: 0, peakReads: 1, failures: 0 });
-      expect(records[1].maxHistoryEvents).toBeGreaterThan(0);
-      expect(JSON.stringify(records)).not.toMatch(/PRIVATE_TITLE|PRIVATE_PROMPT|PRIVATE_RESULT/);
-    } finally { clock.mockRestore(); log.mockRestore(); }
-  });
-
-  it("initializes with one page of summaries and synchronizes off-page runs without reading their resources", async () => {
-    const { service, client, bridge } = await setup();
-    const scope = { userId: "user", workspaceId: "ws" };
-    const entries = [];
-    for (let index = 0; index < 9; index++) {
-      const entry = await service.request(scope, "create", { provider: "codex", title: `Session ${index}` });
-      await service.request(scope, "send", { id: entry.id, content: "Fixture message" });
-      await vi.waitFor(async () => expect((await service.request(scope, "read", { id: entry.id })).turns[0]?.status).toBe("completed"));
-      if (index < 8) await service.request(scope, "update", { id: entry.id, pinned: true });
-      entries.push(entry);
-    }
-    const offPage = entries[8]!;
-    const started = await service.request(scope, "remoteBegin", { id: offPage.id, content: "Background review", agents: [{ id: "design", name: "Design" }] });
-    const request = vi.spyOn(client, "request");
-    const workspace = await bridge.load();
-    expect(workspace.sessions).toHaveLength(8);
-    expect(workspace.sessions.some((entry) => entry.id === offPage.id)).toBe(false);
-    expect(workspace.pendingTasks).toContainEqual({ task_id: started.turns[0]!.id, status: "running", chat_session_id: offPage.id });
-    expect(request.mock.calls.filter(([, method]) => method === "listPage")).toHaveLength(1);
-    expect(request.mock.calls.some(([, method]) => ["list", "read", "fileInfo", "fileRead", "imageRead"].includes(method))).toBe(false);
-  });
-  it("routes a file context menu through the desktop client with its account and source session", async () => {
-    const { bridge } = await setup();
-    const show = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("desktopAPI", { localFileContextMenu: { show } });
-    try {
-      const session = await bridge.request("session.create", { agentId: "local:codex" });
-      const input = { sessionId: session.id, url: "./测试%20build.dmg", hasSelection: false };
-      await bridge.request("host.showFileContextMenu", input);
-      expect(show).toHaveBeenCalledExactlyOnceWith({ userId: "user", workspaceId: "ws" }, input);
-      await expect(bridge.request("host.showFileContextMenu", { ...input, sessionId: "missing" })).rejects.toThrow();
-      expect(show).toHaveBeenCalledTimes(1);
-    } finally { vi.unstubAllGlobals(); }
-  });
-  it("omits old empty sessions from the reference catalog without deleting history or hiding submitted work", async () => {
-    const { bridge, service } = await setup();
-    const scope = { userId: "user", workspaceId: "ws" };
-    const empty = await service.request(scope, "create", { provider: "codex", title: "Named empty draft" });
-    const sent = await service.request(scope, "create", { provider: "codex" });
-    const queued = await service.request(scope, "create", { provider: "claude" });
-    expect((await bridge.load()).sessions).toEqual([]);
-    await bridge.request("session.send", { sessionId: sent.id, content: "First message" });
-    await service.request(scope, "update", { id: sent.id, title: "新会话" });
-    await service.request(scope, "queueEnqueue", { id: queued.id, paused: true, item: {
-      requestId: "pending-first", content: "Waiting for confirmation", display: { id: "pending-first", content: [{ type: "text", text: "Waiting for confirmation" }], createdAtUnixMs: 1 },
-    } });
-    const catalog = await bridge.load();
-    expect(catalog.sessions.map((entry) => entry.id).sort()).toEqual([sent.id, queued.id].sort());
-    expect(catalog.sessions.find((entry) => entry.id === sent.id)?.title).toBe("新会话");
-    expect((await service.request(scope, "list", {}))).toHaveLength(3);
-    expect((await bridge.request("session.load", { sessionId: empty.id })).messages).toEqual([]);
-  });
-  it.each(["codex", "claude"] as const)("keeps the project directory through %s creation, execution and history reload", async (provider) => {
-    const { bridge, service, run, base, chooseDirectory } = await setup();
-    const cwd = join(base, "project"); await mkdir(cwd);
-    chooseDirectory.mockResolvedValue(cwd);
-    const scope = { userId: "user", workspaceId: "ws" };
-    const folder = await service.request(scope, "folderProjectAdd", {});
-    expect((await bridge.load()).folderProjects).toEqual([folder]);
-    const session = await bridge.request("session.create", { agentId: `local:${provider}`, cwd });
-    expect(session.localDirectory).toEqual({ cwd, projectPath: cwd });
-    await bridge.request("session.send", { sessionId: session.id, content: "Read the selected directory" });
-    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-    expect(run.mock.calls[0]?.[0]).toMatchObject({ cwd, provider });
-    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: session.id })).pending).toEqual({}));
-    expect((await bridge.request("session.load", { sessionId: session.id })).session.localDirectory).toEqual({ cwd, projectPath: cwd });
-    expect((await service.request(scope, "read", { id: session.id })).cwd).toBe(cwd);
-    expect((await bridge.load()).sessions.find((entry) => entry.id === session.id)?.localDirectory?.projectPath).toBe(cwd);
-    const noProject = await bridge.request("session.create", { agentId: `local:${provider}` });
-    expect(noProject.localDirectory?.projectPath).toBeNull();
-    expect(noProject.localDirectory?.cwd).not.toBe(cwd);
-    await expect(bridge.request("session.create", { agentId: `local:${provider}`, cwd: "/unknown-directory" })).rejects.toThrow("not found in this workspace");
-    expect(mock.api.createChatSession).not.toHaveBeenCalled();
-  });
-
-  it("inherits manually selected directories by a scoped source and rejects missing or changed directories", async () => {
-    const { bridge, service, base, chooseDirectory } = await setup();
-    const cwd = join(base, "manual"); await mkdir(cwd);
-    const scope = { userId: "user", workspaceId: "ws" };
-    const original = await bridge.request("session.create", { agentId: "local:codex" });
-    chooseDirectory.mockResolvedValue(cwd);
-    await service.request(scope, "directory", { id: original.id });
-    const switched = await bridge.request("session.create", { agentId: "local:claude", cwd });
-    expect(switched.localDirectory).toEqual({ cwd, projectPath: cwd });
-    await expect(service.request({ ...scope, workspaceId: "other" }, "create", { provider: "claude", directorySourceId: original.id })).rejects.toThrow("not found in this workspace");
-    await rm(cwd, { recursive: true });
-    await expect(bridge.request("session.create", { agentId: "local:codex", cwd })).rejects.toThrow();
-    expect((await bridge.load()).sessions).toHaveLength(0);
-  });
-  it.each(["codex", "claude"] as const)("keeps %s thinking settings through the renderer bridge and a queued side conversation", async (provider) => {
-    const { bridge, service, run } = await setup();
-    const session = await bridge.request("session.create", { agentId: `local:${provider}` });
-    await bridge.request("session.send", { sessionId: session.id, content: "First", model: "model", reasoningEffort: "high" });
-    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-    expect(run.mock.calls[0]?.[0]).toMatchObject({ model: "model", reasoningEffort: "high" });
-    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: session.id })).pending).toEqual({}));
-    expect(await bridge.request("session.load", { sessionId: session.id })).toMatchObject({ reasoningEffort: "high" });
-    await bridge.request("queue.enqueue", { sessionId: session.id, paused: true, queued: true, item: {
-      requestId: "queued-side", content: "Next", model: "model", reasoningEffort: "low",
-      display: { id: "queued-side", createdAtUnixMs: 1, content: [{ type: "text", text: "Next" }] },
-    } });
-    const side = await bridge.request("host.openSide", { sessionId: session.id, requestId: "side", queuedRequestId: "queued-side", queued: true });
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-    expect(run.mock.calls[1]?.[0]).toMatchObject({ reasoningEffort: "low" });
-    expect(await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: side.id })).toMatchObject({ reasoningEffort: "low" });
-  });
-  it.each([
-    ["large cases.pos", "application/octet-stream", 7_600_000],
-    ["pasted screenshot.png", "image/png", 128],
-  ])("returns a compact path reference for %s and reads bytes only on preview", async (name, mimeType, size) => {
-    const { bridge, client } = await setup();
-    const request = vi.spyOn(client, "request");
-    const attachment = await bridge.request("attachment.upload", { file: new File([new Uint8Array(size).fill(65)], name, { type: mimeType }) });
-    expect(attachment.url.startsWith("file://")).toBe(true);
-    expect(JSON.stringify(attachment).length).toBeLessThan(2000);
-    expect(request.mock.calls.some(([, method]) => method === "fileRead")).toBe(false);
-    const session = await bridge.request("session.create", { agentId: "local:claude" });
-    const content = `Read [@${name}](${attachment.markdown_url})`;
-    const queued = await bridge.request("queue.enqueue", { sessionId: session.id, queued: true, paused: true, item: {
-      requestId: "large-file", content, attachmentIds: [attachment.id],
-      display: { id: "large-file", createdAtUnixMs: 1, content: [{ type: "text", text: content }] },
-    } });
-    expect(queued.items).toHaveLength(1);
-    expect(JSON.stringify(queued).length).toBeLessThan(3000);
-    const detail = await bridge.request("session.load", { sessionId: session.id });
-    expect(detail.promptQueue?.items[0]?.attachmentIds).toEqual([attachment.id]);
-    const preview = await bridge.request("attachment.read", { attachmentId: attachment.id });
-    expect(preview).toMatchObject({ name, mimeType });
-    expect(atob(preview.data)).toHaveLength(size);
-  });
-  it("hands queued work to Electron before tab disposal and reloads its live state", async () => {
-    const { bridge, service, run } = await setup();
-    let finish!: () => void;
-    const wait = new Promise<void>((resolve) => { finish = resolve; });
-    run.mockImplementation(async () => { if (run.mock.calls.length === 1) await wait; return { output: "done", sessionId: "native-thread" }; });
-    expect((await bridge.load()).queueOwner).toBe("desktop");
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    const enqueue = (requestId: string) => bridge.request("queue.enqueue", { sessionId: session.id, queued: true, item: {
-      requestId, content: requestId, display: { id: requestId, clientSubmitId: requestId, createdAtUnixMs: 1, content: [{ type: "text", text: requestId }] },
-    } });
-    await enqueue("first"); await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
-    await enqueue("second"); bridge.dispose(); finish();
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-    const restored = await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: session.id });
-    expect(restored.promptQueue?.paused).toBe(false);
-    expect(restored.messages.filter((message) => message.role === "user").map((message) => message.content)).toEqual(["first", "second"]);
-  });
-  it("does not navigate back when an earlier GUI selection finishes after host navigation", async () => {
-    let intent = "source";
-    const { bridge, client, onLocalSelect } = await setup(() => intent);
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    const read = client.request;
-    let resume!: () => void;
-    const gate = new Promise<void>((resolve) => { resume = resolve; });
-    client.request = (async (scope, method, params) => { if (method === "read") await gate; return read(scope, method, params); }) as typeof client.request;
-    const pending = bridge.request("host.selectSession", { sessionId: session.id });
-    intent = "newer-host-selection";
-    resume(); await pending;
-    expect(onLocalSelect).not.toHaveBeenCalled();
-  });
-
-  it("keeps the latest GUI selection when reads finish in reverse order", async () => {
-    const { bridge, client, onLocalSelect } = await setup();
-    const old = await bridge.request("session.create", { agentId: "local:codex" });
-    const next = await bridge.request("session.create", { agentId: "local:claude" });
-    const read = client.request;
-    let resume!: () => void;
-    const gate = new Promise<void>((resolve) => { resume = resolve; });
-    client.request = (async (scope, method, params) => { if (method === "read" && (params as { id: string }).id === old.id) await gate; return read(scope, method, params); }) as typeof client.request;
-    const pending = bridge.request("host.selectSession", { sessionId: old.id });
-    await bridge.request("host.selectSession", { sessionId: next.id });
-    resume(); await pending;
-    expect(onLocalSelect.mock.calls).toEqual([[next.id, "claude"]]);
-  });
-  it("passes Codex image paths through the desktop bridge and preserves queued attachments when moving to Side", async () => {
-    const { bridge, service, run, client } = await setup();
-    const scope = { userId: "user", workspaceId: "ws" };
-    const source = await bridge.request("session.create", { agentId: "local:codex" });
-    const data = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGNQzjxBEmIY1TCqYfhqAAAciFQQmuMXLwAAAABJRU5ErkJggg==";
-    const stored = await service.request(scope, "fileStore", { name: "screenshot.png", mimeType: "image/png", data });
-    const image = await service.request(scope, "fileRead", stored);
-    const requests = vi.spyOn(client, "request");
-    await bridge.request("session.send", { sessionId: source.id, content: "Describe this image", attachmentIds: [stored.id] });
-    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: source.id })).turns.at(-1)?.status).toBe("completed"));
-    expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "codex", content: expect.stringContaining(image.path) }), expect.any(Function), expect.any(AbortSignal));
-
-    const requestId = `side:${source.id}:queued-image`;
-    const side = await bridge.request("host.openSide", { sessionId: source.id, requestId, pending: { requestId, content: "Queued image question", attachmentIds: [stored.id] } });
-    await bridge.request("host.startSide", { sessionId: side.id });
-    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: side.id })).turns.at(-1)?.status).toBe("completed"));
-    expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "codex", resume: undefined,
-      content: expect.stringContaining("Queued image question") }), expect.any(Function), expect.any(AbortSignal));
-    expect(run.mock.calls.at(-1)?.[0].content).toContain(image.path);
-    expect(run.mock.calls.at(-1)?.[0]).not.toHaveProperty("images");
-    const saved = await service.request(scope, "read", { id: side.id });
-    expect(saved.messages[0]?.attachmentIds).toEqual([stored.id]);
-    expect(saved.side?.pending).toBeUndefined();
-    expect((await service.request(scope, "read", { id: source.id })).messages).toHaveLength(2);
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(requests.mock.calls.some(([, method]) => method === "fileRead")).toBe(false);
-  });
-  it("leaves new conversations eligible for remembered defaults and retains inherited Side permissions", async () => {
-    const { bridge, service, run } = await setup();
-    const source = await bridge.request("session.create", { agentId: "local:codex" });
-    expect((await bridge.request("session.load", { sessionId: source.id })).permissionMode).toBeUndefined();
-    const side = await service.request({ userId: "user", workspaceId: "ws" }, "sideCreate", { id: source.id, requestId: "permission-inheritance" });
-    expect((await bridge.request("session.load", { sessionId: side.id })).permissionMode).toBe("default");
-    await bridge.request("session.send", { sessionId: source.id, content: "Saved permission", permissionMode: "auto" });
-    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: source.id })).messages).toHaveLength(2));
-    expect((await bridge.request("session.load", { sessionId: source.id })).permissionMode).toBe("auto");
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: "auto" }), expect.any(Function), expect.any(AbortSignal));
-  });
-  it.each(["codex", "claude"])("passes the New task mention to the local %s run without fetching a fake issue or creating on selection", async (provider) => {
-    const { bridge, run } = await setup();
-    const session = await bridge.request("session.create", { agentId: `local:${provider}` });
-    await bridge.request("session.send", { sessionId: session.id, content: "Create the review task", references: [{ kind: "issue", id: CREATE_TASK_MENTION_ID }] });
-    await vi.waitFor(() => expect(run).toHaveBeenCalled());
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ content: "Create the review task" }), expect.any(Function), expect.any(AbortSignal));
-    expect(mock.api.getIssue).not.toHaveBeenCalled();
-    expect(mock.api.createChatSession).not.toHaveBeenCalled();
-    expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
-  });
-  it("reports that local task creation cannot be routed into an official agent invocation", async () => {
-    const { bridge, run } = await setup();
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    await expect(bridge.request("session.send", { sessionId: session.id, content: "Create task", references: [{ kind: "issue", id: CREATE_TASK_MENTION_ID }, { kind: "agent", id: "design" }] })).rejects.toThrow("local provider");
-    expect(run).not.toHaveBeenCalled();
-    expect(mock.api.createChatSession).not.toHaveBeenCalled();
-  });
-  it("identifies local conversation snapshots and provides their stable IDs for MCP lookup without changing authored history", async () => {
-    const { bridge, run } = await setup();
-    const source = await bridge.request("session.create", { agentId: "local:codex", title: "Source chat" });
-    await bridge.request("session.send", { sessionId: source.id, content: "Original question " + "x".repeat(7000) });
-    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: source.id })).messages).toHaveLength(2));
-    run.mockClear();
-    const target = await bridge.request("session.create", { agentId: "local:claude" });
-    await bridge.request("session.send", { sessionId: target.id, content: "Read this conversation", references: [{ kind: "session", id: source.id }] });
-    await vi.waitFor(() => expect(run).toHaveBeenCalled());
-    for (const text of [`id: ${source.id}; workspace: ws`, "Earlier text omitted", "read_context"]) expect(run).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining(text) }), expect.any(Function), expect.any(AbortSignal));
-    expect((await bridge.request("session.load", { sessionId: target.id })).messages[0]?.content).toBe("Read this conversation");
-    expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
-  });
-  it("identifies referenced tasks and explicitly marks incomplete snapshots without changing the authored message", async () => {
-    const { bridge, run } = await setup();
-    mock.api.getIssue.mockResolvedValue({ id: "issue-1", identifier: "TES-124", title: "Task", workspace_id: "ws", description: "x".repeat(7000) });
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    await bridge.request("session.send", { sessionId: session.id, content: "Read this task", model: "selected-model", references: [{ kind: "issue", id: "issue-1" }] });
-    await vi.waitFor(() => expect(run).toHaveBeenCalled());
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining("TES-124 (id: issue-1; workspace: ws)") }), expect.any(Function), expect.any(AbortSignal));
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining("Description excerpt truncated") }), expect.any(Function), expect.any(AbortSignal));
-    expect((await bridge.request("session.load", { sessionId: session.id })).messages[0]?.content).toBe("Read this task");
-    expect((await bridge.request("session.load", { sessionId: session.id })).model).toBe("selected-model");
-    expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
-  });
-  it("reads local provider usage through IPC without invoking a model or creating an official chat", async () => {
-    const { bridge, usage, run } = await setup();
-    const session = await bridge.request("session.create", { agentId: "local:claude" });
-    expect(await bridge.request("usage.read", { agentId: "local:claude", sessionId: session.id, force: true })).toMatchObject({ context: { usedTokens: 120 } });
-    expect(usage.read).toHaveBeenCalledWith("claude", expect.objectContaining({ id: session.id }), true);
-    expect(run).not.toHaveBeenCalled(); expect(mock.api.createChatSession).not.toHaveBeenCalled(); expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
-  });
-  it("keeps ordinary provider sessions local and exposes cloud agents only as mention targets", async () => {
-    const { bridge, run } = await setup();
-    const state = await bridge.load();
-    expect(state.composerDraftScope).toBe(JSON.stringify(["https://example.test", ""]));
-    expect(state.executionTargets?.map((target) => target.name)).toEqual(["Codex", "Claude Code"]);
-    expect(state.agents.map((target) => target.agent.name)).toEqual(["design reviewer", "code reviewer"]);
-    expect(state.sessions).toEqual([]);
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    const sent = await bridge.request("session.send", { sessionId: session.id, content: "Hello", model: "local-model" });
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ provider: "codex", model: "local-model", content: "Hello" }), expect.any(Function), expect.any(AbortSignal));
-    expect(mock.api.createChatSession).not.toHaveBeenCalled(); expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
-    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: session.id })).messages).toContainEqual(expect.objectContaining({ content: "LOCAL_RESULT", task_id: sent.task_id })));
-  });
-  it("invokes two defined agents through existing official chat endpoints and returns both named runs locally", async () => {
-    const { bridge, run } = await setup(); await bridge.load();
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    await bridge.request("session.send", { sessionId: session.id, content: "Review", references: [{ kind: "agent", id: "design" }, { kind: "agent", id: "code" }] });
-    await vi.waitFor(() => expect(mock.api.sendChatMessage).toHaveBeenCalledTimes(2));
-    expect(mock.api.createChatSession.mock.calls.map(([request]) => request.agent_id).sort()).toEqual(["code", "design"]);
-    for (const id of ["cloud-design", "cloud-code"]) {
-      expect(mock.api.sendChatMessage).toHaveBeenCalledWith(id, expect.stringContaining("User request and referenced context:\n\nReview"), []);
-    }
-    for (const [, prompt] of mock.api.sendChatMessage.mock.calls) {
-      expect(prompt).toContain("fenced code block with the language html");
-      expect(prompt).toContain("fenced code block with the language svg");
-      expect(prompt).toContain("Chart.js 4 (global Chart) and D3 7 (global d3)");
-      expect(prompt).toContain("Return the markup itself in your assistant reply");
-    }
-    await vi.waitFor(async () => {
-      const detail = await bridge.request("session.load", { sessionId: session.id });
-      expect(detail.messages.filter((message) => message.role === "assistant").map((message) => message.content).sort()).toEqual(["RESULT_cloud-code", "RESULT_cloud-design"]);
-      expect(detail.tasks?.map((task) => task.chat_invoked_agent_name).sort()).toEqual(["code reviewer", "design reviewer"]);
-    }, { timeout: 5000 });
-    expect(run).not.toHaveBeenCalled();
-  });
-  it("retains preview guidance on official agent follow-ups while keeping local user messages unchanged", async () => {
-    const { bridge } = await setup(); await bridge.load();
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    for (const [index, content] of ["Show an HTML chart", "Now show an SVG diagram"].entries()) {
-      await bridge.request("session.send", { sessionId: session.id, content, references: [{ kind: "agent", id: "design" }] });
-      await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: session.id })).messages.filter((message) => message.role === "assistant")).toHaveLength(index + 1), { timeout: 4000 });
-    }
-    expect(mock.api.createChatSession).toHaveBeenCalledOnce();
-    expect(mock.api.sendChatMessage).toHaveBeenCalledTimes(2);
-    for (const [index, content] of ["Show an HTML chart", "Now show an SVG diagram"].entries()) {
-      expect(mock.api.sendChatMessage.mock.calls[index]).toEqual(["cloud-design", expect.stringContaining(`User request and referenced context:\n\n${content}`), []]);
-      expect(mock.api.sendChatMessage.mock.calls[index]![1]).toContain("fenced code block with the language html");
-      expect(mock.api.sendChatMessage.mock.calls[index]![1]).toContain("fenced code block with the language svg");
-    }
-    expect((await bridge.request("session.load", { sessionId: session.id })).messages.filter((message) => message.role === "user").map((message) => message.content)).toEqual(["Show an HTML chart", "Now show an SVG diagram"]);
-  });
-  it("waits for a durable reply when concurrent reads see task completion first", async () => {
-    const { bridge } = await setup(); await bridge.load();
-    mock.api.listChatMessagesPage.mockResolvedValueOnce({ messages: [], has_more: false });
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    await bridge.request("session.send", { sessionId: session.id, content: "Review", references: [{ kind: "agent", id: "design" }] });
-    await vi.waitFor(async () => expect((await bridge.request("session.load", { sessionId: session.id })).messages).toContainEqual(expect.objectContaining({ content: "RESULT_cloud-design" })), { timeout: 4000 });
-    expect(mock.api.listChatMessagesPage.mock.calls.length).toBeGreaterThanOrEqual(2);
-  });
-  it("does not send to the cloud after cancellation while its session is being created", async () => {
-    const { bridge, service } = await setup(); await bridge.load();
-    let release!: (value: unknown) => void;
-    mock.api.createChatSession.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    const sent = await bridge.request("session.send", { sessionId: session.id, content: "Review", references: [{ kind: "agent", id: "design" }] });
-    await vi.waitFor(() => expect(mock.api.createChatSession).toHaveBeenCalledOnce());
-    await bridge.request("session.cancel", { sessionId: session.id, taskId: sent.task_id });
-    release({ id: "cloud-design", agent_id: "design", workspace_id: "ws" });
-    await vi.waitFor(async () => expect((await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: session.id })).turns[0]?.remote?.sessionId).toBe("cloud-design"));
-    expect(mock.api.sendChatMessage).not.toHaveBeenCalled();
-  });
-  it("cancels the real cloud task when cancellation crosses an accepted send", async () => {
-    const { bridge, service } = await setup(); await bridge.load();
-    let release!: (value: unknown) => void;
-    mock.api.sendChatMessage.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
-    mock.api.cancelTaskById.mockResolvedValue({ id: "crossed-task", status: "cancelled" });
-    const session = await bridge.request("session.create", { agentId: "local:codex" });
-    const sent = await bridge.request("session.send", { sessionId: session.id, content: "Review", references: [{ kind: "agent", id: "design" }] });
-    await vi.waitFor(() => expect(mock.api.sendChatMessage).toHaveBeenCalledOnce());
-    await bridge.request("session.cancel", { sessionId: session.id, taskId: sent.task_id });
-    release({ task_id: "crossed-task", message_id: "crossed-message", created_at: "2026-01-01" });
-    await vi.waitFor(() => expect(mock.api.cancelTaskById).toHaveBeenCalledWith("crossed-task"));
-    await vi.waitFor(async () => expect((await service.request({ userId: "user", workspaceId: "ws" }, "read", { id: session.id })).turns[0]).toMatchObject({ status: "cancelled", remote: { taskId: "crossed-task" } }));
+  routes.push((method, path) => {
+    if (path === "/providers") return { providers: [{ id: "codex", name: "Codex", available: true }, { id: "claude", name: "Claude Code", available: false }] };
+    if (path === "/folder-projects" && method === "GET") return { projects: [{ id: "folder-1", title: "Repo", path: "/repo", created_at: at }] };
+    if (path.startsWith("/sessions?")) return { scope_seq: 3, summaries: [summary("idle"), summary("busy", { status: "running", active_turn_id: "turn-9" })], has_more: false };
+    return undefined;
   });
 });
+afterEach(() => { disposers.splice(0).forEach((dispose) => dispose()); });
 
-
-describe("recoverable local attachment hydration", () => {
-  it.each(["missing", "old-runtime"])("preserves history and saved attachment references with a %s attachment reader", async (failure) => {
-    const { bridge, service, client, onShowMessage } = await setup();
-    const scope = { userId: "user", workspaceId: "ws" };
-    const file = await service.request(scope, "fileStore", { name: "screen.png", mimeType: "image/png", data: Buffer.from("test-owned bytes").toString("base64") });
-    const session = await service.request(scope, "create", { provider: "codex" });
-    await service.request(scope, "send", { id: session.id, content: "Keep this text", attachmentIds: [file.id] });
-    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: session.id })).turns[0]?.status).toBe("completed"));
-    const original = client.request.bind(client);
-    client.request = vi.fn(async (scope, method, params) => {
-      if (failure === "old-runtime" && method === "capabilities") throw new Error("Unknown local conversation request");
-      if (method === "fileInfo") throw new Error(failure === "old-runtime" ? "Unknown local conversation request" : "ENOENT: missing file");
-      return original(scope, method, params);
-    }) as typeof client.request;
-    const detail = await bridge.request("session.load", { sessionId: session.id });
-    expect(detail.messages).toHaveLength(2);
-    expect(detail.messages[0]?.content).toContain("Keep this text");
-    expect(detail.messages[0]?.content).toContain("attachment(s) could not be loaded");
-    expect(detail.messages[1]?.content).toBe("LOCAL_RESULT");
-    expect(detail.messages[0]?.attachments).toBeUndefined();
-    await bridge.request("session.load", { sessionId: session.id });
-    expect(onShowMessage).toHaveBeenCalledTimes(1);
-    const saved = await service.request(scope, "read", { id: session.id });
-    expect(saved.messages[0]).toMatchObject({ content: "Keep this text", attachmentIds: [file.id] });
-    expect(client.request).not.toHaveBeenCalledWith(scope, "fileRead", expect.anything());
-    if (failure === "missing") {
-      client.request = original;
-      const recovered = await bridge.request("session.load", { sessionId: session.id });
-      expect(recovered.messages[0]?.attachments).toHaveLength(1);
-      expect(recovered.messages[0]?.content).toBe("Keep this text");
-    }
+describe("local conversation parent service over v2", () => {
+  it("loads providers, folder projects and every conversation with its running turn", async () => {
+    const { service } = setup();
+    const state = await service.load();
+    expect(state.executionTargets?.map((target) => [target.id, target.canInvoke])).toEqual([["local:codex", true], ["local:claude", false]]);
+    expect(state.sessions.map((session) => session.id)).toEqual(["idle", "busy"]);
+    expect(state.folderProjects).toEqual([{ id: "folder-1", title: "Repo", path: "/repo", createdAt: at }]);
+    expect(state.pendingTasks).toEqual([{ task_id: "turn-9", status: "running", chat_session_id: "busy" }]);
+    expect(sent).toContainEqual({ version: 2, type: "subscribe_scope", after_scope_seq: 3 });
   });
-  it("keeps working attachments beside a failed one and does not hide session authorization failures", async () => {
-    const { bridge, service, client } = await setup(); const scope = { userId: "user", workspaceId: "ws" };
-    const files = await Promise.all(["first", "second"].map((name) => service.request(scope, "fileStore", { name: `${name}.png`, mimeType: "image/png", data: Buffer.from(name).toString("base64") })));
-    const session = await service.request(scope, "create", { provider: "codex" });
-    await service.request(scope, "send", { id: session.id, content: "Two pictures", attachmentIds: files.map((file) => file.id) });
-    await vi.waitFor(async () => expect((await service.request(scope, "read", { id: session.id })).turns[0]?.status).toBe("completed"));
-    const original = client.request.bind(client);
-    client.request = vi.fn(async (scope, method, params) => {
-      if (method === "fileInfo" && (params as { id: string }).id === files[0]!.id) throw new Error("Unreadable attachment");
-      return original(scope, method, params);
-    }) as typeof client.request;
-    const detail = await bridge.request("session.load", { sessionId: session.id });
-    expect(detail.messages[0]?.attachments?.map((file) => file.id)).toEqual([files[1]!.id]);
-    expect(detail.messages[0]?.content).toContain("1 attachment(s)");
-    service.setCurrentUser("another-user");
-    await expect(bridge.request("session.load", { sessionId: session.id })).rejects.toThrow();
-  });
-});
 
-it("carries the originating conversation through a delayed transcript Side creation", async () => {
-  let intent = "source";
-  const { bridge, client, onOpenSide, onOpenResource } = await setup(() => intent);
-  const source = await bridge.request("session.create", { agentId: "local:codex" });
-  const raw = client.request;
-  let resume!: () => void;
-  const gate = new Promise<void>((resolve) => { resume = resolve; });
-  client.request = (async (scope, method, params) => { if (method === "sideCreate") await gate; return raw(scope, method, params); }) as typeof client.request;
-  const pending = bridge.request("host.openSide", { sessionId: source.id, requestId: "late-side" });
-  intent = "other-main";
-  resume(); const side = await pending;
-  expect(onOpenSide).toHaveBeenCalledWith(side.id, source.id);
-  expect(onOpenSide).toHaveBeenCalledOnce();
-  await bridge.request("host.openResource", { sessionId: source.id, url: "https://a.example/" });
-  expect(onOpenResource).toHaveBeenCalledWith(source.id, "https://a.example/");
+  it("creates a conversation in a folder project and sends with mentions and quoted references", async () => {
+    routes.unshift((method, path, body) => {
+      if (method === "POST" && path === "/sessions") return summary(String(body!.id), { cwd: "/repo" });
+      if (path === "/sessions/c1/snapshot") return snapshot("c1", { turns: [{ id: "t", turn_index: 0, request_id: "r", status: "completed", started_at: at, completed_at: at, messages: [{ id: "m", role: "user", content: "earlier question", created_at: at }], events: [] }] });
+      if (method === "POST" && path === "/sessions/new/commands") return body!.type === "send" ? { turn_ids: ["turn-1", "turn-2"] } : summary("new");
+      return undefined;
+    });
+    const { service } = setup();
+    await service.request("session.create", { agentId: "local:codex", cwd: "/repo/" });
+    expect(requests.find((entry) => entry.path === "/sessions" && entry.method === "POST")?.body).toMatchObject({ provider: "codex", folder_project_id: "folder-1" });
+    const result = await service.request("session.send", { sessionId: "new", content: "Review this", requestId: "req-1", model: "gpt-5", references: [{ kind: "agent", id: "design" }, { kind: "session", id: "c1" }] } as never);
+    expect(result).toMatchObject({ message_id: "msg-req-1", task_id: "turn-1" });
+    const send = requests.find((entry) => entry.body?.type === "send")!.body!;
+    expect(send).toMatchObject({ request_id: "req-1", text: "Review this", agents: [{ id: "design", name: "Design reviewer" }] });
+    expect(send.prompt).toContain("Referenced context (quoted data)");
+    expect(send.prompt).toContain("user: earlier question");
+    // Model choices belong to the local provider; agent sends leave them alone.
+    expect(requests.some((entry) => entry.body?.type === "update_settings")).toBe(false);
+  });
+
+  it("applies composer settings before a local send", async () => {
+    routes.unshift((method, path, body) => method === "POST" && path === "/sessions/c1/commands" ? (body!.type === "send" ? { turn_id: "turn-1" } : { status: "ok" }) : undefined);
+    const { service } = setup();
+    await service.request("session.send", { sessionId: "c1", content: "hi", model: "gpt-5", reasoningEffort: "low" } as never);
+    expect(requests.filter((entry) => entry.method === "POST").map((entry) => entry.body?.type)).toEqual(["update_settings", "send"]);
+    expect(requests.find((entry) => entry.body?.type === "update_settings")!.body).toEqual({ type: "update_settings", model: "gpt-5", reasoning_effort: "low" });
+  });
+
+  it("rejects task creation mixed with agent mentions before sending", async () => {
+    const { service } = setup();
+    await expect(service.request("session.send", { sessionId: "c1", content: "x", references: [{ kind: "agent", id: "design" }, { kind: "issue", id: CREATE_TASK_MENTION_ID }] } as never))
+      .rejects.toThrow("New task requires the current local provider");
+    expect(requests.some((entry) => entry.body?.type === "send")).toBe(false);
+  });
+
+  it("projects the snapshot's settings, queue and fork origin into the session detail", async () => {
+    routes.unshift((_method, path) => path === "/sessions/c1/snapshot" ? snapshot("c1", { forked_from_id: "src", forked_from_turn_id: "t-3", queue: { revision: 5, paused: true, error: "stopped", items: [] } }) : undefined);
+    const { service } = setup();
+    const { detail } = await service.request("local.snapshot", { sessionId: "c1" }) as unknown as { detail: Record<string, unknown> };
+    expect(detail).toMatchObject({ model: "gpt", reasoningEffort: "high", permissionMode: "default", promptQueue: { revision: 5, paused: true, error: "stopped", items: [] }, forkedFrom: { sessionId: "src", turnId: "t-3" } });
+  });
+
+  it("forwards a conversation's events while subscribed", async () => {
+    const { service } = setup();
+    const events: unknown[] = [];
+    service.subscribe((event) => events.push(event));
+    await service.request("local.subscribe", { sessionId: "c1", afterSeq: 4, generation: "g" } as never);
+    expect(sent).toContainEqual({ version: 2, type: "subscribe", conversation_id: "c1", after_seq: 4, store_generation: "g" });
+    const message = { version: 2, type: "conversation.events", conversation_id: "c1", from_seq: 5, to_seq: 5, events: [{ seq: 5, type: "turn.started", turn_id: "t", final: false, created_at: at, payload: {} }] };
+    messages.forEach((listener) => listener(scope, message));
+    expect(events).toContainEqual({ type: "local.events", sessionId: "c1", message });
+    await service.request("local.unsubscribe", { sessionId: "c1" } as never);
+    expect(sent.at(-1)).toEqual({ version: 2, type: "unsubscribe", conversation_id: "c1" });
+  });
+
+  it("maps queue, fork, answer and cancel to conversation commands", async () => {
+    routes.unshift((method, path, body) => {
+      if (method !== "POST" || path !== "/sessions/c1/commands") return undefined;
+      if (body!.type === "fork") return summary("forked");
+      if (String(body!.type).startsWith("queue")) return { revision: 3, paused: false, dispatching_request_id: "q1", items: [] };
+      return { status: "requested" };
+    });
+    const { service } = setup();
+    expect(await service.request("queue.update", { sessionId: "c1", action: "sendNow", requestId: "q1" } as never)).toMatchObject({ revision: 3, dispatchingRequestId: "q1" });
+    expect(await service.request("session.fork", { sessionId: "c1", turnId: "t-1", requestId: "f-1" } as never)).toMatchObject({ id: "forked" });
+    await service.request("interaction.respond", { sessionId: "c1", requestId: "question:t:q", answers: { a: "b" } } as never);
+    await service.request("session.cancel", { sessionId: "c1", taskId: "t-1" } as never);
+    expect(requests.map((entry) => entry.body)).toEqual([
+      { type: "queue_update", action: "send_now", request_id: "q1" },
+      { type: "fork", turn_id: "t-1", request_id: "f-1" },
+      { type: "answer", interaction_id: "question:t:q", answer: { a: "b" } },
+      { type: "interrupt" },
+    ]);
+  });
+
+  it("maps the daemon's usage into the composer's shape", async () => {
+    routes.unshift((_method, path) => path.startsWith("/usage?") ? { provider: "claude", context: { used_tokens: 120, limit_tokens: 1000, model: null, updated_at: null }, account: { status: "available", plan: "max", windows: [{ id: "5h", label: "5 hours", used_percent: 40, resets_at: at }], updated_at: at, stale: true } } : undefined);
+    const { service } = setup();
+    expect(await service.request("usage.read", { agentId: "local:claude", sessionId: "c1" } as never)).toEqual({ provider: "claude",
+      context: { usedTokens: 120, limitTokens: 1000, model: null, updatedAt: null },
+      account: { status: "available", plan: "max", updatedAt: at, stale: true, windows: [{ id: "5h", label: "5 hours", usedPercent: 40, resetsAt: at }] } });
+    expect(requests[0]!.path).toBe("/usage?provider=claude&conversation_id=c1");
+  });
+
+  it("keeps only the latest GUI selection when reads finish in reverse order", async () => {
+    let intent = "a";
+    let release: () => void = () => {};
+    routes.unshift((_method, path) => path === "/sessions/slow/snapshot" ? new Promise((resolve) => { release = () => resolve(snapshot("slow")); }) : path === "/sessions/fast/snapshot" ? snapshot("fast") : undefined);
+    const { service, onLocalSelect } = setup({ getSelectionIntent: () => intent });
+    const slow = service.request("host.selectSession", { sessionId: "slow" } as never);
+    intent = "b";
+    await service.request("host.selectSession", { sessionId: "fast" } as never);
+    release(); await slow;
+    expect(onLocalSelect.mock.calls).toEqual([["fast", "codex"]]);
+  });
+
+  it("refuses to delete local history from the GUI", async () => {
+    const { service } = setup();
+    await expect(service.request("session.delete", { sessionId: "c1" } as never)).rejects.toThrow("Archive local conversations");
+  });
 });

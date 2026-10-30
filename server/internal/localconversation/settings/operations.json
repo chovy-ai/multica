@@ -1,0 +1,2689 @@
+[
+  {
+    "name": "settings_read_workspace",
+    "domain": "workspace",
+    "description": "Read the selected workspace's settings.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_workspace",
+    "domain": "workspace",
+    "description": "Edit workspace details without replacing unrelated settings.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "context": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "issue_prefix": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "avatar_url": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uri"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_members",
+    "domain": "members",
+    "description": "List members and pending invitations in the selected workspace.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "invitations": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_invite_member",
+    "domain": "members",
+    "description": "Invite one person by email. Sending the invitation requires human confirmation.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "role": {
+          "default": "member",
+          "type": "string",
+          "enum": [
+            "admin",
+            "member"
+          ]
+        }
+      },
+      "required": [
+        "email"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_member",
+    "domain": "members",
+    "description": "Change a member's workspace role after human confirmation.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "member"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "role"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_remove_member",
+    "domain": "members",
+    "description": "Remove a workspace member after human confirmation.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_revoke_invitation",
+    "domain": "members",
+    "description": "Revoke a pending workspace invitation.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_workflows",
+    "domain": "workflows",
+    "description": "Read workflow definitions, owners, steps and project usage.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_read_workflow",
+    "domain": "workflows",
+    "description": "Read a workflow before editing it.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_create_workflow",
+    "domain": "workflows",
+    "description": "Create a workflow. Creating does not assign it to a project. The server enforces the feature flag and fixed columns.",
+    "permission": "member",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "steps": {
+          "minItems": 1,
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "status_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                  },
+                  "handler": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "agent",
+                          "squad",
+                          "member",
+                          "project_lead",
+                          "creator"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "maxLength": 100000
+                  },
+                  "next_status_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                  },
+                  "back_status_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                  }
+                },
+                "required": [
+                  "status_key"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "new_status": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "category": {
+                        "type": "string",
+                        "enum": [
+                          "unstarted",
+                          "started",
+                          "done",
+                          "closed"
+                        ]
+                      },
+                      "color": {
+                        "type": "string",
+                        "pattern": "^#[0-9a-fA-F]{6}$"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "handler": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "agent",
+                          "squad",
+                          "member",
+                          "project_lead",
+                          "creator"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "maxLength": 100000
+                  },
+                  "next_status_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                  },
+                  "back_status_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                  }
+                },
+                "required": [
+                  "new_status"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "status_mapping": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_preview_workflow",
+    "domain": "workflows",
+    "description": "Preview an edit without writing. Return the server's affected-task counts and required status mappings.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "steps": {
+              "minItems": 1,
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      },
+                      "handler": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "agent",
+                              "squad",
+                              "member",
+                              "project_lead",
+                              "creator"
+                            ]
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "instructions": {
+                        "type": "string",
+                        "maxLength": 100000
+                      },
+                      "next_status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      },
+                      "back_status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      }
+                    },
+                    "required": [
+                      "status_key"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "new_status": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "category": {
+                            "type": "string",
+                            "enum": [
+                              "unstarted",
+                              "started",
+                              "done",
+                              "closed"
+                            ]
+                          },
+                          "color": {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "handler": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "agent",
+                              "squad",
+                              "member",
+                              "project_lead",
+                              "creator"
+                            ]
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "instructions": {
+                        "type": "string",
+                        "maxLength": 100000
+                      },
+                      "next_status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      },
+                      "back_status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      }
+                    },
+                    "required": [
+                      "new_status"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "status_mapping": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "id",
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_workflow",
+    "domain": "workflows",
+    "description": "Edit a workflow after previewing the exact change. Preserve status_mapping; do not guess where existing tasks should move.",
+    "permission": "resource_owner",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "steps": {
+              "minItems": 1,
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      },
+                      "handler": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "agent",
+                              "squad",
+                              "member",
+                              "project_lead",
+                              "creator"
+                            ]
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "instructions": {
+                        "type": "string",
+                        "maxLength": 100000
+                      },
+                      "next_status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      },
+                      "back_status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      }
+                    },
+                    "required": [
+                      "status_key"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "new_status": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "category": {
+                            "type": "string",
+                            "enum": [
+                              "unstarted",
+                              "started",
+                              "done",
+                              "closed"
+                            ]
+                          },
+                          "color": {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "handler": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "agent",
+                              "squad",
+                              "member",
+                              "project_lead",
+                              "creator"
+                            ]
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "instructions": {
+                        "type": "string",
+                        "maxLength": 100000
+                      },
+                      "next_status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      },
+                      "back_status_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      }
+                    },
+                    "required": [
+                      "new_status"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "status_mapping": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "id",
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_delete_workflow",
+    "domain": "workflows",
+    "description": "Delete an unused non-default workflow after human confirmation. A workflow in use must not be force-deleted.",
+    "permission": "resource_owner",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_set_workflow_handoff",
+    "domain": "workflows",
+    "description": "Set one column's handler, instructions and forward/back destinations. copy_for_project_id edits a project-specific copy.",
+    "permission": "resource_owner",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "status_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "handler": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "none",
+                "agent",
+                "squad",
+                "member",
+                "project_lead",
+                "creator"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "next_status_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "back_status_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "copy_for_project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id",
+        "status_key"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_preview_workflow_brief",
+    "domain": "workflows",
+    "description": "Preview a handler's brief from draft handoff settings, without executing an agent.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "status_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "handler": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "none",
+                "agent",
+                "squad",
+                "member",
+                "project_lead",
+                "creator"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "next_status_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "back_status_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id",
+        "status_key"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_set_project_workflow",
+    "domain": "workflows",
+    "description": "Preview or apply a project's workflow. null selects Default. Applying requires a prior preview and human confirmation.",
+    "permission": "project_lead",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "workflow_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status_mapping": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+          }
+        },
+        "dry_run": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "workflow_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_statuses",
+    "domain": "statuses",
+    "description": "Read the full status catalog, categories and built-in/custom markers.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "include_archived": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_create_status",
+    "domain": "statuses",
+    "description": "Create a custom status. Its key and category are immutable after creation.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "icon": {
+          "type": "string",
+          "enum": [
+            "",
+            "dotted",
+            "circle",
+            "half",
+            "three_quarters",
+            "check",
+            "slash",
+            "cross"
+          ]
+        },
+        "position": {
+          "type": "number"
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "unstarted",
+            "started",
+            "done",
+            "closed"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "color",
+        "category"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_status",
+    "domain": "statuses",
+    "description": "Edit a custom status's display fields. Key and category cannot be changed.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "icon": {
+              "type": "string",
+              "enum": [
+                "",
+                "dotted",
+                "circle",
+                "half",
+                "three_quarters",
+                "check",
+                "slash",
+                "cross"
+              ]
+            },
+            "position": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "id",
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_reorder_statuses",
+    "domain": "statuses",
+    "description": "Atomically reorder a category using the dedicated endpoint; never emulate ordering with a series of updates.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "unstarted",
+            "started",
+            "done",
+            "closed"
+          ]
+        },
+        "ids": {
+          "minItems": 1,
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+          }
+        },
+        "include_system": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "category",
+        "ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_archive_status",
+    "domain": "statuses",
+    "description": "Archive a custom status after human confirmation. Built-in or in-use workflow constraints remain enforced by the server.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_wakeups",
+    "domain": "wakeups",
+    "description": "Read workspace-wide system wakeup defaults, instructions and overridden-task counts.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_wakeup",
+    "domain": "wakeups",
+    "description": "Change a workspace system wakeup's enabled flag or instruction; per-task overrides are preserved.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rule": {
+          "type": "string",
+          "enum": [
+            "child_done"
+          ]
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "instruction": {
+              "type": "string",
+              "maxLength": 100000
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "rule",
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_labels",
+    "domain": "labels",
+    "description": "Read issue, agent or Skill labels.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "resource_type": {
+          "default": "issue",
+          "type": "string",
+          "enum": [
+            "issue",
+            "agent",
+            "skill"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_create_label",
+    "domain": "labels",
+    "description": "Create a workspace label, not a task-label attachment.",
+    "permission": "member",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "resource_type": {
+          "default": "issue",
+          "type": "string",
+          "enum": [
+            "issue",
+            "agent",
+            "skill"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "color"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_label",
+    "domain": "labels",
+    "description": "Edit an existing label definition.",
+    "permission": "member",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "id",
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_delete_label",
+    "domain": "labels",
+    "description": "Delete a label definition after human confirmation.",
+    "permission": "member",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_properties",
+    "domain": "properties",
+    "description": "Read typed custom property definitions and select options.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "include_archived": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_create_property",
+    "domain": "properties",
+    "description": "Create a typed property definition; type is immutable after creation.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "icon": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "config": {
+          "type": "object",
+          "properties": {
+            "options": {
+              "maxItems": 200,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "color": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "color"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "text",
+            "number",
+            "select",
+            "multi_select",
+            "date",
+            "checkbox",
+            "url",
+            "actor",
+            "multi_actor",
+            "multi_text",
+            "multi_url"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_property",
+    "domain": "properties",
+    "description": "Edit a property or archive/restore it. Supply the complete options list when changing config; preserve existing option IDs.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "icon": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "config": {
+              "type": "object",
+              "properties": {
+                "options": {
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "color": {
+                        "type": "string",
+                        "pattern": "^#[0-9a-fA-F]{6}$"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "color"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "archived": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "id",
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_quick_actions",
+    "domain": "quick-actions",
+    "description": "Read the quick-action catalog, including ownership and target visibility.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "include_archived": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_create_quick_action",
+    "domain": "quick-actions",
+    "description": "Create a quick-action definition; this does not execute it.",
+    "permission": "member",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "assignee_type": {
+          "type": "string",
+          "enum": [
+            "",
+            "agent",
+            "squad"
+          ]
+        },
+        "assignee_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "private",
+            "public"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "prompt"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_quick_action",
+    "domain": "quick-actions",
+    "description": "Edit or archive a quick action; public/private and target authorization follow server rules.",
+    "permission": "resource_owner",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "fields": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "prompt": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "assignee_type": {
+              "type": "string",
+              "enum": [
+                "",
+                "agent",
+                "squad"
+              ]
+            },
+            "assignee_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            },
+            "visibility": {
+              "type": "string",
+              "enum": [
+                "private",
+                "public"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "id",
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_delete_quick_action",
+    "domain": "quick-actions",
+    "description": "Delete a quick action after human confirmation.",
+    "permission": "resource_owner",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_mcp_servers",
+    "domain": "mcp",
+    "description": "Read MCP library metadata only. Server credentials and configuration are write-only.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_create_mcp_server",
+    "domain": "mcp",
+    "description": "Add a stdio or HTTP MCP server to the library after confirmation. This assigns it to no agent; use assign_agent_mcp next.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,100}$"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "args": {
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 10000
+                  }
+                },
+                "env": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 10000
+                  }
+                }
+              },
+              "required": [
+                "command"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "headers": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 10000
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "config"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_mcp_server",
+    "domain": "mcp",
+    "description": "Replace an MCP library entry's configuration after confirmation. Agent assignments are kept.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "args": {
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 10000
+                  }
+                },
+                "env": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 10000
+                  }
+                }
+              },
+              "required": [
+                "command"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "headers": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 10000
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "config"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_rename_mcp_server",
+    "domain": "mcp",
+    "description": "Rename an MCP library entry without replacing its write-only configuration.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,100}$"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_delete_mcp_server",
+    "domain": "mcp",
+    "description": "Remove an MCP library entry after confirmation. Does not enable inherited external MCPs.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_connections",
+    "domain": "code",
+    "description": "Read code or message-channel connection metadata. Credentials are omitted.",
+    "permission": "member",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "github",
+            "vcs",
+            "lark",
+            "slack",
+            "dingtalk",
+            "wecom",
+            "telegram"
+          ]
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_disconnect_connection",
+    "domain": "channels",
+    "description": "Disconnect a code/message-channel connection after confirmation; active delivery may stop.",
+    "permission": "admin",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "github",
+            "vcs",
+            "lark",
+            "slack",
+            "dingtalk",
+            "wecom",
+            "telegram"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "provider",
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_code_settings",
+    "domain": "code",
+    "description": "Change code-integration flags while retaining unrelated workspace settings. The main-process adapter merges the patch.",
+    "permission": "admin",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "object",
+          "properties": {
+            "github_enabled": {
+              "type": "boolean"
+            },
+            "github_pr_sidebar_enabled": {
+              "type": "boolean"
+            },
+            "co_authored_by_enabled": {
+              "type": "boolean"
+            },
+            "github_auto_link_prs_enabled": {
+              "type": "boolean"
+            },
+            "pr_merge_status": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_read_profile",
+    "domain": "profile",
+    "description": "Read this account's public profile and account preferences.",
+    "permission": "self",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_profile",
+    "domain": "profile",
+    "description": "Change this account's profile, supported language or IANA timezone (empty timezone restores system detection).",
+    "permission": "self",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "profile_description": {
+              "type": "string",
+              "maxLength": 100000
+            },
+            "avatar_url": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uri"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            },
+            "language": {
+              "type": "string",
+              "enum": [
+                "en",
+                "zh-Hans",
+                "ja",
+                "ko",
+                "fr"
+              ]
+            },
+            "timezone": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_read_notifications",
+    "domain": "notifications",
+    "description": "Read the current user's notification preferences in this workspace.",
+    "permission": "self",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_notifications",
+    "domain": "notifications",
+    "description": "Patch only the requested notification groups; unrelated groups are preserved.",
+    "permission": "self",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "preferences": {
+          "type": "object",
+          "properties": {
+            "assignments": {
+              "type": "string",
+              "enum": [
+                "all",
+                "muted"
+              ]
+            },
+            "status_changes": {
+              "type": "string",
+              "enum": [
+                "all",
+                "muted"
+              ]
+            },
+            "comments": {
+              "type": "string",
+              "enum": [
+                "all",
+                "muted"
+              ]
+            },
+            "mentions": {
+              "type": "string",
+              "enum": [
+                "all",
+                "muted"
+              ]
+            },
+            "updates": {
+              "type": "string",
+              "enum": [
+                "all",
+                "muted"
+              ]
+            },
+            "agent_activity": {
+              "type": "string",
+              "enum": [
+                "all",
+                "muted"
+              ]
+            },
+            "system_notifications": {
+              "type": "string",
+              "enum": [
+                "all",
+                "muted"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "preferences"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_list_tokens",
+    "domain": "tokens",
+    "description": "List token metadata, never token values.",
+    "permission": "self",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_create_token",
+    "domain": "tokens",
+    "description": "Request creation after human confirmation. The resulting secret is displayed to the user in the desktop UI and never returned to the model.",
+    "permission": "self",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "expires_in_days": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3650
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_revoke_token",
+    "domain": "tokens",
+    "description": "Revoke an account token after human confirmation.",
+    "permission": "self",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_open",
+    "domain": "preferences",
+    "description": "Open a specific settings tab for OAuth, credentials, or other user interaction. Opening is not a successful configuration change.",
+    "permission": "self",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string",
+          "enum": [
+            "workspace",
+            "members",
+            "workflows",
+            "statuses",
+            "wakeups",
+            "labels",
+            "properties",
+            "quick-actions",
+            "code",
+            "channels",
+            "mcp",
+            "profile",
+            "preferences",
+            "notifications",
+            "shortcuts",
+            "tokens",
+            "daemon",
+            "updates"
+          ]
+        }
+      },
+      "required": [
+        "domain"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_read_device",
+    "domain": "preferences",
+    "description": "Read safe device preferences, shortcuts, daemon state and update preferences through the desktop host. Set probe_runtimes=true for an explicit local runtime availability probe.",
+    "permission": "self",
+    "write": false,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "probe_runtimes": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_update_device",
+    "domain": "preferences",
+    "description": "Update explicit device preferences through the same stores as Settings.",
+    "permission": "self",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "object",
+          "properties": {
+            "theme": {
+              "type": "string",
+              "enum": [
+                "light",
+                "dark",
+                "system"
+              ]
+            },
+            "sticky_composer": {
+              "type": "boolean"
+            },
+            "running_agent_reply": {
+              "type": "string",
+              "enum": [
+                "steer",
+                "after_run"
+              ]
+            },
+            "issue_open_mode": {
+              "type": "string",
+              "enum": [
+                "page",
+                "peek"
+              ]
+            },
+            "floating_chat": {
+              "type": "boolean"
+            },
+            "daemon_auto_start": {
+              "type": "boolean"
+            },
+            "daemon_auto_stop": {
+              "type": "boolean"
+            },
+            "automatic_updates": {
+              "type": "boolean"
+            },
+            "quick_create_fields": {
+              "maxItems": 3,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "project",
+                  "priority",
+                  "due_date"
+                ]
+              }
+            },
+            "manual_create_fields": {
+              "maxItems": 7,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "status",
+                  "priority",
+                  "assignee",
+                  "labels",
+                  "project",
+                  "due_date",
+                  "start_date"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_set_shortcut",
+    "domain": "shortcuts",
+    "description": "Set or reset one supported keyboard shortcut. Conflicting or reserved chords are rejected.",
+    "permission": "self",
+    "write": true,
+    "confirm": false,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+        },
+        "shortcut": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 30
+                },
+                "modifiers": {
+                  "type": "object",
+                  "properties": {
+                    "primary": {
+                      "type": "boolean"
+                    },
+                    "control": {
+                      "type": "boolean"
+                    },
+                    "meta": {
+                      "type": "boolean"
+                    },
+                    "alt": {
+                      "type": "boolean"
+                    },
+                    "shift": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "primary",
+                    "control",
+                    "meta",
+                    "alt",
+                    "shift"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "key",
+                "modifiers"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reset": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "settings_device_action",
+    "domain": "daemon",
+    "description": "Request daemon start/stop/restart or check/download/install an app update. Mutating actions require human confirmation; restarting/installing can interrupt work.",
+    "permission": "self",
+    "write": true,
+    "confirm": true,
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "daemon_start",
+            "daemon_stop",
+            "daemon_restart",
+            "open_daemon_log",
+            "check_update",
+            "download_update",
+            "install_update"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

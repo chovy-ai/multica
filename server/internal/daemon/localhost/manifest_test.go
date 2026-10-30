@@ -53,7 +53,7 @@ func relTo(t *testing.T, from, to string) string {
 func noEnv(string) string { return "" }
 
 func manifestJSON(version int, entry, electron string) string {
-	data, _ := json.Marshal(Manifest{ProtocolVersion: version, Entry: entry, Electron: map[string]string{runtime.GOOS: electron}})
+	data, _ := json.Marshal(Manifest{ProtocolVersion: version, ClaudeEntry: entry, Electron: map[string]string{runtime.GOOS: electron}})
 	return string(data)
 }
 
@@ -68,7 +68,7 @@ func TestLocatePackagedSidecar(t *testing.T) {
 		t.Fatalf("Locate() = %v", err)
 	}
 	wantElectron, _ := filepath.EvalSymlinks(electron)
-	if got.Electron != wantElectron || filepath.Base(got.Entry) != "index.mjs" || got.ProtocolVersion != 2 {
+	if got.Electron != wantElectron || filepath.Base(got.ClaudeEntry) != "index.mjs" || got.ProtocolVersion != 2 {
 		t.Fatalf("unexpected sidecar: %+v", got)
 	}
 }
@@ -100,7 +100,9 @@ func TestLocateRejectsAbsoluteAndMissingPaths(t *testing.T) {
 		manifestJSON(2, "index.mjs", filepath.ToSlash(electron)),
 		manifestJSON(2, "missing.mjs", relTo(t, dir, electron)),
 		manifestJSON(0, "index.mjs", "x"),
-		`{"protocolVersion":2,"entry":"index.mjs","electron":{"plan9":"x"}}`,
+		`{"protocolVersion":2,"claudeEntry":"index.mjs","electron":{"plan9":"x"}}`,
+		// The v1 conversation host alone no longer offers local conversations.
+		`{"protocolVersion":2,"entry":"index.mjs","electron":{}}`,
 	} {
 		writeFile(t, manifestPath(exe), body)
 		if _, err := Locate(exe, noEnv); err == nil || errors.Is(err, ErrNoManifest) {
@@ -122,7 +124,33 @@ func TestLocateHonorsLauncherOverride(t *testing.T) {
 		}
 		return ""
 	})
-	if err != nil || filepath.Base(got.Entry) != "entry.mjs" {
+	if err != nil || filepath.Base(got.ClaudeEntry) != "entry.mjs" {
 		t.Fatalf("Locate() = %+v, %v", got, err)
+	}
+}
+
+func TestLocateResolvesClaudeEntry(t *testing.T) {
+	t.Parallel()
+
+	_, exe, electron := packagedLayout(t)
+	path := manifestPath(exe)
+	writeFile(t, filepath.Join(filepath.Dir(path), "claude-host.cjs"), "claude")
+	data, _ := json.Marshal(Manifest{ProtocolVersion: 2, ClaudeEntry: "claude-host.cjs",
+		Electron: map[string]string{runtime.GOOS: relTo(t, filepath.Dir(path), electron)}})
+	writeFile(t, path, string(data))
+	got, err := Locate(exe, noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(got.ClaudeEntry) != "claude-host.cjs" {
+		t.Fatalf("ClaudeEntry = %q", got.ClaudeEntry)
+	}
+
+	// A declared but missing entry is an error, not a silent downgrade.
+	data, _ = json.Marshal(Manifest{ProtocolVersion: 2, ClaudeEntry: "missing.cjs",
+		Electron: map[string]string{runtime.GOOS: relTo(t, filepath.Dir(path), electron)}})
+	writeFile(t, path, string(data))
+	if _, err := Locate(exe, noEnv); err == nil {
+		t.Fatal("missing claude entry accepted")
 	}
 }

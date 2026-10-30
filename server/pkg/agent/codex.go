@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/codexappserver"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
@@ -309,7 +310,7 @@ func CodexRetiredCompactionError(errText string) bool {
 const codexModelCatalogRefreshFailureSignal = "failed to refresh available models"
 const codexModelCatalogRefreshTimeoutSignal = "failed to refresh available models: timeout waiting for child process to exit"
 
-var errCodexProcessExited = errors.New("codex process exited")
+var errCodexProcessExited = codexappserver.ErrProcessExited
 
 type codexTimeoutKind int
 
@@ -1271,9 +1272,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 
 	c = &codexClient{
 		cfg:                      b.cfg,
-		stdin:                    stdin,
-		pending:                  make(map[int]*pendingRPC),
-		processDone:              make(chan struct{}),
+		conn:                     newCodexConn(stdin, b.cfg.Logger),
 		handshakeTimeout:         handshakeTimeout,
 		threadHandshakeTimeout:   threadHandshakeTimeout,
 		pid:                      cmd.Process.Pid,
@@ -1359,10 +1358,10 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			// the response" apart from "codex died". startOrResumeThread needs
 			// that distinction to report an oversized resume as a rejected
 			// resume rather than a crash (MUL-5722).
-			c.markProcessExited(fmt.Errorf("%w: %w", errCodexProcessExited, err))
+			c.conn.Close(fmt.Errorf("%w: %w", errCodexProcessExited, err))
 			return
 		}
-		c.markProcessExited(errCodexProcessExited)
+		c.conn.Close(errCodexProcessExited)
 	}()
 
 	// drainAndWait closes stdin and joins the process exactly once. Read stderrBuf
@@ -1785,7 +1784,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				if !interruptCodexTurn(c, threadID, turnDone, opts.TurnInterruptTimeout, b.cfg.Logger) {
 					stopProcess()
 				}
-			case <-c.processDone:
+			case <-c.conn.Done():
 				select {
 				case aborted := <-turnDone:
 					finishTurn(aborted)
@@ -1796,7 +1795,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 						waitingForTurn = false
 						finishFirstItemWait("process_exit")
 						finalStatus = "failed"
-						processExitErr = c.getProcessErr()
+						processExitErr = c.conn.Err()
 						if processExitErr == nil {
 							processExitErr = errCodexProcessExited
 						}
@@ -2477,12 +2476,7 @@ func describeCodexSemanticActivity(msg Message) string {
 
 type codexClient struct {
 	cfg                    Config
-	stdin                  interface{ Write([]byte) (int, error) }
-	mu                     sync.Mutex
-	nextID                 int
-	pending                map[int]*pendingRPC
-	processDone            chan struct{}
-	processErr             error
+	conn                   *codexappserver.Conn
 	handshakeTimeout       time.Duration
 	threadHandshakeTimeout time.Duration
 	pid                    int
@@ -2783,152 +2777,39 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	requestCtx := ctx
-	cancelRequest := func() {}
 	if timeout := c.handshakeTimeoutFor(method); timeout > 0 && isCodexHandshakeRPC(method) {
 		timeoutErr := &codexHandshakeTimeoutError{Method: method, Timeout: timeout}
-		requestCtx, cancelRequest = context.WithTimeoutCause(ctx, timeout, timeoutErr)
+		requestCtx, cancelRequest := context.WithTimeoutCause(ctx, timeout, timeoutErr)
+		defer cancelRequest()
+		ctx = requestCtx
 	}
-	defer cancelRequest()
+	return c.conn.Request(ctx, method, params)
+}
 
-	c.mu.Lock()
-	if c.processErr != nil {
-		err := c.processErr
-		c.mu.Unlock()
-		return nil, err
-	}
-	if c.processDone == nil {
-		c.processDone = make(chan struct{})
-	}
-	processDone := c.processDone
-	c.nextID++
-	id := c.nextID
-	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: method}
-	c.pending[id] = pr
-	c.mu.Unlock()
-
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, err
-	}
-	data = append(data, '\n')
-	if _, err := c.stdin.Write(data); err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, fmt.Errorf("write %s: %w", method, err)
-	}
-	if method == "turn/start" {
+// newCodexConn wires the app-server transport with this backend's handshake
+// timeout errors and turn/start logging.
+func newCodexConn(stdin io.Writer, logger *slog.Logger) *codexappserver.Conn {
+	conn := codexappserver.NewConn(stdin)
+	conn.ContextError = codexRequestContextError
+	conn.AfterWrite = func(id int, method string, params any) {
+		if method != "turn/start" {
+			return
+		}
 		threadID := ""
 		if paramMap, ok := params.(map[string]any); ok {
 			threadID, _ = paramMap["threadId"].(string)
 		}
-		c.cfg.Logger.Info("codex turn/start sent", "request_id", id, "thread_id", threadID)
+		logger.Info("codex turn/start sent", "request_id", id, "thread_id", threadID)
 	}
-
-	select {
-	case res := <-pr.ch:
-		return res.result, res.err
-	case <-processDone:
-		select {
-		case res := <-pr.ch:
-			return res.result, res.err
-		default:
-		}
-		c.mu.Lock()
-		delete(c.pending, id)
-		err := c.processErr
-		c.mu.Unlock()
-		if requestCtx.Err() != nil {
-			return nil, codexRequestContextError(requestCtx)
-		}
-		if err == nil {
-			err = errCodexProcessExited
-		}
-		return nil, err
-	case <-requestCtx.Done():
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, codexRequestContextError(requestCtx)
-	}
+	return conn
 }
 
-func (c *codexClient) notify(method string) {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  method,
-	}
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
-}
+func (c *codexClient) notify(method string) { c.conn.Notify(method) }
 
-func (c *codexClient) respond(id int, result any) {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result":  result,
-	}
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
-}
+func (c *codexClient) respond(id int, result any) { c.conn.Respond(id, result) }
 
 func (c *codexClient) respondError(id int, code int, message string) {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"error": map[string]any{
-			"code":    code,
-			"message": message,
-		},
-	}
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
-}
-
-func (c *codexClient) closeAllPending(err error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for id, pr := range c.pending {
-		pr.ch <- rpcResult{err: err}
-		delete(c.pending, id)
-	}
-}
-
-func (c *codexClient) markProcessExited(err error) {
-	if err == nil {
-		err = errCodexProcessExited
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.processErr == nil {
-		c.processErr = err
-		if c.processDone != nil {
-			close(c.processDone)
-		}
-	}
-	for id, pr := range c.pending {
-		pr.ch <- rpcResult{err: err}
-		delete(c.pending, id)
-	}
-}
-
-func (c *codexClient) getProcessErr() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.processErr
+	c.conn.RespondError(id, code, message)
 }
 
 // isCodexResumeOverflow reports whether a failed startOrResumeThread failed
@@ -2969,70 +2850,21 @@ func isCodexTransportError(err error) bool {
 }
 
 func (c *codexClient) handleLine(line string) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return
-	}
-
-	// Check if it's a response to our request
-	if _, hasID := raw["id"]; hasID {
-		if _, hasResult := raw["result"]; hasResult {
-			c.handleResponse(raw)
-			return
-		}
-		if _, hasError := raw["error"]; hasError {
-			c.handleResponse(raw)
-			return
-		}
-		// Server request (has id + method)
-		if _, hasMethod := raw["method"]; hasMethod {
-			c.handleServerRequest(raw)
-			return
-		}
-	}
-
-	// Notification (no id, has method)
-	if _, hasMethod := raw["method"]; hasMethod {
-		c.handleNotification(raw)
-	}
-}
-
-func (c *codexClient) handleResponse(raw map[string]json.RawMessage) {
-	var id int
-	if err := json.Unmarshal(raw["id"], &id); err != nil {
-		return
-	}
-
-	c.mu.Lock()
-	pr, ok := c.pending[id]
-	if ok {
-		delete(c.pending, id)
-	}
-	c.mu.Unlock()
-
+	frame, ok := codexappserver.ParseFrame([]byte(line))
 	if !ok {
 		return
 	}
-
-	if errData, hasErr := raw["error"]; hasErr {
-		var rpcErr struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(errData, &rpcErr)
-		pr.ch <- rpcResult{err: fmt.Errorf("%s: %s (code=%d)", pr.method, rpcErr.Message, rpcErr.Code)}
-	} else {
-		pr.ch <- rpcResult{result: raw["result"]}
+	switch frame.Kind {
+	case codexappserver.FrameResponse:
+		c.conn.Resolve(frame)
+	case codexappserver.FrameServerRequest:
+		c.handleServerRequest(frame.ID, frame.Method, frame.Params)
+	case codexappserver.FrameNotification:
+		c.handleNotification(frame.Method, frame.Params)
 	}
 }
 
-func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
-	var id int
-	_ = json.Unmarshal(raw["id"], &id)
-
-	var method string
-	_ = json.Unmarshal(raw["method"], &method)
-
+func (c *codexClient) handleServerRequest(id int, method string, params json.RawMessage) {
 	// Auto-approve all exec/patch requests in daemon mode
 	switch method {
 	case "item/commandExecution/requestApproval", "execCommandApproval":
@@ -3040,7 +2872,7 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 	case "item/fileChange/requestApproval", "applyPatchApproval":
 		c.respond(id, map[string]any{"decision": "accept"})
 	case "item/permissions/requestApproval":
-		c.respond(id, codexPermissionsApprovalResponse(raw["params"], c.cfg.Logger))
+		c.respond(id, codexPermissionsApprovalResponse(params, c.cfg.Logger))
 	case "mcpServer/elicitation/request":
 		c.respond(id, map[string]any{"action": "accept", "content": nil, "_meta": nil})
 	default:
@@ -3092,13 +2924,10 @@ func codexPermissionsApprovalResponse(params json.RawMessage, logger *slog.Logge
 	}
 }
 
-func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
-	var method string
-	_ = json.Unmarshal(raw["method"], &method)
-
+func (c *codexClient) handleNotification(method string, rawParams json.RawMessage) {
 	var params map[string]any
-	if p, ok := raw["params"]; ok {
-		_ = json.Unmarshal(p, &params)
+	if rawParams != nil {
+		_ = json.Unmarshal(rawParams, &params)
 	}
 	// Filter multiplexed subagent threads before the current-turn gate. The
 	// gate mutates started/turnID on turn/started; letting another thread reach

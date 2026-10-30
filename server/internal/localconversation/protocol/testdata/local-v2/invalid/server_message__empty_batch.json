@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "type": "conversation.events",
+  "conversation_id": "conv-1",
+  "from_seq": 1,
+  "to_seq": 1,
+  "events": []
+}

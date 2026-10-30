@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "type": "error",
+  "id": "r2",
+  "code": "sdk_error",
+  "message": "Claude Code exited before accepting the prompt",
+  "dispatch": "not_dispatched"
+}

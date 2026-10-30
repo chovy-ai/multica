@@ -20,7 +20,8 @@ import {
   type IssueWindowRequest,
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
-import type { LocalConversationClient, LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
+import { localV2UploadSchema, type LocalV2Transport } from "@multica/core/local-conversation/v2";
 import type { LocalHostAvailability } from "../shared/local-host-availability";
 import type {
   DaemonStatus,
@@ -116,21 +117,6 @@ async function localFileError(response: Response): Promise<Error> {
   try { const body = await response.json() as { error?: { message?: string } }; return new Error(body.error?.message ?? `Local file request failed (HTTP ${response.status})`); }
   catch { return new Error(`Local file request failed (HTTP ${response.status})`); }
 }
-const localFileTransport: LocalConversationClient["files"] = {
-  url: (scope, fileRef) => localFileUrl(`files/${encodeURIComponent(fileRef)}`, scope),
-  read: async (scope, fileRef) => {
-    const response = await fetch(localFileUrl(`files/${encodeURIComponent(fileRef)}`, scope));
-    if (!response.ok) throw await localFileError(response);
-    return response.blob();
-  },
-  upload: async (scope, file) => {
-    const response = await fetch(localFileUrl("upload", scope), { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } });
-    if (!response.ok) throw await localFileError(response);
-    const body = await response.json() as { id?: unknown };
-    if (typeof body.id !== "string") throw new Error("The local file upload was not confirmed");
-    return body.id;
-  },
-};
 
 const desktopAPI = {
   localFileContextMenu: {
@@ -172,15 +158,27 @@ const desktopAPI = {
       return () => ipcRenderer.removeListener("local-conversation:availability", handler);
     },
   },
-  localConversations: {
-    files: localFileTransport,
-    request: (scope, method, params) => ipcRenderer.invoke("local-conversation:request", scope, method, params),
+  localV2: {
+    request: (scope, method, path, body) => ipcRenderer.invoke("local-v2:request", scope, method, path, body),
+    send: (scope, message) => ipcRenderer.invoke("local-v2:send", scope, message),
+    choose: (scope, request) => ipcRenderer.invoke("local-v2:choose", scope, request),
     subscribe: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; sessionId: string }) => listener(payload.scope, payload.sessionId);
-      ipcRenderer.on("local-conversation:changed", handler);
-      return () => ipcRenderer.removeListener("local-conversation:changed", handler);
+      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; message: unknown }) => listener(payload.scope, payload.message);
+      ipcRenderer.on("local-v2:message", handler);
+      return () => ipcRenderer.removeListener("local-v2:message", handler);
     },
-  } satisfies LocalConversationClient,
+    onConnection: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { scope: LocalConversationScope; connected: boolean }) => listener(payload.scope, payload.connected);
+      ipcRenderer.on("local-v2:connection", handler);
+      return () => ipcRenderer.removeListener("local-v2:connection", handler);
+    },
+    fileUrl: (scope, path) => `${localFileUrl("v2/file", scope)}&${new URLSearchParams({ target: path })}`,
+    upload: async (scope, file) => {
+      const response = await fetch(localFileUrl("v2/attachments", scope), { method: "POST", body: file, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } });
+      if (!response.ok) throw await localFileError(response);
+      return localV2UploadSchema.parse(await response.json());
+    },
+  } satisfies LocalV2Transport,
   /** App version + normalized OS. Read once at preload time so the renderer
    *  can use it synchronously when initializing the API client. */
   appInfo,

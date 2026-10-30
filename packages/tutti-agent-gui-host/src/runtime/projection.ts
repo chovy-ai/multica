@@ -14,6 +14,8 @@ import { RuntimeLedger } from "./ledger";
 import { chatAuthoredPrompt } from "@multica/core/chat/context-snapshot";
 import { localMessageDisplayContent } from "@multica/core/local-conversation/protocol";
 import { backgroundTaskPresentation } from "./background-task-presentation";
+import type { V2Conversation } from "./v2-conversation";
+import { projectV2Conversation } from "./v2-projection";
 
 export const MULTICA_GUI_CAPABILITIES: AgentActivitySessionCapabilities = {
   imageInput: true, modelImageInputRequired: false, modelPlanBinding: false,
@@ -296,4 +298,35 @@ function millis(value: string): number {
 function invocationIdentity(task: AgentTask | undefined) {
   const name = task?.chat_invoked_agent_name;
   return name ? { invokedAgent: { id: task.agent_id, name } } : {};
+}
+
+/**
+ * A local conversation's view from its v2 state: turns, messages and
+ * question interactions come from the conversation's events; the detail
+ * supplies only metadata (session, queue, settings, fork lineage).
+ */
+export function projectV2Detail(
+  detail: AgentGuiSessionDetail,
+  conversation: V2Conversation,
+  agent: AgentGuiExecutionTarget | undefined,
+  ledger: RuntimeLedger,
+  locale: "en" | "zh-CN" = "en",
+): { session: AgentActivitySession; turns: AgentActivityTurn[]; messages: AgentActivityDurableMessage[] } {
+  const sessionId = ledger.guiId(detail.session.id);
+  const view = projectV2Conversation(conversation, { workspaceId: detail.session.workspace_id, agentSessionId: sessionId, locale });
+  // The composer's submit id lets the engine replace its optimistic message.
+  for (const message of view.messages) {
+    const clientSubmitId = message.role === "user" ? ledger.clientSubmitId(message.messageId) : undefined;
+    if (clientSubmitId) message.payload = { ...message.payload, clientSubmitId };
+  }
+  const messages = ledger.project(sessionId, view.messages, new Map(view.turns.map((turn) => [turn.turnId, turn.startedAtUnixMs])));
+  const turns = view.turns.map((turn) => ({ ...turn, providerForkBindingAvailable: agent?.canFork === true }));
+  const session = projectSession(detail.session, agent, ledger, turns, view.activeTurnId);
+  session.latestTurnInteractions = view.interactions.filter((item) => item.turnId === (session.activeTurnId ?? session.latestTurn?.turnId));
+  session.pendingInteractions = session.latestTurnInteractions.filter((item) => item.status === "pending");
+  if (detail.forkedFrom) session.forkedFrom = {
+    sourceAgentSessionId: ledger.guiId(detail.forkedFrom.sessionId), sourceTurnId: detail.forkedFrom.turnId,
+    targetTurnId: detail.forkedFrom.targetTurnId, operationId: detail.forkedFrom.operationId, forkedAtUnixMs: millis(detail.forkedFrom.createdAt),
+  };
+  return { session, turns, messages };
 }

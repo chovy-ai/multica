@@ -21,7 +21,6 @@ export function isTaskCreationReference(value: { kind?: unknown; id?: unknown })
 }
 export interface LocalConversationScope { userId: string; workspaceId: string }
 export interface LocalFolderProject { id: string; title: string; path: string; createdAt: string }
-export interface LocalProvider { id: LocalProviderId; name: string; available: boolean }
 export interface LocalConversationEvent {
   seq: number; type: "text" | "thinking" | "tool_use" | "tool_result" | "status" | "error";
   content?: string; tool?: string; input?: Record<string, unknown>; output?: string; call_id?: string; created_at: string;
@@ -85,18 +84,6 @@ export interface LocalImportCandidate {
   id: string; provider: LocalProviderId; title: string; cwd: string;
   createdAt: string; updatedAt: string; importedId?: string;
 }
-export interface LocalImportPage { sessions: LocalImportCandidate[]; nextCursor: string | null }
-export interface LocalConversationPage { sessions: LocalConversation[]; nextCursor: string | null }
-export interface LocalConversationRuntimeState {
-  pendingTasks: { task_id: string; status: "running"; chat_session_id: string }[];
-  movedQueueRequests: string[];
-}
-export interface LocalImportResult {
-  imported: { sourceId: string; conversationId: string }[];
-  skipped: { sourceId: string; conversationId: string }[];
-  failed: { sourceId: string; error: string }[];
-}
-export interface LocalConversationModels { supported: boolean; models: RuntimeModel[] }
 export interface LocalSidePrompt { origin?: { conversationId: string; requestId: string }; content: string; attachmentIds?: string[]; references?: { kind: "session" | "issue" | "agent"; id: string }[]; model?: string; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; requestId: string }
 export interface LocalQueuedPrompt extends LocalSidePrompt {
   prompt?: string;
@@ -145,8 +132,6 @@ export interface LocalAccountUsage {
 export interface LocalProviderUsage {
   provider: LocalProviderId; context: LocalContextUsage; account: LocalAccountUsage;
 }
-export const LOCAL_CONVERSATION_PROTOCOL_VERSION = 2;
-export interface LocalConversationCapabilities { protocolVersion: number; methods: string[] }
 
 const sideId = z.string().min(1).max(160);
 const sidePath = z.string().min(1).max(4096);
@@ -163,106 +148,3 @@ export const sideWorkspaceSyncSchema = z.object({
 });
 export type SideWorkspaceTab = z.infer<typeof sideWorkspaceTabSchema>;
 export type SideWorkspaceSnapshot = z.infer<typeof sideWorkspaceSyncSchema>;
-
-export interface LocalConversationMethods {
-  sideWorkspaceSync: { params: SideWorkspaceSnapshot; result: { revision: number } };
-  sideWorkspaceState: { params: { conversationId: string }; result: SideWorkspaceSnapshot | null };
-  capabilities: { params: Record<string, never>; result: LocalConversationCapabilities };
-  queueEnqueue: { params: { id: string; item: LocalQueuedPrompt; paused?: boolean }; result: LocalPromptQueue };
-  queueUpdate: { params: { id: string; action: "pause" | "stop" | "resume" | "remove" | "sendNow"; requestId?: string }; result: LocalPromptQueue };
-  queueSide: { params: { id: string; requestId: string }; result: LocalConversation };
-  stopBackgroundTasks: { params: { id: string }; result: void };
-  folderProjects: { params: Record<string, never>; result: LocalFolderProject[] };
-  folderProjectAdd: { params: Record<string, never>; result: LocalFolderProject | null };
-  sideCreate: { params: { id: string; turnId?: string; quote?: string; requestId: string; pending?: LocalSidePrompt; queuedPrompt?: LocalQueuedPrompt }; result: LocalConversation };
-  sideAccepted: { params: { id: string; requestId: string }; result: void };
-  previewLocate: { params: { path: string; id?: string }; result: LocalPreviewLocation };
-  previewChoose: { params: { kind: "file" | "directory" }; result: LocalPreviewLocation | null };
-  previewList: { params: { root: string; path: string; id?: string }; result: LocalPreviewLocation[] };
-  previewRead: { params: { root?: string; path: string; id?: string }; result: LocalPreviewFile };
-  importScan: { params: { provider: LocalProviderId; cursor?: string }; result: LocalImportPage };
-  importSessions: { params: { provider: LocalProviderId; ids: string[]; projectId?: string | null }; result: LocalImportResult };
-  importCancel: { params: Record<string, never>; result: void };
-  providers: { params: Record<string, never>; result: LocalProvider[] };
-  list: { params: Record<string, never>; result: LocalConversation[] };
-  listPage: { params: { folderProjectId: string | null; archived?: boolean; search?: string; cursor?: string }; result: LocalConversationPage };
-  runtimeState: { params: Record<string, never>; result: LocalConversationRuntimeState };
-  directorySource: { params: { cwd: string }; result: { id: string } | null };
-  read: { params: { id: string }; result: LocalConversation };
-  create: { params: { provider: LocalProviderId; title?: string; projectId?: string | null; folderProjectId?: string | null; directorySourceId?: string }; result: LocalConversation };
-  fork: { params: { id: string; turnId?: string; requestId?: string }; result: LocalConversation };
-  update: { params: { id: string; title?: string; pinned?: boolean; archived?: boolean; projectId?: string | null }; result: LocalConversation };
-  directory: { params: { id: string }; result: LocalConversation };
-  send: { params: { origin?: { conversationId: string; requestId: string }; id: string; content: string; prompt?: string; references?: { kind: "session" | "issue" | "agent"; id: string }[]; attachmentIds?: string[]; model?: string; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; requestId?: string }; result: { messageId: string; turnId: string; createdAt: string; replayed?: boolean } };
-  fileStore: { params: { name: string; mimeType: string; data: string }; result: { id: string } };
-  fileInfo: { params: { id: string }; result: { name: string; mimeType: string; path: string; url: string; size: number } };
-  fileRead: { params: { id: string }; result: { name: string; mimeType: string; data: string; path: string; size: number } };
-  imageRead: { params: { id: string; path: string }; result: LocalPreviewFile };
-  cancel: { params: { id: string; turnId: string }; result: LocalConversationTurn };
-  answerQuestion: { params: { id: string; turnId: string; requestId: string; answers: Record<string, string | string[]> }; result: void };
-  models: { params: { provider: LocalProviderId; force?: boolean }; result: LocalConversationModels };
-  usage: { params: { provider: LocalProviderId; id?: string; force?: boolean }; result: LocalProviderUsage };
-  remoteBegin: { params: { id: string; content: string; prompt?: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
-  /** Starts cloud agent turns; the host sends, polls and resumes them. */
-  remoteSend: { params: { id: string; content: string; prompt?: string; agents: { id: string; name: string }[]; attachmentIds?: string[]; requestId?: string }; result: { messageId: string; turns: LocalConversationTurn[]; createdAt: string; replayed?: boolean } };
-  remoteUpdate: { params: { id: string; turnId: string; sessionId?: string; taskId?: string; contextThroughMessageId?: string; events?: LocalConversationEvent[]; output?: string; error?: string; status?: LocalConversationTurn["status"] }; result: void };
-}
-export type LocalConversationMethod = keyof LocalConversationMethods;
-/** File content moves over the host's HTTP file endpoint, never through JSON-RPC or IPC. */
-export interface LocalFileTransport {
-  /** Stores an attachment and returns its id. */
-  upload(scope: LocalConversationScope, file: File): Promise<string>;
-  /** Reads an attachment id or a granted `fileRef`. */
-  read(scope: LocalConversationScope, fileRef: string): Promise<Blob>;
-  /** A URL the renderer can use directly, e.g. as an image source. */
-  url(scope: LocalConversationScope, fileRef: string): string;
-}
-export interface LocalConversationClient {
-  request<M extends LocalConversationMethod>(scope: LocalConversationScope, method: M, params: LocalConversationMethods[M]["params"]): Promise<LocalConversationMethods[M]["result"]>;
-  subscribe(listener: (scope: LocalConversationScope, sessionId: string) => void): () => void;
-  files: LocalFileTransport;
-}
-
-/** Adding an IPC method requires advertising it to the renderer. */
-export const LOCAL_CONVERSATION_METHODS = {
-  sideWorkspaceSync: true,
-  sideWorkspaceState: true,
-  capabilities: true,
-  queueEnqueue: true,
-  queueUpdate: true,
-  queueSide: true,
-  stopBackgroundTasks: true,
-  folderProjects: true,
-  folderProjectAdd: true,
-  sideCreate: true,
-  sideAccepted: true,
-  previewLocate: true,
-  previewChoose: true,
-  previewList: true,
-  previewRead: true,
-  importScan: true,
-  importSessions: true,
-  importCancel: true,
-  providers: true,
-  list: true,
-  listPage: true,
-  runtimeState: true,
-  directorySource: true,
-  read: true,
-  create: true,
-  fork: true,
-  update: true,
-  directory: true,
-  send: true,
-  fileStore: true,
-  fileInfo: true,
-  fileRead: true,
-  imageRead: true,
-  cancel: true,
-  answerQuestion: true,
-  models: true,
-  usage: true,
-  remoteBegin: true,
-  remoteSend: true,
-  remoteUpdate: true,
-} satisfies Record<LocalConversationMethod, true>;

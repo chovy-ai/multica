@@ -1,10 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import type { LocalConversation, LocalFolderProject } from "@multica/core/local-conversation/protocol";
-import { groupLocalConversations, projectForDirectory } from "./local-conversation-projects";
+import type { LocalFolderProject } from "@multica/core/local-conversation/protocol";
+import { groupLocalConversations, projectForDirectory, type LocalSessionEntry } from "./local-conversation-projects";
 
 const projects = [{ id: "a", title: "Shared title", path: "/repo-a" }, { id: "b", title: "Shared title", path: "/repo-b" }] as LocalFolderProject[];
-const session = (id: string, cwd = "/unregistered", archived = false) => ({ id, title: id, cwd, archived, messages: [] }) as unknown as LocalConversation;
+const session = (id: string, cwd = "/unregistered", archived = false) => ({ id, title: id, provider: "codex", cwd, archived, pinned: false, projectId: null, running: false, waitingForAnswer: false, preview: "", turnCount: 0, updatedAt: "" }) as LocalSessionEntry;
 describe("local conversation folder grouping", () => {
   it("groups by working directory, preserves session ordering, and puts unregistered directories last", () => {
     const groups = groupLocalConversations([session("b-pinned", "/repo-b"), session("legacy"), session("a", "/repo-a"), session("b-recent", "/repo-b/"), session("cleared"), session("archived", "/repo-a", true)], projects, false, "");

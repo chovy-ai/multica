@@ -6,6 +6,7 @@ import type { AgentGuiHostEvent, AgentGuiInitSnapshot, AgentGuiRpcClient, AgentG
 import { createMulticaAgentGuiRuntime, MulticaAgentGuiError } from "./create-multica-agent-gui-runtime";
 import { RuntimeLedger } from "./ledger";
 import { projectDetail } from "./projection";
+import { withLocalSnapshots } from "./local-snapshot-test-host";
 import { createRichTextMentionMarkdown } from "@tutti-os/ui-rich-text/core";
 
 const time = "2026-10-24T01:00:00Z";
@@ -64,7 +65,7 @@ function backend(storage = new Map<string, string>()) {
     }
   });
   const client: AgentGuiRpcClient = {
-    request,
+    request: withLocalSnapshots(request as never) as AgentGuiRpcClient["request"],
     subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
   return { client, request, storage, sessions, messages, transcript, tasks,
@@ -1281,5 +1282,50 @@ describe("local thinking settings", () => {
     const { handle } = await setup(data);
     await expect(handle.setReasoningSelection(agent.id, null, "high")).rejects.toMatchObject({ code: "invalid_reasoning_effort" });
     expect(handle.getReasoningSelection(agent.id)).toBeNull();
+  });
+});
+
+describe("local conversations over protocol v2", () => {
+  async function localRuntime() {
+    const data = backend(); data.sessions.push(session);
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") return { ...await original(method, params), local: true };
+      if (method === "models.list") return { supported: true, models: [] };
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true, sessions: [session] });
+    handles.push(handle); await handle.initialize();
+    const release = handle.runtime.ensureSessionSynchronized!({ workspaceId: init.workspaceId, agentSessionId: session.id });
+    await vi.waitFor(() => expect(data.request.mock.calls.some(([method]) => method === "session.load")).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const messages = () => (handle.runtime.getSnapshot(init.workspaceId).sessionMessagesById[session.id] ?? []) as { messageId: string; payload: Record<string, unknown> }[];
+    return { data, handle, messages, release };
+  }
+  const event = (seq: number, type: string, payload: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    ({ seq, turn_id: "turn-1", turn_seq: seq, item_id: null, type, final: type === "item.completed" || type === "turn.completed", created_at: time, payload, ...extra });
+  const batch = (events: ReturnType<typeof event>[]) => ({ version: 2, type: "conversation.events", conversation_id: session.id, from_seq: events[0]!.seq, to_seq: events.at(-1)!.seq, events });
+
+  it("projects streamed events of a subscribed conversation", async () => {
+    const { data, messages } = await localRuntime();
+    expect(data.request.mock.calls.filter(([method]) => method === "session.load")).toHaveLength(1);
+    data.emit({ type: "local.events", sessionId: session.id, message: batch([
+      event(1, "user.message", { message_id: "m1", content: "hi" }),
+      event(2, "turn.started", { request_id: "r1" }),
+      event(3, "item.delta", { kind: "assistant_text", field: "text", text: "Hel" }, { item_id: "it-1" }),
+    ]) });
+    await vi.waitFor(() => expect(messages().some((message) => message.messageId === "it-1" && message.payload.content === "Hel")).toBe(true));
+    data.emit({ type: "local.events", sessionId: session.id, message: batch([event(4, "item.completed", { kind: "assistant_text", status: "completed", text: "Hello!" }, { item_id: "it-1" })]) });
+    await vi.waitFor(() => expect(messages().find((message) => message.messageId === "it-1")?.payload.content).toBe("Hello!"));
+    // Live events never re-read the conversation.
+    expect(data.request.mock.calls.filter(([method]) => method === "session.load")).toHaveLength(1);
+  });
+
+  it("reloads the snapshot after a gap or an ended subscription", async () => {
+    const { data } = await localRuntime();
+    data.emit({ type: "local.events", sessionId: session.id, message: batch([event(5, "turn.started", { request_id: "r1" })]) });
+    await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "session.load")).toHaveLength(2));
+    data.emit({ type: "local.reload", sessionId: session.id });
+    await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "session.load")).toHaveLength(3));
   });
 });

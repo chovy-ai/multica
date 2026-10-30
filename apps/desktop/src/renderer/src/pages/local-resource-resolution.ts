@@ -1,5 +1,7 @@
-import type { LocalConversation, LocalPreviewFile, LocalPreviewLocation } from "@multica/core/local-conversation/protocol";
+import type { LocalPreviewFile, LocalPreviewLocation } from "@multica/core/local-conversation/protocol";
 import { localResourceTarget } from "@multica/tutti-agent-gui-host/message-resource-links";
+import type { V2Conversation } from "@multica/tutti-agent-gui-host/v2-conversation";
+import { LocalV2RequestError } from "../platform/local-v2";
 
 export class FileLinkPreviewError extends Error {
   constructor(readonly kind: "missing" | "ambiguous" | "denied" | "incomplete") {
@@ -9,11 +11,24 @@ export class FileLinkPreviewError extends Error {
 
 const absolute = (path: string) => /^(?:\/|[a-z]:[\\/])/i.test(path);
 const join = (root: string, path: string) => `${root.replace(/[\\/]+$/, "")}/${path}`;
-const missing = (error: unknown) => /\b(?:ENOENT|ENOTDIR)\b/.test(error instanceof Error ? error.message : String(error));
-const denied = (error: unknown) => /\b(?:EACCES|EPERM)\b|outside the selected folder|Choose this folder/.test(error instanceof Error ? error.message : String(error));
+const missing = (error: unknown) => error instanceof LocalV2RequestError && error.kind === "not_found";
+const denied = (error: unknown) => error instanceof LocalV2RequestError && error.kind === "outside_folder";
+
+/** What a conversation cites: its message texts and its tools' inputs. */
+export interface ResolutionSource { cwd: string; texts: string[]; toolInputs: Record<string, unknown>[] }
+
+export function resolutionSource(conversation: V2Conversation): ResolutionSource {
+  const items = [...conversation.items.values()].sort((a, b) => a.order - b.order);
+  return {
+    cwd: conversation.summary.cwd,
+    texts: [...[...conversation.messages.values()].map((message) => message.content), ...items.flatMap((item) => item.kind === "assistant_text" && typeof item.state.text === "string" ? [item.state.text] : [])],
+    toolInputs: items.flatMap((item) => item.kind === "command" ? [{ command: item.state.command }]
+      : item.kind === "tool_call" && item.state.input && typeof item.state.input === "object" ? [item.state.input as Record<string, unknown>] : []),
+  };
+}
 
 interface Input {
-  source: Pick<LocalConversation, "cwd" | "messages"> & Partial<Pick<LocalConversation, "turns">>;
+  source: ResolutionSource;
   value: string;
   read(path: string): Promise<LocalPreviewFile>;
   list(path: string): Promise<LocalPreviewLocation[]>;
@@ -40,19 +55,18 @@ export async function resolveConversationFile({ source, value, read, list }: Inp
     hints.add(hint);
     if (hints.size > 8) throw new FileLinkPreviewError("incomplete");
   };
-  if (source.messages.reduce((size, message) => size + message.content.length, 0) > 2_000_000) throw new FileLinkPreviewError("incomplete");
-  for (const message of source.messages) {
-    for (const match of message.content.matchAll(/`([^`\r\n]+)`|\]\((?:<([^>\r\n]+)>|([^\s)]+))\)/g)) {
+  if (source.texts.reduce((size, text) => size + text.length, 0) > 2_000_000) throw new FileLinkPreviewError("incomplete");
+  for (const text of source.texts) {
+    for (const match of text.matchAll(/`([^`\r\n]+)`|\]\((?:<([^>\r\n]+)>|([^\s)]+))\)/g)) {
       addHint(match[1] ?? match[2] ?? match[3] ?? "");
     }
   }
   // Replies can abbreviate files that tools addressed by absolute path. These
   // inputs are hints only: never execute commands or infer shell cwd changes.
   let inputSize = 0;
-  for (const turn of source.turns ?? []) {
-    for (const event of turn.events) {
-      if (event.type !== "tool_use") continue;
-      for (const value of Object.values(event.input ?? {})) {
+  for (const input of source.toolInputs) {
+    {
+      for (const value of Object.values(input)) {
         if (typeof value !== "string") continue;
         inputSize += value.length;
         if (inputSize > 2_000_000) throw new FileLinkPreviewError("incomplete");

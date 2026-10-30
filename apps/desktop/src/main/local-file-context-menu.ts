@@ -2,7 +2,6 @@ import { resolve } from "node:path";
 import { clipboard, ipcMain, shell, type BrowserWindow } from "electron";
 import { z } from "zod";
 import { localResourceTarget } from "@multica/tutti-agent-gui-host/message-resource-links";
-import type { LocalConversationClient } from "@multica/core/local-conversation/protocol";
 import { showLocalFileContextMenu } from "./context-menu";
 
 const scopeSchema = z.object({ userId: z.string().min(1), workspaceId: z.string().min(1) });
@@ -14,8 +13,11 @@ const inputSchema = z.object({
 export function setupLocalFileContextMenu(options: {
   getWindow(): BrowserWindow | null;
   currentUser(): string | null | undefined;
-  request: LocalConversationClient["request"];
+  /** A GET to the daemon's local v2 API. */
+  request(scope: z.infer<typeof scopeSchema>, path: string): Promise<unknown>;
 }): void {
+  const locate = async (scope: z.infer<typeof scopeSchema>, id: string, path: string) =>
+    z.object({ path: z.string() }).parse(await options.request(scope, `/preview/locate?${new URLSearchParams({ conversation_id: id, path })}`));
   ipcMain.handle("local-file:context-menu", async (event, rawScope: unknown, rawInput: unknown) => {
     const scope = scopeSchema.parse(rawScope);
     const input = inputSchema.parse(rawInput);
@@ -28,15 +30,15 @@ export function setupLocalFileContextMenu(options: {
     assertCurrent();
     const target = localResourceTarget(input.url);
     if (!target) throw new Error("Use a local file path");
-    const source = await options.request(scope, "read", { id: input.sessionId });
+    const snapshot = z.object({ conversation: z.object({ cwd: z.string() }) }).parse(await options.request(scope, `/sessions/${encodeURIComponent(input.sessionId)}/snapshot`));
     // Metadata validation keeps large installers usable without granting preview content.
-    const location = await options.request(scope, "previewLocate", { id: input.sessionId, path: resolve(source.cwd, target.path) });
+    const location = await locate(scope, input.sessionId, resolve(snapshot.conversation.cwd, target.path));
     const window = assertCurrent();
     showLocalFileContextMenu(window.webContents, input, {
       copyPath: async () => { assertCurrent(); await clipboard.writeText(location.path); },
       reveal: async () => {
         assertCurrent();
-        await options.request(scope, "previewLocate", { id: input.sessionId, path: location.path });
+        await locate(scope, input.sessionId, location.path);
         assertCurrent(); shell.showItemInFolder(location.path);
       },
     });
