@@ -112,10 +112,13 @@ describe("local conversation parent service over v2", () => {
   });
 
   it("projects the snapshot's settings, queue and fork origin into the session detail", async () => {
-    routes.unshift((_method, path) => path === "/sessions/c1/snapshot" ? snapshot("c1", { forked_from_id: "src", forked_from_turn_id: "t-3", queue: { revision: 5, paused: true, error: "stopped", items: [] } }) : undefined);
+    // The copied turn keeps its start time; a turn sent after the fork must not move the branch point.
+    const turn = (id: string, startedAt: string) => ({ id, turn_index: 0, request_id: id, status: "completed", started_at: startedAt, completed_at: startedAt, messages: [], events: [] });
+    const turns = [turn("copy-3", "2026-10-28T23:00:00Z"), turn("after", "2026-10-29T01:00:00Z")];
+    routes.unshift((_method, path) => path === "/sessions/c1/snapshot" ? snapshot("c1", { forked_from_id: "src", forked_from_turn_id: "t-3", turns, queue: { revision: 5, paused: true, error: "stopped", items: [] } }) : undefined);
     const { service } = setup();
     const { detail } = await service.request("local.snapshot", { sessionId: "c1" }) as unknown as { detail: Record<string, unknown> };
-    expect(detail).toMatchObject({ model: "gpt", reasoningEffort: "high", permissionMode: "default", promptQueue: { revision: 5, paused: true, error: "stopped", items: [] }, forkedFrom: { sessionId: "src", turnId: "t-3" } });
+    expect(detail).toMatchObject({ model: "gpt", reasoningEffort: "high", permissionMode: "default", promptQueue: { revision: 5, paused: true, error: "stopped", items: [] }, forkedFrom: { sessionId: "src", turnId: "t-3", targetTurnId: "copy-3" } });
   });
 
   it("forwards a conversation's events while subscribed", async () => {

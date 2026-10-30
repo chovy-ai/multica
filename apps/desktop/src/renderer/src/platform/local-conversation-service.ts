@@ -110,8 +110,10 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   async function detail(id: string): Promise<{ detail: AgentGuiSessionDetail; snapshot: LocalV2Snapshot }> {
     const snapshot = await client.snapshot(id); assertCurrent();
     client.receiveSummary(snapshot.conversation);
+    // The fork's copied turns started before the fork was created; the last one is where it branched.
+    const branched = snapshot.turns.filter((turn) => Date.parse(turn.started_at) <= Date.parse(snapshot.created_at)).at(-1);
     const forked = snapshot.forked_from_id && snapshot.forked_from_turn_id
-      ? { forkedFrom: { sessionId: snapshot.forked_from_id, turnId: snapshot.forked_from_turn_id, targetTurnId: snapshot.turns.at(-1)?.id ?? "", operationId: id, createdAt: snapshot.created_at } } : {};
+      ? { forkedFrom: { sessionId: snapshot.forked_from_id, turnId: snapshot.forked_from_turn_id, targetTurnId: branched?.id ?? "", operationId: id, createdAt: snapshot.created_at } } : {};
     return { snapshot, detail: {
       session: projectLocalSession(snapshot.conversation, scope), model: snapshot.settings.model, reasoningEffort: snapshot.settings.reasoning_effort as AgentGuiSessionDetail["reasoningEffort"],
       permissionMode: snapshot.settings.permission_mode as AgentGuiSessionDetail["permissionMode"], promptQueue: projectQueue(snapshot.queue),
