@@ -12,9 +12,9 @@
     "runtimes": "Runtimes",
     "skills": "Skills",
     "settings": "Paramètres",
-    "conversation_flow": "Conversations",
-    "conversation_flow_local": "Conversations (local)",
-    "conversation_flow_device": "Conversations ({{device}})"
+    "conversation_flow": "Sessions IA",
+    "conversation_flow_local": "Local",
+    "conversation_flow_device": "Sessions IA ({{device}})"
   },
   "tab": {
     "issue": "Tâche",

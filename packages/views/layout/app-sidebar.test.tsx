@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { buildIssueStatusCatalog } from "@multica/core/issue-statuses/queries";
 
 vi.mock("@multica/core/issue-statuses/hooks", () => ({
@@ -61,7 +61,7 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   Sidebar: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarFooter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SidebarGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SidebarGroup: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
   SidebarGroupContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarHeader: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -221,19 +221,52 @@ describe("PinRow", () => {
     workspaces.current = [];
   });
 
-  it("splits conversations by device and highlights only the open one", async () => {
+  it("groups local and remote conversations under one heading and highlights the open device", async () => {
     navigation.current.pathname = "/acme/conversations/devices/peer-1";
-    const { container } = renderWithI18n(<AppSidebar conversationFlowDevices={[{ peerId: "peer-1", name: "Mac Studio" }]} />);
-    expect(await screen.findByText("Conversations (local)")).toBeInTheDocument();
-    expect(screen.getByText("Conversations (Mac Studio)")).toBeInTheDocument();
-    expect(container.querySelector('button[data-href="/acme/conversations/devices/peer-1"]')).toHaveAttribute("data-active", "true");
-    expect(container.querySelector('button[data-href="/acme/conversations"]')).not.toHaveAttribute("data-active");
+    renderWithI18n(<AppSidebar conversationFlowDevices={[{ peerId: "peer-1", name: "Mac Studio" }]} />);
+    const group = await screen.findByRole("group", { name: "AI Sessions" });
+    const local = within(group).getByRole("button", { name: "Local" });
+    const remote = within(group).getByRole("button", { name: "Mac Studio" });
+    expect(screen.getAllByText("AI Sessions")).toHaveLength(1);
+    expect(remote).toHaveAttribute("data-active", "true");
+    expect(remote).toHaveAttribute("aria-current", "page");
+    expect(remote).toHaveAttribute("data-href", "/acme/conversations/devices/peer-1");
+    expect(remote).toHaveAttribute("data-target", "_blank");
+    expect(local).not.toHaveAttribute("data-active");
+    expect(local).not.toHaveAttribute("aria-current");
+    expect(screen.queryByText("AI Sessions (Mac Studio)")).not.toBeInTheDocument();
   });
 
-  it("keeps a single conversations entry without other devices", async () => {
+  it("keeps the desktop conversation group with only a local entry when no devices are connected", async () => {
+    navigation.current.pathname = "/acme/conversations";
+    renderWithI18n(<AppSidebar conversationFlowDevices={[]} />);
+    const group = await screen.findByRole("group", { name: "AI Sessions" });
+    const local = within(group).getByRole("button", { name: "Local" });
+    expect(within(group).getAllByRole("button")).toHaveLength(1);
+    expect(local).toHaveAttribute("data-active", "true");
+    expect(local).toHaveAttribute("data-href", "/acme/conversations");
+    expect(local).toHaveAttribute("data-target", "_blank");
+  });
+
+  it("shows localized device labels with full names available for long device names", async () => {
+    const name = "chovydeMac-mini.local-with-a-long-device-name";
+    navigation.current.pathname = "/acme/conversations/devices/peer-10";
+    renderWithI18n(<AppSidebar conversationFlowDevices={[
+      { peerId: "peer-1", name },
+      { peerId: "peer-10", name: "Mac Studio" },
+    ]} />, { locale: "zh-Hans" });
+    const group = await screen.findByRole("group", { name: "AI 会话" });
+    expect(within(group).getByRole("button", { name: "本地" })).not.toHaveAttribute("data-active");
+    expect(within(group).getByRole("button", { name })).toHaveAttribute("title", name);
+    expect(within(group).getByRole("button", { name })).not.toHaveAttribute("data-active");
+    expect(within(group).getByRole("button", { name: "Mac Studio" })).toHaveAttribute("data-active", "true");
+  });
+
+  it("keeps the web's single conversations entry without desktop device navigation", async () => {
     const { container } = renderWithI18n(<AppSidebar />);
-    expect(await screen.findByText("Conversations")).toBeInTheDocument();
-    expect(container.querySelector('button[data-href^="/acme/conversations/devices/"]')).toBeNull();
+    expect(await screen.findByText("AI Sessions")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "AI Sessions" })).not.toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/conversations"]')).toHaveAttribute("data-target", "_blank");
   });
 
   it("unpins missing details", async () => {
@@ -458,7 +491,7 @@ describe("personal nav — Chat", () => {
     expect(chatNav(container)).not.toBeNull();
   });
 
-  it("opens Conversations in a new tab while Chat keeps its existing destination", () => {
+  it("opens AI Sessions in a new tab while Chat keeps its existing destination", () => {
     const { container } = render(<AppSidebar />);
     expect(container.querySelector('[data-href="/acme/conversations"]')).toHaveAttribute("data-target", "_blank");
     expect(chatNav(container)).not.toHaveAttribute("data-target");

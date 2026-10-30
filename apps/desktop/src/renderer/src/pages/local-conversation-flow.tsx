@@ -157,6 +157,7 @@ function LocalConversationFlow() {
     const refresh = () => {
       void qc.invalidateQueries({ queryKey: [...key, "providers"] });
       void qc.invalidateQueries({ queryKey: [...key, "folder-projects"] });
+      void qc.invalidateQueries({ queryKey: [...key, "selected"] });
     };
     let connected = transport.availability()?.state === "connected";
     const stopAvailability = transport.onAvailability((value) => {

@@ -12,9 +12,9 @@
     "runtimes": "執行時",
     "skills": "Skills",
     "settings": "設定",
-    "conversation_flow": "對話流",
-    "conversation_flow_local": "對話流（本機）",
-    "conversation_flow_device": "對話流（{{device}}）"
+    "conversation_flow": "AI 會話",
+    "conversation_flow_local": "本機",
+    "conversation_flow_device": "AI 會話（{{device}}）"
   },
   "tab": {
     "issue": "任務",
