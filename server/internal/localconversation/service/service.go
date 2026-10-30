@@ -106,8 +106,8 @@ type Service struct {
 	host      Host
 	// turnEnd learns that a conversation's turn ended; see OnTurnEnd.
 	turnEnd func(conversationID string)
-	side      sideWorkspaces
-	imports   imports
+	side    sideWorkspaces
+	imports imports
 	// closed is closed when Close begins.
 	closed chan struct{}
 }
