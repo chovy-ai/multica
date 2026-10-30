@@ -374,8 +374,12 @@ func (s *Service) checkPeer(id peer.ID) {
 	ctx, cancel := context.WithTimeout(network.WithAllowLimitedConn(s.ctx, "multica-peer-probe"), peerProbeTimeout)
 	var err error
 	select {
-	case result := <-ping.Ping(ctx, s.host, id):
-		err = result.Error
+	case result, ok := <-ping.Ping(ctx, s.host, id):
+		if !ok {
+			err = errors.New("p2p: ping ended before a response")
+		} else {
+			err = result.Error
+		}
 	case <-ctx.Done():
 		err = ctx.Err()
 	}
