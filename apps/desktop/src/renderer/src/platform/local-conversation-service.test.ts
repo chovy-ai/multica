@@ -181,15 +181,14 @@ describe("local conversation parent service over v2", () => {
   });
 });
 
-describe("another device's files", () => {
-  it("opens the native file menu only for this device's conversations", async () => {
+describe("file menu", () => {
+  it("names the device whose conversation the file belongs to", async () => {
     const show = vi.fn(async () => undefined);
     vi.stubGlobal("window", { desktopAPI: { localFileContextMenu: { show } } });
     const params = { sessionId: "c1", url: "file:///repo/a.ts", hasSelection: false };
     await setup({}, "peer-1").service.request("host.showFileContextMenu", params as never);
-    expect(show).not.toHaveBeenCalled();
     await setup().service.request("host.showFileContextMenu", params as never);
-    expect(show).toHaveBeenCalledOnce();
+    expect(show.mock.calls.map((call) => (call as unknown[])[2])).toEqual(["peer-1", "local"]);
     vi.unstubAllGlobals();
   });
 });

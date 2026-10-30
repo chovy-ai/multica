@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,12 +9,13 @@ import { setupLocalFileContextMenu } from "./local-file-context-menu";
 type Item = { label?: string; role?: string; type?: string; click?: () => void };
 const mock = vi.hoisted(() => ({
   handle: vi.fn(), popup: vi.fn(), items: [] as Item[],
-  writeText: vi.fn().mockResolvedValue(undefined), reveal: vi.fn(), locale: ["en-US"],
+  writeText: vi.fn().mockResolvedValue(undefined), reveal: vi.fn(), locale: ["en-US"], savePath: "" as string,
 }));
 vi.mock("electron", () => ({
   ipcMain: { handle: mock.handle },
   clipboard: { writeText: mock.writeText }, shell: { showItemInFolder: mock.reveal },
-  app: { getPreferredSystemLanguages: () => mock.locale },
+  app: { getPreferredSystemLanguages: () => mock.locale, getPath: () => "/downloads" },
+  dialog: { showSaveDialog: vi.fn(async () => ({ canceled: false, filePath: mock.savePath })) },
   BrowserWindow: { fromWebContents: () => undefined },
   Menu: class {
     items: Item[] = [];
@@ -31,10 +32,11 @@ let destroyed: boolean;
 const webContents = { mainFrame: {} };
 const event = { sender: webContents, senderFrame: webContents.mainFrame };
 const scope = { userId: "user", workspaceId: "workspace" };
-const request = vi.fn<(scope: unknown, path: string) => Promise<unknown>>();
-type Handler = (event: unknown, scope: unknown, input: unknown) => Promise<void>;
-const show = (url: string, hasSelection = false, sourceEvent: unknown = event) =>
-  (mock.handle.mock.calls[0]![1] as Handler)(sourceEvent, scope, { sessionId: "source-session", url, hasSelection });
+const request = vi.fn<(scope: unknown, path: string, deviceId: string) => Promise<unknown>>();
+const download = vi.fn<(scope: unknown, path: string, deviceId: string) => Promise<Response>>();
+type Handler = (event: unknown, scope: unknown, input: unknown, deviceId?: string) => Promise<void>;
+const show = (url: string, hasSelection = false, sourceEvent: unknown = event, deviceId?: string) =>
+  (mock.handle.mock.calls[0]![1] as Handler)(sourceEvent, scope, { sessionId: "source-session", url, hasSelection }, deviceId);
 const click = (label: string) => {
   const item = mock.items.find((entry) => entry.label === label);
   expect(item).toBeDefined(); item!.click!();
@@ -61,7 +63,7 @@ beforeEach(async () => {
   });
   setupLocalFileContextMenu({
     getWindow: () => ({ webContents, isDestroyed: () => destroyed }) as never,
-    currentUser: () => user, request,
+    currentUser: () => user, request, download,
   });
 });
 afterEach(async () => { await rm(base, { recursive: true, force: true }); vi.restoreAllMocks(); });
@@ -75,7 +77,20 @@ it("copies and reveals the canonical target without reading a large binary insta
   click(revealLabel); await vi.waitFor(() => expect(mock.reveal).toHaveBeenCalledExactlyOnceWith(path));
   // Only metadata routes: the file's content is never read.
   expect(request.mock.calls.every(([, route]) => /^\/(sessions\/[^/]+\/snapshot|preview\/locate\?)/.test(route))).toBe(true);
-  expect(request).toHaveBeenCalledWith(scope, `/preview/locate?${new URLSearchParams({ conversation_id: "source-session", path })}`);
+  expect(request).toHaveBeenCalledWith(scope, `/preview/locate?${new URLSearchParams({ conversation_id: "source-session", path })}`, "local");
+});
+
+it("saves another device's file here instead of revealing a path that is not on this machine", async () => {
+  const path = join(cwd, "report.pdf"); await writeFile(path, "remote bytes");
+  mock.savePath = join(base, "saved.pdf");
+  download.mockResolvedValue(new Response("remote bytes"));
+  await show(pathToFileURL(path).href, false, event, "peer-1");
+  expect(mock.items.map((item) => item.label)).toEqual(["Copy Path", "Save to This Device"]);
+  expect(request.mock.calls.every(([, , device]) => device === "peer-1")).toBe(true);
+  click("Save to This Device");
+  await vi.waitFor(async () => expect(await readFile(mock.savePath, "utf8")).toBe("remote bytes"));
+  expect(download).toHaveBeenCalledWith(scope, `/preview/content?${new URLSearchParams({ conversation_id: "source-session", root: cwd, path })}`, "peer-1");
+  expect(mock.reveal).not.toHaveBeenCalled();
 });
 
 it.each(["./archive.zip", "archive.zip", "./checksum.sha256:12:4"])("resolves %s against the source cwd and retains normal Copy", async (url) => {

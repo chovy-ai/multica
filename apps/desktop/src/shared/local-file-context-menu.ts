@@ -7,5 +7,6 @@ export interface LocalFileContextMenuInput {
 }
 
 export interface LocalFileContextMenuClient {
-  show(scope: LocalConversationScope, input: LocalFileContextMenuInput): Promise<void>;
+  /** deviceId names another device whose conversation the file belongs to. */
+  show(scope: LocalConversationScope, input: LocalFileContextMenuInput, deviceId?: string): Promise<void>;
 }

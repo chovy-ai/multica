@@ -75,6 +75,13 @@ export class LocalV2Client {
     throw new LocalV2Error("forbidden", "The local daemon refused the connection", 403);
   }
 
+  /** Streams a file route of this device or, with deviceId, another one. */
+  async file(scope: LocalConversationScope, path: string, deviceId = "local"): Promise<Response> {
+    const endpoint = await this.endpoint();
+    const base = deviceId === "local" ? "" : `/local/devices/${encodeURIComponent(deviceId)}`;
+    return fetch(`http://${endpoint.base}${base}/local/v2${path}`, { headers: this.headers(scope, endpoint.token) });
+  }
+
   /** Drains the daemon's service before a restart; returns its running turns. */
   async drain(): Promise<number> {
     const endpoint = await this.endpoint();

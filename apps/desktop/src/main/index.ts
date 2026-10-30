@@ -796,9 +796,12 @@ if (!gotTheLock) {
       const { preview, owner } = previewFor(event, scope);
       return preview.chromeProfiles.cancel(owner, requestId);
     });
-    setupLocalFileContextMenu({ getWindow: () => mainWindow, currentUser: () => settingsUserId, request: (scope, path) => {
+    setupLocalFileContextMenu({ getWindow: () => mainWindow, currentUser: () => settingsUserId, request: (scope, path, deviceId) => {
       if (!localV2) throw new Error("Local conversations require the active main window");
-      return localV2.request(scope, "GET", path);
+      return localV2.request(scope, "GET", path, undefined, deviceId);
+    }, download: (scope, path, deviceId) => {
+      if (!localV2) throw new Error("Local conversations require the active main window");
+      return localV2.file(scope, path, deviceId);
     } });
     const mainFrame = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
       if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localV2) throw new Error("Local conversations require the active main window");

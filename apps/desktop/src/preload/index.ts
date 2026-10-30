@@ -104,7 +104,7 @@ function subscribeToMainRendererChannel<T>(
 
 const desktopAPI = {
   localFileContextMenu: {
-    show: (scope, input) => ipcRenderer.invoke("local-file:context-menu", scope, input),
+    show: (scope, input, deviceId) => ipcRenderer.invoke("local-file:context-menu", scope, input, deviceId),
   } satisfies import("../shared/local-file-context-menu").LocalFileContextMenuClient,
   terminalCli: {
     status: () => ipcRenderer.invoke("terminal-cli:status"),

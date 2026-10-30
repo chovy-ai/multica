@@ -197,9 +197,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       case "host.startSide": return undefined; // a moved message runs in its Side by itself
       case "host.openResource": options.onOpenResource?.(params.sessionId, params.url); return undefined;
       case "host.showFileContextMenu":
-        // Revealing or opening a file works on this device only; another device's files stay there.
-        if (((transport as { deviceId?: string }).deviceId ?? "local") !== "local") return undefined;
-        await window.desktopAPI.localFileContextMenu.show(scope, { sessionId: params.sessionId, url: params.url, hasSelection: params.hasSelection }); return undefined;
+        await window.desktopAPI.localFileContextMenu.show(scope, { sessionId: params.sessionId, url: params.url, hasSelection: params.hasSelection }, (transport as { deviceId?: string }).deviceId ?? "local"); return undefined;
       case "host.locateSource": options.onLocateSource?.(params.sessionId, params.turnId, params.quote); return undefined;
       case "interaction.respond":
         await command(params.sessionId, { type: "answer", interaction_id: params.requestId, answer: params.answers }); return undefined;
