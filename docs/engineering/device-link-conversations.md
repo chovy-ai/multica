@@ -90,7 +90,7 @@
 - 标识：会话行的标题右侧显示设备图标（lucide `MonitorSmartphone`），和运行中、置顶等现有状态图标放在一起，不加文字。
 - 悬停：Tooltip 显示「{设备名} 正在使用」/ In use on {device}。多台设备时列出所有设备名，以顿号分隔（英文用逗号）。
 - 「正在使用」：远端设备打开了这个会话（有订阅），或者远端发起的运行还没结束。远端断开后，宽限期（60 秒）结束时标识消失。
-- 只在被访问端显示。查看端的远端 tab 不显示其他设备的使用情况，本地 tab 也不显示。
+- 只在被访问端显示：本机对话流显示其他设备的使用情况；查看端的远端 tab 不显示。守护进程照常向所有连接推送 presence，是否显示由界面决定。
 
 | 元素 | zh-Hans | en |
 | --- | --- | --- |
@@ -103,7 +103,7 @@
 - **机器**：会话数据、执行、文件、目录、执行环境、端口。实现放在守护进程（`server/internal/localconversation`）。本地 tab 经回环访问，远端 tab 经 p2p 访问，只有一份实现。
 - **查看端**：窗口、弹窗、确认、网页渲染、保存到本机。实现留在 Electron，由发起请求的那台查看端处理。
 
-host request 只保留需要人操作的请求。今后新增涉及机器数据的能力，写在守护进程中，不写进 Electron 主进程，否则每项能力都要为远端 tab 单独补一次。
+守护进程内部只有一份能力，本机渲染进程、本机主进程和经 p2p 来的其他设备都是调用方，区别只在入口认证和策略表（见「实现」）。host request 只保留需要人操作的请求。今后新增涉及机器数据的能力，写在守护进程中，不写进 Electron 主进程，否则每项能力都要为远端 tab 单独补一次。
 
 ## 前置：渲染进程直连守护进程
 
@@ -347,20 +347,40 @@ func (s *Service) OnDirect(fn func(peer.ID))            // 出现到某设备的
 - `Dial`：到该设备的连接全是 circuit 时，订阅 `event.EvtPeerConnectednessChanged`，最多等 5 秒非 circuit 连接，超时才在中继上开流。
 - `OnDirect` 复用 `addrsLoop` 所在的事件订阅。设备名和连接类型复用 `Peers()` 的 `PeerStatus{DeviceName, Connection}`。
 
-#### `V2` 的本机入口和远端入口（`daemon/localhost/v2.go`）
+#### 分层：入口 → 策略 → 能力（`daemon/localhost/`）
 
-```go
-func (v *V2) ServeHTTP(w, r)   // 本机：Authorize 后调用 serve，caller{client: "local/" + X-Multica-Client-ID}
-func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drain /undrain /stop-providers → 403；
-                               // API origin ≠ serverOrigin → api_url_mismatch；
-                               // caller{peer, client: peer + "/" + X-Multica-Client-ID}
+守护进程的能力只有一份，调用方可能是本机主进程、本机渲染进程，或经 p2p 来的其他设备。入口只负责认证并得出 `caller`，权限由一张策略表决定，能力层不区分调用方。
+
+```text
+入口层（认证，产出 caller）
+  回环 /local/v2/*：主进程 token → caller{kind: main}
+                    渲染进程 token、WS 票据、签名 URL → caller{kind: renderer}
+  p2p  /multica/local-api/1：gater + allowlist + 开关 → caller{kind: remote, peer}
+        peer 由 device-link http.Server 的 ConnContext 从 RemoteAddr 放进 context，不信任请求头
+  共同：clientKey = {local | peer}/{X-Multica-Client-ID}
+策略层（一张表：caller.kind × 路由 → 允许或拒绝）
+能力层（现有 V2 路由和 localconversation service，不区分调用方）
 ```
 
-- 现有 `ServeHTTP` 的主体改名为 `serve(w, r, caller)`，`scope()` 照常校验账号。
-- peer 由 device-link `http.Server` 的 `ConnContext` 从 `RemoteAddr` 放进 context，不信任请求头。
-- `NewV2` 增加 `serverOrigin`，在 `daemon/local_conversations.go` 传入 `d.cfg.ServerBaseURL`。否则 `EnsureScope` 会为另一个服务端新建 scope，`contextCloud` 也会返回 nil。
-- `wsConn` 增加 `remote`、`peer`、`clientKey`。
-- 仅经中继时，文件读取和上传超过 5 MB 返回 `relay_transfer_limited`（见反向代理）。
+```go
+type caller struct { kind callerKind; peer peer.ID; clientKey string }
+func (v *V2) ServeHTTP(w, r)   // 回环入口：认证 → caller{main|renderer} → v.serve
+func (v *V2) ServeRemote(w, r) // p2p 入口：开关 → caller{remote} → v.serve
+func (v *V2) serve(w, r, c caller) // allowed(c.kind, route) → 现有路由
+```
+
+| 路由 | main | renderer | remote |
+| --- | --- | --- | --- |
+| 会话、命令、配置、预览读取、附件、导入、`/directories`、WS | ✓ | ✓ | ✓ |
+| `ws-ticket`、`file-urls` | ✓ | ✓ | ✗（查看端守护进程自己签发） |
+| 扩大读取范围：`/folder-projects` POST、`/preview/roots`、`set_directory` | ✓ | ✗ | ✓ |
+| `/drain`、`/undrain`、`/stop-providers` | ✓ | ✗ | ✗ |
+
+- remote 可以扩大读取范围：查看端守护进程只在请求带主进程 token 时才转发这三类请求（也就是只能来自查看端主进程的 `choose-remote`），所以策略在查看端的入口执行。
+- 所有调用方共用的检查：`scope()` 校验账号；API origin 必须等于 `serverOrigin`，否则返回 `api_url_mismatch`。`NewV2` 增加 `serverOrigin`，在 `daemon/local_conversations.go` 传入 `d.cfg.ServerBaseURL`；否则 `EnsureScope` 会为另一个服务端新建 scope，`contextCloud` 也会返回 nil。
+- `wsConn` 记录 `caller`。反向请求路由、宽限期、presence 都只依赖 `clientKey`，与调用方类型无关。
+- 仅经中继时，文件读取和上传超过 5 MB 返回 `relay_transfer_limited`。这属于传输层，在查看端的反向代理中处理，不进入能力层。
+- 查看端的 `/local/devices/{peerId}/...` 反向代理也走回环入口认证。它只做转发，不是能力。
 
 #### 反向请求路由（`daemon/localhost/v2_host.go`、`localconversation/service`）
 
@@ -373,7 +393,7 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
 - `V2` 维护 `presence: conversationID → clientKey → {peerId, deviceName}`。
   - 加入：远端连接 `subscribe` 这个会话。远端 clientKey 发起的运行在结束前也算在内；service 增加 `OnTurnEnded` 选项，把现有的 `turnEnded` 通知出来。
   - 移除：`unsubscribe`、运行结束（且没有订阅），或连接断开后宽限期到期。
-- 每次变化只推给本机连接（非远端且有 scope 订阅）：
+- 每次变化推给所有有 scope 订阅的连接，与调用方类型无关；条目中排除接收方自己的 clientKey：
 
   ```json
   {"version": 2, "type": "scope.presence", "conversation_id": "…", "devices": [{"peer_id": "…", "device_name": "…"}]}
@@ -412,7 +432,7 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
 
 #### 其他
 
-- `GET /local/v2/directories?path=`：service 新增 `ListDirectories`，只列目录，跳过隐藏项，空路径时返回 home 目录。
+- `GET /local/v2/directories?path=`：service 新增 `ListDirectories`，只列目录，跳过隐藏项，空路径时返回 home 目录。所有调用方可用。
 - `hello` 的 `capabilities` 增加 `device-link`。
 
 ### Desktop 主进程和 preload
@@ -466,7 +486,7 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
 2. Desktop 主进程和 preload：`choose-remote`、保存到本机、远端反向请求的原生部分和 settings 分流、owner 带 deviceId、设备轮询、开关 IPC。
 3. 渲染进程和 views：transport 的 `basePath` 和 `clientId`、设备 context、路由、侧边栏插槽和选中规则、第 ⑤ 类 key、远端选择 Dialog、右键菜单和网页预览的远端行为、设置 tab、提示文案、翻译、云端任务会话链接。
 4. 验证：
-   - Go：presence 的加入、宽限期后移除、只推送给本机连接；适配器（含半关闭）、`ServeRemote` 白名单和 origin 校验、反向代理和错误码、`clientKey` 路由（两条连接同 scope 时确认发往发起方）、宽限期、直连迁移。
+   - Go：presence 的加入、宽限期后移除、排除接收方自己；适配器（含半关闭）、策略表（三种 caller × 路由）和 origin 校验、反向代理和错误码、`clientKey` 路由（两条连接同 scope 时确认发往发起方）、宽限期、直连迁移。
    - 前置 PR：两种 token 的路由权限、Origin 白名单、票据单次有效、签名过期和路径篡改、401 后重取 token。
    - Desktop 主进程：`choose-remote` 拒绝本机 deviceId、设置确认不使用转来的 `apply`。
    - 渲染进程：使用中标识的显示和 Tooltip、侧边栏两种状态和选中规则、远端 tab、key 隔离、缺少设备 transport 时报错。
