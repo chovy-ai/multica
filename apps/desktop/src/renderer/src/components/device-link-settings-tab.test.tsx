@@ -4,9 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import translations from "../../../../../../packages/views/locales/en/settings.json";
 import type { DaemonStatus } from "../../../shared/daemon-types";
 
-const mocks = vi.hoisted(() => ({ deviceLink: vi.fn(), setDeviceLink: vi.fn() }));
+const mocks = vi.hoisted(() => ({ deviceLink: vi.fn(), setDeviceLink: vi.fn(), servicePreview: vi.fn(async () => ({ available: true, enabled: false, ports: [] })), setServicePreview: vi.fn() }));
 vi.mock("@multica/views/i18n", () => ({ useT: () => ({ t: (selector: (resources: typeof translations) => string) => selector(translations) }) }));
-vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: () => ({ deviceLink: mocks.deviceLink, setDeviceLink: mocks.setDeviceLink }) }));
+vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: () => mocks }));
 import { DeviceLinkSettingsTab, deviceLinkSettingKey } from "./device-link-settings-tab";
 
 const copy = translations.desktop.device_link;

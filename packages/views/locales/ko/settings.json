@@ -1108,6 +1108,19 @@
       "other_instance": "명령이 다른 Desktop 또는 개발 인스턴스에 연결되어 있습니다.",
       "dev_bundle_missing": "현재 개발 CLI를 사용할 수 없습니다. Go를 설치한 후 pnpm dev:desktop을 다시 실행하세요.",
       "dev_bound": "현재 개발 인스턴스와 해당 CLI에 연결되었습니다."
+    },
+    "service_preview": {
+      "agent_ports": "Agent 서비스 포트",
+      "revoke_agent_ports": "공유 중지",
+      "title": "로컬 서비스 미리보기",
+      "allow": "다른 기기의 서비스 미리보기 허용",
+      "description": "기기 연결이 활성화되면 같은 계정의 기기에서 지정한 로컬 서비스 포트에 접근할 수 있습니다.",
+      "ports": "허용할 포트",
+      "invalid_ports": "1~65535 범위의 포트를 1~64개 입력하고 쉼표로 구분하세요.",
+      "failed": "서비스 미리보기를 업데이트하지 못했습니다. 로컬 데몬을 확인하고 다시 시도하세요.",
+      "save": "포트 저장",
+      "confirm_title": "이 로컬 서비스에 대한 접근을 허용할까요?",
+      "confirm_description": "같은 계정의 기기에서 {{ports}} 포트의 서비스로 요청을 보낼 수 있습니다. 데이터를 변경하는 요청도 포함됩니다."
     }
   },
   "members": {

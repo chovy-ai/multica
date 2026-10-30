@@ -1,6 +1,8 @@
 import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
-export interface WebPreviewState { id: string; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; error?: string }
-export interface WebPreviewCommand { id: string; action: "show" | "hide" | "close" | "navigate" | "back" | "forward" | "reload"; url?: string; bounds?: { x: number; y: number; width: number; height: number } }
+export interface WebPreviewTarget { deviceId: string; conversationId: string }
+export type WebPreviewPhase = "connecting_device" | "connecting_service" | "loading" | "ready" | "disconnected";
+export interface WebPreviewState { id: string; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; error?: string; phase?: WebPreviewPhase }
+export interface WebPreviewCommand { id: string; action: "show" | "hide" | "close" | "navigate" | "back" | "forward" | "reload"; url?: string; target?: WebPreviewTarget; bounds?: { x: number; y: number; width: number; height: number } }
 export interface ResourcePreviewClient {
   request(scope: LocalConversationScope, command: WebPreviewCommand): Promise<WebPreviewState | null>;
   subscribe(listener: (state: WebPreviewState) => void): () => void;

@@ -1378,6 +1378,19 @@
       "other_instance": "The command is bound to a different Desktop or development instance.",
       "dev_bundle_missing": "This development instance’s CLI is unavailable. Install Go and rerun pnpm dev:desktop.",
       "dev_bound": "Bound to the current development instance and its CLI."
+    },
+    "service_preview": {
+      "agent_ports": "Agent service ports",
+      "revoke_agent_ports": "Stop sharing",
+      "title": "Local service preview",
+      "allow": "Allow service preview from other devices",
+      "description": "With Device link enabled, devices on this account can access the allowed local service ports.",
+      "ports": "Allowed ports",
+      "invalid_ports": "Enter 1–64 ports between 1 and 65535, separated by commas.",
+      "failed": "Could not update service preview. Check the local daemon and retry.",
+      "save": "Save ports",
+      "confirm_title": "Allow access to these local services?",
+      "confirm_description": "Devices on this account can send requests to services on ports {{ports}}, including requests that change data."
     }
   },
   "members": {

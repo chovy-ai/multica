@@ -8,6 +8,7 @@ import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescript
 import { SettingsCard, SettingsRow, SettingsTab } from "@multica/views/settings";
 import { useT } from "@multica/views/i18n";
 import { localV2Transport } from "../platform/local-v2-transport";
+import { ServicePreviewSettings } from "./service-preview-settings";
 
 const settingSchema = z.object({ available: z.boolean().default(false), enabled: z.boolean().default(false) });
 type DeviceLinkSetting = z.infer<typeof settingSchema>;
@@ -62,6 +63,7 @@ export function DeviceLinkSettingsTab() {
           />
         </SettingsRow>
       </SettingsCard>
+      <ServicePreviewSettings />
       <AlertDialog open={confirming} onOpenChange={(open) => { if (!open && !save.isPending) setConfirming(false); }}>
         <AlertDialogContent>
           <AlertDialogHeader>

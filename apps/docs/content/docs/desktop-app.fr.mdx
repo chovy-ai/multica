@@ -66,6 +66,14 @@ Il ne lit ni n'écrase jamais le profil par défaut que vous utilisez dans le te
 
 Vous pouvez consulter l'état et les journaux du runtime dans les paramètres de Desktop. Si un outil n'est pas détecté, vérifiez d'abord qu'il fonctionne dans un terminal ordinaire et qu'il est connecté, puis redémarrez le daemon de Desktop.
 
+## Aperçu des services distants
+
+Mettez à jour les deux appareils, puis activez **Paramètres → Cet appareil → Liaison des appareils** sur celui qui héberge le service. Ouvrez sa conversation source, puis son lien `http://localhost:3000/`. HTTP, HTTPS, WebSocket et SSE passent par P2P ; la validation des certificats HTTPS reste active.
+
+L’Agent démarre le service demandé avec les permissions habituelles du terminal, vérifie son port réel, puis appelle `service_preview_register`. `side_browser_open` enregistre aussi automatiquement le service. Un service déjà lancé peut être enregistré, consulté avec `service_preview_list` et retiré avec `service_preview_remove`.
+
+Les inscriptions temporaires restent limitées à la conversation source et expirent après 30 minutes sans aperçu ou après l’arrêt du service. Les paramètres permettent de révoquer les ports de l’Agent. Les ports manuels restent configurables séparément. En cas de panne de la connexion distante, l’aperçu ne se rabat pas sur votre propre localhost.
+
 ## Mettre à jour Desktop
 
 La mise à jour automatique est activée par défaut. L'application recherche et télécharge les nouvelles versions en arrière-plan ; une fois une version téléchargée, vous pouvez redémarrer pour l'installer immédiatement ou la laisser s'installer à la prochaine fermeture. Vous pouvez aussi désactiver les vérifications automatiques ou rechercher manuellement de nouvelles versions dans **Paramètres → Mises à jour**.

@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import type { LocalConversationScope } from "@multica/core/local-conversation/protocol";
 import type { LocalV2RendererEndpoint } from "@multica/core/local-conversation/v2";
+import { openPreviewTunnel } from "./preview-tunnel";
 
 /** The daemon's verified endpoint and token; the token never leaves main. */
 export interface LocalV2Endpoint { base: string; token: string }
@@ -42,6 +43,12 @@ export class LocalV2Client {
     return { base, apiUrl: this.options.apiUrl, token: derive(token, "multica-local-renderer"), fileKey: derive(token, "multica-local-file") };
   }
 
+  async previewTunnel(scope: LocalConversationScope, deviceId: string, serviceId: string, capability: string, signal: AbortSignal) {
+    const endpoint = await this.endpoint(true);
+    const params = new URLSearchParams({ device_id: deviceId, service_id: serviceId });
+    return openPreviewTunnel(`ws://${endpoint.base}/local/preview/tunnel?${params}`, { ...this.headers(scope, endpoint.token), "X-Multica-Preview-Capability": capability }, signal);
+  }
+
   private headers(scope: LocalConversationScope, token: string): Record<string, string> {
     return { Authorization: `Bearer ${token}`, "X-Multica-API-Origin": this.options.apiUrl, "X-Multica-User-ID": scope.userId, "X-Workspace-ID": scope.workspaceId };
   }
@@ -59,7 +66,7 @@ export class LocalV2Client {
         const base = deviceId === "local" ? "" : `/local/devices/${encodeURIComponent(deviceId)}`;
         response = await fetch(`http://${endpoint.base}${base}/local/v2${path}`, {
           method, headers: { ...this.headers(scope, endpoint.token), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(path === "/hello" || path.startsWith("/preview/services") ? 20_000 : REQUEST_TIMEOUT_MS),
         });
       } catch {
         throw new LocalV2Error("daemon_offline", "Start the local daemon to use local conversations", 0);

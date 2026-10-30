@@ -104,6 +104,7 @@ type Service struct {
 	titles    titleRuns
 	delivery  deliveries
 	host      Host
+	preview   PreviewServices
 	// turnEnd learns that a conversation's turn ended; see OnTurnEnd.
 	turnEnd func(conversationID string)
 	side    sideWorkspaces
@@ -203,6 +204,9 @@ func (s *Service) Close(ctx context.Context) error {
 		cancel()
 	}
 	errs = append(errs, s.context.Close())
+	if preview := s.previewServices(); preview != nil {
+		preview.Revoke()
+	}
 	s.batcher.Close()
 	s.writer.Close()
 	errs = append(errs, s.store.Close())

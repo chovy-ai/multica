@@ -345,6 +345,20 @@ Daemon behavior is configured via flags or environment variables:
 | GC Hermes session TTL (per-conversation `state.db`) | — | `MULTICA_GC_HERMES_SESSION_TTL` | `336h` (14d; set `0` to disable) |
 | GC task temp legacy TTL (pre-lock `multica-task-*`) | — | `MULTICA_GC_TASK_TEMP_LEGACY_TTL` | `0` (disabled; set a duration to opt in) |
 
+#### Remote localhost service preview
+
+Desktop can preview a linked device's `http://localhost:PORT/` through P2P. On the service host, enable **Settings → This device → Device link**. Agent-started services use conversation-scoped temporary registrations; existing services can instead use the separate manual service-sharing setting and allowed ports. Both devices need the preview-capable daemon. The service must already be running; configuring a port does not launch it.
+
+Preview browser sessions retain the original URL, Host and Origin, and isolate state by account, workspace, device and source conversation. Loopback traffic uses `/multica/preview-tcp/1`; public resources use the viewer's normal network and supported system proxy routes. Direct and relayed device links share the same protocol. Private LAN destinations, cross-account access and UDP are outside this feature.
+
+The built-in `service_preview_register`, `service_preview_list` and `service_preview_remove` tools manage temporary registrations for the current conversation. Agents use their normal shell permissions to start services, verify the selected port, then register it automatically. `side_browser_open` also registers live loopback services before opening them. Registration never executes a command or enables Device link. A service that was already launched in a terminal can use the same register tool.
+
+Temporary registrations are not written to disk and do not alter manual ports. Unused registrations expire after 30 minutes; preview leases renew them while viewed. A five-second TCP liveness check removes stopped services and their dependent grants. It checks listening ports, not process identity. The settings page lists temporary Agent ports and can revoke them together; `DELETE /local/service-preview` revokes only these temporary registrations.
+
+Manual policy is stored in the profile's `service-preview.json`, disabled by default. Access grants last 30 minutes and renew while preview tabs remain open, including hidden tabs. Closing the last tab, signing out, disabling sharing or removing a port closes the corresponding connections. An unreachable device or proxy never falls back to the viewer's localhost. HTTPS certificate validation remains enabled. System proxies requiring authentication are rejected explicitly.
+
+See [the protocol and verification plan](docs/p2p-remote-service-preview-plan.md) for control routes, stream framing and test coverage.
+
 #### Workspace garbage collection
 
 The daemon periodically scans `MULTICA_WORKSPACES_ROOT` and applies several disk-reclamation policies:

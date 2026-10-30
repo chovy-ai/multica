@@ -1368,6 +1368,19 @@
       "other_instance": "当前命令绑定了其他 Desktop 或开发实例。",
       "dev_bundle_missing": "当前开发实例的 CLI 不可用。安装 Go 后重新运行 pnpm dev:desktop。",
       "dev_bound": "已绑定当前开发实例，与开发版 CLI 一致。"
+    },
+    "service_preview": {
+      "agent_ports": "Agent 服务端口",
+      "revoke_agent_ports": "停止共享",
+      "title": "本地服务预览",
+      "allow": "允许其他设备预览本机服务",
+      "description": "设备互联开启后，同一账号的设备可以访问指定端口上的本地服务。",
+      "ports": "允许的端口",
+      "invalid_ports": "请输入 1–64 个端口，用逗号分隔，范围为 1–65535。",
+      "failed": "无法更新服务预览，请检查本机守护进程后重试。",
+      "save": "保存端口",
+      "confirm_title": "允许访问这些本地服务？",
+      "confirm_description": "同一账号的设备可以向端口 {{ports}} 上的服务发送请求，包括会修改数据的请求。"
     }
   },
   "members": {

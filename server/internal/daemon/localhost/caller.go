@@ -174,6 +174,8 @@ func (v *V2) authenticate(r *http.Request) (callerKind, bool) {
 // decoded command type for POST /sessions/{id}/commands, "" otherwise.
 func allowed(k callerKind, method, path, command string) bool {
 	switch {
+	case path == "/preview/services" || strings.HasPrefix(path, "/preview/services/"):
+		return k == callerMain || k == callerRemote
 	// Updates of this device stop its own providers.
 	case path == "/drain" || path == "/undrain" || path == "/stop-providers":
 		return k == callerMain
