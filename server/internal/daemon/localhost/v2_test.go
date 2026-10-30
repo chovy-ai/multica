@@ -512,7 +512,7 @@ func TestV2HostRequestsReachTheConnectedDesktop(t *testing.T) {
 	srv, svc, v := newV2Fixture(t)
 	h := v2Headers("user-1")
 	scopeID, _ := svc.Store().EnsureScope(context.Background(), store.Scope{APIOrigin: "https://api.multica.ai", UserID: "user-1", WorkspaceID: "ws-1"})
-	if _, err := v.hosts.request(context.Background(), scopeID, "settings.confirm", map[string]any{}); !errors.Is(err, service.ErrHostUnavailable) {
+	if _, err := v.hosts.request(context.Background(), scopeID, "", "settings.confirm", map[string]any{}); !errors.Is(err, service.ErrHostUnavailable) {
 		t.Fatalf("without Desktop = %v", err)
 	}
 	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/local/v2/ws", h)
@@ -552,7 +552,7 @@ func TestV2HostRequestsReachTheConnectedDesktop(t *testing.T) {
 	done := answer(func(id string) map[string]any {
 		return map[string]any{"version": 2, "type": "host.reply", "request_id": id, "result": map[string]any{"approved": true}}
 	})
-	result, err := v.hosts.request(context.Background(), scopeID, "settings.confirm", map[string]any{"operation": "x"})
+	result, err := v.hosts.request(context.Background(), scopeID, "", "settings.confirm", map[string]any{"operation": "x"})
 	<-done
 	if err != nil || string(result) != `{"approved":true}` {
 		t.Fatalf("result = %s, %v", result, err)
@@ -561,7 +561,7 @@ func TestV2HostRequestsReachTheConnectedDesktop(t *testing.T) {
 		return map[string]any{"version": 2, "type": "host.reply", "request_id": id, "error": map[string]any{"kind": "declined", "message": "no"}}
 	})
 	var hostErr *service.HostError
-	_, err = v.hosts.request(context.Background(), scopeID, "settings.confirm", map[string]any{})
+	_, err = v.hosts.request(context.Background(), scopeID, "", "settings.confirm", map[string]any{})
 	<-done
 	if !errors.As(err, &hostErr) || hostErr.Kind != "declined" {
 		t.Fatalf("declined = %v", err)
@@ -573,7 +573,7 @@ func TestV2HostRequestsReachTheConnectedDesktop(t *testing.T) {
 		_ = ws.ReadJSON(&raw)
 		_ = ws.Close()
 	}()
-	if _, err := v.hosts.request(context.Background(), scopeID, "settings.confirm", map[string]any{}); !errors.Is(err, service.ErrHostUnavailable) {
+	if _, err := v.hosts.request(context.Background(), scopeID, "", "settings.confirm", map[string]any{}); !errors.Is(err, service.ErrHostUnavailable) {
 		t.Fatalf("after disconnect = %v", err)
 	}
 }

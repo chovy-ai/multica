@@ -28,7 +28,7 @@ func newSideFixture(t *testing.T) *sideFixture {
 	ctx := context.Background()
 	f.create(t, "conv-1", "claude")
 	f.create(t, "side-1", "claude")
-	f.svc.SetHost(func(_ context.Context, _ int64, kind string, payload any) (json.RawMessage, error) {
+	f.svc.SetHost(func(_ context.Context, _ int64, _ string, kind string, payload any) (json.RawMessage, error) {
 		data, _ := json.Marshal(payload)
 		var p map[string]any
 		_ = json.Unmarshal(data, &p)

@@ -79,7 +79,7 @@ func (s *Service) developerLogTool(conv sqlitedb.Conversation) contextmcp.Tool {
 				prior = &sideWrite{input: string(fingerprint), done: make(chan struct{})}
 				exports[in.RequestID] = prior
 				mu.Unlock()
-				raw, err := s.askHost(ctx, conv.ScopeID, "developer_logs.export", query)
+				raw, err := s.askHost(ctx, conv.ScopeID, conv.ID, "developer_logs.export", query)
 				var value any
 				_ = json.Unmarshal(raw, &value)
 				prior.value, prior.err = contextmcp.Result{Value: value}, err

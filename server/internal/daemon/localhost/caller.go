@@ -27,17 +27,53 @@ const (
 	// callerRenderer is Desktop's renderer with the derived renderer
 	// token, a WebSocket ticket or a file key.
 	callerRenderer
+	// callerRemote is another device of this account over the device link.
+	callerRemote
 )
+
+// headerClientID names one Desktop client instance. Host requests for a
+// conversation go to the client that last acted on it, and survive that
+// client reconnecting.
+const headerClientID = "X-Multica-Client-ID"
+
+// caller is who made a request: its kind, the client key host requests
+// route by ("local/<id>" or "<peer>/<id>"), and for a remote device its
+// identity.
+type caller struct {
+	kind       callerKind
+	clientKey  string
+	peer       string
+	deviceName string
+}
+
+func clientKey(prefix string, h http.Header) string {
+	id := h.Get(headerClientID)
+	if id == "" || len(id) > 128 {
+		return ""
+	}
+	return prefix + "/" + id
+}
 
 type callerKey struct{}
 
-func withCaller(ctx context.Context, k callerKind) context.Context {
-	return context.WithValue(ctx, callerKey{}, k)
+func withCaller(ctx context.Context, c caller) context.Context {
+	return context.WithValue(ctx, callerKey{}, c)
 }
 
-func callerOf(ctx context.Context) callerKind {
-	k, _ := ctx.Value(callerKey{}).(callerKind)
-	return k
+func callerOf(ctx context.Context) caller {
+	c, _ := ctx.Value(callerKey{}).(caller)
+	return c
+}
+
+type remotePeerKey struct{}
+
+// RemotePeer is the device a device-link connection comes from.
+type RemotePeer struct{ ID, DeviceName string }
+
+// WithRemotePeer records the device a device-link connection comes from;
+// the device-link server sets it from the authenticated stream.
+func WithRemotePeer(ctx context.Context, p RemotePeer) context.Context {
+	return context.WithValue(ctx, remotePeerKey{}, p)
 }
 
 // RendererToken derives the renderer's bearer token from the profile token,
@@ -122,6 +158,9 @@ func (v *V2) authenticate(r *http.Request) (callerKind, bool) {
 			return 0, false
 		}
 		t.scope.set(r.Header)
+		if t.clientID != "" {
+			r.Header.Set(headerClientID, t.clientID)
+		}
 		return t.kind, true
 	}
 	if key := q.Get("file_key"); key != "" && r.Method == http.MethodGet && equal(key, FileKey(v.token)) && isFilePath(strings.TrimPrefix(r.URL.Path, "/local/v2")) {
@@ -131,20 +170,24 @@ func (v *V2) authenticate(r *http.Request) (callerKind, bool) {
 	return 0, false
 }
 
-// allowed is the policy table: what each caller may reach. body is the
+// allowed is the policy table: what each caller may reach. command is the
 // decoded command type for POST /sessions/{id}/commands, "" otherwise.
 func allowed(k callerKind, method, path, command string) bool {
 	switch {
+	// Updates of this device stop its own providers.
 	case path == "/drain" || path == "/undrain" || path == "/stop-providers":
 		return k == callerMain
-	// Paths that widen what the daemon may read come only from the OS
-	// picker, which only the main process can show.
-	case method == http.MethodPost && (path == "/folder-projects" || path == "/preview/roots"):
-		return k == callerMain
-	case command == "set_directory":
-		return k == callerMain
+	// Tickets are for this device's renderer; a remote device's daemon
+	// issues its own.
+	case path == "/ws-ticket":
+		return k == callerMain || k == callerRenderer
+	// Paths that widen what the daemon may read come only from a picker the
+	// renderer cannot fake: this device's OS picker, or a remote device's
+	// main process, which its own daemon admits alone to these routes.
+	case method == http.MethodPost && (path == "/folder-projects" || path == "/preview/roots"), command == "set_directory":
+		return k == callerMain || k == callerRemote
 	}
-	return k == callerMain || k == callerRenderer
+	return k == callerMain || k == callerRenderer || k == callerRemote
 }
 
 var filePathPattern = regexp.MustCompile(`^/(attachments/[\w-]{1,128}|sessions/[\w:.~-]{1,160}/image|preview/content)$`)
@@ -174,9 +217,10 @@ func (s requestScope) set(h http.Header) {
 const ticketTTL = 30 * time.Second
 
 type ticket struct {
-	kind    callerKind
-	scope   requestScope
-	expires time.Time
+	kind     callerKind
+	scope    requestScope
+	clientID string
+	expires  time.Time
 }
 
 // tickets are single-use WebSocket credentials: a browser WebSocket cannot
@@ -188,7 +232,7 @@ type tickets struct {
 	now   func() time.Time
 }
 
-func (t *tickets) issue(kind callerKind, scope requestScope) string {
+func (t *tickets) issue(kind callerKind, scope requestScope, clientID string) string {
 	buf := make([]byte, 24)
 	_, _ = rand.Read(buf)
 	id := hex.EncodeToString(buf)
@@ -200,7 +244,7 @@ func (t *tickets) issue(kind callerKind, scope requestScope) string {
 			delete(t.items, k)
 		}
 	}
-	t.items[id] = ticket{kind: kind, scope: scope, expires: now.Add(ticketTTL)}
+	t.items[id] = ticket{kind: kind, scope: scope, clientID: clientID, expires: now.Add(ticketTTL)}
 	return id
 }
 
