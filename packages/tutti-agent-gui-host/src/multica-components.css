@@ -335,6 +335,21 @@ html.multica-agent-gui .agent-gui-node__composer-send-button:disabled {
   opacity: 0.5;
 }
 
+/* A labeled send button ("Continue", plan review) widens into a pill; the
+   later upstream 28px circle rule would otherwise clip its label. */
+html.multica-agent-gui .agent-gui-node__composer-send-button[data-plan-review-label="true"] {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 220px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
 html.multica-agent-gui .agent-gui-node__composer-send-button:is([data-state="loading"], [data-state="stopping"]) {
   background: var(--surface-hover);
   color: var(--foreground);
