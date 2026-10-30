@@ -165,13 +165,15 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 			}
 		},
 	})
-	// Queues keep running after a restart.
+	// Queued messages wait for the user after a restart (plan §8.2).
 	queued, err := st.QueuedConversations(ctx)
 	if err != nil {
 		opts.Logger.Warn("local conversations: could not list queued conversations", "error", err)
 	}
 	for _, id := range queued {
-		go s.dispatchQueue(id)
+		if err := s.pauseQueueAfterRestart(ctx, id); err != nil {
+			opts.Logger.Warn("local conversations: could not pause a queue after restart", "conversation_id", id, "error", err)
+		}
 	}
 	s.resumeRemote(ctx)
 	return s, nil
