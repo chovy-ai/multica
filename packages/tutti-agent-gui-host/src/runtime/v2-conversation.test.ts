@@ -151,4 +151,23 @@ describe("V2Conversation", () => {
     expect(conversation.apply([event(9, "turn.completed", { status: "completed" })])).toBe("applied");
     expect(conversation.turns.get("turn-1")?.status).toBe("running");
   });
+
+  it("keeps assistant message rows out of the user messages", () => {
+    // A fork copies messages under new ids, so an assistant row no longer shares its item's id.
+    const conversation = V2Conversation.fromSnapshot(localV2SnapshotSchema.parse({
+      version: 2, store_generation: "g1", snapshot_seq: 4, has_older_turns: false,
+      conversation: { conversation_id: "fork-1", summary_seq: 1, provider: "claude", title: "t · Fork", status: "idle", pinned: false, archived: false, updated_at: at },
+      turns: [{
+        id: "turn-1", turn_index: 0, request_id: "r1", status: "completed", started_at: at, completed_at: at,
+        messages: [
+          { id: "fork~m1", role: "user", content: "hi", attachment_ids: [], created_at: at },
+          { id: "fork~a1", role: "assistant", content: "READY", attachment_ids: [], created_at: at },
+        ],
+        events: [event(2, "item.completed", { kind: "assistant_text", status: "completed", text: "READY" }, { item_id: "a1", final: true })],
+      }],
+      pending_interactions: [],
+    }));
+    expect([...conversation.messages.keys()]).toEqual(["fork~m1"]);
+    expect(project(conversation).messages.filter((message) => JSON.stringify(message.payload).includes("READY"))).toHaveLength(1);
+  });
 });
