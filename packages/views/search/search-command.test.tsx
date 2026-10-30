@@ -485,12 +485,12 @@ describe("SearchCommand", () => {
     expect(useSearchStore.getState().open).toBe(false);
   });
 
-  it("opens Conversations in a separate tab on a normal selection", async () => {
+  it("opens AI Sessions in a separate tab on a normal selection", async () => {
     const user = userEvent.setup();
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderSearch();
     await user.type(screen.getByPlaceholderText("Type a command or search..."), "conversations");
-    await user.click(await screen.findByText("Conversations"));
+    await user.click(await screen.findByText("AI Sessions"));
     expect(open).toHaveBeenCalledWith("https://app.multica//ws-test/conversations", "_blank", "noopener,noreferrer");
     expect(mockPush).not.toHaveBeenCalled();
     open.mockRestore();
