@@ -755,12 +755,12 @@ if (!gotTheLock) {
     };
     const sideWorkspaceControl = new SideWorkspaceControl({
       currentUser: () => settingsUserId,
-      snapshot: async (scope, conversationId) => {
-        const { workspace } = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(conversationId)}/side-workspace`) as { workspace: unknown };
+      snapshot: async (scope, conversationId, deviceId) => {
+        const { workspace } = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(conversationId)}/side-workspace`, undefined, deviceId) as { workspace: unknown };
         return workspace ? sideWorkspaceSyncSchema.parse(workspace) : null;
       },
-      assertTurn: async (scope, id, turnId) => {
-        const snapshot = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(id)}/snapshot`) as { turns: { id: string; status: string }[] };
+      assertTurn: async (scope, id, turnId, deviceId) => {
+        const snapshot = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(id)}/snapshot`, undefined, deviceId) as { turns: { id: string; status: string }[] };
         if (!snapshot.turns.some((turn) => turn.id === turnId && turn.status === "running")) throw new Error("The controlling Side execution has ended");
       },
       preview: getResourcePreview,
@@ -770,9 +770,9 @@ if (!gotTheLock) {
     mainWindow?.once("closed", () => sideWorkspaceControl.dispose());
     // After the renderer records a layout in the daemon, the browser tabs follow
     // what the daemon accepted, read back with main's own credential.
-    ipcMain.handle("side-workspace:reconcile", async (event, scope: LocalConversationScope, conversationId: string) => {
+    ipcMain.handle("side-workspace:reconcile", async (event, scope: LocalConversationScope, conversationId: string, deviceId: string) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || scope?.userId !== settingsUserId) throw new Error("Side workspace requires the active main window");
-      await sideWorkspaceControl.reconcileFrom(scope, conversationId);
+      await sideWorkspaceControl.reconcileFrom(scope, conversationId, typeof deviceId === "string" && deviceId ? deviceId : "local");
     });
     ipcMain.handle("side-workspace:ack", (event, reply) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("Side acknowledgement requires the main window");
@@ -820,8 +820,10 @@ if (!gotTheLock) {
       mainFrame(event, scope);
       if (!localV2Host) throw new Error("Local conversations require the active main window");
       if (typeof deviceId !== "string" || !deviceId) throw new Error("invalid_request: A host request names its device");
-      const handle = deviceId === "local" ? localV2Host : remoteHostRequests(localV2Host);
-      return handle(scope, kind, payload ?? {}).catch((error: unknown) => {
+      const handle = deviceId === "local" ? localV2Host : remoteHostRequests(localV2Host, deviceId);
+      // Only main names another device, after the request came from that device's socket.
+      const { deviceId: _named, ...request } = payload ?? {};
+      return handle(scope, kind, request).catch((error: unknown) => {
         const code = (error as { code?: unknown })?.code;
         throw new Error(`${typeof code === "string" ? code : "host_request_failed"}: ${error instanceof Error ? error.message : String(error)}`);
       });

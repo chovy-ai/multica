@@ -12,7 +12,7 @@ import { useConversationLayoutStore } from "../stores/local-conversation-layout"
 import type { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ComponentProps } from "react";
 const transportFor = vi.hoisted(() => ({ calls: [] as string[] }));
-vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: (deviceId = "local") => { transportFor.calls.push(deviceId); return window.desktopAPI.localV2; } }));
+vi.mock("../platform/local-v2-transport", () => ({ setRemoteFolderChooser: () => {}, localV2Transport: (deviceId = "local") => { transportFor.calls.push(deviceId); return window.desktopAPI.localV2; } }));
 vi.mock("../platform/linked-devices", () => ({ useLinkedDevices: () => [{ peer_id: "peer-1", device_name: "Mac Studio", connection: "direct" }], deviceName: (_devices: unknown, id: string) => id === "peer-1" ? "Mac Studio" : id }));
 
 const mock = vi.hoisted(() => ({ request: vi.fn(), replace: vi.fn(), pathname: "/test/conversations", selected: "source", error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), panel: vi.fn(), copyText: vi.fn(), compact: false, locale: "zh-Hans", projects: [] as Project[], folders: [] as LocalFolderProject[], folderError: null as Error | null }));

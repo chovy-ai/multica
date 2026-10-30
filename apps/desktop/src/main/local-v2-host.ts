@@ -35,13 +35,15 @@ const VIEW_SETTINGS = new Set(["settings_open", "settings_assert_scope", "settin
 
 /**
  * Host requests from another device's agents. Settings confirmations and
- * views happen here, with this Desktop's account; this device's own
- * settings, its logs and the Side browser are not for another device.
+ * views happen here, with this Desktop's account, and Side control acts on
+ * that device's page here; this device's own settings and logs are not for
+ * another device.
  */
-export function remoteHostRequests(handle: ReturnType<typeof localV2HostHandler>): ReturnType<typeof localV2HostHandler> {
+export function remoteHostRequests(handle: ReturnType<typeof localV2HostHandler>, deviceId: string): ReturnType<typeof localV2HostHandler> {
   return async (scope, kind, payload) => {
     if (kind === "settings.host" && !VIEW_SETTINGS.has(String(payload.operation))) throw new SettingsOperationError("device_settings_elsewhere", "This setting can only be changed on the device itself");
-    if (kind === "developer_logs.export" || kind === "side.control") throw new SettingsOperationError("unsupported_host_request", `Desktop cannot handle ${kind} for another device`);
+    if (kind === "developer_logs.export") throw new SettingsOperationError("unsupported_host_request", `Desktop cannot handle ${kind} for another device`);
+    if (kind === "side.control") return handle(scope, kind, { ...payload, deviceId });
     return handle(scope, kind, payload);
   };
 }

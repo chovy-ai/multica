@@ -34,15 +34,15 @@ interface Props {
   onOpenChange?: (open: boolean) => void;
 }
 const emptyLayout = (): Layout => ({ tabs: [], selected: null, open: false });
-function layoutKey(scope: LocalConversationScope, sessionId: string) {
-  return sideLayoutKey(scope, sessionId);
+function layoutKey(scope: LocalConversationScope, sessionId: string, deviceId: string) {
+  return sideLayoutKey(scope, sessionId, deviceId);
 }
 
 export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(function LocalSideWorkspace(props, ref) {
   const device = useLocalDevice();
   const { transport } = device;
   const sessionId = props.sessionId === undefined ? props.source?.id : props.sessionId;
-  const key = sessionId ? layoutKey(props.scope, sessionId) : "new";
+  const key = sessionId ? layoutKey(props.scope, sessionId, device.id) : "new";
   const [layouts, setLayouts] = useState<Record<string, Layout>>(() => ({ [key]: sessionId ? readLayout(key) : emptyLayout() }));
   const layoutsRef = useRef(layouts); layoutsRef.current = layouts;
   const layout = layouts[key] ?? (sessionId ? readLayout(key) : emptyLayout());
@@ -90,12 +90,12 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
   const latest = useRef(props); latest.current = props;
   const [browserActivity, setBrowserActivity] = useState<Record<string, { conversationId: string; turnId: string }>>({});
   const sync = useCallback(async (owner: string, value: Layout, visible: boolean) => {
-    const prefix = sideLayoutKey(latest.current.scope, "");
+    const prefix = sideLayoutKey(latest.current.scope, "", device.id);
     if (!owner.startsWith(prefix)) return;
     const snapshot = sideSnapshot(owner.slice(prefix.length), value, visible);
     await syncSideWorkspace(transport, latest.current.scope, snapshot);
     return snapshot;
-  }, [transport]);
+  }, [transport, device.id]);
   useEffect(() => {
     const timer = setTimeout(() => {
       const values = { ...layoutsRef.current };
@@ -105,7 +105,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
   }, [layouts, key, props.active, sync]);
   useEffect(() => {
     const fullSync = () => {
-      const prefix = sideLayoutKey(latest.current.scope, "");
+      const prefix = sideLayoutKey(latest.current.scope, "", device.id);
       for (let index = 0; index < localStorage.length; index++) {
         const owner = localStorage.key(index);
         if (owner?.startsWith(prefix)) void sync(owner, layoutsRef.current[owner] ?? readLayout(owner), false).catch(() => {});
@@ -115,17 +115,17 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     fullSync();
     // A restarted daemon has lost the layouts.
     return transport.onConnection((scope, connected) => { if (connected && scope.userId === latest.current.scope.userId && scope.workspaceId === latest.current.scope.workspaceId) fullSync(); });
-  }, [props.scope.userId, props.scope.workspaceId, key, sync, transport]);
-  useEffect(() => registerSideWorkspaceView({ userId: props.scope.userId, workspaceId: props.scope.workspaceId }), [props.scope.userId, props.scope.workspaceId]);
+  }, [props.scope.userId, props.scope.workspaceId, key, sync, transport, device.id]);
+  useEffect(() => registerSideWorkspaceView({ userId: props.scope.userId, workspaceId: props.scope.workspaceId }, device.id), [props.scope.userId, props.scope.workspaceId, device.id]);
   useEffect(() => () => { if (key !== "new") void sync(key, layoutsRef.current[key] ?? readLayout(key), false).catch(() => {}); }, [key, sync]);
   useEffect(() => window.desktopAPI.sideWorkspace?.onActivity((value) => setBrowserActivity((current) => {
     const next = { ...current }; if (value.active && value.turnId) next[value.tabId] = { conversationId: value.conversationId, turnId: value.turnId }; else delete next[value.tabId]; return next;
   })), []);
   useEffect(() => window.desktopAPI.sideWorkspace?.onCommand((command) => {
     const request = sideWorkspaceControlSchema.parse(command.request), current = latest.current;
-    if (request.scope.userId !== current.scope.userId || request.scope.workspaceId !== current.scope.workspaceId) return;
+    if (request.scope.userId !== current.scope.userId || request.scope.workspaceId !== current.scope.workspaceId || (request.deviceId ?? "local") !== device.id) return;
     void (async () => {
-      const owner = sideLayoutKey(current.scope, request.conversationId);
+      const owner = sideLayoutKey(current.scope, request.conversationId, device.id);
       const opened = await prepareSideTab(request, transport);
       if (!mounted.current || latest.current.scope.userId !== current.scope.userId || latest.current.scope.workspaceId !== current.scope.workspaceId) throw new Error("Side workspace changed");
       const previous = layoutsRef.current[owner] ?? readLayout(owner);
@@ -137,7 +137,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       await window.desktopAPI.sideWorkspace.ack({ id: command.id, snapshot, tabId });
     })().catch((error: unknown) => { void window.desktopAPI.sideWorkspace.ack({ id: command.id, error: error instanceof Error ? error.message : String(error) }); });
-  }), [sync, transport]);
+  }), [sync, transport, device.id]);
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: "multica-side-workspace-width" });
   const onOpenChange = props.onOpenChange;
   useEffect(() => { onOpenChange?.(layout.open); }, [layout.open, onOpenChange]);
@@ -163,7 +163,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     return { tabs: existing ? current.tabs.map((item) => item.id === existing.id && item.kind === "file" && tab.kind === "file" ? { ...item, line: tab.line } : item) : [...current.tabs, tab], selected: existing?.id ?? tab.id, open: true };
   }); if (currentKey.current === owner) setError(""); }, [updateLayout]);
   const add = useCallback((tab: Tab) => addTo(key, tab), [addTo, key]);
-  const openSide = useCallback((id: string, sourceId?: string) => addTo(sourceId ? layoutKey(props.scope, sourceId) : key, { id: `side:${id}`, kind: "side", sessionId: id }), [addTo, key, props.scope]);
+  const openSide = useCallback((id: string, sourceId?: string) => addTo(sourceId ? layoutKey(props.scope, sourceId, device.id) : key, { id: `side:${id}`, kind: "side", sessionId: id }), [addTo, key, props.scope, device.id]);
   const openResourceFor = useCallback((owner: string, sessionId: string, value: string) => {
     const requestKey = JSON.stringify([owner, sessionId, value]);
     const pending = resourceRequests.current.get(requestKey);
@@ -193,7 +193,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
     void operation.finally(() => resourceRequests.current.delete(requestKey)).catch(() => {});
     return operation;
   }, [addTo, updateLayout, transport]);
-  const openResource = useCallback((sessionId: string, value: string, sourceId?: string) => openResourceFor(sourceId ? layoutKey(props.scope, sourceId) : key, sessionId, value), [key, openResourceFor, props.scope]);
+  const openResource = useCallback((sessionId: string, value: string, sourceId?: string) => openResourceFor(sourceId ? layoutKey(props.scope, sourceId, device.id) : key, sessionId, value), [key, openResourceFor, props.scope, device.id]);
   useImperativeHandle(ref, () => ({ openSide, openResource, toggle: () => setLayout((current) => ({ ...current, open: !current.open })) }), [openSide, openResource, setLayout]);
   const showError = (error: unknown) => { const message = error instanceof Error ? error.message : String(error); setError(message); props.onShowMessage(message, "error"); };
   const createSide = async () => {
@@ -214,7 +214,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
       if (sessionId) openSide(side.id);
       else {
         const tab: Tab = { id: `side:${side.id}`, kind: "side", sessionId: side.id };
-        updateLayout(layoutKey(props.scope, source.id), (current) => ({ tabs: [...current.tabs, tab], selected: tab.id, open: true }));
+        updateLayout(layoutKey(props.scope, source.id, device.id), (current) => ({ tabs: [...current.tabs, tab], selected: tab.id, open: true }));
         if (isCurrent()) props.onSelectSource(source.id);
       }
     } catch (error) { if (isCurrent()) showError(error); } finally { if (isCurrent()) setCreating(false); }

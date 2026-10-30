@@ -52,15 +52,16 @@ describe("localV2HostHandler", () => {
 });
 
 describe("remoteHostRequests", () => {
-  it("lets another device confirm settings but keeps this device's own to itself", async () => {
+  it("lets another device confirm settings and control its Side, but keeps this device's own to itself", async () => {
     const { handlers, handle } = setup();
-    const remote = remoteHostRequests(handle);
+    const remote = remoteHostRequests(handle, "peer-1");
     await remote(scope, "settings.confirm", { operation: "settings_invite_member", scope: { workspace_id: "w1", user_id: "u1" }, input: { email: "a@example.com" } });
     expect(handlers.confirm).toHaveBeenCalled();
     await remote(scope, "settings.host", { operation: "settings_open", scope: { workspace_id: "w1", user_id: "u1" }, input: {} });
     await expect(remote(scope, "settings.host", { operation: "settings_update_device", scope: { workspace_id: "w1", user_id: "u1" }, input: {} })).rejects.toMatchObject({ code: "device_settings_elsewhere" });
     await expect(remote(scope, "developer_logs.export", {})).rejects.toMatchObject({ code: "unsupported_host_request" });
-    await expect(remote(scope, "side.control", {})).rejects.toMatchObject({ code: "unsupported_host_request" });
+    await remote(scope, "side.control", { op: "select", scope: { userId: "u1", workspaceId: "w1" }, conversationId: "c", tabId: "t" });
+    expect(handlers.side).toHaveBeenCalledWith(expect.objectContaining({ deviceId: "peer-1", conversationId: "c" }), expect.any(AbortSignal));
     expect(handlers.developerLogs).not.toHaveBeenCalled();
   });
 });

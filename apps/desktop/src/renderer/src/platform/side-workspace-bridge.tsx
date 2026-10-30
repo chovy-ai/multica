@@ -35,15 +35,16 @@ export function DesktopSideWorkspaceBridge() {
   }, [userId, workspaceId, enabled]);
   useEffect(() => window.desktopAPI.sideWorkspace?.onCommand((command) => {
     const request = sideWorkspaceControlSchema.parse(command.request);
-    if (hasSideWorkspaceView(request.scope)) return;
+    const deviceId = request.deviceId ?? "local";
+    if (hasSideWorkspaceView(request.scope, deviceId)) return;
     void (async () => {
       const check = () => {
         if (!active.current.enabled || active.current.userId !== request.scope.userId || getCurrentWsId() !== request.scope.workspaceId) throw new Error("Select the originating account and workspace before controlling Side tabs");
       };
       check();
-      const transport = localV2Transport();
+      const transport = localV2Transport(deviceId);
       const opened = await prepareSideTab(request, transport); check();
-      const key = sideLayoutKey(request.scope, request.conversationId);
+      const key = sideLayoutKey(request.scope, request.conversationId, deviceId);
       const { layout, tabId } = applySideCommand(readSideLayout(key), request, opened);
       localStorage.setItem(key, JSON.stringify(layout));
       const snapshot = sideSnapshot(request.conversationId, layout, false);
@@ -51,7 +52,8 @@ export function DesktopSideWorkspaceBridge() {
       if (request.op === "select" || (request.op === "open" && request.select !== false)) {
         const slug = getCurrentSlug(); if (!slug) throw new Error("No selected workspace");
         const source = (await localV2(transport, request.scope).snapshot(request.conversationId)).conversation; check();
-        const path = `${paths.workspace(slug).conversationFlow()}?${new URLSearchParams({ session: source.conversation_id, provider: source.provider })}`;
+        const flow = deviceId === "local" ? paths.workspace(slug).conversationFlow() : paths.workspace(slug).conversationFlowDevice(deviceId);
+        const path = `${flow}?${new URLSearchParams({ session: source.conversation_id, provider: source.provider })}`;
         useTabStore.getState().openTab(path, "", { activate: true });
         // openTab deduplicates by pathname and intentionally retains the old query.
         useTabStore.getState().navigateActiveSession(path, { replace: true });

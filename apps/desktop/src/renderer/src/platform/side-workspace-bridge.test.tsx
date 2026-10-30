@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SideWorkspaceCommand } from "../../../shared/side-workspace";
 import { DesktopSideWorkspaceBridge } from "./side-workspace-bridge";
 import { sideLayoutKey, type SideLayout } from "../pages/local-side-workspace-sync";
-vi.mock("./local-v2-transport", () => ({ localV2Transport: () => window.desktopAPI.localV2 }));
+const transports = vi.hoisted(() => ({ calls: [] as string[] }));
+vi.mock("./local-v2-transport", () => ({ localV2Transport: (deviceId = "local") => { transports.calls.push(deviceId); return window.desktopAPI.localV2; } }));
 const fake = vi.hoisted(() => ({ openTab: vi.fn(), navigateActiveSession: vi.fn() }));
 vi.mock("@multica/core/auth", () => ({ useAuthStore: (selector: (value: unknown) => unknown) => selector({ user: { id: "user" }, status: "authenticated" }) }));
 vi.mock("@multica/core/workspace", () => ({ useWorkspaceList: () => ({ workspaces: [{ id: "workspace", slug: "test" }], ready: true, unavailable: false }) }));
@@ -56,4 +57,19 @@ it("updates the selected conversation even when openTab reuses an older chat rou
   act(() => command({ id: "focus", request: { op: "select", scope, conversationId: "target", turnId: "turn", tabId: "web:one" } }));
   await waitFor(() => expect(fake.navigateActiveSession).toHaveBeenCalledWith(expect.stringContaining("session=target"), { replace: true }));
   await waitFor(() => expect(ack).toHaveBeenCalledWith(expect.objectContaining({ id: "focus", tabId: "web:one" })));
+});
+
+it("acts on another device's conversation through that device and keeps its layout apart", async () => {
+  localStorage.setItem(sideLayoutKey(scope, "remote", "peer-1"), JSON.stringify({ open: false, selected: "web:one", tabs: [{ id: "web:one", kind: "web", url: "https://example.test" }] }));
+  render(<DesktopSideWorkspaceBridge />);
+  // This device's layouts are restored on start; another device's are not.
+  await waitFor(() => expect(transports.calls).toContain("local"));
+  expect(synced().some((layout) => layout.conversationId === "remote")).toBe(false);
+  transports.calls = [];
+  act(() => command({ id: "remote-focus", request: { op: "select", scope, conversationId: "remote", turnId: "turn", tabId: "web:one", deviceId: "peer-1" } }));
+  await waitFor(() => expect(fake.navigateActiveSession).toHaveBeenCalledWith(expect.stringMatching(/^\/test\/conversations\/devices\/peer-1\?.*session=remote/), { replace: true }));
+  await waitFor(() => expect(ack).toHaveBeenCalledWith(expect.objectContaining({ id: "remote-focus", tabId: "web:one" })));
+  expect(transports.calls).toEqual(["peer-1"]);
+  expect(JSON.parse(localStorage.getItem(sideLayoutKey(scope, "remote", "peer-1"))!).selected).toBe("web:one");
+  expect(localStorage.getItem(sideLayoutKey(scope, "remote"))).toBeNull();
 });

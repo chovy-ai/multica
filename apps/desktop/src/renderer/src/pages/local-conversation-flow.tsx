@@ -35,7 +35,7 @@ import type { ComponentProps } from "react";
 type RestoreDraftRequest = NonNullable<ComponentProps<typeof TuttiAgentGuiPanel>["restoreDraftRequest"]>;
 import { projectVisibilityScopeKey, useProjectVisibilityStore } from "../stores/local-conversation-project-visibility";
 import { SESSION_LIST_MIN_WIDTH, SESSION_LIST_MAX_WIDTH, useConversationLayoutStore } from "../stores/local-conversation-layout";
-import { localV2Transport } from "../platform/local-v2-transport";
+import { localV2Transport, setRemoteFolderChooser } from "../platform/local-v2-transport";
 import { LocalDeviceProvider, useLocalDevice, type LocalDevice } from "../platform/local-device";
 import { deviceName, useLinkedDevices } from "../platform/linked-devices";
 import { pickRemoteFolder, RemoteFolderPicker } from "./remote-folder-picker";
@@ -53,11 +53,11 @@ function localProjectsRequireRestart(error: unknown): boolean {
 
 const DEVICE_ROUTE = /\/conversations\/devices\/([^/?#]+)/;
 
-/** A device folder the user picked on another device's page, applied by main. */
-async function chooseOnDevice(deviceId: string, scope: { userId: string; workspaceId: string }, request: Parameters<typeof pickRemoteFolder>[2]) {
+// A folder the user picked on another device's page, applied by main.
+setRemoteFolderChooser(async (deviceId, scope, request) => {
   const path = await pickRemoteFolder(deviceId, scope, request);
   return path === null ? null : window.desktopAPI.localV2.chooseRemote(deviceId, scope, request, path);
-}
+});
 
 /**
  * Conversations of this device, or of another device of the account over
@@ -70,7 +70,7 @@ export function LocalConversationFlowPage() {
   const deviceId = match ? decodeURIComponent(match[1]!) : "local";
   const devices = useLinkedDevices(deviceId !== "local");
   const name = deviceId === "local" ? "" : deviceName(devices, deviceId);
-  const device = useMemo<LocalDevice>(() => ({ id: deviceId, name, transport: deviceId === "local" ? localV2Transport() : localV2Transport(deviceId, (scope, request) => chooseOnDevice(deviceId, scope, request)) }), [deviceId, name]);
+  const device = useMemo<LocalDevice>(() => ({ id: deviceId, name, transport: localV2Transport(deviceId) }), [deviceId, name]);
   return <LocalDeviceProvider device={device}><LocalConversationFlow key={deviceId} /></LocalDeviceProvider>;
 }
 

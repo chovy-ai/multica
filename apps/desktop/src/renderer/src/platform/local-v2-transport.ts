@@ -299,15 +299,20 @@ export class DirectLocalV2Transport implements LocalV2Transport {
 }
 
 const transports = new Map<string, DirectLocalV2Transport>();
+let remoteChooser: ((deviceId: string, scope: LocalV2Scope, request: LocalV2ChooseRequest) => Promise<unknown>) | undefined;
+
+/** Sets how folders are chosen on other devices; the conversation page provides its picker. */
+export function setRemoteFolderChooser(choose: typeof remoteChooser) { remoteChooser = choose; }
 
 /**
  * This window's transport to the conversations of a device: this one by
  * default, or another device of the account through this daemon.
  */
-export function localV2Transport(deviceId = "local", chooseRemote?: DirectLocalV2Options["chooseRemote"]): DirectLocalV2Transport {
+export function localV2Transport(deviceId = "local"): DirectLocalV2Transport {
   let transport = transports.get(deviceId);
   if (!transport) {
-    transport = new DirectLocalV2Transport({ bridge: window.desktopAPI.localV2, deviceId, chooseRemote });
+    transport = new DirectLocalV2Transport({ bridge: window.desktopAPI.localV2, deviceId,
+      chooseRemote: (scope, request) => remoteChooser ? remoteChooser(deviceId, scope, request) : Promise.reject(new Error("unsupported: Open the device's conversations to choose a folder")) });
     transports.set(deviceId, transport);
   }
   return transport;

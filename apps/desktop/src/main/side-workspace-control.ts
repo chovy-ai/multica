@@ -6,8 +6,9 @@ import type { ResourceWebPreview } from "./resource-web-preview";
 
 interface Options {
   currentUser(): string | null | undefined;
-  snapshot(scope: LocalConversationScope, id: string): Promise<SideWorkspaceSnapshot | null>;
-  assertTurn(scope: LocalConversationScope, id: string, turnId: string): Promise<void>;
+  /** deviceId is "local" or another device whose conversation it is. */
+  snapshot(scope: LocalConversationScope, id: string, deviceId: string): Promise<SideWorkspaceSnapshot | null>;
+  assertTurn(scope: LocalConversationScope, id: string, turnId: string, deviceId: string): Promise<void>;
   send(command: SideWorkspaceCommand): void;
   preview(): ResourceWebPreview;
   activity(tabId: string, conversationId: string, turnId: string, active: boolean): void;
@@ -33,6 +34,7 @@ export class SideWorkspaceControl {
   private async perform(request: SideWorkspaceControlRequest, signal: AbortSignal) {
     signal.throwIfAborted();
     const { scope, conversationId, turnId, tabId, op } = request;
+    const device = request.deviceId ?? "local";
     if (!turnId) throw new Error("Side control requires a turn ID");
     const turnKey = JSON.stringify([scope, conversationId, turnId]);
     if (op === "release") {
@@ -41,8 +43,8 @@ export class SideWorkspaceControl {
       return this.command(request, signal);
     }
     if (this.endedTurns.has(turnKey)) throw new Error("The controlling Side execution has ended");
-    await this.options.assertTurn(scope, conversationId, turnId);
-    const snapshot = await this.options.snapshot(scope, conversationId);
+    await this.options.assertTurn(scope, conversationId, turnId, device);
+    const snapshot = await this.options.snapshot(scope, conversationId, device);
     if (!snapshot) throw new Error("desktop_not_connected: Side workspace has not synced");
     const tab = snapshot.tabs.find((tab) => tab.id === tabId);
     if (op !== "open" && !tab) throw new Error("not_in_current_side: This tab is not open in this conversation");
@@ -53,12 +55,12 @@ export class SideWorkspaceControl {
     const owner = JSON.stringify([scope.userId, scope.workspaceId]);
     await this.command({ ...request, op: "select", action: undefined }, signal);
     // Recheck after asynchronous UI changes, before acquiring a real WebContents.
-    const latest = await this.options.snapshot(scope, conversationId);
+    const latest = await this.options.snapshot(scope, conversationId, device);
     if (!latest?.tabs.some((entry) => entry.id === tab.id && entry.kind === "web")) throw new Error("not_in_current_side: The tab has closed");
     if (scope.userId !== this.options.currentUser()) throw new Error("Side workspace account changed");
     if (this.endedTurns.has(turnKey)) throw new Error("The controlling Side execution has ended");
     const contents = await this.options.preview().ensure(owner, tab.id, tab.url);
-    await this.options.assertTurn(scope, conversationId, turnId);
+    await this.options.assertTurn(scope, conversationId, turnId, device);
     if (this.endedTurns.has(turnKey)) throw new Error("The controlling Side execution has ended");
     return this.browser.run(tab.id, contents, conversationId, turnId, request.action, signal);
   }
@@ -88,8 +90,8 @@ export class SideWorkspaceControl {
   }
   reconcile(snapshot: SideWorkspaceSnapshot) { this.browser.reconcile(snapshot.conversationId, new Set(snapshot.tabs.filter((tab) => tab.kind === "web").map((tab) => tab.id))); }
   /** Closes browser tabs the conversation's stored layout no longer has. */
-  async reconcileFrom(scope: LocalConversationScope, conversationId: string) {
-    const snapshot = await this.options.snapshot(scope, conversationId);
+  async reconcileFrom(scope: LocalConversationScope, conversationId: string, deviceId: string) {
+    const snapshot = await this.options.snapshot(scope, conversationId, deviceId);
     if (snapshot) this.reconcile(snapshot);
   }
   dispose() {
