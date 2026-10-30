@@ -1,15 +1,16 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import translations from "../../../../../../packages/views/locales/en/settings.json";
+import type { DaemonStatus } from "../../../shared/daemon-types";
 
 const mocks = vi.hoisted(() => ({ deviceLink: vi.fn(), setDeviceLink: vi.fn() }));
 vi.mock("@multica/views/i18n", () => ({ useT: () => ({ t: (selector: (resources: typeof translations) => string) => selector(translations) }) }));
 vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: () => ({ deviceLink: mocks.deviceLink, setDeviceLink: mocks.setDeviceLink }) }));
-import { DeviceLinkSettingsTab } from "./device-link-settings-tab";
+import { DeviceLinkSettingsTab, deviceLinkSettingKey } from "./device-link-settings-tab";
 
 const copy = translations.desktop.device_link;
-const renderTab = () => render(<QueryClientProvider client={new QueryClient()}><DeviceLinkSettingsTab /></QueryClientProvider>);
+const renderTab = (client = new QueryClient()) => render(<QueryClientProvider client={client}><DeviceLinkSettingsTab /></QueryClientProvider>);
 
 describe("Device link settings", () => {
   beforeEach(() => {
@@ -58,5 +59,34 @@ describe("Device link settings", () => {
     await waitFor(() => expect(mocks.setDeviceLink).toHaveBeenCalledWith(false));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("switch", { name: copy.allow })).not.toBeChecked());
+  });
+
+  it.each([false, true])("refreshes a stale unavailable setting after daemon startup (request failed: %s)", async (failed) => {
+    const listeners = new Set<(status: DaemonStatus) => void>();
+    const previousAPI = Object.getOwnPropertyDescriptor(window, "daemonAPI");
+    Object.defineProperty(window, "daemonAPI", { configurable: true, value: {
+      onStatusChange: (listener: (status: DaemonStatus) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    } });
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    if (failed) mocks.deviceLink.mockRejectedValueOnce(new Error("Runtime starting"));
+    else mocks.deviceLink.mockResolvedValueOnce({ available: false, enabled: false });
+    const view = renderTab(client);
+    try {
+      await waitFor(() => expect(client.getQueryState(deviceLinkSettingKey)?.status).toBe(failed ? "error" : "success"));
+      const toggle = screen.getByRole("switch", { name: copy.allow });
+      expect(toggle).toHaveAttribute("data-disabled");
+      await act(async () => { for (const listener of listeners) listener({ state: "running" }); });
+      await waitFor(() => expect(toggle).not.toHaveAttribute("data-disabled"));
+      expect(toggle).not.toBeChecked();
+      expect(mocks.setDeviceLink).not.toHaveBeenCalled();
+      const reads = mocks.deviceLink.mock.calls.length;
+      await act(async () => { for (const listener of listeners) listener({ state: "running" }); });
+      expect(mocks.deviceLink).toHaveBeenCalledTimes(reads);
+    } finally {
+      view.unmount(); client.clear();
+      if (previousAPI) Object.defineProperty(window, "daemonAPI", previousAPI);
+      else Reflect.deleteProperty(window, "daemonAPI");
+    }
+    expect(listeners.size).toBe(0);
   });
 });

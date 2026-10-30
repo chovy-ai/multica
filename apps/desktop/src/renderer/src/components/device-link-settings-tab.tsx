@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { parseWithFallback } from "@multica/core/api/schema";
@@ -17,6 +17,16 @@ export const deviceLinkSettingKey = ["device-link", "setting"] as const;
 
 /** Whether this device can and does share its conversations. */
 export function useDeviceLinkSetting() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    let previous: string | undefined;
+    return window.daemonAPI?.onStatusChange((status) => {
+      if (status.state === "running" && previous !== "running") {
+        void qc.invalidateQueries({ queryKey: deviceLinkSettingKey });
+      }
+      previous = status.state;
+    });
+  }, [qc]);
   return useQuery({
     queryKey: deviceLinkSettingKey,
     queryFn: async () => parseWithFallback<DeviceLinkSetting>(await localV2Transport().deviceLink(), settingSchema, OFF, { endpoint: "local.device-link" }),
