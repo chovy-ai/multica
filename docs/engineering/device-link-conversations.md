@@ -138,7 +138,11 @@
 
   结论：HTTP 请求无法用 Origin 区分主进程和渲染进程，两者的权限只能靠两个 token 区分。渲染进程 token 接受「不带 Origin」、`file://` 和开发环境的 dev server 地址（由 Desktop 启动守护进程时传入）。主进程 token 仍要求不带 Origin。回环 Host 检查保留。
 - CORS：开发环境如果打开 `webSecurity`，需要对白名单 origin 响应预检，允许 `Authorization`、`Content-Type`、`X-File-Name`、`X-Multica-*`、`Range`。WS 的 `CheckOrigin` 使用同一个白名单，所以生产环境必须放行 `file://`。
-- 票据和签名：`ws-ticket` 一次性；`file-urls` 用守护进程内存中的 HMAC 密钥签名 `(scope, path, exp)`。
+- 票据和签名：浏览器的 WebSocket 和 `<img>` 都带不了 scope 请求头和 `X-Multica-Client-ID`，所以票据和签名要把它们一起绑定。
+  - `ws-ticket` 一次性，绑定 `(API origin, userId, workspaceId, clientId, 路径)`。
+  - `file-urls` 用守护进程内存中的 HMAC 密钥签名 `(API origin, userId, workspaceId, 路径, exp)`。
+  - 入口层校验后，把绑定的值还原为请求头，再交给策略层和能力层，所以能力层看到的请求和带请求头的请求一样。
+- Origin 检查只放在入口层。现在 `NewV2` 的 upgrader 写死了 `CheckOrigin: Origin == ""`，要移到入口层。否则经 p2p 转发过来的 WS 会因为带着查看端的 `Origin: file://` 被被访问端拒绝。查看端的反向代理在入口校验通过后删除 `Origin`。
 
 Desktop 改动：
 
@@ -170,7 +174,7 @@ MacBook（查看端）                                         Mac Studio（被�
 
 ```text
 打开远端 tab → 渲染进程为该设备创建 transport(basePath=/local/devices/{peerId})
- → GET …/local/v2/hello      版本不一致 → incompatible
+ → GET …/local/v2/hello      version 不同，或 capabilities 不含 device-link → incompatible
  → 请求和 WS 带 scope 请求头（API origin、userId、workspaceId）
        被访问端 scope()：userId ≠ .desktop-user-id → account_mismatch
                         API origin ≠ 被访问端 ServerBaseURL → api_url_mismatch
@@ -466,7 +470,7 @@ func (v *V2) serve(w, r, c caller) // allowed(c.kind, route) → 现有路由
 | 层级 | 检查 |
 | --- | --- |
 | 查看端回环接口 | loopback Host；主进程 token 不能带 Origin；渲染进程 token、WS 票据和签名 URL 只接受 Desktop 的 origin，且不能访问 drain 和扩大读取范围的接口 |
-| 转发前 | 删除本机 token、票据和签名参数 |
+| 转发前 | 删除本机 token、票据、签名参数和 Origin；把票据或签名绑定的 scope 和 clientId 还原为请求头 |
 | p2p 连接 | gater 只放行同账号设备，基于握手时证明的公钥身份 |
 | 被访问端入口 | 开关打开才注册协议；路径白名单；禁止 drain 和停止 provider；每次请求校验 userId 和 API origin |
 | 被访问端执行环境 | 使用被访问端守护进程自己的环境，远端不能传入 env |
