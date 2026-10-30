@@ -151,6 +151,7 @@ export interface AgentGuiRpcMethods {
   "task.messages": { params: { taskId: string }; result: AgentGuiTaskMessagePayload[] };
   "models.list": { params: { agentId: string; force?: boolean }; result: RuntimeModelsResult };
   "usage.read": { params: { agentId: string; sessionId?: string; force?: boolean }; result: LocalProviderUsage };
+  "session.compact": { params: { sessionId: string; requestId: string }; result: { turnId: string } };
   "context.tasks": { params: { query: string; limit: number }; result: AgentGuiContextItem[] };
   "attachment.upload": {
     params: { file: File; sessionId?: string };

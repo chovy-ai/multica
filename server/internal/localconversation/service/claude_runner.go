@@ -65,6 +65,8 @@ type SendRequest struct {
 	// Hidden turns have no user message: the prompt comes from Multica,
 	// such as a background result delivery.
 	Hidden bool
+	// Compact invokes the provider's native context compaction.
+	Compact bool
 }
 
 func (r SendRequest) prompt() string {
@@ -119,6 +121,9 @@ type ClaudeRunner struct {
 
 type claudeTurn struct {
 	id              string
+	compacting      bool
+	compacted       bool
+	compactError    string
 	cancelRequested bool
 	// storageFailed is set when the batcher rejected output; the rest of
 	// the turn's output is dropped and the turn ends as failed.
@@ -187,7 +192,7 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		r.mu.Unlock()
 		return err
 	}
-	turn := &claudeTurn{id: req.TurnID, references: req.References, createTask: req.CreateTask}
+	turn := &claudeTurn{id: req.TurnID, references: req.References, createTask: req.CreateTask, compacting: req.Compact}
 	r.turn = turn
 	r.mu.Unlock()
 
@@ -368,6 +373,21 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 	r.mu.Unlock()
 	switch out.Type {
 	case "sdk_message":
+		if turn != nil && turn.compacting {
+			var status struct {
+				Type          string `json:"type"`
+				Subtype       string `json:"subtype"`
+				CompactResult string `json:"compact_result"`
+				CompactError  string `json:"compact_error"`
+			}
+			_ = json.Unmarshal(out.Message, &status)
+			if status.Type == "system" && status.Subtype == "compact_boundary" {
+				turn.compacted = true
+			}
+			if status.CompactResult == "failed" {
+				turn.compactError = status.CompactError
+			}
+		}
 		r.normMu.Lock()
 		events := norm.Accept(out.Message)
 		sessionID := norm.SessionID()
@@ -398,6 +418,15 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 				r.finish(turn, "cancelled", nil)
 			case result.IsError:
 				r.finish(turn, "failed", &turnError{kind: "provider_error", message: result.Error})
+			case turn.compacting && (!turn.compacted || turn.compactError != ""):
+				message := turn.compactError
+				if message == "" {
+					message = result.Output
+				}
+				if message == "" {
+					message = "The provider did not compact this conversation; there may not be enough history"
+				}
+				r.finish(turn, "failed", &turnError{kind: "compaction_failed", message: message})
 			default:
 				r.finish(turn, "completed", nil)
 			}

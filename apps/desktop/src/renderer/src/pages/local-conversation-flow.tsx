@@ -25,6 +25,7 @@ import { ProviderLogo } from "@multica/views/runtimes/provider-logo";
 import { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ParentServiceOptions } from "@multica/views/conversation-flow/service";
 import type { LocalFolderProject, LocalProviderId } from "@multica/core/local-conversation/protocol";
+import { isAutomaticLocalDirectory } from "@multica/tutti-agent-gui-host/local-projects";
 import { createLocalConversationParentService, localConversationKey, localTargetId } from "../platform/local-conversation-service";
 import { useLocalConversationPages } from "../platform/local-conversation-pages";
 import { projectForDirectory, sessionEntry, type LocalSessionEntry } from "../platform/local-conversation-projects";
@@ -150,6 +151,24 @@ function LocalConversationFlow() {
   const projects = (projectQuery.data ?? []).filter((project) => project.workspace_id === scope.workspaceId);
   const folderQuery = useQuery({ queryKey: [...localConversationKey(scope, device.id), "folder-projects"], queryFn: async () => (await v2.request("GET", "/folder-projects") as { projects: { id: string; title: string; path: string; created_at: string }[] }).projects.map(folderProject), enabled: !!workspace && !!userId,
     retry: (count, error) => !localProjectsRequireRestart(error) && count < 2 });
+  useEffect(() => {
+    if (!scope.userId || !scope.workspaceId) return;
+    const key = localConversationKey({ userId: scope.userId, workspaceId: scope.workspaceId }, device.id);
+    const refresh = () => {
+      void qc.invalidateQueries({ queryKey: [...key, "providers"] });
+      void qc.invalidateQueries({ queryKey: [...key, "folder-projects"] });
+    };
+    let connected = transport.availability()?.state === "connected";
+    const stopAvailability = transport.onAvailability((value) => {
+      const next = value.state === "connected";
+      if (next && !connected) refresh();
+      connected = next;
+    });
+    const stopConnection = transport.onConnection((value, online) => {
+      if (online && value.userId === scope.userId && value.workspaceId === scope.workspaceId) refresh();
+    });
+    return () => { stopAvailability(); stopConnection(); };
+  }, [transport, qc, device.id, scope.userId, scope.workspaceId]);
   const folderProjects = folderQuery.data ?? [];
   const hiddenProjectIds = hiddenProjectPreferences.filter((id) => folderProjects.some((project) => project.id === id));
   const selectedId = searchParams.get("session");
@@ -196,6 +215,10 @@ function LocalConversationFlow() {
     sessions: "Local sessions", new: "New conversation", search: "Search conversations", empty: "No local conversations yet", noResults: "No matching conversations", retry: "Retry", loading: "Loading…", archive: "Archive", history: "Back to sessions", pinned: "Pin", unpin: "Unpin", directory: "Choose working directory", newTitle: "New conversation", storage: "History saved on this computer", directoryLocked: "The working directory is fixed after the first message. Start a new conversation to change it.", unavailable: "Install Codex or Claude Code on this computer", failed: "Could not update the conversation", fork: "Fork", forking: "Forking…", forkHint: "Create an independent conversation from this history", forkWaiting: "Wait for the current execution to finish", forkEmpty: "Send a message before forking",
   };
   const report = (error: unknown) => toast.error(error instanceof Error ? error.message : labels.failed);
+  const canCreate = providers.data?.some((entry) => entry.available) ?? false;
+  const providerLabels = chinese ? { checking: "正在检测本机运行器…", failed: "运行器检测失败" }
+    : { checking: "Checking local providers…", failed: "Could not detect providers" };
+  const createDisabledReason = providers.isPending ? providerLabels.checking : providers.isError ? providerLabels.failed : labels.unavailable;
   const renameLabels = chinese ? { action: "重命名", title: "重命名会话", name: "会话名称", save: "保存", saving: "正在保存...", cancel: "取消" }
     : { action: "Rename", title: "Rename conversation", name: "Conversation name", save: "Save", saving: "Saving...", cancel: "Cancel" };
   const projectLabels = chinese ? { unassigned: "未分配项目", unavailable: "项目不可用", actions: "会话操作", move: "关联工作区项目", noWorkspaceProject: "不关联工作区项目", create: "新建项目会话", new: "新建项目", empty: "暂无会话", loadFailed: "项目加载失败", folderLoadFailed: "本地项目加载失败", manage: "项目操作", remove: "从列表移除", removed: "已移除项目", restore: "恢复项目", removedNotice: "已从列表移除", undo: "撤销" }
@@ -277,9 +300,9 @@ function LocalConversationFlow() {
     } catch (error) { report(error); } finally { setForkingId(null); }
   };
   // Internal execution folders, including those inherited by forks, are not user-bound folders.
-  const automaticDirectory = /(?:^|[\\/])local-conversations[\\/][a-f0-9]{64}[\\/]workdirs[\\/][^\\/]+[\\/]?$/.test(selected?.cwd ?? "");
+  const automaticDirectory = isAutomaticLocalDirectory(selected?.cwd ?? "");
   const directoryName = automaticDirectory
-    ? (chinese ? "无绑定文件夹" : "No folder linked")
+    ? projectLabels.unassigned
     : selected?.cwd.split(/[\\/]/).filter(Boolean).at(-1) || labels.directory;
   const renderSessionActions = (entry: LocalSessionEntry, contextMenu: boolean) => {
     const Sub = contextMenu ? ContextMenuSub : DropdownMenuSub;
@@ -392,11 +415,12 @@ function LocalConversationFlow() {
             <div className="flex shrink-0 items-center gap-1">
               <LocalConversationImportButton key={`${scope.userId}:${scope.workspaceId}`} scope={scope} client={transport} projects={projects} chinese={chinese} onImported={() => { void qc.invalidateQueries({ queryKey: localConversationKey(scope, device.id) }); }} />
               <IconButton label={projectLabels.new} disabled={addingProject} aria-busy={addingProject} onClick={() => { void addProject(); }}>{addingProject ? <Loader2 className="animate-spin" /> : <FolderPlus />}</IconButton>
-              <IconButton label={labels.new} disabled={!providers.data?.some((entry) => entry.available)} disabledReason={labels.unavailable} onClick={() => create()}><Plus /></IconButton>
+              <IconButton label={labels.new} disabled={!canCreate} disabledReason={createDisabledReason} aria-busy={providers.isFetching || undefined} onClick={() => create()}><Plus /></IconButton>
             </div>
           </div>
           <div className="px-3 py-3"><div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input aria-label={labels.search} placeholder={labels.search} className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setSearch(""); }} /></div></div>
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto px-3 pb-2">
+            {providers.isError && <div role="status" aria-label={providerLabels.failed} className="flex items-center justify-between gap-2 px-3 py-1 text-caption text-muted-foreground"><span>{providerLabels.failed}</span><Button variant="ghost" size="xs" disabled={providers.isFetching} onClick={() => { void providers.refetch(); }}>{labels.retry}</Button></div>}
             {folderQuery.isError && <div role="status" className="flex items-center justify-between gap-2 px-3 py-1 text-caption text-muted-foreground"><span>{localProjectsRequireRestart(folderQuery.error) ? folderRestartMessage : projectLabels.folderLoadFailed}</span><Button variant="ghost" size="xs" onClick={() => { void folderQuery.refetch(); }}>{labels.retry}</Button></div>}
             {sessions.isPending ? <p role="status" className="p-4 text-body text-muted-foreground">{labels.loading}</p> : sessions.isError ? <div role="alert" className="p-4"><Button variant="outline" onClick={() => { void sessions.refetch(); }}>{labels.retry}</Button></div> : groups.length ? groups.map((group) => {
               const key = group.id ?? "unassigned";
@@ -408,7 +432,7 @@ function LocalConversationFlow() {
                     {expanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}<FolderOpen className="size-3.5 shrink-0" /><span className="truncate">{title}</span><span className="ml-auto text-micro tabular-nums text-faint-foreground">{group.sessions.length}</span>
                   </Button>
                   <div className="flex shrink-0 items-center">
-                    {!archived && (group.id === null || group.project) && <IconButton size="icon-xs" label={`${projectLabels.create}：${title}`} disabled={!providers.data?.some((entry) => entry.available)} onClick={() => create(group.id)}><Plus className="size-3.5" /></IconButton>}
+                    {!archived && (group.id === null || group.project) && <IconButton size="icon-xs" label={`${projectLabels.create}：${title}`} disabled={!canCreate} disabledReason={createDisabledReason} onClick={() => create(group.id)}><Plus className="size-3.5" /></IconButton>}
                     {group.id !== null && <DropdownMenu>
                       <DropdownMenuTrigger
                         // Activate on click; desktop accessibility presses may omit compatibility mouse events.

@@ -33,6 +33,7 @@ export function projectV2Conversation(
       occurredAtUnixMs: millis(message.createdAt),
       payload: {
         text: content, content,
+        ...(message.requestId ? { clientSubmitId: message.requestId } : {}),
         ...(message.attachmentIds.length ? {
           attachments: message.attachmentIds.map((attachmentId) => ({ attachmentId })),
           content: [{ type: "text", text: content }, ...message.attachmentIds.map((attachmentId) => ({ type: "image", attachmentId }))],

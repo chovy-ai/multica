@@ -1,4 +1,6 @@
 import { api } from "@multica/core/api";
+import { parseWithFallback } from "@multica/core/api/schema";
+import { z } from "zod";
 import type { AgentTask, Attachment } from "@multica/core/types";
 import { createAgentGuiParentService, type ParentServiceOptions } from "@multica/views/conversation-flow/service";
 import type { AgentGuiHostEvent, AgentGuiRpcMethod, AgentGuiRpcMethods, AgentGuiSession, AgentGuiSessionDetail, AgentGuiWorkspaceState } from "@multica/tutti-agent-gui-host/protocol";
@@ -245,6 +247,12 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       case "models.list": {
         const result = await client.request("GET", `/models?provider=${localProviderId(params.agentId)}${params.force ? "&force=true" : ""}`) as Record<string, unknown>;
         return { ...result, id: "local-models", runtime_id: params.agentId, status: "completed" };
+      }
+      case "session.compact": {
+        const result = await command(params.sessionId, { type: "compact", request_id: params.requestId });
+        const parsed = parseWithFallback<{ turn_id: string } | null>(result, z.object({ turn_id: z.string().min(1) }), null, { endpoint: "local-v2.compact" });
+        if (!parsed) throw new Error("Invalid context compaction response. Reload and retry.");
+        return { turnId: parsed.turn_id };
       }
       case "usage.read": {
         const usage = await client.request("GET", `/usage?provider=${localProviderId(params.agentId)}${params.sessionId ? `&conversation_id=${encodeURIComponent(params.sessionId)}` : ""}${params.force ? "&force=true" : ""}`) as {

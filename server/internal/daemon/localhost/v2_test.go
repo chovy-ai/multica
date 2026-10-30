@@ -90,6 +90,26 @@ func v2Headers(user string) http.Header {
 	return h
 }
 
+func TestV2CompactValidatesHistoryAndRequestIdentity(t *testing.T) {
+	t.Parallel()
+	srv, _ := newV2Server(t)
+	h := v2Headers("user-1")
+	status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "compact-empty", "provider": "claude"}, h)
+	if status != http.StatusCreated {
+		t.Fatalf("create = %d, %v", status, body)
+	}
+	path := "/local/v2/sessions/compact-empty/commands"
+	status, body = v2Do(t, srv, http.MethodPost, path, map[string]any{"type": "compact"}, h)
+	if status != http.StatusBadRequest {
+		t.Fatalf("missing request = %d, %v", status, body)
+	}
+	status, body = v2Do(t, srv, http.MethodPost, path, map[string]any{"type": "compact", "request_id": "compact-1"}, h)
+	apiError, _ := body["error"].(map[string]any)
+	if status != http.StatusConflict || apiError["kind"] != "compact_unavailable" {
+		t.Fatalf("empty history = %d, %v", status, body)
+	}
+}
+
 func v2Do(t *testing.T, srv *httptest.Server, method, path string, body any, header http.Header) (int, map[string]any) {
 	t.Helper()
 	var reader *bytes.Reader
