@@ -1,14 +1,15 @@
-// The p2p device registry the Desktop-managed daemon links devices through.
-// Builds bake it in with VITE_P2P_SERVER_URL; without it device links stay
-// off. A MULTICA_DAEMON_P2P_SERVER_URL already in the environment wins so a
-// developer can point one machine at a test registry.
+// The default registry and relay deployed by deploy-p2p.yml.
+const DEFAULT_P2P_SERVER_URL = "http://101.33.221.22:8090";
+
+// Runtime configuration wins over a build-time registry and the default.
+// Sharing this device's conversations still requires the Device link switch.
 export function p2pServerEnv(
   processEnv: NodeJS.ProcessEnv,
   buildUrl: string | undefined,
 ): NodeJS.ProcessEnv {
   if (processEnv.MULTICA_DAEMON_P2P_SERVER_URL?.trim()) return {};
-  const url = buildUrl?.trim();
-  return url ? { MULTICA_DAEMON_P2P_SERVER_URL: url } : {};
+  const url = buildUrl?.trim() || DEFAULT_P2P_SERVER_URL;
+  return { MULTICA_DAEMON_P2P_SERVER_URL: url };
 }
 
 export function buildP2PServerUrl(): string | undefined {
