@@ -128,8 +128,16 @@ host request 只保留需要人操作的请求。今后新增涉及机器数据�
 守护进程改动（`daemon/localhost/auth.go`、`v2.go`）：
 
 - 两个 token：现有主进程 token 不变；新增渲染进程 token（每次启动轮换，写入 profile，0600），只能访问 `/local/v2` 的会话、文件和 WS 接口，以及 `/local/devices`。
-- Origin：主进程 token 仍要求不带 Origin；渲染进程 token 只接受 Desktop 自己的 origin（生产环境 `loadFile` 为 `null`，开发环境为 dev server 地址，由 Desktop 启动守护进程时传入）。回环 Host 检查保留。
-- CORS：对白名单 origin 响应预检，允许 `Authorization`、`Content-Type`、`X-File-Name`、`X-Multica-*`、`Range`；WS 的 `CheckOrigin` 同样使用白名单。
+- Origin（2026-10-29 用 Electron 44.9.3 实测，窗口配置与 Desktop 相同：`sandbox: true`、`webSecurity: false`）：
+
+  | 请求 | 生产（`file://`） | 开发（`http://localhost:{port}`） |
+  | --- | --- | --- |
+  | `fetch` GET/POST（带 `Authorization`） | 不带 Origin，无预检 | 不带 Origin，无预检；`webSecurity: true` 时带 Origin 并先发预检 |
+  | WebSocket | `Origin: file://` | `Origin: http://localhost:{port}` |
+  | `<img src>` | 不带 Origin，也带不了请求头 | 同左 |
+
+  结论：HTTP 请求无法用 Origin 区分主进程和渲染进程，两者的权限只能靠两个 token 区分。渲染进程 token 接受「不带 Origin」、`file://` 和开发环境的 dev server 地址（由 Desktop 启动守护进程时传入）。主进程 token 仍要求不带 Origin。回环 Host 检查保留。
+- CORS：开发环境如果打开 `webSecurity`，需要对白名单 origin 响应预检，允许 `Authorization`、`Content-Type`、`X-File-Name`、`X-Multica-*`、`Range`。WS 的 `CheckOrigin` 使用同一个白名单，所以生产环境必须放行 `file://`。
 - 票据和签名：`ws-ticket` 一次性；`file-urls` 用守护进程内存中的 HMAC 密钥签名 `(scope, path, exp)`。
 
 Desktop 改动：
@@ -431,7 +439,7 @@ func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drai
 ### 主要风险
 
 - `ReverseProxy`、WebSocket 和 libp2p stream 半关闭的组合最容易出问题。第一个 PR 就用同一台机器的两个 profile，以 curl 和 websocat 验证 hello、WS 长连接、Range 读取和上传。
-- 前置改造中，WS 票据、签名 URL 和 CORS 要在打包后的 `file://` 页面上实测 Origin 的实际取值，开发环境和生产环境都要覆盖。
+- `renderer-web-preferences.ts` 计划以后恢复 `webSecurity` 并改用自定义协议加载页面。届时 Origin 会变成自定义协议的 origin，白名单要同步更新。
 
 ## 安全边界
 
