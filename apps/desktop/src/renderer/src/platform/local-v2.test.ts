@@ -56,13 +56,19 @@ describe("LocalV2ScopeClient", () => {
     expect(sent.at(-1)).toEqual({ version: 2, type: "unsubscribe", conversation_id: "c1" });
   });
 
-  it("tells listeners to reload when the connection drops", () => {
+  it("tells listeners to reload once the connection is back", () => {
     const { t } = transport();
     const client = new LocalV2ScopeClient(t, scope);
-    const listener = vi.fn();
+    const listener = vi.fn(), closed = vi.fn();
     client.subscribe("c1", 0, "g", listener);
+    const stopClosed = client.subscribe("c2", 0, "g", closed);
     client.connection(false);
-    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ conversation_id: "c1", status: "resubscribe" }));
+    // A reload while the daemon is down would fail and not be retried.
+    expect(listener).not.toHaveBeenCalled();
+    stopClosed();
+    client.connection(true);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ conversation_id: "c1", status: "resubscribe" }));
+    expect(closed).not.toHaveBeenCalled();
   });
 
   it("keeps the daemon's error kind across IPC", () => {

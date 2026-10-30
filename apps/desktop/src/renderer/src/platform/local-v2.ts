@@ -30,8 +30,8 @@ const SUMMARY_PAGES = 100;
  * One account and workspace of the local v2 API in this renderer. It keeps
  * the complete conversation list current through the scope subscription,
  * and shares one WebSocket subscription per conversation among its
- * listeners. Subscriptions do not survive a reconnect: listeners are told
- * to reload, and resubscribe from their new snapshot.
+ * listeners. Subscriptions do not survive a reconnect: once connected
+ * again, listeners are told to reload and resubscribe from a new snapshot.
  */
 export class LocalV2ScopeClient {
   private summaryMap = new Map<string, LocalV2Summary>();
@@ -41,6 +41,8 @@ export class LocalV2ScopeClient {
   private scopeSeq = 0;
   private summaryListeners = new Set<() => void>();
   private conversations = new Map<string, ConversationSubscription>();
+  /** Listeners whose subscriptions a disconnect dropped, reloaded on reconnect. */
+  private lost = new Map<string, Set<ConversationListener>>();
   private generation = "";
 
   constructor(private transport: LocalV2Transport, readonly scope: LocalV2Scope) {}
@@ -123,6 +125,7 @@ export class LocalV2ScopeClient {
     }
     subscription.listeners.add(listener);
     return () => {
+      this.lost.get(id)?.delete(listener);
       const current = this.conversations.get(id);
       if (!current?.listeners.delete(listener) || current.listeners.size) return;
       this.conversations.delete(id);
@@ -155,13 +158,25 @@ export class LocalV2ScopeClient {
     for (const listener of [...subscription.listeners]) listener(raw);
   }
 
-  /** A reconnect loses every subscription. */
+  /**
+   * A disconnect loses every subscription. Listeners reload once the daemon
+   * is back: a reload while it is down would fail and not be retried.
+   */
   connection(connected: boolean): void {
-    if (connected) { if (this.summaryLoad) this.reloadSummaries(); return; }
-    const lost = [...this.conversations.entries()];
-    this.conversations.clear();
-    for (const [id, subscription] of lost) {
-      for (const listener of subscription.listeners) listener({ version: LOCAL_V2_VERSION, type: "subscription.status", conversation_id: id, status: "resubscribe" });
+    if (!connected) {
+      for (const [id, subscription] of this.conversations) {
+        const lost = this.lost.get(id) ?? new Set();
+        for (const listener of subscription.listeners) lost.add(listener);
+        this.lost.set(id, lost);
+      }
+      this.conversations.clear();
+      return;
+    }
+    if (this.summaryLoad) this.reloadSummaries();
+    const lost = [...this.lost.entries()];
+    this.lost.clear();
+    for (const [id, listeners] of lost) {
+      for (const listener of listeners) listener({ version: LOCAL_V2_VERSION, type: "subscription.status", conversation_id: id, status: "resubscribe" });
     }
   }
 
