@@ -15,7 +15,7 @@ export interface LocalV2HostHandlers {
 }
 
 const daemonScope = z.object({ workspace_id: z.string(), user_id: z.string() });
-const settingsPayload = z.object({ operation: z.string().regex(/^settings_[a-z_]+$/), scope: daemonScope, input: z.record(z.string(), z.unknown()), impact: z.unknown().optional() });
+const settingsPayload = z.object({ operation: z.string().regex(/^settings_[a-z_]+$/), scope: daemonScope, input: z.record(z.string(), z.unknown()), impact: z.unknown().optional(), source: z.string().max(200).optional() });
 
 /**
  * The write a confirmed operation performs, built here from the operation
@@ -29,6 +29,35 @@ export function settingsApply(operation: string, scope: SettingsScope, input: Re
 }
 
 const HOST_TIMEOUT_MS = 90_000;
+
+/** Settings host operations that act on Desktop's window, not on the device. */
+const VIEW_SETTINGS = new Set(["settings_open", "settings_assert_scope", "settings_cancel", "settings_capabilities", "settings_refresh"]);
+
+/**
+ * Host requests from another device's agents. Settings confirmations and
+ * views happen here, with this Desktop's account, and Side control acts on
+ * that device's page here; this device's own settings and logs are not for
+ * another device.
+ */
+export function remoteHostRequests(handle: ReturnType<typeof localV2HostHandler>, deviceId: string, deviceName: () => Promise<string>): ReturnType<typeof localV2HostHandler> {
+  return async (scope, kind, payload) => {
+    if (kind === "settings.confirm") return handle(scope, kind, { ...payload, source: await deviceName().catch(() => deviceId) });
+    if (kind === "settings.host" && !VIEW_SETTINGS.has(String(payload.operation))) throw new SettingsOperationError("device_settings_elsewhere", "This setting can only be changed on the device itself");
+    if (kind === "developer_logs.export") throw new SettingsOperationError("unsupported_host_request", `Desktop cannot handle ${kind} for another device`);
+    if (kind === "side.control") return handle(scope, kind, { ...payload, deviceId });
+    return handle(scope, kind, payload);
+  };
+}
+
+/** Sends a path the user chose to the daemon of a device; only main may. */
+export function applyChosenPath(client: { request(scope: LocalConversationScope, method: string, path: string, body?: unknown, deviceId?: string): Promise<unknown> }, scope: LocalConversationScope, request: { purpose?: unknown; conversationId?: unknown }, path: string, deviceId: string): Promise<unknown> {
+  if (request?.purpose === "preview") return client.request(scope, "POST", "/preview/roots", { path }, deviceId);
+  if (request?.purpose === "folder_project") return client.request(scope, "POST", "/folder-projects", { path }, deviceId);
+  if (request?.purpose === "conversation_directory" && typeof request.conversationId === "string") {
+    return client.request(scope, "POST", `/sessions/${encodeURIComponent(request.conversationId)}/commands`, { type: "set_directory", cwd: path }, deviceId);
+  }
+  return Promise.reject(new Error("Invalid local conversation request"));
+}
 
 /**
  * Performs the daemon's v2 host requests, which the renderer receives on its

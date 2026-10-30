@@ -1225,6 +1225,16 @@
     "actions_aria": "{{url}} 的操作"
   },
   "desktop": {
+    "device_link": {
+      "title": "裝置互聯",
+      "allow": "允許其他裝置存取本機對話流",
+      "allow_description": "同一帳號的其他裝置可以查看本機對話、讀取對話中的檔案，並在本機執行智慧體。",
+      "confirm_title": "允許其他裝置存取本機？",
+      "confirm_description": "它們可以在本機執行智慧體並讀寫本機檔案。",
+      "cancel": "取消",
+      "confirm": "允許",
+      "save_failed": "無法變更裝置互聯，請重試。"
+    },
     "tabs": {
       "updates": "更新"
     },

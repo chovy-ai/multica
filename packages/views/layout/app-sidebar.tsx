@@ -433,9 +433,17 @@ interface AppSidebarProps {
   headerClassName?: string;
   /** Extra style for SidebarHeader */
   headerStyle?: React.CSSProperties;
+  /**
+   * Other devices whose conversations this one can use (Desktop's Device
+   * link). With any, the conversations entry splits into this device's and
+   * one per device.
+   */
+  conversationFlowDevices?: { peerId: string; name: string }[];
 }
 
-export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
+const NO_DEVICES: { peerId: string; name: string }[] = [];
+
+export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle, conversationFlowDevices = NO_DEVICES }: AppSidebarProps = {}) {
   const { t } = useT("layout");
   const { pathname, push } = useNavigation();
   const user = useAuthStore((s) => s.user);
@@ -780,6 +788,30 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                   const href = p[item.key]();
                   const Icon = routeIconForPath(href);
                   const isActive = isNavActive(pathname, href);
+                  if (item.key === "conversationFlow" && conversationFlowDevices.length > 0) {
+                    // Device routes live under the local one, so it must not claim them.
+                    const local = isActive && !pathname.startsWith(`${href}/devices/`);
+                    return [
+                      <SidebarMenuItem key={item.key}>
+                        <SidebarMenuButton isActive={local} render={<AppLink href={href} target="_blank" />} className={NAV_ITEM_CLASS_NAME}>
+                          <Icon />
+                          <span className="truncate">{t(($) => $.nav.conversation_flow_local)}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>,
+                      ...conversationFlowDevices.map((device) => {
+                        const deviceHref = p.conversationFlowDevice(device.peerId);
+                        const label = t(($) => $.nav.conversation_flow_device, { device: device.name });
+                        return (
+                          <SidebarMenuItem key={`device:${device.peerId}`}>
+                            <SidebarMenuButton isActive={isNavActive(pathname, deviceHref)} render={<AppLink href={deviceHref} target="_blank" />} className={NAV_ITEM_CLASS_NAME} title={label}>
+                              <Icon />
+                              <span className="truncate">{label}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      }),
+                    ];
+                  }
                   return (
                     <SidebarMenuItem key={item.key}>
                       <SidebarMenuButton

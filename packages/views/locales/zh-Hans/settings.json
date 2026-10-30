@@ -1225,6 +1225,16 @@
     "actions_aria": "{{url}} 的操作"
   },
   "desktop": {
+    "device_link": {
+      "title": "设备互联",
+      "allow": "允许其他设备访问本机对话流",
+      "allow_description": "同一账号的其他设备可以查看本机对话、读取对话中的文件，并在本机运行智能体。",
+      "confirm_title": "允许其他设备访问本机？",
+      "confirm_description": "它们可以在本机运行智能体并读写本机文件。",
+      "cancel": "取消",
+      "confirm": "允许",
+      "save_failed": "无法更改设备互联，请重试。"
+    },
     "tabs": {
       "updates": "更新"
     },

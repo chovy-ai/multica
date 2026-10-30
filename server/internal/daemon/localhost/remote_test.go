@@ -241,3 +241,31 @@ func TestV2ListsFoldersForRemotePickers(t *testing.T) {
 		t.Fatalf("relative = %d", status)
 	}
 }
+
+func TestV2PresenceKeepsARunAnotherDeviceStartedUntilItEnds(t *testing.T) {
+	t.Parallel()
+
+	local, _, v := newV2Fixture(t)
+	open := &atomic.Bool{}
+	open.Store(true)
+	remote := remoteServer(t, v, RemotePeer{ID: "peer-b", DeviceName: "MacBook"}, open)
+	if status, _ := v2Do(t, local, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-1", "provider": "claude"}, v2Headers("user-1")); status != http.StatusCreated {
+		t.Fatal("create")
+	}
+	localWS := dialWS(t, local.URL, v2Headers("user-1"))
+	_ = localWS.WriteJSON(map[string]any{"version": V2Version, "type": "subscribe_scope", "after_scope_seq": 0})
+	readUntil(t, localWS, func(m map[string]any) bool { return m["status"] == "subscribed" })
+
+	// The viewer sends without opening the conversation; the fixture's turn ends at once.
+	if status, body := v2Do(t, remote, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "send", "request_id": "r1", "text": "hi"}, remoteHeaders("viewer")); status != http.StatusAccepted {
+		t.Fatalf("send = %d %v", status, body)
+	}
+	started := readUntil(t, localWS, func(m map[string]any) bool { return m["type"] == "scope.presence" })
+	if devices, _ := started["devices"].([]any); len(devices) != 1 {
+		t.Fatalf("while running = %v", started)
+	}
+	ended := readUntil(t, localWS, func(m map[string]any) bool { return m["type"] == "scope.presence" })
+	if devices, _ := ended["devices"].([]any); len(devices) != 0 {
+		t.Fatalf("after the turn = %v", ended)
+	}
+}

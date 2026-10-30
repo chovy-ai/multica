@@ -1,9 +1,9 @@
-import { LOCAL_V2_VERSION, localV2UploadSchema, type LocalV2ClientMessage, type LocalV2RendererEndpoint, type LocalV2Scope, type LocalV2Transport } from "@multica/core/local-conversation/v2";
-import type { LocalHostAvailability } from "../../../shared/local-host-availability";
+import { LOCAL_V2_VERSION, localV2UploadSchema, type LocalV2ChooseRequest, type LocalV2ClientMessage, type LocalV2RendererEndpoint, type LocalV2Scope, type LocalV2Transport } from "@multica/core/local-conversation/v2";
+import type { LocalHostAvailability, LocalHostUnavailableReason } from "../../../shared/local-host-availability";
 import type { LocalV2Bridge } from "../../../shared/local-v2-bridge";
 
 /** Error kinds that say why local conversations cannot be used at all. */
-const BLOCKING = new Set(["daemon_offline", "not_signed_in", "account_mismatch"]);
+const BLOCKING = new Set(["daemon_offline", "not_signed_in", "account_mismatch", "device_unreachable", "device_link_off", "device_unknown", "api_url_mismatch"]);
 const RECONNECT_MIN_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -22,6 +22,10 @@ interface Socket {
 
 export interface DirectLocalV2Options {
   bridge: LocalV2Bridge;
+  /** "local", or the peer ID of another device reached over Device link. */
+  deviceId?: string;
+  /** Shows a folder picker for another device; that device has no OS picker here. */
+  chooseRemote?: (scope: LocalV2Scope, request: LocalV2ChooseRequest) => Promise<unknown>;
   WebSocket?: typeof WebSocket;
   fetch?: typeof fetch;
 }
@@ -44,10 +48,17 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   private probeTimer?: ReturnType<typeof setInterval>;
   private readonly WS: typeof WebSocket;
   private readonly fetch: typeof fetch;
+  readonly deviceId: string;
+  /** Another device's API sits under this daemon's /local/devices/{peer}. */
+  private readonly basePath: string;
+  /** This client, so the daemon sends a conversation's host requests back here, also after a reconnect. */
+  private readonly clientId = crypto.randomUUID();
 
   constructor(private options: DirectLocalV2Options) {
     this.WS = options.WebSocket ?? WebSocket;
     this.fetch = options.fetch ?? fetch.bind(globalThis);
+    this.deviceId = options.deviceId ?? "local";
+    this.basePath = this.deviceId === "local" ? "" : `/local/devices/${encodeURIComponent(this.deviceId)}`;
   }
 
   private endpoint(refresh = false): Promise<LocalV2RendererEndpoint> {
@@ -59,10 +70,10 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     return this.endpointLoad;
   }
 
-  private url(endpoint: LocalV2RendererEndpoint, path: string) { return `http://${endpoint.base}/local/v2${path}`; }
+  private url(endpoint: LocalV2RendererEndpoint, path: string) { return `http://${endpoint.base}${this.basePath}/local/v2${path}`; }
 
   private headers(endpoint: LocalV2RendererEndpoint, scope: LocalV2Scope): Record<string, string> {
-    return { Authorization: `Bearer ${endpoint.token}`, "X-Multica-API-Origin": endpoint.apiUrl, "X-Multica-User-ID": scope.userId, "X-Workspace-ID": scope.workspaceId };
+    return { Authorization: `Bearer ${endpoint.token}`, "X-Multica-API-Origin": endpoint.apiUrl, "X-Multica-User-ID": scope.userId, "X-Workspace-ID": scope.workspaceId, "X-Multica-Client-ID": this.clientId };
   }
 
   // --- availability ---
@@ -96,15 +107,21 @@ export class DirectLocalV2Transport implements LocalV2Transport {
       response = await this.fetch(this.url(endpoint, "/hello"), { headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(5000) });
     } catch { this.report({ state: "unavailable", reason: "daemon_offline" }); return; }
     if (response.status === 404) { this.report({ state: "unavailable", reason: "unsupported" }); return; }
-    if (!response.ok) { this.report({ state: "unavailable", reason: "daemon_offline" }); return; }
+    if (!response.ok) {
+      const kind = (await response.json().catch(() => null) as { error?: { kind?: unknown } } | null)?.error?.kind;
+      this.report({ state: "unavailable", reason: typeof kind === "string" && BLOCKING.has(kind) ? kind as LocalHostUnavailableReason : "daemon_offline" });
+      return;
+    }
     const hello = await response.json().catch(() => null) as { version?: unknown } | null;
-    this.report(hello?.version === LOCAL_V2_VERSION ? { state: "connected" } : { state: "unavailable", reason: "incompatible" });
+    const capabilities = Array.isArray((hello as { capabilities?: unknown } | null)?.capabilities) ? (hello as { capabilities: unknown[] }).capabilities : [];
+    const compatible = hello?.version === LOCAL_V2_VERSION && (this.deviceId === "local" || capabilities.includes("device-link"));
+    this.report(compatible ? { state: "connected" } : { state: "unavailable", reason: "incompatible" });
   }
 
   private outcome(kind: string | null) {
     if (kind === null) this.report({ state: "connected" });
     else if (kind === "draining") this.report({ state: "updating" });
-    else if (BLOCKING.has(kind)) this.report({ state: "unavailable", reason: kind as "daemon_offline" | "not_signed_in" | "account_mismatch" });
+    else if (BLOCKING.has(kind)) this.report({ state: "unavailable", reason: kind as LocalHostUnavailableReason });
   }
 
   // --- requests ---
@@ -164,7 +181,29 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     return `${this.url(endpoint, path)}${path.includes("?") ? "&" : "?"}${params}`;
   }
 
-  choose(scope: LocalV2Scope, request: Parameters<LocalV2Bridge["choose"]>[1]) { return this.options.bridge.choose(scope, request); }
+  choose(scope: LocalV2Scope, request: LocalV2ChooseRequest) {
+    if (this.deviceId === "local") return this.options.bridge.choose(scope, request);
+    if (!this.options.chooseRemote) return Promise.reject(failure("unsupported", "Choose a folder on this device"));
+    return this.options.chooseRemote(scope, request);
+  }
+
+  // --- this device's Device link (local transport only) ---
+
+  private async own(method: string, path: string, body?: unknown): Promise<unknown> {
+    const endpoint = await this.endpoint();
+    const response = await this.fetch(`http://${endpoint.base}${path}`, { method, headers: { Authorization: `Bearer ${endpoint.token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+    const value: unknown = await response.json().catch(() => null);
+    if (!response.ok) throw failure(`http_${response.status}`, "The local daemon refused the request");
+    return value;
+  }
+
+  /** The account's other devices that are connected and share their conversations. */
+  devices(): Promise<unknown> { return this.own("GET", "/local/devices"); }
+
+  /** Whether this device shares its conversations, and whether it can. */
+  deviceLink(): Promise<unknown> { return this.own("GET", "/local/device-link"); }
+
+  setDeviceLink(enabled: boolean): Promise<unknown> { return this.own("PUT", "/local/device-link", { enabled }); }
 
   // --- WebSocket ---
 
@@ -195,7 +234,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
       try {
         const { ticket } = await this.json(scope, "POST", "/ws-ticket") as { ticket: string };
         const endpoint = await this.endpoint();
-        const ws = new this.WS(`ws://${endpoint.base}/local/v2/ws?${new URLSearchParams({ ticket })}`);
+        const ws = new this.WS(`ws://${endpoint.base}${this.basePath}/local/v2/ws?${new URLSearchParams({ ticket })}`);
         await new Promise<void>((resolve, reject) => {
           ws.addEventListener("open", () => resolve(), { once: true });
           ws.addEventListener("error", () => reject(failure("daemon_offline", "Start the local daemon to use local conversations")), { once: true });
@@ -231,7 +270,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   private async answer(scope: LocalV2Scope, ws: WebSocket, requestId: string, kind: string, payload: Record<string, unknown>) {
     let reply: Record<string, unknown>;
     try {
-      reply = { result: (await this.options.bridge.hostRequest(scope, kind, payload)) ?? null };
+      reply = { result: (await this.options.bridge.hostRequest(this.deviceId, scope, kind, payload)) ?? null };
     } catch (error) {
       const text = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : String(error);
       const match = /^([a-z][a-z0-9_]*): ([\s\S]*)$/.exec(text);
@@ -259,9 +298,22 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   }
 }
 
-let shared: DirectLocalV2Transport | undefined;
+const transports = new Map<string, DirectLocalV2Transport>();
+let remoteChooser: ((deviceId: string, scope: LocalV2Scope, request: LocalV2ChooseRequest) => Promise<unknown>) | undefined;
 
-/** This window's transport to the local daemon. */
-export function localV2Transport(): DirectLocalV2Transport {
-  return shared ??= new DirectLocalV2Transport({ bridge: window.desktopAPI.localV2 });
+/** Sets how folders are chosen on other devices; the conversation page provides its picker. */
+export function setRemoteFolderChooser(choose: typeof remoteChooser) { remoteChooser = choose; }
+
+/**
+ * This window's transport to the conversations of a device: this one by
+ * default, or another device of the account through this daemon.
+ */
+export function localV2Transport(deviceId = "local"): DirectLocalV2Transport {
+  let transport = transports.get(deviceId);
+  if (!transport) {
+    transport = new DirectLocalV2Transport({ bridge: window.desktopAPI.localV2, deviceId,
+      chooseRemote: (scope, request) => remoteChooser ? remoteChooser(deviceId, scope, request) : Promise.reject(new Error("unsupported: Open the device's conversations to choose a folder")) });
+    transports.set(deviceId, transport);
+  }
+  return transport;
 }

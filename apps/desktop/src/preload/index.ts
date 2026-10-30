@@ -104,7 +104,7 @@ function subscribeToMainRendererChannel<T>(
 
 const desktopAPI = {
   localFileContextMenu: {
-    show: (scope, input) => ipcRenderer.invoke("local-file:context-menu", scope, input),
+    show: (scope, input, deviceId) => ipcRenderer.invoke("local-file:context-menu", scope, input, deviceId),
   } satisfies import("../shared/local-file-context-menu").LocalFileContextMenuClient,
   terminalCli: {
     status: () => ipcRenderer.invoke("terminal-cli:status"),
@@ -138,7 +138,8 @@ const desktopAPI = {
   localV2: {
     endpoint: () => ipcRenderer.invoke("local-v2:endpoint"),
     choose: (scope, request) => ipcRenderer.invoke("local-v2:choose", scope, request),
-    hostRequest: (scope, kind, payload) => ipcRenderer.invoke("local-v2:host-request", scope, kind, payload),
+    hostRequest: (deviceId, scope, kind, payload) => ipcRenderer.invoke("local-v2:host-request", deviceId, scope, kind, payload),
+    chooseRemote: (deviceId, scope, request, path) => ipcRenderer.invoke("local-v2:choose-remote", deviceId, scope, request, path),
   } satisfies LocalV2Bridge,
   /** App version + normalized OS. Read once at preload time so the renderer
    *  can use it synchronously when initializing the API client. */

@@ -50,7 +50,8 @@ export function createDesktopSettingsHost(getWindow: () => BrowserWindow | null,
       signal.throwIfAborted();
       const description = SETTINGS_OPERATIONS.find((entry) => entry.name === request.operation)?.description ?? "Apply this settings operation?";
       const details = JSON.stringify({ workspace_id: request.scope.workspaceId, target: request.input.id ?? request.input.project_id ?? request.input.email, impact: publicSettingsValue(request.impact), changes: request.input }, null, 2);
-      const detail = details.length > 12000 ? `${details.slice(0, 12000)}\n\nAdditional details were truncated. Cancel to inspect the full requested change first.` : details;
+      const truncated = details.length > 12000 ? `${details.slice(0, 12000)}\n\nAdditional details were truncated. Cancel to inspect the full requested change first.` : details;
+      const detail = request.source ? `Requested by an agent on ${request.source}.\n\n${truncated}` : truncated;
       const response = await dialog.showMessageBox(window, { type: "question", title: "Multica Settings", message: description, detail, buttons: ["Cancel", "Apply"], defaultId: 0, cancelId: 0, noLink: true, signal });
       signal.throwIfAborted();
       if (generation !== getGeneration()) throw new SettingsOperationError("account_changed", "The account changed before confirmation");

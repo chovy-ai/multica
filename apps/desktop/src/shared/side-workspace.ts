@@ -15,6 +15,8 @@ export const sideWorkspaceControlSchema = z.object({
   op: z.enum(["open", "select", "close", "browser", "release"]),
   scope: z.object({ userId: id, workspaceId: id }).strict(), conversationId: id,
   turnId: id.optional(), tabId: id.optional(), requestId: id.optional(), select: z.boolean().optional(),
+  // Set by main for another device's conversation: "local" or absent is this device.
+  deviceId: z.string().min(1).max(200).optional(),
   keep: z.boolean().optional(),
   tab: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("web"), url: z.string().max(8192) }).strict(),
@@ -32,6 +34,6 @@ export interface SideWorkspaceClient {
   onCommand(listener: (command: SideWorkspaceCommand) => void): () => void;
   ack(reply: SideWorkspaceAck): Promise<void>;
   /** Makes the Side browser follow the layout the daemon stored for a conversation. */
-  reconcile(scope: { userId: string; workspaceId: string }, conversationId: string): Promise<void>;
+  reconcile(scope: { userId: string; workspaceId: string }, conversationId: string, deviceId: string): Promise<void>;
   onActivity(listener: (activity: { conversationId: string; tabId: string; turnId?: string; active: boolean }) => void): () => void;
 }

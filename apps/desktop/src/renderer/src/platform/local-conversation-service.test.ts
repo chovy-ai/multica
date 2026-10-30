@@ -38,11 +38,11 @@ function transport(): LocalV2Transport {
   };
 }
 
-function setup(options: { getSelectionIntent?: () => string } = {}) {
+function setup(options: { getSelectionIntent?: () => string } = {}, deviceId?: string) {
   const callbacks = { onLocalSelect: vi.fn(), onOpenSide: vi.fn(), onShowMessage: vi.fn() };
   const qc = new QueryClient();
   const service = createLocalConversationParentService({ queryClient: qc, workspaceId: "ws", workspaceSlug: "workspace", userId: "user", isCurrent: () => true, resolveAvatar: (value) => value,
-    onSelectSession: vi.fn(), onOpenTask: vi.fn(), ...callbacks, ...options }, transport());
+    onSelectSession: vi.fn(), onOpenTask: vi.fn(), ...callbacks, ...options }, Object.assign(transport(), deviceId ? { deviceId } : {}));
   disposers.push(() => { service.dispose(); qc.clear(); });
   return { service, ...callbacks };
 }
@@ -178,5 +178,17 @@ describe("local conversation parent service over v2", () => {
   it("refuses to delete local history from the GUI", async () => {
     const { service } = setup();
     await expect(service.request("session.delete", { sessionId: "c1" } as never)).rejects.toThrow("Archive local conversations");
+  });
+});
+
+describe("file menu", () => {
+  it("names the device whose conversation the file belongs to", async () => {
+    const show = vi.fn(async () => undefined);
+    vi.stubGlobal("window", { desktopAPI: { localFileContextMenu: { show } } });
+    const params = { sessionId: "c1", url: "file:///repo/a.ts", hasSelection: false };
+    await setup({}, "peer-1").service.request("host.showFileContextMenu", params as never);
+    await setup().service.request("host.showFileContextMenu", params as never);
+    expect(show.mock.calls.map((call) => (call as unknown[])[2])).toEqual(["peer-1", "local"]);
+    vi.unstubAllGlobals();
   });
 });

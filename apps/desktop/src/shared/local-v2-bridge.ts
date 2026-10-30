@@ -7,6 +7,11 @@ export interface LocalV2Bridge {
   endpoint(): Promise<LocalV2RendererEndpoint>;
   /** Shows the OS picker and applies the chosen path; null when cancelled. */
   choose(scope: LocalConversationScope, request: LocalV2ChooseRequest): Promise<unknown>;
-  /** Performs a daemon host request that needs main: dialogs, Settings, the Side browser, log files. */
-  hostRequest(scope: LocalConversationScope, kind: string, payload: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Performs a daemon host request that needs main: dialogs, Settings, the
+   * Side browser, log files. deviceId is "local" or the device that asked.
+   */
+  hostRequest(deviceId: string, scope: LocalConversationScope, kind: string, payload: Record<string, unknown>): Promise<unknown>;
+  /** Applies a folder the user chose on another device's picker; main alone may widen what it reads. */
+  chooseRemote(deviceId: string, scope: LocalConversationScope, request: LocalV2ChooseRequest, path: string): Promise<unknown>;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore, useMemo } from "react";
 import { motion } from "motion/react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
@@ -36,6 +36,7 @@ import { TabBar } from "./tab-bar";
 import { TabContent } from "./tab-content";
 import { WindowOverlay } from "./window-overlay";
 import { WindowToolbar, WINDOW_TOOLBAR_CLEARANCE } from "./window-toolbar";
+import { deviceName, useLinkedDevices } from "../platform/linked-devices";
 
 const TOP_BAR_HEIGHT_CLASS = "h-10";
 const toolbarMotion = {
@@ -239,6 +240,8 @@ export function DesktopShell() {
     currentSlug && workspaces.some((w) => w.slug === currentSlug)
       ? currentSlug
       : null;
+  const devices = useLinkedDevices(!!slug);
+  const linkedDevices = useMemo(() => devices.map((device) => ({ peerId: device.peer_id, name: deviceName(devices, device.peer_id) })), [devices]);
 
   return (
     <DesktopNavigationProvider>
@@ -271,7 +274,7 @@ export function DesktopShell() {
           >
             {slug && <GlobalShortcuts />}
             {slug && <WindowToolbar />}
-            {slug && <AppSidebar topSlot={<SidebarTopSpacer />} searchSlot={<SearchTrigger />} />}
+            {slug && <AppSidebar topSlot={<SidebarTopSpacer />} searchSlot={<SearchTrigger />} conversationFlowDevices={linkedDevices} />}
             {/* Right side: header + content container */}
             <div className="flex flex-1 min-w-0 flex-col">
               <MainTopBar sidebarMounted={Boolean(slug)} />

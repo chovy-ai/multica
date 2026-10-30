@@ -205,6 +205,12 @@ func (s *Service) turnEnded(conversationID, turnID string) {
 	if len(ids) > 0 {
 		s.cancelQuestions(conversationID, ids)
 	}
+	s.mu.Lock()
+	ended := s.turnEnd
+	s.mu.Unlock()
+	if ended != nil {
+		ended(conversationID)
+	}
 	go func() {
 		s.dispatchQueue(conversationID)
 		s.generateTitle(conversationID)

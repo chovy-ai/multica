@@ -1,7 +1,8 @@
 package localhost
 
 // Presence tells a scope's connections which other devices use each of its
-// conversations: a remote device counts while it has the conversation open.
+// conversations: a remote device counts while it has the conversation open
+// or a turn it started is running.
 
 func presenceMessage(conversationID string, devices []map[string]string) map[string]any {
 	return map[string]any{"version": V2Version, "type": "scope.presence", "conversation_id": conversationID, "devices": devices}
@@ -13,7 +14,7 @@ func (v *V2) devicesFor(scopeID int64, conversationID, receiver string) []map[st
 	devices := []map[string]string{}
 	seen := map[string]bool{}
 	for key, peer := range v.presence[scopeID][conversationID] {
-		if key == receiver || seen[peer.ID] {
+		if key == receiver || key == runKey+receiver || seen[peer.ID] {
 			continue
 		}
 		seen[peer.ID] = true
@@ -22,22 +23,61 @@ func (v *V2) devicesFor(scopeID int64, conversationID, receiver string) []map[st
 	return devices
 }
 
-// setPresence records that c opened or closed a conversation and tells the
-// scope's other connections when the devices using it changed.
+// setPresence records that c opened or closed a conversation.
 func (v *V2) setPresence(c *wsConn, conversationID string, open bool) {
 	if c.caller.kind != callerRemote || c.caller.clientKey == "" {
 		return
 	}
-	// Listed before taking v.mu: hosts.mu is taken before v.mu elsewhere.
-	receivers := v.scopeListeners(c.scopeID)
+	v.mark(c.scopeID, conversationID, c.caller.clientKey, c.caller, open)
+}
+
+// runKey marks a turn a remote client started, which keeps its device
+// using the conversation until the turn ends even with the page closed.
+const runKey = "run/"
+
+// startedRun records, or withdraws, a turn another device starts in a
+// conversation.
+func (v *V2) startedRun(scopeID int64, conversationID string, c caller, started bool) {
+	if c.kind != callerRemote || c.clientKey == "" {
+		return
+	}
+	v.mark(scopeID, conversationID, runKey+c.clientKey, c, started)
+}
+
+// turnEnded clears the runs other devices started in the conversation.
+func (v *V2) turnEnded(conversationID string) {
+	type run struct {
+		scopeID int64
+		key     string
+	}
+	var ended []run
 	v.mu.Lock()
-	byConv := v.presence[c.scopeID]
+	for scopeID, byConv := range v.presence {
+		for key := range byConv[conversationID] {
+			if len(key) > len(runKey) && key[:len(runKey)] == runKey {
+				ended = append(ended, run{scopeID, key})
+			}
+		}
+	}
+	v.mu.Unlock()
+	for _, r := range ended {
+		v.mark(r.scopeID, conversationID, r.key, caller{}, false)
+	}
+}
+
+// mark records whether key uses a conversation and tells the scope's
+// connections when the devices using it changed.
+func (v *V2) mark(scopeID int64, conversationID, key string, c caller, open bool) {
+	// Listed before taking v.mu: hosts.mu is taken before v.mu elsewhere.
+	receivers := v.scopeListeners(scopeID)
+	v.mu.Lock()
+	byConv := v.presence[scopeID]
 	if byConv == nil {
 		byConv = map[string]map[string]RemotePeer{}
-		v.presence[c.scopeID] = byConv
+		v.presence[scopeID] = byConv
 	}
 	clients := byConv[conversationID]
-	_, had := clients[c.caller.clientKey]
+	_, had := clients[key]
 	if open == had {
 		v.mu.Unlock()
 		return
@@ -47,16 +87,16 @@ func (v *V2) setPresence(c *wsConn, conversationID string, open bool) {
 			clients = map[string]RemotePeer{}
 			byConv[conversationID] = clients
 		}
-		clients[c.caller.clientKey] = RemotePeer{ID: c.caller.peer, DeviceName: c.caller.deviceName}
+		clients[key] = RemotePeer{ID: c.peer, DeviceName: c.deviceName}
 	} else {
-		delete(clients, c.caller.clientKey)
+		delete(clients, key)
 		if len(clients) == 0 {
 			delete(byConv, conversationID)
 		}
 	}
 	messages := make([]map[string]any, len(receivers))
 	for i, r := range receivers {
-		messages[i] = presenceMessage(conversationID, v.devicesFor(c.scopeID, conversationID, r.caller.clientKey))
+		messages[i] = presenceMessage(conversationID, v.devicesFor(scopeID, conversationID, r.caller.clientKey))
 	}
 	v.mu.Unlock()
 	for i, r := range receivers {

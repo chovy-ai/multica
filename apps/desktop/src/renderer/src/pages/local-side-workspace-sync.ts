@@ -9,7 +9,10 @@ export type SideTab = { id: string; kind: "side"; sessionId: string }
   | { id: string; kind: "web"; url: string; title?: string; loading?: boolean; openedBy?: "user" | "agent"; turnId?: string; keep?: boolean };
 export type SideLayout = { tabs: SideTab[]; selected: string | null; open: boolean };
 let revision = 0;
-export function sideLayoutKey(scope: LocalConversationScope, id: string) { return `multica-side-workspace:${scope.userId}:${scope.workspaceId}:session:${id}`; }
+/** Where a conversation's Side layout is kept; another device's conversations are kept apart. */
+export function sideLayoutKey(scope: LocalConversationScope, id: string, deviceId = "local") {
+  return `multica-side-workspace:${scope.userId}:${scope.workspaceId}:${deviceId === "local" ? "" : `device:${deviceId}:`}session:${id}`;
+}
 export function sideSnapshot(conversationId: string, layout: SideLayout, visible: boolean): SideWorkspaceSnapshot {
   revision = Math.max(revision + 1, Date.now() * 1000);
   return sideWorkspaceSyncSchema.parse({ conversationId, revision, panelOpen: layout.open, visible, selectedTabId: layout.selected,
@@ -20,12 +23,12 @@ export function sideSnapshot(conversationId: string, layout: SideLayout, visible
 }
 
 const mountedScopes = new Map<string, number>();
-const scopeKey = (scope: LocalConversationScope) => JSON.stringify([scope.userId, scope.workspaceId]);
-export function registerSideWorkspaceView(scope: LocalConversationScope) {
-  const key = scopeKey(scope); mountedScopes.set(key, (mountedScopes.get(key) ?? 0) + 1);
+const scopeKey = (scope: LocalConversationScope, deviceId: string) => JSON.stringify([deviceId, scope.userId, scope.workspaceId]);
+export function registerSideWorkspaceView(scope: LocalConversationScope, deviceId = "local") {
+  const key = scopeKey(scope, deviceId); mountedScopes.set(key, (mountedScopes.get(key) ?? 0) + 1);
   return () => { const count = (mountedScopes.get(key) ?? 1) - 1; if (count) mountedScopes.set(key, count); else mountedScopes.delete(key); };
 }
-export function hasSideWorkspaceView(scope: LocalConversationScope) { return mountedScopes.has(scopeKey(scope)); }
+export function hasSideWorkspaceView(scope: LocalConversationScope, deviceId = "local") { return mountedScopes.has(scopeKey(scope, deviceId)); }
 export function readSideLayout(key: string): SideLayout {
   try {
     const value = JSON.parse(localStorage.getItem(key) || "null");
@@ -38,7 +41,7 @@ export function readSideLayout(key: string): SideLayout {
 export async function syncSideWorkspace(transport: LocalV2Transport, scope: LocalConversationScope, snapshot: SideWorkspaceSnapshot) {
   const result = await localV2(transport, scope).command(snapshot.conversationId, { type: "side_workspace_sync", workspace: snapshot }) as { revision?: unknown } | null;
   // The browser tabs follow the layout the daemon accepted.
-  if (result?.revision === snapshot.revision) await window.desktopAPI.sideWorkspace?.reconcile(scope, snapshot.conversationId);
+  if (result?.revision === snapshot.revision) await window.desktopAPI.sideWorkspace?.reconcile(scope, snapshot.conversationId, (transport as { deviceId?: string }).deviceId ?? "local");
 }
 export async function prepareSideTab(request: SideWorkspaceControlRequest, transport: LocalV2Transport): Promise<SideTab | undefined> {
   if (request.op !== "open") return;

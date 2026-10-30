@@ -9,11 +9,13 @@ import type { LocalConversationScope, LocalPreviewLocation } from "@multica/core
 import type { WebPreviewState, WebPreviewCommand } from "../../../shared/resource-preview";
 import { ChromeProfileImport } from "./chrome-profile-import";
 import { localV2Preview } from "../platform/local-v2-preview";
-import { localV2Transport } from "../platform/local-v2-transport";
+import { useLocalDevice } from "../platform/local-device";
+import { isLoopbackUrl } from "../../../shared/loopback-url";
 
 export function PreviewFolder({ location, selected, scope, sessionId, onSelect, chinese, defaultExpanded = true }: { location: LocalPreviewLocation; selected?: string; scope: LocalConversationScope; sessionId?: string; onSelect: (file: LocalPreviewLocation) => void; chinese: boolean; defaultExpanded?: boolean }) {
+  const device = useLocalDevice();
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const query = useQuery({ queryKey: ["resource-folder", scope.userId, scope.workspaceId, location.root, location.path], queryFn: () => localV2Preview(localV2Transport(), scope).list(location, sessionId), enabled: expanded });
+  const query = useQuery({ queryKey: ["resource-folder", device.id, scope.userId, scope.workspaceId, location.root, location.path], queryFn: () => localV2Preview(device.transport, scope).list(location, sessionId), enabled: expanded });
   return <div role="group" className="min-w-0">
     <Button variant="ghost" size="sm" className="w-full justify-start" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}<Folder className="size-4 shrink-0" /><span className="truncate">{location.name}</span></Button>
     {expanded && <div className="ml-3 border-l pl-1">{query.isPending ? <Loader2 className="m-2 size-4 animate-spin" /> : query.isError ? <Button variant="ghost" size="xs" onClick={() => { void query.refetch(); }}>{chinese ? "重试" : "Retry"}</Button> : query.data.map((entry) => entry.kind === "directory" ? <PreviewFolder defaultExpanded={false} key={entry.path} location={entry} selected={selected} scope={scope} sessionId={sessionId} chinese={chinese} onSelect={onSelect} /> : <Button key={entry.path} variant="ghost" size="sm" className={`w-full justify-start ${selected === entry.path ? "bg-surface-selected hover:bg-surface-selected" : ""}`} title={entry.name} onClick={() => onSelect(entry)}><File className="size-4 shrink-0" /><span className="truncate">{entry.name}</span></Button>)}{query.data?.length === 1000 && <p className="p-2 text-caption text-muted-foreground">{chinese ? "仅显示前 1000 项" : "Showing the first 1,000 items"}</p>}</div>}
@@ -21,8 +23,9 @@ export function PreviewFolder({ location, selected, scope, sessionId, onSelect, 
 }
 
 export function LocalFilePreview({ location, scope, sessionId, line, chinese }: { location: LocalPreviewLocation; scope: LocalConversationScope; sessionId?: string; line?: number; chinese: boolean }) {
+  const device = useLocalDevice();
   const [source, setSource] = useState(false);
-  const query = useQuery({ queryKey: ["resource-file", scope.userId, scope.workspaceId, location.root, location.path], queryFn: () => localV2Preview(localV2Transport(), scope).read(location, sessionId) });
+  const query = useQuery({ queryKey: ["resource-file", device.id, scope.userId, scope.workspaceId, location.root, location.path], queryFn: () => localV2Preview(device.transport, scope).read(location, sessionId) });
   const highlight = useRef<HTMLSpanElement>(null);
   useEffect(() => { highlight.current?.scrollIntoView({ block: "center" }); }, [line, query.data]);
   const file = query.data;
@@ -38,11 +41,16 @@ export function LocalFilePreview({ location, scope, sessionId, line, chinese }: 
 export function WebResourcePreview({ id, url, scope: owner, active, chinese, onChange, onReference }: { id: string; url: string; scope: LocalConversationScope; active: boolean; chinese: boolean; onChange: (url: string, title?: string, loading?: boolean) => void; onReference: (url: string, title: string) => void }) {
   const scope = useMemo(() => ({ userId: owner.userId, workspaceId: owner.workspaceId }), [owner.userId, owner.workspaceId]);
   const client = window.desktopAPI.resourcePreview;
+  const device = useLocalDevice();
+  // Another device's local address would open this machine's server.
+  const elsewhere = (value: string) => device.id !== "local" && isLoopbackUrl(value);
+  const elsewhereMessage = chinese ? `这是 ${device.name} 上的本地地址` : `This is a local address on ${device.name}`;
   const [state, setState] = useState<WebPreviewState>({ id, url, title: url, loading: true, canGoBack: false, canGoForward: false });
   const [address, setAddress] = useState(url); const [error, setError] = useState("");
   const content = useRef<HTMLDivElement>(null); const alive = useRef(true);
-  const current = useRef({ url, active, onChange }); current.current = { url, active, onChange };
+  const current = useRef({ url, active, onChange, elsewhere: false }); current.current = { url, active, onChange, elsewhere: elsewhere(url) };
   const command = async (value: Omit<WebPreviewCommand, "id">) => {
+    if ("url" in value && typeof value.url === "string" && elsewhere(value.url)) { setError(elsewhereMessage); return; }
     try { const result = await client.request(scope, { ...value, id }); if (result && alive.current) setState(result); }
     catch (error) { if (alive.current) setError(error instanceof Error ? error.message : String(error)); }
   };
@@ -60,7 +68,7 @@ export function WebResourcePreview({ id, url, scope: owner, active, chinese, onC
       frame = requestAnimationFrame(() => {
         const box = element.getBoundingClientRect();
         const overlay = document.querySelector('[role="dialog"],[role="menu"],[role="listbox"],[data-side-dragging="true"]');
-        if (!current.current.active || overlay || document.visibilityState !== "visible") { void client.request(scope, { id, action: "hide" }).catch(() => {}); return; }
+        if (!current.current.active || overlay || document.visibilityState !== "visible" || current.current.elsewhere) { void client.request(scope, { id, action: "hide" }).catch(() => {}); return; }
         void client.request(scope, { id, action: "show", url: current.current.url, bounds: { x: Math.max(0, box.x), y: Math.max(0, box.y), width: box.width, height: box.height } }).then((value) => { if (value && alive.current) setState(value); }).catch((error: unknown) => { if (alive.current) setError(error instanceof Error ? error.message : String(error)); });
       });
     };
@@ -74,7 +82,7 @@ export function WebResourcePreview({ id, url, scope: owner, active, chinese, onC
       <IconButton label={chinese ? "网页后退" : "Back webpage"} disabled={!state.canGoBack} onClick={() => { void command({ action: "back" }); }}><ArrowLeft /></IconButton><IconButton label={chinese ? "网页前进" : "Forward webpage"} disabled={!state.canGoForward} onClick={() => { void command({ action: "forward" }); }}><ArrowRight /></IconButton><IconButton label={chinese ? "刷新网页" : "Reload webpage"} onClick={() => { setError(""); void command({ action: "reload" }); }}>{state.loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}</IconButton><Input aria-label={chinese ? "网页地址" : "Webpage address"} value={address} onChange={(event) => setAddress(event.target.value)} className="min-w-0 flex-1 text-caption" /><IconButton label={chinese ? "在浏览器中打开" : "Open in browser"} onClick={() => { void window.desktopAPI.openExternal(state.url || url); }}><ExternalLink /></IconButton>
     </form>
     <div ref={content} className="relative min-h-0 flex-1 bg-background" data-web-preview={id}>
-      {error || state.error ? <div role="alert" className="p-4 text-body"><p>{error || state.error}</p><Button className="mt-3" variant="outline" size="sm" onClick={() => { setError(""); void command({ action: "reload" }); }}>{chinese ? "重试" : "Retry"}</Button></div> : state.loading ? <div role="status" className="flex h-full items-center justify-center gap-2 text-body text-muted-foreground"><Loader2 className="size-4 animate-spin" />{chinese ? "正在打开网页…" : "Opening webpage…"}</div> : null}
+      {error || state.error || elsewhere(url) ? <div role="alert" className="p-4 text-body"><p>{error || (elsewhere(url) ? elsewhereMessage : state.error)}</p><Button className="mt-3" variant="outline" size="sm" onClick={() => { setError(""); void command({ action: "reload" }); }}>{chinese ? "重试" : "Retry"}</Button></div> : state.loading ? <div role="status" className="flex h-full items-center justify-center gap-2 text-body text-muted-foreground"><Loader2 className="size-4 animate-spin" />{chinese ? "正在打开网页…" : "Opening webpage…"}</div> : null}
     </div>
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-1 border-t p-2"><Button variant="ghost" size="sm" onClick={() => onReference(state.url || url, state.title || url)}><Globe className="size-4" />{chinese ? "引用到主对话" : "Reference in main chat"}</Button><ChromeProfileImport key={JSON.stringify([scope.userId, scope.workspaceId, id])} scope={scope} previewId={id} chinese={chinese} /><Button variant="ghost" size="sm" onClick={() => { void window.desktopAPI.openExternal(state.url || url); }}><ExternalLink className="size-4" />{chinese ? "在浏览器中打开" : "Open in browser"}</Button></div>
   </div>;

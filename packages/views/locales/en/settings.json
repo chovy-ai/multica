@@ -1231,6 +1231,16 @@
     "actions_aria": "Actions for {{url}}"
   },
   "desktop": {
+    "device_link": {
+      "title": "Device link",
+      "allow": "Allow other devices to use conversations on this device",
+      "allow_description": "Other devices signed in to this account can view conversations on this device, read their files and run agents here.",
+      "confirm_title": "Allow other devices to use this device?",
+      "confirm_description": "They can run agents and read and write files on this device.",
+      "cancel": "Cancel",
+      "confirm": "Allow",
+      "save_failed": "Could not change Device link. Try again."
+    },
     "tabs": {
       "updates": "Updates"
     },

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { LocalV2Bridge } from "../../../shared/local-v2-bridge";
-import { DirectLocalV2Transport } from "./local-v2-transport";
+import { DirectLocalV2Transport, type DirectLocalV2Options } from "./local-v2-transport";
 
 const scope = { userId: "user", workspaceId: "ws" };
 
@@ -18,7 +18,7 @@ async function fakeDaemon(): Promise<Daemon> {
     daemon.requests.push(req);
     if (req.headers.authorization !== `Bearer ${daemon.token}`) { res.writeHead(403).end("forbidden"); return; }
     if (req.url === "/local/v2/hello") { json(res, 200, { version: daemon.helloVersion ?? 2 }); return; }
-    if (req.url === "/local/v2/ws-ticket") { const ticket = `ticket-${daemon.requests.length}`; daemon.tickets.add(ticket); json(res, 200, { ticket }); return; }
+    if (req.url?.endsWith("/local/v2/ws-ticket")) { const ticket = `ticket-${daemon.requests.length}`; daemon.tickets.add(ticket); json(res, 200, { ticket }); return; }
     if (req.url === "/local/v2/sessions/other/snapshot") { json(res, 403, { error: { kind: "account_mismatch", message: "another account" } }); return; }
     if (req.url === "/local/v2/sessions/missing/snapshot") { json(res, 404, { error: { kind: "not_found", message: "conversation missing" } }); return; }
     let body = "";
@@ -42,11 +42,11 @@ async function fakeDaemon(): Promise<Daemon> {
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 
-async function setup(hostRequest: LocalV2Bridge["hostRequest"] = vi.fn(async () => ({ ok: true }))) {
+async function setup(hostRequest: LocalV2Bridge["hostRequest"] = vi.fn(async () => ({ ok: true })), device?: { deviceId: string; chooseRemote?: DirectLocalV2Options["chooseRemote"] }) {
   const daemon = await fakeDaemon();
   let token = daemon.token, base = daemon.base;
-  const bridge = { endpoint: vi.fn(async () => ({ base, apiUrl: "https://api.multica.ai", token, fileKey: "fk" })), choose: vi.fn(), hostRequest };
-  const transport = new DirectLocalV2Transport({ bridge });
+  const bridge = { endpoint: vi.fn(async () => ({ base, apiUrl: "https://api.multica.ai", token, fileKey: "fk" })), choose: vi.fn(), chooseRemote: vi.fn(), hostRequest };
+  const transport = new DirectLocalV2Transport({ bridge, ...device });
   cleanups.push(() => transport.release(scope), () => daemon.close());
   return { daemon, transport, bridge, rotate: (next: string) => { token = next; }, move: (next: string) => { base = next; } };
 }
@@ -106,7 +106,7 @@ describe("DirectLocalV2Transport", () => {
   });
 
   it("opens the WebSocket with a ticket, relays messages and answers host requests through main", async () => {
-    const hostRequest = vi.fn(async (_scope: unknown, kind: string) => { if (kind === "fail") throw new Error("Error invoking remote method 'local-v2:host-request': Error: declined: The user declined"); return { approved: true }; });
+    const hostRequest = vi.fn(async (_device: string, _scope: unknown, kind: string) => { if (kind === "fail") throw new Error("Error invoking remote method 'local-v2:host-request': Error: declined: The user declined"); return { approved: true }; });
     const { daemon, transport } = await setup(hostRequest);
     const messages = vi.fn(), connection = vi.fn();
     transport.subscribe(messages); transport.onConnection(connection);
@@ -120,7 +120,7 @@ describe("DirectLocalV2Transport", () => {
     await until(() => daemon.received.length === 3);
     expect(messages).toHaveBeenCalledWith(scope, expect.objectContaining({ type: "scope.summaries" }));
     expect(messages).toHaveBeenCalledTimes(1);
-    expect(hostRequest).toHaveBeenCalledWith(scope, "settings.confirm", { operation: "x" });
+    expect(hostRequest).toHaveBeenCalledWith("local", scope, "settings.confirm", { operation: "x" });
     expect(daemon.received.slice(1)).toEqual(expect.arrayContaining([
       { version: 2, type: "host.reply", request_id: "h1", result: { approved: true } },
       { version: 2, type: "host.reply", request_id: "h2", error: { kind: "declined", message: "The user declined" } },
@@ -137,5 +137,47 @@ describe("DirectLocalV2Transport", () => {
     await until(() => daemon.sockets.length === 2);
     await until(() => connection.mock.calls.filter(([, up]) => up).length === 2);
     expect(connection).toHaveBeenCalledWith(scope, false);
+  });
+
+  it("reaches another device under this daemon's /local/devices route with a stable client ID", async () => {
+    const chooseRemote = vi.fn<NonNullable<DirectLocalV2Options["chooseRemote"]>>(async () => ({ id: "f1" }));
+    const { daemon, transport, bridge } = await setup(undefined, { deviceId: "peer 1", chooseRemote });
+    await transport.request(scope, "GET", "/sessions");
+    await transport.request(scope, "GET", "/sessions");
+    expect(daemon.requests.map((request) => request.url)).toEqual(["/local/devices/peer%201/local/v2/sessions", "/local/devices/peer%201/local/v2/sessions"]);
+    const [first, second] = daemon.requests.map((request) => request.headers["x-multica-client-id"]);
+    expect(first).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second).toBe(first);
+    expect(transport.fileUrl(scope, "/attachments/a1")).toContain(`http://${daemon.base}/local/devices/peer%201/local/v2/attachments/a1?`);
+    // Another device has no OS picker here.
+    await expect(transport.choose(scope, { purpose: "folder_project" })).resolves.toEqual({ id: "f1" });
+    expect(bridge.choose).not.toHaveBeenCalled();
+    expect(chooseRemote).toHaveBeenCalledWith(scope, { purpose: "folder_project" });
+  });
+
+  it("needs Device link support from another device's daemon", async () => {
+    const { daemon, transport } = await setup(undefined, { deviceId: "peer-1" });
+    daemon.server.removeAllListeners("request");
+    daemon.server.on("request", (_req, res) => { res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: 2, capabilities: ["claude"] })); });
+    await transport.probe();
+    expect(transport.availability()).toEqual({ state: "unavailable", reason: "incompatible" });
+  });
+
+  it("reports another device turning Device link off", async () => {
+    const { daemon, transport } = await setup(undefined, { deviceId: "peer-1" });
+    daemon.server.removeAllListeners("request");
+    daemon.server.on("request", (_req, res) => { res.writeHead(503, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { kind: "device_link_off", message: "off" } })); });
+    await expect(transport.request(scope, "GET", "/sessions")).rejects.toThrow(/^device_link_off: /);
+    expect(transport.availability()).toEqual({ state: "unavailable", reason: "device_link_off" });
+  });
+
+  it("passes host requests to main with the device that asked", async () => {
+    const hostRequest = vi.fn(async () => ({ ok: true }));
+    const { daemon, transport } = await setup(hostRequest, { deviceId: "peer-1" });
+    await transport.send(scope, { version: 2, type: "subscribe_scope", after_scope_seq: 0 });
+    await until(() => daemon.sockets.length === 1);
+    daemon.sockets[0]!.send(JSON.stringify({ version: 2, type: "host.request", request_id: "h1", kind: "settings.confirm", payload: {} }));
+    await until(() => hostRequest.mock.calls.length === 1);
+    expect(hostRequest).toHaveBeenCalledWith("peer-1", scope, "settings.confirm", {});
   });
 });

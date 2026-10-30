@@ -9,7 +9,8 @@ import { projectForDirectory } from "./local-conversation-projects";
 import { blobBase64 } from "./local-preview-file";
 import { localV2, type LocalV2ScopeClient } from "./local-v2";
 
-export const localConversationKey = (scope: LocalV2Scope) => ["local-conversations", scope.userId, scope.workspaceId] as const;
+/** Query keys of a device's conversations; deviceId is "local" or another device's peer ID. */
+export const localConversationKey = (scope: LocalV2Scope, deviceId = "local") => ["local-conversations", deviceId, scope.userId, scope.workspaceId] as const;
 export const localTargetId = (provider: string) => `local:${provider}`;
 export function localProviderId(target: string): LocalProviderId {
   if (target === "local:codex") return "codex";
@@ -196,7 +197,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       case "host.startSide": return undefined; // a moved message runs in its Side by itself
       case "host.openResource": options.onOpenResource?.(params.sessionId, params.url); return undefined;
       case "host.showFileContextMenu":
-        await window.desktopAPI.localFileContextMenu.show(scope, { sessionId: params.sessionId, url: params.url, hasSelection: params.hasSelection }); return undefined;
+        await window.desktopAPI.localFileContextMenu.show(scope, { sessionId: params.sessionId, url: params.url, hasSelection: params.hasSelection }, (transport as { deviceId?: string }).deviceId ?? "local"); return undefined;
       case "host.locateSource": options.onLocateSource?.(params.sessionId, params.turnId, params.quote); return undefined;
       case "interaction.respond":
         await command(params.sessionId, { type: "answer", interaction_id: params.requestId, answer: params.answers }); return undefined;

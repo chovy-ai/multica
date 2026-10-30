@@ -965,6 +965,16 @@
     "actions_aria": "{{url}} 작업"
   },
   "desktop": {
+    "device_link": {
+      "title": "기기 연결",
+      "allow": "다른 기기가 이 기기의 대화 흐름을 사용하도록 허용",
+      "allow_description": "이 계정으로 로그인한 다른 기기가 이 기기의 대화를 보고, 파일을 읽고, 여기서 에이전트를 실행할 수 있습니다.",
+      "confirm_title": "다른 기기가 이 기기를 사용하도록 허용할까요?",
+      "confirm_description": "이 기기에서 에이전트를 실행하고 파일을 읽고 쓸 수 있습니다.",
+      "cancel": "취소",
+      "confirm": "허용",
+      "save_failed": "기기 연결을 변경하지 못했습니다. 다시 시도하세요."
+    },
     "tabs": {
       "updates": "업데이트"
     },

@@ -12,7 +12,9 @@
     "runtimes": "런타임",
     "skills": "스킬",
     "settings": "설정",
-    "conversation_flow": "대화 흐름"
+    "conversation_flow": "대화 흐름",
+    "conversation_flow_local": "대화 흐름 (로컬)",
+    "conversation_flow_device": "대화 흐름 ({{device}})"
   },
   "tab": {
     "issue": "태스크",

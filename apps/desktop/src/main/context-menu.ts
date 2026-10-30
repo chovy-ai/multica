@@ -143,7 +143,8 @@ export function installContextMenu(webContents: WebContents): void {
 export function showLocalFileContextMenu(
   webContents: WebContents,
   input: { hasSelection: boolean },
-  actions: { copyPath(): Promise<void>; reveal(): Promise<void> },
+  // A file on another device can be saved here but not shown in a folder.
+  actions: { copyPath(): Promise<void>; reveal?(): Promise<void>; saveToThisDevice?(): Promise<void> },
 ): void {
   const labels = pickLabels();
   const menu = new Menu();
@@ -155,7 +156,8 @@ export function showLocalFileContextMenu(
     void action().catch((error: unknown) => console.warn("[context-menu] local file action failed", error));
   };
   menu.append(new MenuItem({ label: labels.copyPath, click: () => run(actions.copyPath) }));
-  menu.append(new MenuItem({ label: process.platform === "darwin" ? labels.openInFinder : labels.showInFolder, click: () => run(actions.reveal) }));
+  if (actions.reveal) menu.append(new MenuItem({ label: process.platform === "darwin" ? labels.openInFinder : labels.showInFolder, click: () => run(actions.reveal!) }));
+  if (actions.saveToThisDevice) menu.append(new MenuItem({ label: labels.saveToThisDevice, click: () => run(actions.saveToThisDevice!) }));
   menu.popup({ window: BrowserWindow.fromWebContents(webContents) ?? undefined });
 }
 
@@ -166,6 +168,7 @@ export function showLocalFileContextMenu(
 // more rope than payload. Matches the four locales the renderer ships.
 type ContextMenuLabels = {
   copyPath: string;
+  saveToThisDevice: string;
   openInFinder: string;
   showInFolder: string;
   openLink: string;
@@ -177,6 +180,7 @@ type ContextMenuLabels = {
 const labelsByLocale: Record<string, ContextMenuLabels> = {
   en: {
     copyPath: "Copy Path",
+    saveToThisDevice: "Save to This Device",
     openInFinder: "Open in Finder",
     showInFolder: "Show in Folder",
     openLink: "Open Link in Browser",
@@ -186,6 +190,7 @@ const labelsByLocale: Record<string, ContextMenuLabels> = {
   },
   "zh-Hans": {
     copyPath: "复制路径",
+    saveToThisDevice: "保存到本机",
     openInFinder: "在 Finder 中显示",
     showInFolder: "在文件夹中显示",
     openLink: "在浏览器中打开链接",
@@ -195,6 +200,7 @@ const labelsByLocale: Record<string, ContextMenuLabels> = {
   },
   "zh-Hant": {
     copyPath: "複製路徑",
+    saveToThisDevice: "儲存到本機",
     openInFinder: "在 Finder 中顯示",
     showInFolder: "在資料夾中顯示",
     openLink: "在瀏覽器中開啟連結",
@@ -204,6 +210,7 @@ const labelsByLocale: Record<string, ContextMenuLabels> = {
   },
   ja: {
     copyPath: "パスをコピー",
+    saveToThisDevice: "このデバイスに保存",
     openInFinder: "Finder で表示",
     showInFolder: "フォルダーに表示",
     openLink: "ブラウザでリンクを開く",
@@ -213,6 +220,7 @@ const labelsByLocale: Record<string, ContextMenuLabels> = {
   },
   ko: {
     copyPath: "경로 복사",
+    saveToThisDevice: "이 기기에 저장",
     openInFinder: "Finder에서 보기",
     showInFolder: "폴더에서 보기",
     openLink: "브라우저에서 링크 열기",

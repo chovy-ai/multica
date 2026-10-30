@@ -204,15 +204,17 @@ export class LocalV2ScopeClient {
   }
 }
 
-const clients = new Map<string, LocalV2ScopeClient>();
-let routed: LocalV2Transport | undefined;
+const routed = new WeakMap<LocalV2Transport, Map<string, LocalV2ScopeClient>>();
 
-/** The renderer's client of a scope; one per account and workspace. */
+/** The renderer's client of a scope on a transport; one per account and workspace. */
 export function localV2(transport: LocalV2Transport, scope: LocalV2Scope): LocalV2ScopeClient {
-  if (routed !== transport) {
-    // One transport per renderer; tests create their own.
-    routed = transport; clients.clear();
-    const find = (value: LocalV2Scope) => clients.get(JSON.stringify([value.userId, value.workspaceId]));
+  let clients = routed.get(transport);
+  if (!clients) {
+    // Each device has its own transport; tests create their own too.
+    const own = new Map<string, LocalV2ScopeClient>();
+    clients = own;
+    routed.set(transport, own);
+    const find = (value: LocalV2Scope) => own.get(JSON.stringify([value.userId, value.workspaceId]));
     transport.subscribe((value, message) => find(value)?.receive(message));
     transport.onConnection((value, connected) => find(value)?.connection(connected));
   }

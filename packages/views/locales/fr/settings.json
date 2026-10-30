@@ -1231,6 +1231,16 @@
     "actions_aria": "Actions pour {{url}}"
   },
   "desktop": {
+    "device_link": {
+      "title": "Liaison d'appareils",
+      "allow": "Autoriser les autres appareils à utiliser les conversations de cet appareil",
+      "allow_description": "Les autres appareils connectés à ce compte peuvent voir les conversations de cet appareil, lire leurs fichiers et y exécuter des agents.",
+      "confirm_title": "Autoriser les autres appareils à utiliser cet appareil ?",
+      "confirm_description": "Ils pourront exécuter des agents et lire et écrire des fichiers sur cet appareil.",
+      "cancel": "Annuler",
+      "confirm": "Autoriser",
+      "save_failed": "Impossible de modifier la liaison d'appareils. Réessayez."
+    },
     "tabs": {
       "updates": "Mises à jour"
     },
