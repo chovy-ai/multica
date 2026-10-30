@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { localV2ServerMessageSchema, localV2SnapshotSchema, type LocalV2Event } from "@multica/core/local-conversation/v2";
 import { V2Conversation } from "./v2-conversation";
 import { projectV2Conversation } from "./v2-projection";
+import { mergeWorkspaceAgentActivityDurableAndOverlayMessages } from "../../../../vendor/tutti/packages/agent/gui/shared/workspaceAgentMessageOverlay";
 
 const samples = join(__dirname, "../../../../server/internal/localconversation/protocol/testdata/local-v2/valid");
 const at = "2026-10-29T12:00:00Z";
@@ -38,6 +39,57 @@ function event(seq: number, type: string, payload: Record<string, unknown>, extr
 const project = (conversation: V2Conversation) => projectV2Conversation(conversation, { workspaceId: "ws", agentSessionId: "gui-1", locale: "en" });
 
 describe("V2Conversation", () => {
+  it.each(["events", "running snapshot", "completed snapshot"])("replaces a queued prompt's optimistic message from %s", (source) => {
+    const input = event(1, "user.message", { message_id: "m1", request_id: "submit-1", content: "hi", attachment_ids: ["att-1"] }, { final: true });
+    let conversation = empty();
+    if (source === "events") {
+      conversation.apply([input]);
+    } else {
+      conversation = V2Conversation.fromSnapshot(localV2SnapshotSchema.parse({
+        version: 2, store_generation: "g1", snapshot_seq: 1,
+        conversation: { conversation_id: "conv-1", summary_seq: 1, provider: "codex", title: "hi", status: "idle", pinned: false, archived: false, updated_at: at },
+        turns: [{
+          id: "turn-1", turn_index: 0, request_id: "submit-1", status: source === "running snapshot" ? "running" : "completed", started_at: at,
+          messages: [{ id: "m1", role: "user", content: "hi", attachment_ids: ["att-1"], created_at: at }],
+          events: [input],
+        }],
+      }));
+    }
+    const durable = project(conversation).messages.map((message, index) => ({ ...message, sequence: index + 1, version: index + 1 }));
+    const optimistic = {
+      ...durable[0]!, messageId: "client-submit:user:submit-1", turnId: "pending:submit-1",
+      payload: { clientSubmitId: "submit-1", __agentGuiOptimisticPrompt: true, text: "hi", content: [{ type: "text", text: "hi" }] },
+    };
+    expect(mergeWorkspaceAgentActivityDurableAndOverlayMessages({ durableMessages: durable, localMessages: [optimistic] })).toEqual(durable);
+    expect(durable).toHaveLength(1);
+    expect(durable[0]!.payload).toMatchObject({ clientSubmitId: "submit-1", attachments: [{ attachmentId: "att-1" }] });
+  });
+
+  it("keeps identical prompts with distinct submit ids, including input added to the same turn", () => {
+    const conversation = empty();
+    conversation.apply([
+      event(1, "user.message", { message_id: "m1", request_id: "submit-1", content: "hi" }),
+      event(2, "turn.started", { request_id: "submit-1" }),
+      event(3, "user.message", { message_id: "m2", request_id: "submit-2", content: "hi", steered: true }),
+    ]);
+    const durable = project(conversation).messages.map((message, index) => ({ ...message, sequence: index + 1, version: index + 1 }));
+    expect(durable.map((message) => message.payload.clientSubmitId)).toEqual(["submit-1", "submit-2"]);
+    const optimistic = {
+      ...durable[0]!, messageId: "client-submit:user:submit-3", turnId: "pending:submit-3",
+      payload: { clientSubmitId: "submit-3", __agentGuiOptimisticPrompt: true, text: "hi" },
+    };
+    expect(mergeWorkspaceAgentActivityDurableAndOverlayMessages({ durableMessages: durable, localMessages: [optimistic] })).toHaveLength(3);
+  });
+
+  it("does not assign a turn's submit id to a message whose request id is unknown", () => {
+    const conversation = empty();
+    conversation.apply([
+      event(1, "user.message", { message_id: "imported-message", content: "hi" }),
+      event(2, "turn.started", { request_id: "submit-1" }),
+    ]);
+    expect(project(conversation).messages[0]!.payload).not.toHaveProperty("clientSubmitId");
+  });
+
   it("streams text and lets the final event replace it", () => {
     const conversation = empty();
     expect(conversation.apply([

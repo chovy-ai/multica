@@ -26,6 +26,7 @@ export interface V2Item {
 
 export interface V2UserMessage {
   id: string;
+  requestId: string;
   turnId: string | null;
   content: string;
   attachmentIds: string[];
@@ -79,7 +80,7 @@ export class V2Conversation {
         // Assistant rows repeat the turn's assistant_text items.
         if (message.role !== "user") continue;
         conversation.messages.set(message.id, {
-          id: message.id, turnId: turn.id, content: message.content, attachmentIds: message.attachment_ids,
+          id: message.id, requestId: "", turnId: turn.id, content: message.content, attachmentIds: message.attachment_ids,
           steered: message.steered, failed: message.failed, createdAt: message.created_at,
         });
       }
@@ -128,7 +129,7 @@ export class V2Conversation {
         const id = text(payload.message_id);
         if (!id) return;
         this.messages.set(id, {
-          id, turnId: event.turn_id, content: text(payload.content),
+          id, requestId: text(payload.request_id), turnId: event.turn_id, content: text(payload.content),
           attachmentIds: Array.isArray(payload.attachment_ids) ? payload.attachment_ids.filter((value): value is string => typeof value === "string") : [],
           steered: payload.steered === true, failed: false, createdAt: event.created_at,
         });
