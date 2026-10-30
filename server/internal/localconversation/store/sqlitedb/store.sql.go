@@ -889,6 +889,33 @@ func (q *Queries) ListConversationTurns(ctx context.Context, conversationID stri
 	return items, nil
 }
 
+const listConversationsWithBackgroundTasks = `-- name: ListConversationsWithBackgroundTasks :many
+SELECT id FROM conversation WHERE background_tasks > 0 ORDER BY id
+`
+
+func (q *Queries) ListConversationsWithBackgroundTasks(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listConversationsWithBackgroundTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventsAfter = `-- name: ListEventsAfter :many
 SELECT conversation_id, seq, turn_id, turn_seq, item_id, type, final, payload, created_at FROM event
 WHERE conversation_id = ?1

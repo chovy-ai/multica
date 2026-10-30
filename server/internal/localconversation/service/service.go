@@ -133,6 +133,11 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if closed > 0 {
 		opts.Logger.Info("local conversations: closed turns interrupted by restart", "turns", closed)
 	}
+	if tasks, err := CloseOrphanedBackgroundTasks(ctx, st, writer, opts.Now()); err != nil {
+		opts.Logger.Warn("local conversations: could not close background tasks left by restart", "error", err)
+	} else if tasks > 0 {
+		opts.Logger.Info("local conversations: closed background tasks left by restart", "tasks", tasks)
+	}
 	if removed, err := st.RemoveUnreferencedFiles(ctx, unreferencedFileAge, opts.Now()); err != nil {
 		opts.Logger.Warn("local conversations: attachment cleanup failed", "error", err)
 	} else if removed > 0 {
