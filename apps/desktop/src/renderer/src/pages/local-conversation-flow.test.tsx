@@ -224,7 +224,7 @@ describe("Device link", () => {
     expect(transportFor.calls).toContain("peer-1");
     expect(transportFor.calls).not.toContain("local");
     expect(within(list).getAllByRole("link")[0]).toHaveAttribute("href", expect.stringMatching(/^\/test\/conversations\/devices\/peer-1\?/));
-    expect(document.title).toBe("对话流（Mac Studio）");
+    expect(document.title).toBe("AI 会话（Mac Studio）");
   });
 
   it("marks this device's conversations another device has open", async () => {
