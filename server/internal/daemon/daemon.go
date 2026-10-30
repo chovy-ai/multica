@@ -442,7 +442,10 @@ type Daemon struct {
 
 	// localV2 serves Go-owned local conversations when Desktop ships the
 	// Claude adapter; nil otherwise.
-	localV2       *localhost.V2
+	localV2 *localhost.V2
+	// deviceLink shares local conversations with the account's other
+	// devices; nil without local conversations.
+	deviceLink    *deviceLink
 	conversations *service.Service
 
 	// gitCALastErr is the last applyGitCACerts failure, so a persistent one

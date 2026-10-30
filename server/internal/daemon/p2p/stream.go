@@ -94,13 +94,13 @@ func (s *Service) Dial(ctx context.Context, p peer.ID, proto protocol.ID) (net.C
 	if !s.allow.allowed(p) {
 		return nil, ErrNotAllowed
 	}
-	if s.connection(p) == ConnectionRelayed {
+	if s.Connection(p) == ConnectionRelayed {
 		deadline := time.NewTimer(directWait)
 		tick := time.NewTicker(100 * time.Millisecond)
 		defer deadline.Stop()
 		defer tick.Stop()
 	wait:
-		for s.connection(p) != ConnectionDirect {
+		for s.Connection(p) != ConnectionDirect {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -117,9 +117,9 @@ func (s *Service) Dial(ctx context.Context, p peer.ID, proto protocol.ID) (net.C
 	return streamConn{st}, nil
 }
 
-// connection is ConnectionDirect when any connection to p avoids the relay,
+// Connection is ConnectionDirect when any connection to p avoids the relay,
 // ConnectionRelayed when all go through it, and "" when not connected.
-func (s *Service) connection(p peer.ID) string {
+func (s *Service) Connection(p peer.ID) string {
 	state := ""
 	for _, c := range s.host.Network().ConnsToPeer(p) {
 		if !isCircuit(c.RemoteMultiaddr()) {

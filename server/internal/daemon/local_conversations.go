@@ -46,6 +46,8 @@ func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.S
 	}
 	d.conversations = svc
 	d.localV2 = localhost.NewV2(svc, d.cfg.LocalAPIToken, d.cfg.ProfileDir)
+	d.localV2.SetServerOrigin(d.cfg.ServerBaseURL)
+	d.deviceLink = newDeviceLink(d.cfg.ProfileDir, d.localV2, d.cfg.LocalAPIToken, d.logger.With("component", "device-link"))
 	return nil
 }
 
