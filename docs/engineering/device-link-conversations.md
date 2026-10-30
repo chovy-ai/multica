@@ -10,6 +10,7 @@
 - 每台可用设备对应一个对话流侧边栏入口和 tab。没有可用设备时，侧边栏保持不变。
 - 远端 tab 复用对话流界面，目录、Session、消息、运行、模型和文件都读取远端设备，执行也在远端设备上。
 - 通过现有的事件游标和重新同步机制实现实时更新和重连。
+- 被访问端的对话流用一个标识标出正在被其他设备使用的会话。
 - 优先直连，尽量不经中继。
 
 暂不包含：
@@ -81,6 +82,19 @@
 | 中继下的大文件 | `relay_transfer_limited` | 当前经中继连接，暂不能传输大于 5 MB 的文件 | Files over 5 MB are unavailable while connected through the relay |
 
 断线期间保留已加载内容和草稿，不把正在运行的任务标记为失败。连接恢复前禁用发送。重连后按 `after_seq` 续传，或重新读取快照；待处理的设置确认和 Side 控制在宽限期内保持有效。被访问端更新时进入 drain，期间发起执行返回 `draining`，复用现有文案。
+
+### 被访问端：使用中标识
+
+被访问端不弹提示，也不限制本机操作，只在对话流的会话列表中标出正在被其他设备使用的会话：
+
+- 标识：会话行的标题右侧显示设备图标（lucide `MonitorSmartphone`），和运行中、置顶等现有状态图标放在一起，不加文字。
+- 悬停：Tooltip 显示「{设备名} 正在使用」/ In use on {device}。多台设备时列出所有设备名，以顿号分隔（英文用逗号）。
+- 「正在使用」：远端设备打开了这个会话（有订阅），或者远端发起的运行还没结束。远端断开后，宽限期（60 秒）结束时标识消失。
+- 只在被访问端显示。查看端的远端 tab 不显示其他设备的使用情况，本地 tab 也不显示。
+
+| 元素 | zh-Hans | en |
+| --- | --- | --- |
+| Tooltip | {设备名} 正在使用 | In use on {device} |
 
 ## 能力归属原则
 
@@ -189,6 +203,18 @@ p2p 断开 → WS 关闭 → proxy connection(false) → 「正在重连」
 关闭最后一个该设备的 tab → 引用计数归零，60 秒后关闭 proxy
 ```
 
+### 8. 使用中标识
+
+```text
+远端连接 subscribe {conversation_id} / 远端发起的运行开始或结束 / 远端连接断开且宽限期结束
+ → 被访问端 V2 更新 presence：conversation_id → 设备集合（peerId、设备名来自 allowlist）
+ → 向本机连接（非远端）的 scope 订阅推送 scope.presence {conversation_id, devices}
+本机连接 subscribe_scope 时先收到一次全量 scope.presence
+ → 渲染进程保存在 LocalV2ScopeClient，会话列表行读取
+```
+
+presence 只在内存中，不写入 SQLite，不占用 `summary_seq`。
+
 ## 优先直连
 
 - 直连顺序：局域网 mDNS → 登记的直连地址（含 NAT 端口映射和观察到的公网地址）→ 中继，随后 DCUtR 打洞。
@@ -280,6 +306,7 @@ p2p 断开 → WS 关闭 → proxy connection(false) → 「正在重连」
   - WS 握手时分配 `client_id`，重连时客户端带回原 `client_id`。
   - 命令带 `client_id`，service 记在 turn 上；`askHost` 带 turn，`hosts.request` 优先发给该 `client_id` 的连接，找不到时沿用「最后一次 subscribe 的连接」。
   - 连接断开时，该 `client_id` 的待处理请求保留 60 秒，同一 `client_id` 重连后重新下发；宽限期结束才返回 `ErrHostUnavailable`。现在 `attach` 的 detach 会立即失败所有待处理请求。
+- 使用中标识：`V2` 维护 `conversation_id → 远端设备集合`，来源是远端连接的订阅、远端发起且未结束的 turn，断开的连接在宽限期结束后移除。只向本机连接推送 `scope.presence`；`subscribe_scope` 时先发全量。在 `local-v2.schema.json` 中增加该消息和对应样例。
 - 新增 `GET /local/v2/directories?path=`：列出被访问端目录，供远端选择使用；本地 tab 不使用。
 - 回环接口：
   - 在 health mux 上注册 `/local/devices` 和 `/local/devices/`，并调用 `Authorize`。
@@ -307,6 +334,7 @@ p2p 断开 → WS 关闭 → proxy connection(false) → 「正在重连」
 - `app-sidebar` 增加平台插槽，由 Desktop 注入「对话流（本地）」和「对话流（{设备名}）」，并按上文规则判断选中状态。
 - 远端目录和文件选择 Dialog；设置「设备互联」tab 和 AlertDialog；`LocalRuntimeNotice` 按设备订阅并补充远端文案；翻译（en、zh-Hans、ja、ko）。
 - 云端任务会话链接的跨设备查找。
+- 使用中标识：`localV2ServerMessageSchema` 解析 `scope.presence`（未知字段和消息按现有方式降级），`LocalV2ScopeClient` 保存 presence，会话列表行显示图标和 Tooltip。
 
 ## 安全边界
 
@@ -331,9 +359,9 @@ p2p 断开 → WS 关闭 → proxy connection(false) → 「正在重连」
 2. Desktop 主进程和 preload：`basePath`、`client_id`、错误映射、`DeviceProxies` 和引用计数、显式 deviceId 的 IPC、文件协议、`choose-remote`、保存到本机、反向请求和 settings 分流、设备轮询、开关 IPC。
 3. 渲染进程和 views：设备专属 transport 和 context、路由、侧边栏插槽和选中规则、第 ⑤ 类 key、远端选择 Dialog、右键菜单和网页预览的远端行为、设置 tab、提示文案、翻译、云端任务会话链接。
 4. 验证：
-   - Go：适配器（含半关闭）、`ServeRemote` 白名单和 origin 校验、反向代理和错误码、`client_id` 路由（两条连接同 scope 时确认发往发起方）、宽限期、直连迁移。
+   - Go：presence 的加入、宽限期后移除、只推送给本机连接；适配器（含半关闭）、`ServeRemote` 白名单和 origin 校验、反向代理和错误码、`client_id` 路由（两条连接同 scope 时确认发往发起方）、宽限期、直连迁移。
    - Desktop 主进程：`basePath` 拼接、远端 proxy 不调用 drain、`choose-remote` 拒绝本机 deviceId。
-   - 渲染进程：侧边栏两种状态和选中规则、远端 tab、key 隔离、缺少设备 transport 时报错。
+   - 渲染进程：使用中标识的显示和 Tooltip、侧边栏两种状态和选中规则、远端 tab、key 隔离、缺少设备 transport 时报错。
    - 手动：先用同一台机器的两个 profile，再用两台不同网络的机器验证打洞和中继回退。浅色和深色主题截图保存在 `.tmp/device-link/`。
 
 ## 第二期
@@ -342,7 +370,3 @@ p2p 断开 → WS 关闭 → proxy connection(false) → 「正在重连」
 - 端口转发（`/multica/port-forward/1`，只转发被访问端的回环端口），支持预览被访问端的 dev server。
 - 从被访问端获取守护进程日志。
 - 设备列表改为推送。
-
-## 待定问题
-
-- 被访问端是否需要提示「正在被其他设备使用」？
