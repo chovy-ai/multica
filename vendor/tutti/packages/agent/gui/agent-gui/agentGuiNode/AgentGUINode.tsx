@@ -160,6 +160,7 @@ export const AgentGUINode = memo(function AgentGUINode({
     agentConfigSystemActions: renderAgentConfigSystemActions,
     agentTargetInfo: renderAgentTargetInfo,
     composerFooterAccessory: renderComposerFooterAccessory,
+    composerEmptySubmit,
     projectDirectoryPickerHeaderActions:
       renderProjectDirectoryPickerHeaderActions,
     projectSelectOptions,
@@ -611,6 +612,7 @@ export const AgentGUINode = memo(function AgentGUINode({
                 renderReferencePickerSidebarActions
               }
               renderComposerFooterAccessory={renderComposerFooterAccessory}
+              composerEmptySubmit={composerEmptySubmit}
             />
           );
         }}

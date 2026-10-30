@@ -33,8 +33,9 @@ Tutti server. The Multica integration supplies activity and command behavior
 through the UI package's existing host/runtime ports.
 
 The exact package paths and every copied file are recorded in
-`source-manifest.json`. The current snapshot contains 2,491 unchanged upstream
-files and 22 local package metadata overlays.
+`source-manifest.json`. The current snapshot contains 2,483 unchanged upstream
+files, 8 files changed by local patches and 22 local package metadata
+overlays.
 
 ## Reproduce and verify
 
@@ -53,6 +54,18 @@ snapshot reproducible on Windows checkouts with automatic CRLF conversion.
 Verification requires only this directory;
 it checks the copied contents and generated manifests without fetching or
 executing upstream code.
+
+## Local patches
+
+Changes to upstream files live in `patches/*.patch`, as diffs relative to this
+directory. The sync script applies them in name order after copying the
+upstream files, and the manifest records each patched file's upstream and
+patched hashes. Keep patches minimal and prefer the UI package's existing
+host/runtime ports; a patch is for a port the Host needs and upstream lacks.
+
+- `agent-gui-composer-empty-submit.patch` adds the `composerEmptySubmit`
+  render slot: a Host label and action for the send button while the composer
+  is empty. Multica uses it to continue a stopped or interrupted local turn.
 
 ## Package metadata overlays
 

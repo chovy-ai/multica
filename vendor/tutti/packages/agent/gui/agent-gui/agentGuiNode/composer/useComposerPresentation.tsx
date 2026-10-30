@@ -265,10 +265,13 @@ export function useComposerPresentation(input: Input) {
 
   // While the empty-send override is active (plan review) the send button
   // carries explicit decision copy: an empty draft accepts, typed feedback
-  // requests changes. Icon-only otherwise.
+  // requests changes. A Host empty-send action labels only the empty draft;
+  // typed content is an ordinary send. Icon-only otherwise.
   const planReviewSendLabel = allowEmptySubmit
     ? ((hasDraftContent
-        ? labels.sendRequestChanges
+        ? emptySubmitLabel === undefined
+          ? labels.sendRequestChanges
+          : null
         : (emptySubmitLabel ?? labels.sendAccept)) ?? null)
     : null;
   const composerActionButton = shouldShowStopButton ? (
