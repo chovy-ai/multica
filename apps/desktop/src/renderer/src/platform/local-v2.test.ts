@@ -56,6 +56,24 @@ describe("LocalV2ScopeClient", () => {
     expect(sent.at(-1)).toEqual({ version: 2, type: "unsubscribe", conversation_id: "c1" });
   });
 
+  it("keeps other devices' presence without touching the conversation's subscription", () => {
+    const { t } = transport();
+    const client = new LocalV2ScopeClient(t, scope);
+    const listener = vi.fn(), changed = vi.fn();
+    client.subscribe("c1", 0, "g", listener);
+    client.onPresence(changed);
+    const devices = [{ peer_id: "p1", device_name: "MacBook" }];
+    client.receive({ version: 2, type: "scope.presence", conversation_id: "c1", devices });
+    expect(client.presence("c1")).toEqual(devices);
+    expect(listener).not.toHaveBeenCalled();
+    client.receive({ version: 2, type: "scope.presence", conversation_id: "c1", devices: [] });
+    expect(client.presence("c1")).toEqual([]);
+    client.receive({ version: 2, type: "scope.presence", conversation_id: "c1", devices });
+    client.connection(false);
+    expect(client.presence("c1")).toEqual([]);
+    expect(changed).toHaveBeenCalledTimes(4);
+  });
+
   it("tells listeners to reload once the connection is back", () => {
     const { t } = transport();
     const client = new LocalV2ScopeClient(t, scope);

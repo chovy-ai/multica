@@ -678,7 +678,7 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 			Scope:    settings.Scope{WorkspaceID: scope.WorkspaceID, UserID: scope.UserID},
 			Receipts: settingsReceipts{store: s.store, scopeID: conv.ScopeID, now: s.opts.Now},
 			Host: func(ctx context.Context, kind string, payload any) (json.RawMessage, error) {
-				return s.askHost(ctx, conv.ScopeID, kind, payload)
+				return s.askHost(ctx, conv.ScopeID, conv.ID, kind, payload)
 			},
 		}
 		if requester != nil {
@@ -699,8 +699,10 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 	}
 }
 
-// Host asks the scope's connected Desktop to act and returns its result.
-type Host func(ctx context.Context, scopeID int64, kind string, payload any) (json.RawMessage, error)
+// Host asks a connected Desktop of the scope to act for a conversation and
+// returns its result; the transport prefers the Desktop that last acted on
+// the conversation.
+type Host func(ctx context.Context, scopeID int64, conversationID, kind string, payload any) (json.RawMessage, error)
 
 // HostError is Desktop's refusal or failure of a host request.
 type HostError struct {
@@ -718,12 +720,12 @@ func (s *Service) SetHost(h Host) {
 }
 
 // askHost sends a host request, or fails when no transport is set.
-func (s *Service) askHost(ctx context.Context, scopeID int64, kind string, payload any) (json.RawMessage, error) {
+func (s *Service) askHost(ctx context.Context, scopeID int64, conversationID, kind string, payload any) (json.RawMessage, error) {
 	s.mu.Lock()
 	h := s.host
 	s.mu.Unlock()
 	if h == nil {
 		return nil, ErrHostUnavailable
 	}
-	return h(ctx, scopeID, kind, payload)
+	return h(ctx, scopeID, conversationID, kind, payload)
 }

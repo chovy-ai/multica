@@ -320,8 +320,29 @@
         { "$ref": "#/$defs/conversation_events" },
         { "$ref": "#/$defs/scope_summaries" },
         { "$ref": "#/$defs/subscription_status" },
-        { "$ref": "#/$defs/host_request" }
+        { "$ref": "#/$defs/host_request" },
+        { "$ref": "#/$defs/scope_presence" }
       ]
+    },
+    "scope_presence": {
+      "description": "Other devices using a conversation now, excluding the receiving connection. An empty list clears it.",
+      "type": "object",
+      "required": ["version", "type", "conversation_id", "devices"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 2 },
+        "type": { "const": "scope.presence" },
+        "conversation_id": { "type": "string", "minLength": 1 },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["peer_id", "device_name"],
+            "additionalProperties": false,
+            "properties": { "peer_id": { "type": "string", "minLength": 1 }, "device_name": { "type": "string" } }
+          }
+        }
+      }
     },
     "host_request": {
       "description": "Asks the connected Desktop to act for an execution, such as confirming a setting or opening a Side tab. Desktop answers with host.reply.",

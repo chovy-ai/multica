@@ -47,6 +47,18 @@ type V2 struct {
 	upgrader   websocket.Upgrader
 	hosts      hosts
 	tickets    tickets
+	// serverOrigin is the API origin this daemon signs in to; requests
+	// for another one are refused instead of opening a scope that cannot
+	// reach its server.
+	serverOrigin string
+	// remoteOpen reports whether other devices may use this one.
+	remoteOpen func() bool
+
+	mu sync.Mutex
+	// origins is the client that last acted on each conversation.
+	origins map[string]string
+	// presence is which remote devices use each conversation, by scope.
+	presence map[int64]map[string]map[string]RemotePeer
 }
 
 // NewV2 serves svc. Requests must carry token, or a renderer credential
@@ -56,29 +68,80 @@ func NewV2(svc *service.Service, token, profileDir string) *V2 {
 		ReadBufferSize: 64 << 10, WriteBufferSize: 64 << 10,
 		// authenticate already checked the Origin for the caller's credential.
 		CheckOrigin: func(*http.Request) bool { return true },
-	}, hosts: hosts{byScope: map[int64][]*wsConn{}, pending: map[string]chan v2HostReply{}},
-		tickets: tickets{items: map[string]ticket{}, now: time.Now}}
+	}, hosts: hosts{byScope: map[int64][]*wsConn{}, pending: map[string]*hostPending{}, orphans: map[string][]*hostPending{}, grace: hostGrace},
+		tickets: tickets{items: map[string]ticket{}, now: time.Now}, origins: map[string]string{}, presence: map[int64]map[string]map[string]RemotePeer{}}
+	v.hosts.origin = v.origin
 	svc.SetHost(v.hosts.request)
 	return v
+}
+
+// SetServerOrigin refuses requests for any API origin but origin.
+func (v *V2) SetServerOrigin(origin string) { v.serverOrigin = normalizeOrigin(origin) }
+
+// SetRemoteOpen sets whether other devices may use this one now.
+func (v *V2) SetRemoteOpen(open func() bool) { v.remoteOpen = open }
+
+func normalizeOrigin(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
+}
+
+func (v *V2) origin(conversationID string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.origins[conversationID]
+}
+
+func (v *V2) actedOn(conversationID string, c caller) {
+	if c.clientKey == "" {
+		return
+	}
+	v.mu.Lock()
+	v.origins[conversationID] = c.clientKey
+	v.mu.Unlock()
 }
 
 // Register mounts the v2 routes.
 func (v *V2) Register(mux *http.ServeMux) { mux.Handle("/local/v2/", v) }
 
+// ServeHTTP is the loopback entry: Desktop's main process and renderer.
 func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	kind, ok := v.authenticate(r)
 	if !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	v.serve(w, r, caller{kind: kind, clientKey: clientKey("local", r.Header)})
+}
+
+// ServeRemote is the device-link entry. The p2p layer admits only this
+// account's devices; the connection names the device.
+func (v *V2) ServeRemote(w http.ResponseWriter, r *http.Request) {
+	peer, _ := r.Context().Value(remotePeerKey{}).(RemotePeer)
+	if peer.ID == "" {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if v.remoteOpen == nil || !v.remoteOpen() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]any{"kind": "device_link_off", "message": "This device does not share its conversations"}})
+		return
+	}
+	v.serve(w, r, caller{kind: callerRemote, clientKey: clientKey(peer.ID, r.Header), peer: peer.ID, deviceName: peer.DeviceName})
+}
+
+func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 	path := strings.TrimPrefix(r.URL.Path, "/local/v2")
-	if !allowed(kind, r.Method, path, "") {
+	if !allowed(c.kind, r.Method, path, "") {
 		writeV2Error(w, AppError("forbidden", "This caller cannot use this local conversation route"))
 		return
 	}
-	r = r.WithContext(withCaller(r.Context(), kind))
+	kind := c.kind
+	r = r.WithContext(withCaller(r.Context(), c))
 	if path == "/hello" && r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": []string{"claude", "codex"}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": []string{"claude", "codex", "device-link"}})
 		return
 	}
 	// Desktop stops provider processes before an update replaces the app.
@@ -116,7 +179,7 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	switch {
 	case path == "/ws-ticket" && r.Method == http.MethodPost:
-		writeJSON(w, http.StatusOK, ticketResponse(v.tickets.issue(kind, scopeFromHeaders(r.Header))))
+		writeJSON(w, http.StatusOK, ticketResponse(v.tickets.issue(kind, scopeFromHeaders(r.Header), r.Header.Get(headerClientID))))
 	case path == "/ws" && r.Method == http.MethodGet:
 		v.serveWS(w, r, scopeID)
 	case path == "/sessions" && r.Method == http.MethodGet:
@@ -198,6 +261,8 @@ func (v *V2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"workspace": state})
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "image" && r.Method == http.MethodGet:
 		v.conversationImage(w, r, scopeID, parts[1])
+	case path == "/directories" && r.Method == http.MethodGet:
+		listDirectories(w, r.URL.Query().Get("path"))
 	case path == "/directory-source" && r.Method == http.MethodGet:
 		v.directorySource(w, r, scopeID)
 	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "snapshot" && r.Method == http.MethodGet:
@@ -215,6 +280,9 @@ func (v *V2) scope(r *http.Request) (int64, error) {
 	origin, user, workspace := r.Header.Get(headerAPIOrigin), r.Header.Get(headerUserID), r.Header.Get(headerWorkspaceID)
 	if origin == "" || user == "" || workspace == "" {
 		return 0, AppError("invalid_scope", "API origin, user and workspace headers are required")
+	}
+	if v.serverOrigin != "" && normalizeOrigin(origin) != v.serverOrigin {
+		return 0, AppError("api_url_mismatch", "This device signs in to another Multica server")
 	}
 	data, err := os.ReadFile(filepath.Join(v.profileDir, desktopUserIDFile))
 	if err != nil {
@@ -376,9 +444,13 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 		writeV2Error(w, err)
 		return
 	}
-	if !allowed(callerOf(r.Context()), r.Method, "/sessions/"+id+"/commands", body.Type) {
+	if !allowed(callerOf(r.Context()).kind, r.Method, "/sessions/"+id+"/commands", body.Type) {
 		writeV2Error(w, AppError("forbidden", "Choose this folder in Multica first"))
 		return
+	}
+	switch body.Type {
+	case "send", "answer", "queue_enqueue":
+		v.actedOn(id, callerOf(r.Context()))
 	}
 	switch body.Type {
 	case "send":
@@ -524,9 +596,8 @@ type wsConn struct {
 	mu      sync.Mutex
 	subs    map[string]*service.Subscription
 	scope   *service.ScopeSubscription
-	// hostPending are host requests waiting for this Desktop's reply;
-	// guarded by hosts.mu.
-	hostPending map[string]chan v2HostReply
+	caller  caller
+	scopeID int64
 }
 
 func (c *wsConn) send(v any) error {
@@ -557,20 +628,25 @@ func (v *V2) serveWS(w http.ResponseWriter, r *http.Request, scopeID int64) {
 	if err != nil {
 		return
 	}
-	c := &wsConn{conn: ws, subs: map[string]*service.Subscription{}, hostPending: map[string]chan v2HostReply{}}
+	c := &wsConn{conn: ws, subs: map[string]*service.Subscription{}, caller: callerOf(r.Context()), scopeID: scopeID}
 	detach := v.hosts.attach(scopeID, c)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
 		detach()
 		cancel()
 		c.mu.Lock()
-		for _, sub := range c.subs {
+		opened := make([]string, 0, len(c.subs))
+		for id, sub := range c.subs {
 			sub.Close()
+			opened = append(opened, id)
 		}
 		if c.scope != nil {
 			c.scope.Close()
 		}
 		c.mu.Unlock()
+		for _, id := range opened {
+			v.setPresence(c, id, false)
+		}
 		_ = ws.Close()
 	}()
 	ws.SetReadLimit(1 << 20)
@@ -591,11 +667,15 @@ func (v *V2) serveWS(w http.ResponseWriter, r *http.Request, scopeID int64) {
 			v.wsSubscribe(ctx, c, scopeID, msg)
 		case "unsubscribe":
 			c.mu.Lock()
-			if sub := c.subs[msg.ConversationID]; sub != nil {
+			sub := c.subs[msg.ConversationID]
+			if sub != nil {
 				sub.Close()
 				delete(c.subs, msg.ConversationID)
 			}
 			c.mu.Unlock()
+			if sub != nil {
+				v.setPresence(c, msg.ConversationID, false)
+			}
 		case "subscribe_scope":
 			v.wsSubscribeScope(ctx, c, scopeID, msg)
 		}
@@ -631,6 +711,7 @@ func (v *V2) wsSubscribe(ctx context.Context, c *wsConn, scopeID int64, msg wsCl
 	c.subs[msg.ConversationID] = sub
 	c.mu.Unlock()
 	_ = c.send(statusMessage(msg.ConversationID, "subscribed", high, nil))
+	v.setPresence(c, msg.ConversationID, true)
 	go func() {
 		live := false
 		for {
@@ -675,6 +756,7 @@ func (v *V2) wsSubscribeScope(ctx context.Context, c *wsConn, scopeID int64, msg
 	c.scope = sub
 	c.mu.Unlock()
 	_ = c.send(statusMessage("", "subscribed", high, nil))
+	v.sendPresence(c)
 	go func() {
 		for {
 			rows, err := sub.Next(ctx)

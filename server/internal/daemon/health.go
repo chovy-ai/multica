@@ -438,6 +438,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
 	if d.localV2 != nil {
 		d.localV2.Register(mux)
+		d.deviceLink.register(mux)
 	}
 	mux.HandleFunc("/p2p/status", d.p2pStatusHandler())
 

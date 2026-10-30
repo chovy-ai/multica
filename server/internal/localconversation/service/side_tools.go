@@ -75,7 +75,7 @@ func (t *sideTools) control(ctx context.Context, req map[string]any) (contextmcp
 	}
 	req["scope"] = map[string]any{"userId": scope.UserID, "workspaceId": scope.WorkspaceID}
 	req["conversationId"], req["turnId"] = t.conv.ID, turn
-	raw, err := t.s.askHost(ctx, t.conv.ScopeID, "side.control", req)
+	raw, err := t.s.askHost(ctx, t.conv.ScopeID, t.conv.ID, "side.control", req)
 	if err != nil {
 		return contextmcp.Result{}, err
 	}

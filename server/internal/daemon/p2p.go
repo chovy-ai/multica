@@ -66,10 +66,16 @@ func (d *Daemon) startP2P(ctx context.Context) error {
 		return err
 	}
 	d.p2p.Store(svc)
+	if d.deviceLink != nil {
+		d.deviceLink.attach(svc)
+	}
 
 	go func() {
 		<-ctx.Done()
 		d.p2p.Store(nil)
+		if d.deviceLink != nil {
+			d.deviceLink.detach(svc)
+		}
 		svc.Close()
 	}()
 	go d.p2pRegistrationLoop(ctx, registry, svc, key.GetPublic(), reregister)

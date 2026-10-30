@@ -2,7 +2,7 @@ import type { z } from "zod";
 import { parseWithFallback } from "@multica/core/api/schema";
 import {
   LOCAL_V2_VERSION, localV2ServerMessageSchema, localV2SessionListSchema, localV2SnapshotSchema, localV2UploadSchema,
-  type LocalV2Scope, type LocalV2Snapshot, type LocalV2Summary, type LocalV2Transport,
+  type LocalV2Device, type LocalV2Scope, type LocalV2Snapshot, type LocalV2Summary, type LocalV2Transport,
 } from "@multica/core/local-conversation/v2";
 
 /** A failed v2 request with the daemon's stable error kind. */
@@ -44,6 +44,8 @@ export class LocalV2ScopeClient {
   /** Listeners whose subscriptions a disconnect dropped, reloaded on reconnect. */
   private lost = new Map<string, Set<ConversationListener>>();
   private generation = "";
+  private presenceMap = new Map<string, LocalV2Device[]>();
+  private presenceListeners = new Set<() => void>();
 
   constructor(private transport: LocalV2Transport, readonly scope: LocalV2Scope) {}
 
@@ -145,6 +147,12 @@ export class LocalV2ScopeClient {
       return;
     }
     if (message.type === "host.request") return; // answered by the transport
+    if (message.type === "scope.presence") {
+      if (message.devices.length) this.presenceMap.set(message.conversation_id, message.devices);
+      else this.presenceMap.delete(message.conversation_id);
+      for (const listener of this.presenceListeners) listener();
+      return;
+    }
     if (message.type === "subscription.status" && !message.conversation_id) {
       // The scope stream fell behind: read the list again.
       if (message.status === "resubscribe" || message.status === "snapshot_required") this.reloadSummaries();
@@ -158,12 +166,22 @@ export class LocalV2ScopeClient {
     for (const listener of [...subscription.listeners]) listener(raw);
   }
 
+  /** Other devices using a conversation now. */
+  presence(id: string): LocalV2Device[] { return this.presenceMap.get(id) ?? []; }
+
+  onPresence(listener: () => void): () => void {
+    this.presenceListeners.add(listener);
+    return () => { this.presenceListeners.delete(listener); };
+  }
+
   /**
    * A disconnect loses every subscription. Listeners reload once the daemon
    * is back: a reload while it is down would fail and not be retried.
    */
   connection(connected: boolean): void {
     if (!connected) {
+      // The daemon sends presence again with the next scope subscription.
+      if (this.presenceMap.size) { this.presenceMap.clear(); for (const listener of this.presenceListeners) listener(); }
       for (const [id, subscription] of this.conversations) {
         const lost = this.lost.get(id) ?? new Set();
         for (const listener of subscription.listeners) lost.add(listener);

@@ -131,7 +131,7 @@ func TestV2WebSocketTicketExpires(t *testing.T) {
 
 	now := time.Now()
 	ts := tickets{items: map[string]ticket{}, now: func() time.Time { return now }}
-	id := ts.issue(callerRenderer, requestScope{})
+	id := ts.issue(callerRenderer, requestScope{}, "")
 	now = now.Add(ticketTTL + time.Second)
 	if _, ok := ts.take(id); ok {
 		t.Fatal("expired ticket was accepted")

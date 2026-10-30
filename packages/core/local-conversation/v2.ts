@@ -64,8 +64,12 @@ export const localV2ServerMessageSchema = z.discriminatedUnion("type", [
     status: z.string(), high_water: z.number().int().optional(), error: errorSchema.optional(),
   }),
   z.object({ version: z.literal(LOCAL_V2_VERSION), type: z.literal("host.request"), request_id: z.string(), kind: z.string(), payload }),
+  // Other devices using a conversation now; an empty list clears it.
+  z.object({ version: z.literal(LOCAL_V2_VERSION), type: z.literal("scope.presence"), conversation_id: z.string().min(1), devices: z.array(z.object({ peer_id: z.string().min(1), device_name: z.string() })) }),
 ]);
 export type LocalV2ServerMessage = z.infer<typeof localV2ServerMessageSchema>;
+/** Another device using a conversation, as presence messages name it. */
+export interface LocalV2Device { peer_id: string; device_name: string }
 
 export const localV2ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ version: z.literal(LOCAL_V2_VERSION), type: z.literal("subscribe_scope"), after_scope_seq: z.number().int().min(0).optional(), store_generation: z.string().optional() }).strict(),
