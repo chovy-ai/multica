@@ -1115,6 +1115,20 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       engine.dispatch({ type: "engine/connectionChanged", status: "connected", workspaceId });
     },
     getWorkspaceState: () => workspace,
+    /**
+     * Whether a local conversation can be continued from the empty composer:
+     * its latest turn was stopped by the user or cut off by a restart, and
+     * nothing is running or queued.
+     */
+    continuable(agentSessionId: string) {
+      if (engine.getSnapshot().promptQueue.recordsBySessionId[agentSessionId]?.prompts.length) return false;
+      return v2.get(agentSessionId)?.continuable() ?? false;
+    },
+    /** Asks the conversation's provider to continue where its turn stopped. */
+    continueSession(agentSessionId: string) {
+      engine.submitPrompt({ agentSessionId, clientSubmitId: crypto.randomUUID(), content: [{ type: "text", text: init.locale === "zh-CN" ? "继续" : "Continue" }] });
+    },
+    subscribeTurns: (listener: () => void) => engine.subscribe(() => listener()),
     loadModelCatalog: async (agentId: string, options?: { force?: boolean; signal?: AbortSignal }) => {
       const result = await loadReasoningCatalog(agentId, options);
       modelRevision++; modelListeners.forEach((listener) => listener());

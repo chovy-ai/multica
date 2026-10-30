@@ -41,7 +41,7 @@ const emoji = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w
 
 afterEach(() => { captured.props = null; captured.content = ""; vi.unstubAllGlobals(); });
 
-async function mount(local = true) {
+async function mount(local = true, options: { activeSessionId?: string; continuable?: boolean } = {}) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let workspace = {
     local,
@@ -55,11 +55,16 @@ async function mount(local = true) {
     ] } : {}),
     sessions: [],
   } as unknown as AgentGuiWorkspaceState;
-  const initial: AgentGuiInitSnapshot = { ...workspace, workspaceId: "ws", workspaceSlug: "workspace", userId: "user", locale: "en", theme: "dark", activeSessionId: null };
+  const initial: AgentGuiInitSnapshot = { ...workspace, workspaceId: "ws", workspaceSlug: "workspace", userId: "user", locale: "en", theme: "dark", activeSessionId: options.activeSessionId ?? null };
   const listeners = new Set<() => void>();
   const handle = {
     getWorkspaceState: () => workspace,
     subscribeWorkspace: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    subscribeTurns: () => () => {},
+    continuable: () => options.continuable ?? false,
+    continueSession: vi.fn(),
+    toGuiSessionId: (id: string) => id,
+    toServerSessionId: (id: string) => id,
     runtime: {},
   } as unknown as Parameters<typeof AgentGuiApplication>[0]["handle"];
   const client = { request: vi.fn().mockResolvedValue({}), subscribe: () => () => {} } as unknown as AgentGuiRpcClient;
@@ -68,7 +73,7 @@ async function mount(local = true) {
   const render = () => root.render(<AgentGuiApplication client={client} initial={initial} handle={handle} />);
   await act(async () => render());
   return {
-    container, client,
+    container, client, handle,
     props: () => captured.props!,
     render: async () => { await act(async () => render()); },
     update: async (agents: AgentGuiWorkspaceState["agents"]) => {
@@ -124,4 +129,16 @@ it("keeps one presentation per workspace identity when cloud execution and menti
     expect(app.props().agentDirectory.agents.map((entry) => entry.agentTargetId)).toEqual([hunterId, reviewerId]);
     expect(app.props().mentionAgentDirectory?.agents.map((entry) => entry.iconUrl)).toEqual([image, emoji]);
   } finally { await app.cleanup(); }
+});
+
+it("turns the empty send button into Continue only for a continuable local turn", async () => {
+  const stopped = await mount(true, { activeSessionId: "s1", continuable: true });
+  try {
+    const action = stopped.props().renderSlots?.composerEmptySubmit;
+    expect(action?.label).toBe("Continue");
+    action!.onSubmit();
+    expect(stopped.handle.continueSession).toHaveBeenCalledWith("s1");
+  } finally { await stopped.cleanup(); }
+  const settled = await mount(true, { activeSessionId: "s1", continuable: false });
+  try { expect(settled.props().renderSlots?.composerEmptySubmit).toBeNull(); } finally { await settled.cleanup(); }
 });

@@ -179,6 +179,13 @@ export function AgentGuiApplication({
     }
     return { ...agentDirectory, agents: [...agents.values()] };
   }, [agentDirectory, workspace.agents]);
+  const activeSessionId = node.lastActiveAgentSessionId;
+  // The empty composer's send button continues a stopped or interrupted local turn.
+  const continuable = useSyncExternalStore(handle.subscribeTurns,
+    () => snapshot.local && activeSessionId ? handle.continuable(activeSessionId) : false);
+  const composerEmptySubmit = useMemo(() => continuable && activeSessionId
+    ? { label: snapshot.locale === "zh-CN" ? "继续" : "Continue", onSubmit: () => handle.continueSession(activeSessionId) }
+    : null, [continuable, activeSessionId, handle, snapshot.locale]);
   const imageSessionId = node.lastActiveAgentSessionId ? handle.toServerSessionId(node.lastActiveAgentSessionId) : null;
   const hostApi = useMemo(() => createAgentGuiHostApi(client, { workspaceId: snapshot.workspaceId, locale: snapshot.locale, local: snapshot.local }, handle, imageSessionId), [client, handle, snapshot.locale, snapshot.workspaceId, snapshot.local, imageSessionId]);
   const mentionService = useMemo(() => createMulticaContextMentions(client, { workspaceId: snapshot.workspaceId, locale: snapshot.locale, local: snapshot.local }, handle), [client, handle, snapshot.workspaceId, snapshot.locale, snapshot.local]);
@@ -234,7 +241,7 @@ export function AgentGuiApplication({
         void client.request("host.promptApplied", { sequence, restoreRequestId });
       },
     }}
-    renderSlots={{ composerFooterAccessory: (context) => <ComposerFooterControls context={context} client={client} handle={handle} targets={executionTargets(workspace)} snapshot={snapshot} onReadyForFocus={setComposerFocusSequence}
+    renderSlots={{ composerEmptySubmit, composerFooterAccessory: (context) => <ComposerFooterControls context={context} client={client} handle={handle} targets={executionTargets(workspace)} snapshot={snapshot} onReadyForFocus={setComposerFocusSequence}
       newConversationRequest={pendingNewConversation} onNewConversationApplied={() => setPendingNewConversation(undefined)}
       onOpenNewConversation={() => dispatchAgentGuiWorkbenchCommand({ type: "new-conversation", instanceId: `multica-agent-gui:${initial.workspaceId}` })}
       pendingTarget={pendingTarget} onCancelTargetSwitch={() => setPendingTarget(null)}
