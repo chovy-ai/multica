@@ -139,6 +139,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     inbox: () => "/acme/inbox",
     chat: () => "/acme/chat",
     conversationFlow: () => "/acme/conversations",
+    conversationFlowDevice: (peerId: string) => `/acme/conversations/devices/${peerId}`,
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
@@ -218,6 +219,21 @@ describe("PinRow", () => {
     detail.current = { isPending: false, isError: false, data: null, error: null };
     summary.current = [];
     workspaces.current = [];
+  });
+
+  it("splits conversations by device and highlights only the open one", async () => {
+    navigation.current.pathname = "/acme/conversations/devices/peer-1";
+    const { container } = renderWithI18n(<AppSidebar conversationFlowDevices={[{ peerId: "peer-1", name: "Mac Studio" }]} />);
+    expect(await screen.findByText("Conversations (local)")).toBeInTheDocument();
+    expect(screen.getByText("Conversations (Mac Studio)")).toBeInTheDocument();
+    expect(container.querySelector('button[data-href="/acme/conversations/devices/peer-1"]')).toHaveAttribute("data-active", "true");
+    expect(container.querySelector('button[data-href="/acme/conversations"]')).not.toHaveAttribute("data-active");
+  });
+
+  it("keeps a single conversations entry without other devices", async () => {
+    const { container } = renderWithI18n(<AppSidebar />);
+    expect(await screen.findByText("Conversations")).toBeInTheDocument();
+    expect(container.querySelector('button[data-href^="/acme/conversations/devices/"]')).toBeNull();
   });
 
   it("unpins missing details", async () => {

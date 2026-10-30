@@ -12,7 +12,9 @@
     "runtimes": "运行时",
     "skills": "Skills",
     "settings": "设置",
-    "conversation_flow": "对话流"
+    "conversation_flow": "对话流",
+    "conversation_flow_local": "对话流（本地）",
+    "conversation_flow_device": "对话流（{{device}}）"
   },
   "tab": {
     "issue": "任务",

@@ -12,7 +12,9 @@
     "runtimes": "ランタイム",
     "skills": "スキル",
     "settings": "設定",
-    "conversation_flow": "会話フロー"
+    "conversation_flow": "会話フロー",
+    "conversation_flow_local": "会話フロー（ローカル）",
+    "conversation_flow_device": "会話フロー（{{device}}）"
   },
   "tab": {
     "issue": "タスク",
