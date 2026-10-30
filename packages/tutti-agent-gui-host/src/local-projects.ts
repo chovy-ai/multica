@@ -1,7 +1,7 @@
 import type { AgentGuiWorkspaceState } from "./protocol";
 
 export function isAutomaticLocalDirectory(path: string): boolean {
-  return /(?:^|[\\/])local-conversations[\\/][a-f0-9]{64}[\\/]workdirs[\\/][^\\/]+[\\/]?$/.test(path);
+  return /(?:^|[\\/])local-conversations[\\/](?:[a-f0-9]{64}[\\/]workdirs|workdirs[\\/]\d+)[\\/][^\\/]+[\\/]?$/.test(path);
 }
 
 export function localProjectSectionKey(path: string): string {

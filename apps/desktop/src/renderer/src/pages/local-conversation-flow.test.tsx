@@ -11,6 +11,7 @@ import { useProjectVisibilityStore } from "../stores/local-conversation-project-
 import { useConversationLayoutStore } from "../stores/local-conversation-layout";
 import type { TuttiAgentGuiPanel } from "@multica/views/conversation-flow/panel";
 import type { ComponentProps } from "react";
+import type { LocalHostAvailability } from "../../../shared/local-host-availability";
 const transportFor = vi.hoisted(() => ({ calls: [] as string[] }));
 vi.mock("../platform/local-v2-transport", () => ({ setRemoteFolderChooser: () => {}, localV2Transport: (deviceId = "local") => { transportFor.calls.push(deviceId); return window.desktopAPI.localV2; } }));
 vi.mock("../platform/linked-devices", () => ({ useLinkedDevices: () => [{ peer_id: "peer-1", device_name: "Mac Studio", connection: "direct" }], deviceName: (_devices: unknown, id: string) => id === "peer-1" ? "Mac Studio" : id }));
@@ -39,6 +40,8 @@ let summarySeq = 0;
 /** Publishes the list again, as the daemon does after any change. */
 let publishList: () => Promise<void> = async () => {};
 let publishMessage: (message: unknown) => void = () => {};
+let publishAvailability: (value: LocalHostAvailability) => void = () => {};
+let publishConnection: (scope: { userId: string; workspaceId: string }, connected: boolean) => void = () => {};
 let daemonRequests: { method: string; path: string; body?: Record<string, unknown> }[] = [];
 /** Reads of the conversation list. */
 const listReads = () => daemonRequests.filter((entry) => entry.method === "GET" && entry.path.startsWith("/sessions?"));
@@ -59,6 +62,11 @@ const folderRow = (project: LocalFolderProject) => ({ id: project.id, title: pro
  */
 function installDaemon() {
   const v2Listeners = new Set<(scope: unknown, message: unknown) => void>();
+  const availabilityListeners = new Set<(value: LocalHostAvailability) => void>();
+  const connectionListeners = new Set<(scope: { userId: string; workspaceId: string }, connected: boolean) => void>();
+  let availability: LocalHostAvailability = { state: "connected" };
+  publishAvailability = (value) => { availability = value; availabilityListeners.forEach((listener) => listener(value)); };
+  publishConnection = (scope, connected) => connectionListeners.forEach((listener) => listener(scope, connected));
   daemonRequests = [];
   const rows = async (scope: unknown): Promise<LocalConversation[]> => {
     const result = await mock.request(scope, "listPage", {});
@@ -105,8 +113,8 @@ function installDaemon() {
       } catch (error) { fail(error); }
       return null;
     },
-    send: async () => {}, onConnection: () => () => {}, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
-    availability: () => ({ state: "connected" }), onAvailability: () => () => {},
+    send: async () => {}, onConnection: (listener: (scope: { userId: string; workspaceId: string }, connected: boolean) => void) => { connectionListeners.add(listener); return () => { connectionListeners.delete(listener); }; }, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
+    availability: () => availability, onAvailability: (listener: (value: LocalHostAvailability) => void) => { availabilityListeners.add(listener); return () => { availabilityListeners.delete(listener); }; },
     subscribe: (listener: (scope: unknown, message: unknown) => void) => {
       v2Listeners.add(listener);
       return () => v2Listeners.delete(listener);
@@ -145,6 +153,65 @@ function activateWithPointer(element: HTMLElement) {
   fireEvent.pointerUp(element, { pointerType: "mouse", button: 0 });
   fireEvent.click(element, { button: 0, detail: 1 });
 }
+
+describe("provider detection recovery", () => {
+  it("shows detection in progress and lets the user retry a failed check", async () => {
+    const original = mock.request.getMockImplementation()!;
+    let rejectDetection: (error: Error) => void = () => {};
+    const detection = new Promise((_resolve, reject) => { rejectDetection = reject; });
+    mock.request.mockImplementation((scope, method, params) => method === "providers" ? detection : original(scope, method, params));
+    render(page());
+    const createButton = screen.getByRole("button", { name: "新建会话" });
+    expect(createButton).toHaveAccessibleDescription("正在检测本机运行器…");
+    await act(async () => rejectDetection(new Error("daemon_offline: Runtime starting")));
+    const failure = await screen.findByRole("status", { name: "运行器检测失败" });
+    mock.request.mockImplementation(original);
+    fireEvent.click(within(failure).getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(createButton).not.toHaveAttribute("aria-disabled", "true"));
+    fireEvent.click(createButton);
+    expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex");
+  });
+
+  it("recovers provider and folder detection after the runtime connects without replacing the draft", async () => {
+    const original = mock.request.getMockImplementation()!;
+    let offline = true;
+    mock.request.mockImplementation((scope, method, params) => method === "providers" && offline ? Promise.reject(new Error("daemon_offline: Runtime starting")) : original(scope, method, params));
+    mock.folderError = new Error("daemon_offline: Runtime starting");
+    publishAvailability({ state: "unavailable", reason: "daemon_offline" });
+    render(page());
+    expect(await screen.findByRole("status", { name: "运行器检测失败" })).toBeVisible();
+    const createButton = screen.getByRole("button", { name: "新建会话" });
+    expect(createButton).toHaveAttribute("aria-disabled", "true");
+    expect(createButton).toHaveAccessibleDescription("运行器检测失败");
+    const draft = screen.getByRole("textbox", { name: "Conversation draft" });
+    fireEvent.change(draft, { target: { value: "Keep my draft" } });
+    offline = false; mock.folderError = null;
+    await act(async () => publishAvailability({ state: "connected" }));
+    await waitFor(() => expect(createButton).not.toHaveAttribute("aria-disabled", "true"));
+    expect(screen.queryByRole("status", { name: "运行器检测失败" })).not.toBeInTheDocument();
+    expect(screen.queryByText("本地项目加载失败")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Conversation draft" })).toBe(draft);
+    expect(draft).toHaveValue("Keep my draft");
+  });
+
+  it("rechecks availability on a reconnect of this scope and ignores other workspaces", async () => {
+    const original = mock.request.getMockImplementation()!;
+    let available = false;
+    mock.request.mockImplementation((scope, method, params) => method === "providers" ? Promise.resolve([{ id: "codex", available }]) : original(scope, method, params));
+    qc.setDefaultOptions({ queries: { retry: false, staleTime: Infinity } });
+    render(page());
+    const createButton = await screen.findByRole("button", { name: "新建会话" });
+    await waitFor(() => expect(createButton).toHaveAccessibleDescription("请先在本机安装 Codex 或 Claude Code"));
+    available = true;
+    const reads = () => daemonRequests.filter((entry) => entry.path === "/providers").length;
+    const before = reads();
+    await act(async () => publishConnection({ userId: "user", workspaceId: "different" }, true));
+    expect(reads()).toBe(before);
+    await act(async () => publishConnection({ userId: "user", workspaceId: "workspace" }, true));
+    await waitFor(() => expect(createButton).not.toHaveAttribute("aria-disabled", "true"));
+    expect(reads()).toBeGreaterThan(before);
+  });
+});
 
 describe("Device link", () => {
   it("shows another device's conversations under its own route and title", async () => {
@@ -727,6 +794,28 @@ describe("Side conversations in the main session list", () => {
     expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex&session=source");
     expect(await list.findByRole("link", { name: /Original/ })).toBeVisible();
     expect(list.queryAllByRole("link", { name: /Side/ })).toHaveLength(0);
+  });
+});
+
+describe("local conversation directory label", () => {
+  it.each([
+    ["zh-Hans", "/profile/local-conversations/workdirs/3/source"],
+    ["en", "C:\\profile\\local-conversations\\workdirs\\3\\source"],
+    ["zh-Hans", `/profile/local-conversations/${"a".repeat(64)}/workdirs/source`],
+    ["en", `/profile/local-conversations/${"a".repeat(64)}/workdirs/source`],
+  ])("shows an unassigned project for the internal directory in %s: %s", async (locale, path) => {
+    mock.locale = locale; source.cwd = path;
+    render(page());
+    const header = await screen.findByRole("button", { name: locale === "en" ? "Choose working directory" : "选择工作目录" });
+    const label = locale === "en" ? "No project" : "未分配项目";
+    expect(header).toHaveTextContent(label);
+    expect(header).toHaveAttribute("title", expect.stringContaining(label));
+    expect(header.getAttribute("title")).not.toContain(path);
+  });
+
+  it("keeps the name of a directory selected by the user", async () => {
+    render(page());
+    expect(await screen.findByRole("button", { name: "选择工作目录" })).toHaveTextContent("work");
   });
 });
 
