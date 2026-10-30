@@ -419,7 +419,7 @@ func (v *V2) serve(w, r, c caller) // allowed(c.kind, route) → 现有路由
 ### 渲染进程和 views
 
 - 直连 transport 增加 `basePath`（本机为空，远端为 `/local/devices/{peerId}`）和 `clientId`（实例生成的 UUID，放在 `X-Multica-Client-ID`）。错误 `device_unreachable`、`device_link_off`、`api_url_mismatch` 进入 availability。
-- `LocalDeviceProvider` 提供 `{ deviceId, deviceName, transport }`。`LocalConversationFlowPage` 从路由读取 peerId 后提供；`useLocalDevice()` 拿不到时抛错，不回落到本机。以下 6 处直接读取 `window.desktopAPI` 的地方改为使用它：`local-conversation-flow.tsx`、`local-resource-preview.tsx`、`local-runtime-notice.tsx`、`local-side-workspace.tsx`、`side-workspace-bridge.tsx`、`use-local-v2-conversation.ts`。
+- `LocalDeviceProvider` 提供 `{ deviceId, deviceName, transport }`。`LocalConversationFlowPage` 从路由读取 peerId 后提供；`useLocalDevice()` 在设备页面外返回本机（全局 bridge 和设置页等不在设备页面内）。以下 6 处直接读取 `window.desktopAPI` 的地方改为使用它：`local-conversation-flow.tsx`、`local-resource-preview.tsx`、`local-runtime-notice.tsx`、`local-side-workspace.tsx`、`side-workspace-bridge.tsx`、`use-local-v2-conversation.ts`。
 - `LocalV2ScopeClient` 的缓存 key 改为 `(deviceId, scope)`；`LocalConversationScope` 不增加字段。第 ⑤ 类的其他 key 改为显式带 deviceId。
 - 使用中标识：`localV2ServerMessageSchema` 增加 `scope.presence`；`LocalV2ScopeClient` 增加 `presence(id)` 和变更通知；会话列表行显示 `MonitorSmartphone` 图标和 Tooltip。
 - 路由 `/{slug}/conversations/devices/{peerId}`；`paths.ts` 增加对应路径函数。
