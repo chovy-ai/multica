@@ -1,4 +1,9 @@
 import "@testing-library/jest-dom/vitest";
+import { configure } from "@testing-library/react";
+
+// findBy*/waitFor give up after 1s by default, which loaded CI runners and
+// full local runs exceed for page tests; vitest's testTimeout bounds them.
+configure({ asyncUtilTimeout: 5_000 });
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();

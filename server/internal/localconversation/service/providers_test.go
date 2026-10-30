@@ -58,3 +58,32 @@ func TestProvidersWithoutACatalog(t *testing.T) {
 		}
 	}
 }
+
+func TestRestartCancelsBackgroundTasksOfThePreviousDaemon(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "c.sqlite")
+	f := newServiceFixture(t, path)
+	ctx := context.Background()
+	f.create(t, "conv-1", "claude")
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.batcher.AppendWait(ctx, store.Batch{ConversationID: "conv-1", Events: []store.NewEvent{{
+		TurnID: "turn-r1", ItemID: "bg-1", Type: "item.started", Payload: json.RawMessage(`{"kind":"background_task","task_id":"t1","description":"watch"}`), CreatedAt: time.Now(),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	again := newServiceFixture(t, path)
+	conv, err := again.svc.Store().Conversation(ctx, "conv-1")
+	if err != nil || conv.BackgroundTasks != 0 {
+		t.Fatalf("conversation after restart = %+v, %v; want no running background tasks", conv, err)
+	}
+	if open, err := again.svc.Store().OpenBackgroundTasks(ctx, "conv-1"); err != nil || len(open) != 0 {
+		t.Fatalf("open tasks after restart = %v, %v", open, err)
+	}
+}

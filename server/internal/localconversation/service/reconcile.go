@@ -55,6 +55,43 @@ func ReconcileInterruptedTurns(ctx context.Context, s *store.Store, committer Co
 	return closed, nil
 }
 
+// CloseOrphanedBackgroundTasks cancels the background tasks a previous
+// daemon's provider processes were running: they stopped with them, so
+// nothing would ever report them finished. It returns the number closed.
+func CloseOrphanedBackgroundTasks(ctx context.Context, s *store.Store, committer Committer, now time.Time) (int, error) {
+	ids, err := s.ConversationsWithBackgroundTasks(ctx)
+	if err != nil {
+		return 0, err
+	}
+	closed := 0
+	for _, id := range ids {
+		rows, err := s.OpenBackgroundTaskItems(ctx, id)
+		if err != nil {
+			return closed, err
+		}
+		batch := store.Batch{ConversationID: id}
+		for _, row := range rows {
+			var state map[string]any
+			_ = json.Unmarshal([]byte(row.Payload), &state)
+			if state == nil {
+				state = map[string]any{"kind": "background_task"}
+			}
+			state["status"] = "cancelled"
+			state["summary"] = "Multica restarted; this background task stopped with it."
+			payload, _ := json.Marshal(state)
+			batch.Events = append(batch.Events, store.NewEvent{TurnID: row.TurnID.String, ItemID: row.ItemID.String, Type: "item.completed", Final: true, Payload: payload, CreatedAt: now})
+		}
+		if len(batch.Events) == 0 {
+			continue
+		}
+		if _, err := committer.Submit(ctx, batch); err != nil {
+			return closed, err
+		}
+		closed += len(batch.Events)
+	}
+	return closed, nil
+}
+
 type synthesizedFinal struct {
 	itemID  string
 	payload map[string]any

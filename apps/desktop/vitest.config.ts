@@ -15,5 +15,8 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./test/setup.ts"],
     passWithNoTests: true,
+    // jsdom page tests run about ten times slower on shared CI runners than
+    // locally; the 5s default fails them there before they settle.
+    testTimeout: 20_000,
   },
 });

@@ -248,6 +248,12 @@ func (s *Store) OpenBackgroundTasks(ctx context.Context, conversationID string) 
 	return ids, nil
 }
 
+// ConversationsWithBackgroundTasks lists conversations showing running
+// background tasks.
+func (s *Store) ConversationsWithBackgroundTasks(ctx context.Context) ([]string, error) {
+	return sqlitedb.New(s.read).ListConversationsWithBackgroundTasks(ctx)
+}
+
 // OpenBackgroundTaskItems returns the latest event of each background task
 // item that has no final event yet, in the order the items started.
 func (s *Store) OpenBackgroundTaskItems(ctx context.Context, conversationID string) ([]sqlitedb.Event, error) {

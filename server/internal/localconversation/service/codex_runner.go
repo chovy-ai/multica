@@ -91,9 +91,13 @@ type codexTurn struct {
 	norm            *codex.Normalizer
 	buffered        []codexappserver.Frame
 	cancelRequested bool
-	storageFailed   bool
-	references      []Reference
-	createTask      bool
+	// active is set by the turn's first frame: Codex rejects turn/interrupt
+	// until the turn has started, so an earlier interrupt waits for it.
+	active        bool
+	interrupted   bool
+	storageFailed bool
+	references    []Reference
+	createTask    bool
 }
 
 type codexNative struct {
@@ -211,37 +215,58 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 	return nil
 }
 
-// Interrupt asks Codex to stop the running turn. If Codex does not confirm
-// in time, the process is stopped and the turn ends as cancelled.
+// Interrupt asks Codex to stop the running turn. A turn Codex has not
+// started yet is interrupted as soon as it starts. If Codex does not
+// confirm in time, the process is stopped and the turn ends as cancelled.
 func (r *CodexRunner) Interrupt(ctx context.Context) error {
 	r.mu.Lock()
 	turn, server := r.turn, r.server
-	var threadID, nativeTurnID string
-	if turn != nil {
-		turn.cancelRequested = true
-		threadID, nativeTurnID = turn.threadID, turn.nativeTurnID
-	}
-	r.mu.Unlock()
-	if turn == nil || server == nil || nativeTurnID == "" {
+	if turn == nil || turn.cancelRequested {
+		r.mu.Unlock()
 		return nil
 	}
-	if _, err := server.Request(ctx, "turn/interrupt", map[string]any{"threadId": threadID, "turnId": nativeTurnID}); err != nil {
-		return err
+	turn.cancelRequested = true
+	active := turn.active
+	if active {
+		turn.interrupted = true
 	}
-	go func() {
-		select {
-		case <-time.After(codexInterruptWait):
+	r.mu.Unlock()
+	if active {
+		if err := r.interruptNative(ctx, turn, server); err != nil {
 			r.mu.Lock()
-			stillRunning := r.turn == turn
+			turn.cancelRequested, turn.interrupted = false, false
 			r.mu.Unlock()
-			if stillRunning {
-				server.Stop()
-				r.finish(turn, "cancelled", &turnError{kind: "interrupt_unconfirmed", message: "Codex did not confirm interruption"})
-			}
-		case <-server.Done():
+			return err
 		}
-	}()
+	}
+	if server != nil {
+		go r.confirmInterrupt(turn, server)
+	}
 	return nil
+}
+
+func (r *CodexRunner) interruptNative(ctx context.Context, turn *codexTurn, server CodexServer) error {
+	r.mu.Lock()
+	threadID, nativeTurnID := turn.threadID, turn.nativeTurnID
+	r.mu.Unlock()
+	_, err := server.Request(ctx, "turn/interrupt", map[string]any{"threadId": threadID, "turnId": nativeTurnID})
+	return err
+}
+
+// confirmInterrupt stops the app-server when an interrupted turn is still
+// running after codexInterruptWait.
+func (r *CodexRunner) confirmInterrupt(turn *codexTurn, server CodexServer) {
+	select {
+	case <-time.After(codexInterruptWait):
+		r.mu.Lock()
+		stillRunning := r.turn == turn
+		r.mu.Unlock()
+		if stillRunning {
+			server.Stop()
+			r.finish(turn, "cancelled", &turnError{kind: "interrupt_unconfirmed", message: "Codex did not confirm interruption"})
+		}
+	case <-server.Done():
+	}
 }
 
 // Steer adds input to the running turn.
@@ -487,12 +512,27 @@ func (r *CodexRunner) handle(frame codexappserver.Frame) {
 		return
 	}
 	cancelRequested, storageFailed, nativeTurnID := turn.cancelRequested, turn.storageFailed, turn.nativeTurnID
-	r.mu.Unlock()
 	if (p.TurnID != "" && p.TurnID != nativeTurnID) || (p.Turn.ID != "" && p.Turn.ID != nativeTurnID) {
+		r.mu.Unlock()
 		if frame.Kind == codexappserver.FrameServerRequest && server != nil {
 			declineCodexRequest(server, frame)
 		}
 		return
+	}
+	turn.active = true
+	interrupt := cancelRequested && !turn.interrupted && frame.Method != "turn/completed"
+	if interrupt {
+		turn.interrupted = true
+	}
+	r.mu.Unlock()
+	if interrupt {
+		// handle must not block the reader; confirmInterrupt, started by
+		// Interrupt, ends the turn if this request fails.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), codexInterruptWait)
+			defer cancel()
+			_ = r.interruptNative(ctx, turn, server)
+		}()
 	}
 
 	if frame.Kind == codexappserver.FrameServerRequest {

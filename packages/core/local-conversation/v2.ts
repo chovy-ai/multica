@@ -141,8 +141,8 @@ export interface LocalV2Transport {
   onConnection(listener: (scope: LocalV2Scope, connected: boolean) => void): () => void;
   /** A URL streaming a daemon file: an attachment, a conversation image or preview content. */
   fileUrl(scope: LocalV2Scope, path: string): string;
-  /** Uploads a message attachment. */
-  upload(scope: LocalV2Scope, file: File): Promise<LocalV2Upload>;
+  /** Uploads a message attachment; the result is parsed with localV2UploadSchema. */
+  upload(scope: LocalV2Scope, file: File): Promise<unknown>;
   /**
    * Asks the user for a path and applies it; null when cancelled. Paths that
    * widen what the daemon may read come only from the OS picker.

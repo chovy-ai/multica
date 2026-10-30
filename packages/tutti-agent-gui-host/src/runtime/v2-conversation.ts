@@ -76,6 +76,8 @@ export class V2Conversation {
         startedAt: turn.started_at, completedAt: turn.completed_at ?? null, error: turn.error ?? null,
       });
       for (const message of turn.messages) {
+        // Assistant rows repeat the turn's assistant_text items.
+        if (message.role !== "user") continue;
         conversation.messages.set(message.id, {
           id: message.id, turnId: turn.id, content: message.content, attachmentIds: message.attachment_ids,
           steered: message.steered, failed: message.failed, createdAt: message.created_at,

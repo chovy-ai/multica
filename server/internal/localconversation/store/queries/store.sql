@@ -206,6 +206,9 @@ SELECT COUNT(DISTINCT e.item_id) FROM event e
 WHERE e.conversation_id = ? AND e.item_id IS NOT NULL AND json_extract(e.payload, '$.kind') = 'background_task'
   AND NOT EXISTS (SELECT 1 FROM event f WHERE f.conversation_id = e.conversation_id AND f.item_id = e.item_id AND f.final = 1);
 
+-- name: ListConversationsWithBackgroundTasks :many
+SELECT id FROM conversation WHERE background_tasks > 0 ORDER BY id;
+
 -- name: ListBackgroundTaskEvents :many
 SELECT * FROM event
 WHERE conversation_id = ? AND item_id IS NOT NULL AND json_extract(payload, '$.kind') = 'background_task'
