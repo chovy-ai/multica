@@ -62,8 +62,10 @@ async function daemon(scopeValue: LocalConversationScope, method: string, path: 
     if (session && body?.type === "interrupt") return request(scopeValue, "cancel", { id: session[1] });
     if (url.pathname === "/sessions" && method === "POST") return summary(await request(scopeValue, "create", { provider: body!.provider }) as LocalConversation);
     const location = { ...(q.get("root") ? { root: q.get("root")! } : {}), path: q.get("path")!, ...(q.get("conversation_id") ? { id: q.get("conversation_id")! } : {}) };
+    if (url.pathname === "/preview/locate") return await request(scopeValue, "previewLocate", location);
     if (url.pathname === "/preview/list") return { entries: await request(scopeValue, "previewList", location) };
     if (url.pathname === "/preview/file") {
+      if (!location.root) throw new Error("outside_folder: choose this folder before previewing its contents");
       const file = await request(scopeValue, "previewRead", location) as { root?: string; path: string; name: string; mimeType: string; size: number; text?: string };
       previewTexts.set(url.search, file.text ?? "");
       return { root: file.root ?? "/project", path: file.path, name: file.name, mime_type: file.mimeType, size: file.size };
@@ -80,6 +82,10 @@ beforeEach(() => {
     if (method === "sideCreate") { const side = { ...sessions[0]!, id: "new-side", side: { sourceId: "main", requestId: String(params.requestId), context: [] } }; sessions.push(side); return side; }
     if (method === "read") return sessions.find((entry) => entry.id === params.id);
     if (method === "previewChoose") return { root: "/project", path: "/project", name: "project", kind: "directory" };
+    if (method === "previewLocate") {
+      if (!String(params.path).startsWith("/project/")) throw new Error("outside_folder: choose this folder before previewing its contents");
+      return { root: "/project", path: params.path, name: String(params.path).split("/").at(-1), kind: "file" };
+    }
     if (method === "previewList") return [{ root: "/project", path: "/project/test.ts", name: "test.ts", kind: "file" }, { root: "/project", path: "/project/nested", name: "nested", kind: "directory" }];
     if (method === "previewRead") return { name: "test.ts", path: "/project/test.ts", mimeType: "text/plain", text: "export const ready = true;", size: 26, truncated: false };
     return undefined;
@@ -202,7 +208,8 @@ it.each([
 ])("previews a transcript file using the source folder and decoded path: %s", async (href, path, line) => {
   const { ref } = setup();
   await act(async () => { await ref.current!.openResource("main", href); });
-  expect(request).toHaveBeenCalledWith(scope, "previewRead", { path, id: "main" });
+  expect(request).toHaveBeenCalledWith(scope, "previewLocate", { path, id: "main" });
+  expect(request).toHaveBeenCalledWith(scope, "previewRead", { root: "/project", path, id: "main" });
   expect(await screen.findByRole("tab", { name: "test.ts" })).toHaveAttribute("aria-selected", "true");
   if (line) expect(await screen.findByText(`第 ${line} 行`)).toBeVisible();
 });
@@ -211,6 +218,26 @@ it("rejects foreign file URLs before reading a local resource", async () => {
   await expect(ref.current!.openResource("main", "file://server/project/cases.html")).rejects.toThrow("Use a local file path");
   expect(request.mock.calls.filter(([, method]) => method === "previewRead")).toEqual([]);
 });
+it("previews an HTML link with its authorized root without asking for another file selection", async () => {
+  const base = request.getMockImplementation()!;
+  const html = "<!doctype html><html><body>Login</body></html>";
+  request.mockImplementation(async (scopeValue, method, params) => method === "previewRead"
+    ? { root: "/project", path: "/project/login.html", name: "login.html", mimeType: "text/html", text: html, size: html.length, truncated: false }
+    : base(scopeValue, method, params));
+  const view = setup();
+  await act(async () => { await view.ref.current!.openResource("main", "/project/login.html"); });
+  expect(await screen.findByRole("tab", { name: "login.html" })).toHaveAttribute("aria-selected", "true");
+  expect(view.container.querySelector("iframe")?.getAttribute("srcdoc")).toContain(html);
+  expect(request).toHaveBeenCalledWith(scope, "previewRead", { root: "/project", path: "/project/login.html", id: "main" });
+  expect(request.mock.calls.some(([, method]) => method === "previewChoose")).toBe(false);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+it("keeps files outside the authorized folders blocked before reading their contents", async () => {
+  const { ref } = setup();
+  await act(async () => { await ref.current!.openResource("main", "/private/secret.html"); });
+  expect(screen.getByRole("alert")).toHaveTextContent("无法访问此文件");
+  expect(request.mock.calls.some(([, method]) => method === "previewRead" || method === "previewChoose")).toBe(false);
+});
 it("keeps the authorized root when a tool reference resolves outside the source cwd", async () => {
   const path = "/selected repo/server/internal/daemon/runtime_mcp.go";
   sessions[0]!.turns = [{ id: "turn", status: "completed", createdAt: "2026-10-24", events: [
@@ -218,6 +245,10 @@ it("keeps the authorized root when a tool reference resolves outside the source 
   ] }];
   request.mockImplementation(async (_scope, method, params) => {
     if (method === "read") return sessions[0];
+    if (method === "previewLocate") {
+      if (params.path !== path) throw new Error("ENOENT");
+      return { root: "/selected repo", path, name: "runtime_mcp.go", kind: "file" };
+    }
     if (method === "previewRead") {
       if (params.path !== path) throw new Error("ENOENT");
       return { root: "/selected repo", path, name: "runtime_mcp.go", mimeType: "text/plain", text: "package daemon", size: 14, truncated: false };
@@ -232,13 +263,14 @@ it("keeps the authorized root when a tool reference resolves outside the source 
 });
 it("shows one recoverable file error and preserves the main draft instead of stacking IPC toasts", async () => {
   let missing = true;
-  request.mockImplementation(async (_scope, method) => {
+  const base = request.getMockImplementation()!;
+  request.mockImplementation(async (_scope, method, params) => {
     if (method === "read") return sessions[0];
     if (method === "previewRead") {
       if (missing) throw new Error("Error invoking remote method 'local-v2:request': Error: ENOENT: realpath '/project/walkthrough.md'");
       return { name: "test.ts", path: "/project/test.ts", mimeType: "text/plain", text: "ready", size: 5, truncated: false };
     }
-    return undefined;
+    return base(_scope, method, params);
   });
   const { ref, onShowMessage } = setup(); const main = screen.getByRole("textbox", { name: "Main draft" });
   fireEvent.change(main, { target: { value: "Keep this draft" } });

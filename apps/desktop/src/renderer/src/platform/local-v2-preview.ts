@@ -28,7 +28,7 @@ export class LocalV2Preview {
   }
 
   /** A file's metadata, with images and PDFs by URL and text up to 1 MB. */
-  async read(location: { root?: string; path: string }, conversationId?: string): Promise<LocalPreviewFile> {
+  async read(location: { root: string; path: string }, conversationId?: string): Promise<LocalPreviewFile> {
     const params = { conversation_id: conversationId, root: location.root, path: location.path };
     const file = fileSchema.parse(await this.client.request("GET", `/preview/file?${query(params)}`));
     const preview: LocalPreviewFile = { name: file.name, path: file.path, root: file.root, mimeType: file.mime_type, size: file.size, truncated: false };

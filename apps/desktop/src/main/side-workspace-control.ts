@@ -1,9 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { sideWorkspaceSyncSchema, type LocalConversationScope, type SideWorkspaceSnapshot } from "@multica/core/local-conversation/protocol";
+import { parseWithFallback } from "@multica/core/api/schema";
+import { z } from "zod";
 import { sideWorkspaceAckSchema, sideWorkspaceControlSchema, type SideWorkspaceAck, type SideWorkspaceCommand, type SideWorkspaceControlRequest } from "../shared/side-workspace";
 import { SideBrowserController } from "./side-browser-controller";
 import { isLoopbackUrl } from "../shared/loopback-url";
 import type { ResourceWebPreview } from "./resource-web-preview";
+
+// Read responses include server metadata such as updatedAt; sync commands stay strict.
+const sideWorkspaceResponseSchema = z.object({ workspace: sideWorkspaceSyncSchema.strip().nullable() });
+export function parseSideWorkspaceResponse(raw: unknown): SideWorkspaceSnapshot | null {
+  const response = parseWithFallback<z.infer<typeof sideWorkspaceResponseSchema> | null>(raw, sideWorkspaceResponseSchema, null, { endpoint: "local-v2.side-workspace" });
+  if (!response) throw new Error("Invalid Side workspace response");
+  return response.workspace;
+}
 
 interface Options {
   currentUser(): string | null | undefined;

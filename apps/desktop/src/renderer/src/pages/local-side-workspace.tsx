@@ -179,7 +179,7 @@ export const LocalSideWorkspace = forwardRef<SideWorkspaceHandle, Props>(functio
         const source = resolutionSource(V2Conversation.fromSnapshot(await localV2(transport, scope).snapshot(sessionId)));
         const preview = localV2Preview(transport, scope);
         const { file, line } = await resolveConversationFile({ source, value,
-          read: (path) => preview.read({ path }, sessionId),
+          read: async (path) => preview.read(await preview.locate(sessionId, path), sessionId),
           list: (path) => preview.list({ root: source.cwd, path }, sessionId),
         });
         if (!mounted.current || (owner === "new" && !isCurrent())) return;
