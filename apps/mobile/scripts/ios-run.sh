@@ -19,5 +19,6 @@
 # run:ios only — prebuild takes the same flags for every variant.
 set -euo pipefail
 
+pnpm run build:device-link
 pnpm exec expo prebuild -p ios --no-install
 exec pnpm exec expo run:ios "$@"

@@ -1,4 +1,5 @@
 import "../global.css";
+import { AIDeviceProvider } from "@/data/ai-sessions/provider";
 
 import { useEffect, useRef } from "react";
 import { AppState, type AppStateStatus } from "react-native";
@@ -85,6 +86,7 @@ export default function RootLayout() {
             <QueryClientProvider client={queryClient}>
               <ThemeProvider value={NAV_THEME[colorScheme]}>
                 <AuthInitializer>
+                  <AIDeviceProvider>
                   <SessionActivityBoundary>
                     <LightboxProvider>
                       <StatusBar style={isDarkColorScheme ? "light" : "dark"} />
@@ -96,6 +98,7 @@ export default function RootLayout() {
                       <PortalHost />
                     </LightboxProvider>
                   </SessionActivityBoundary>
+                  </AIDeviceProvider>
                 </AuthInitializer>
               </ThemeProvider>
             </QueryClientProvider>

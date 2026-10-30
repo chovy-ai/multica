@@ -1,3 +1,6 @@
+import aiSessionsZhHant from "@/locales/zh-Hant/ai-sessions.json";
+import aiSessionsZh from "@/locales/zh-Hans/ai-sessions.json";
+import aiSessionsEn from "@/locales/en/ai-sessions.json";
 import authEn from "@/locales/en/auth.json";
 import chatEn from "@/locales/en/chat.json";
 import commonEn from "@/locales/en/common.json";
@@ -32,6 +35,7 @@ import workspaceZhHant from "@/locales/zh-Hant/workspace.json";
 export const resources = {
   en: {
     auth: authEn,
+    aiSessions: aiSessionsEn,
     chat: chatEn,
     common: commonEn,
     editor: editorEn,
@@ -44,6 +48,7 @@ export const resources = {
   },
   "zh-Hans": {
     auth: authZh,
+    aiSessions: aiSessionsZh,
     chat: chatZh,
     common: commonZh,
     editor: editorZh,
@@ -56,6 +61,7 @@ export const resources = {
   },
   "zh-Hant": {
     auth: authZhHant,
+    aiSessions: aiSessionsZhHant,
     chat: chatZhHant,
     common: commonZhHant,
     editor: editorZhHant,

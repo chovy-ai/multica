@@ -32,3 +32,10 @@ data/**/.DS_Store
 
 expo-env.d.ts
 # @end expo-cli
+# Local Expo module source; only its generated Go framework is ignored.
+!modules/**/ios/
+!modules/**/ios/*.swift
+!modules/**/ios/*.podspec
+modules/**/ios/*.xcframework/
+modules/**/ios/.framework-fingerprint
+.cache/

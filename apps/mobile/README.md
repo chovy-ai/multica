@@ -2,6 +2,59 @@
 
 Expo + React Native iOS client for Multica. Independent from web/desktop — shares types and pure utilities from `@multica/core/`. See [`AGENTS.md`](./AGENTS.md) for mobile architecture and development rules; `package.json` records the current dependency versions.
 
+## AI Sessions and the embedded iOS daemon
+
+The third bottom tab is **AI Sessions** (AI 会话). The original workspace
+Chat is under **More → Chat**. AI Sessions lists the account's computers,
+their folder projects, and their local Codex/Claude Code conversations.
+Enable **Device link** on the computer before connecting. Execution, files
+and history remain on that computer.
+
+After restoring a signed-in account, the app starts an embedded Go daemon
+through the local `MulticaDeviceLink` Expo module. It reuses the existing
+libp2p device transport (`/multica/local-api/1`) and exposes an authenticated
+loopback HTTP/WebSocket API to React Native. It does not launch an iOS child
+process. The app owns startup, health checks, restart/backoff, foreground
+recovery, and shutdown on background/sign-out. Switching workspaces releases
+the old UI subscriptions; caches and drafts include account, workspace and
+device identity. Desktop-only host requests fail explicitly.
+
+AI sessions support adding messages to the running conversation's queue,
+pausing/resuming/removing pending messages, and sending one immediately without
+a second confirmation. Sending immediately interrupts the current generation.
+Project groups can be collapsed, older turns load on demand, and model settings
+include the runner's supported reasoning levels and execution permissions.
+Account usage is available from the conversation's **More → Usage and limits**
+menu; it is read from the selected computer's provider account, separately from
+conversation context use. Unsupported or expired windows are not shown as zero.
+
+Attachments use iOS Quick Look and the system share sheet. Side is a full-screen
+workspace with file browsing, public webpages, and independent conversations
+created from a selected passage. Text selection offers **Continue in Side** and
+keeps the original turn as its source. Computer loopback URLs require a computer
+preview channel and are not opened as phone-local URLs. Automated desktop browser
+controls remain desktop-only. History pagination and attachment names require the
+computer daemon built from this branch (`/sessions/{id}/history` and
+`/attachments/{id}/metadata`). Rebuild the native iOS app for file previews.
+
+`ios:mobile*` builds the Go XCFramework before Expo prebuild. Install full
+Xcode, select its developer directory, and install Go matching `server/go.mod`.
+The script installs pinned `gomobile`/`gobind` build tools into `.cache/` on
+first use and rebuilds the framework only when its sources change. The
+framework and generated binding dependencies are not committed.
+
+```bash
+pnpm --filter @multica/mobile build:device-link
+pnpm ios:mobile:staging
+```
+
+Set `EXPO_PUBLIC_P2P_SERVER_URL` to use a private device registry; otherwise
+the app uses the same registry as Desktop. That registry must validate tokens
+against the selected `EXPO_PUBLIC_API_URL`. Expo Go does not include the native
+module; install a development or Release build. Unit tests and Go tunnel tests
+do not verify the native framework, permission prompts, keyboard layout, or
+cross-network connectivity on an iPhone.
+
 ## Just want to use it on your phone? (no development)
 
 Multica isn't on the App Store yet — until that changes, anyone who wants it on their iPhone builds from source. One command:

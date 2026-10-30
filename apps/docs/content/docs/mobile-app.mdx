@@ -10,6 +10,14 @@ The Multica iOS client is not on the App Store yet. You can build a Release vers
 
 The installed app connects to Multica Cloud by default; sign in with your existing account. Workspaces, issues, comments, and run history all live on the server, so nothing needs to be synced from web or Desktop.
 
+## AI Sessions from your computer
+
+Open **AI Sessions** in the third bottom tab, select a computer, and open a Codex or Claude Code conversation. Sign in with the same account on both devices and enable **Device link** on the computer. Local conversation history, execution and files stay on that computer; the phone displays them through the device connection. Workspace **Chat** is under **More → Chat**.
+
+You can queue follow-up messages, change the model and execution permissions, and read the current provider account's limits from **More → Usage and limits**. Attachments use the iOS preview and share sheet. Side opens files, public webpages and an independent conversation from a selected passage. Computer-local webpages and automated desktop browser controls are not available on iOS yet.
+
+The app manages its connection while open. Returning from the background reconnects the phone; execution on the computer continues. Building this version also requires Go matching `server/go.mod`.
+
 ## Prerequisites
 
 You need:
