@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "type": "scope.presence",
+  "conversation_id": "conv-1",
+  "devices": [{ "peer_id": "12D3KooWExample", "device_name": "MacBook" }]
+}
