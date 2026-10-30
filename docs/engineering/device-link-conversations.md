@@ -136,7 +136,8 @@ Desktop 与守护进程之间的 `/local/v2` 原样承载在 p2p 流上的 HTTP 
  → 请求和 WS 带 scope 请求头（API origin、userId、workspaceId）
        被访问端 scope()：userId ≠ .desktop-user-id → account_mismatch
                         API origin ≠ 被访问端 ServerBaseURL → api_url_mismatch
- → WS …/local/v2/ws          服务端分配 client_id 并在第一条消息中返回
+ → 每个请求和 WS 带 X-Multica-Client-ID（proxy 实例生成，重连不变）；被访问端记为 {peerId}/{clientId}
+ → WS …/local/v2/ws
  → subscribe_scope {after_scope_seq}；打开会话时 subscribe {after_seq, store_generation}
 ```
 
@@ -146,7 +147,7 @@ Desktop 与守护进程之间的 `/local/v2` 原样承载在 p2p 流上的 HTTP 
 渲染进程 LocalV2ScopeClient.request(method, path) → transport(deviceId)
  → IPC local-v2:request(deviceId, …) → proxy(deviceId) → HTTP
  → 隧道 → ServeRemote → V2.ServeHTTP → service → 原路返回
-命令（send、interrupt、queue_update…）带 client_id，被访问端记在 turn 上，供第 5 节路由
+send、answer、入队时，被访问端把该会话的发起方记为这个 clientKey，供第 5 节路由
 ```
 
 ### 3. 实时更新
@@ -173,11 +174,11 @@ v2 推送的是事件本身（含流式文本），不需要「changed → 重�
 
 ```text
 被访问端执行中需要查看端（settings.confirm、settings.host、settings.refresh、side.control、developer_logs.export）
- → service.askHost(scope, turn, kind) → hosts.request 优先发给 turn 记录的 client_id 对应的连接
+ → service.askHost(scope, conversationId, kind) → hosts.request 优先发给该会话发起方 clientKey 的连接
  → 隧道 → 查看端 proxy(deviceId) → 远端 host 处理函数（第 ③ 类）→ host.reply → 隧道 → service 继续
 ```
 
-现在 `hosts.request` 发给该 scope「最后一次 subscribe 的连接」。远端和本机同账号同工作区，属于同一个 scope，所以 B 设备发起的运行可能把确认弹到 A 上。改为按 turn 的发起连接路由，找不到时才使用现有规则。
+现在 `hosts.request` 发给该 scope「最后一次 subscribe 的连接」。远端和本机同账号同工作区，属于同一个 scope，所以 B 设备发起的运行可能把确认弹到 A 上。改为按会话的发起方路由，找不到时才使用现有规则。
 
 ### 6. 目录和文件选择
 
@@ -194,8 +195,8 @@ v2 推送的是事件本身（含流式文本），不需要「changed → 重�
 
 ```text
 p2p 断开 → WS 关闭 → proxy connection(false) → 「正在重连」
- → 该 client_id 的待处理 host request 保留 60 秒
- → libp2p 重新连接 → proxy 退避重连 WS（带原 client_id）→ 渲染进程重新订阅（after_seq）
+ → 该 clientKey 的待处理 host request 保留 60 秒
+ → libp2p 重新连接 → proxy 退避重连 WS（带原 clientId）→ 渲染进程重新订阅（after_seq）
      宽限期内的 host request 重新下发给新连接
      after_seq 仍可续传 → 补发事件；store_generation 变化或超出 → snapshot_required，重新读取快照
 中继升级为直连 → 查看端守护进程关闭走中继的隧道流 → proxy 立即重连（不显示断线提示），新流走直连
@@ -286,55 +287,134 @@ presence 只在内存中，不写入 SQLite，不占用 `summary_seq`。
 
 ## 实现
 
+分三个 PR：守护进程 → Desktop 主进程和 preload → 渲染进程和 views。
+
 ### 守护进程（Go）
 
-- `p2p` 包：
-  - 新增 `Service.Listen(proto) net.Listener` 和 `Service.Dial(ctx, peer, proto) net.Conn`，基于 `Service.Handle` 和 `Service.Open`，保留 allowlist 检查。不使用 `gostream`：它的 `Listen` 直接调用 `SetStreamHandler`，绕过 allowlist。适配器需要处理半关闭（参考 gostream 的 `IgnoreEOF`）。
-  - `RemoteAddr()` 返回 peer ID。
-  - 新增 `RemoveHandler(proto)`。
-  - `Dial` 在只有中继连接时最多等待 5 秒直连；新增连接变化订阅，供隧道在出现直连后迁移。
-- 开关：
-  - 保存在 profile 目录的 `device-link.json`。
-  - 回环接口 `GET`/`PUT /local/device-link`。p2p 未启用或守护进程不提供本地对话时返回 `unavailable`。
-  - 打开时 `Listen` 并用 `http.Server{Handler: V2.ServeRemote, ReadHeaderTimeout, IdleTimeout}` 服务；关闭时 `RemoveHandler`、关闭 listener、断开远端连接。
-- `localhost.V2.ServeRemote`：
-  - 不做 `Authorize`（loopback 和 token），访问控制由 gater、allowlist 和开关负责；保留 `scope()` 的账号校验。
-  - 只放行 `/local/v2/` 下的路径，拒绝 `/drain`、`/undrain`、`/stop-providers`。
-  - API origin 必须等于被访问端的 `ServerBaseURL`，否则返回 `api_url_mismatch`。否则 `EnsureScope` 会为另一个服务端新建 scope，`contextCloud` 也会返回 nil。
-  - 仅经中继时，文件读取和上传超过 5 MB 返回 `relay_transfer_limited`。
-- 反向请求路由（`v2_host.go`）：
-  - WS 握手时分配 `client_id`，重连时客户端带回原 `client_id`。
-  - 命令带 `client_id`，service 记在 turn 上；`askHost` 带 turn，`hosts.request` 优先发给该 `client_id` 的连接，找不到时沿用「最后一次 subscribe 的连接」。
-  - 连接断开时，该 `client_id` 的待处理请求保留 60 秒，同一 `client_id` 重连后重新下发；宽限期结束才返回 `ErrHostUnavailable`。现在 `attach` 的 detach 会立即失败所有待处理请求。
-- 使用中标识：`V2` 维护 `conversation_id → 远端设备集合`，来源是远端连接的订阅、远端发起且未结束的 turn，断开的连接在宽限期结束后移除。只向本机连接推送 `scope.presence`；`subscribe_scope` 时先发全量。在 `local-v2.schema.json` 中增加该消息和对应样例。
-- 新增 `GET /local/v2/directories?path=`：列出被访问端目录，供远端选择使用；本地 tab 不使用。
-- 回环接口：
-  - 在 health mux 上注册 `/local/devices` 和 `/local/devices/`，并调用 `Authorize`。
-  - `GET /local/devices` 返回可用设备。
-  - `/local/devices/{peerId}/...`：`httputil.ReverseProxy`，去掉前缀，Transport 的 `DialContext` 使用 `p2p.Dial`，设置 `IdleConnTimeout`；删除 `Authorization`；`FlushInterval: -1`。
-  - `ErrorHandler` 返回 v2 的错误格式 `{ error: { kind, message } }`：拨号失败为 502 `device_unreachable`；对端不支持协议为 503 `device_link_off`；不在 allowlist 为 404 `device_unknown`。
+#### p2p 适配器（`server/internal/daemon/p2p/`）
+
+`Service.Handle` 已经检查 allowlist，`Service.Open` 已经带 `WithAllowLimitedConn`，适配器包在这两个函数外面：
+
+```go
+// stream_conn.go
+type streamConn struct{ network.Stream }                // 实现 net.Conn
+func (c streamConn) RemoteAddr() net.Addr               // 返回 peer ID
+func (s *Service) Listen(proto protocol.ID) (net.Listener, func())   // Handle 把流推进 chan；返回的 func 调用 RemoveStreamHandler
+func (s *Service) Dial(ctx context.Context, p peer.ID, proto protocol.ID) (net.Conn, error)
+func (s *Service) OnDirect(fn func(peer.ID))            // 出现到某设备的非 circuit 连接时回调
+```
+
+- 不使用 `gostream`：它的 `Listen` 直接调用 `SetStreamHandler`，绕过 allowlist。`Close` 需要处理半关闭（先 `CloseWrite`，读到 EOF 再关闭，参考 gostream 的 `IgnoreEOF`）。
+- `Dial`：到该设备的连接全是 circuit 时，订阅 `event.EvtPeerConnectednessChanged`，最多等 5 秒非 circuit 连接，超时才在中继上开流。
+- `OnDirect` 复用 `addrsLoop` 所在的事件订阅。设备名和连接类型复用 `Peers()` 的 `PeerStatus{DeviceName, Connection}`。
+
+#### `V2` 的本机入口和远端入口（`daemon/localhost/v2.go`）
+
+```go
+func (v *V2) ServeHTTP(w, r)   // 本机：Authorize 后调用 serve，caller{client: "local/" + X-Multica-Client-ID}
+func (v *V2) ServeRemote(w, r) // p2p：开关关闭 → device_link_off；/drain /undrain /stop-providers → 403；
+                               // API origin ≠ serverOrigin → api_url_mismatch；
+                               // caller{peer, client: peer + "/" + X-Multica-Client-ID}
+```
+
+- 现有 `ServeHTTP` 的主体改名为 `serve(w, r, caller)`，`scope()` 照常校验账号。
+- peer 由 device-link `http.Server` 的 `ConnContext` 从 `RemoteAddr` 放进 context，不信任请求头。
+- `NewV2` 增加 `serverOrigin`，在 `daemon/local_conversations.go` 传入 `d.cfg.ServerBaseURL`。否则 `EnsureScope` 会为另一个服务端新建 scope，`contextCloud` 也会返回 nil。
+- `wsConn` 增加 `remote`、`peer`、`clientKey`。
+- 仅经中继时，文件读取和上传超过 5 MB 返回 `relay_transfer_limited`（见反向代理）。
+
+#### 反向请求路由（`daemon/localhost/v2_host.go`、`localconversation/service`）
+
+- `clientKey`：客户端为每个 `LocalV2Proxy` 实例生成一个 UUID，HTTP 和 WS 都放在 `X-Multica-Client-ID` 请求头中，重连时自然沿用。服务端加上前缀：本机是 `local/`，远端是 `{peerId}/`，所以远端伪造不出本机的 key。
+- 按会话路由：`ContextBinder` 按 provider 进程绑定，settings 工具的 `Host` 闭包拿不到 turn，所以不按 turn 路由。service 在内存里维护 `conversationID → clientKey`，在 `send`、`answer`、入队时更新为发起方。`askHost` 增加 `conversationID` 参数，`hosts.request` 先找该 clientKey 的连接，找不到时沿用「最后一次 subscribe 的连接」。两台设备同时操作同一个会话不处理，所以按会话路由足够。
+- 宽限期：现在 `hosts.attach` 的 detach 会立即让该连接的待处理请求失败。改为移入 `orphaned[clientKey]` 并计时 60 秒；同一 clientKey 的新连接 attach 时，用原 `request_id` 重新发送 `host.request`；到期才返回 `ErrHostUnavailable`。
+
+#### 使用中标识
+
+- `V2` 维护 `presence: conversationID → clientKey → {peerId, deviceName}`。
+  - 加入：远端连接 `subscribe` 这个会话。远端 clientKey 发起的运行在结束前也算在内；service 增加 `OnTurnEnded` 选项，把现有的 `turnEnded` 通知出来。
+  - 移除：`unsubscribe`、运行结束（且没有订阅），或连接断开后宽限期到期。
+- 每次变化只推给本机连接（非远端且有 scope 订阅）：
+
+  ```json
+  {"version": 2, "type": "scope.presence", "conversation_id": "…", "devices": [{"peer_id": "…", "device_name": "…"}]}
+  ```
+
+- `wsSubscribeScope` 成功后先发一次全量。presence 只在内存中，不写入 SQLite，不占用 `summary_seq`。
+- `protocol/schema/local-v2.schema.json` 增加这条消息，并补 valid 和 invalid 样例。
+
+#### 开关、设备列表和反向代理（新文件 `daemon/device_link.go`）
+
+- 开关保存在 profile 目录的 `device-link.json`。
+  - 打开时：`svc.Listen("/multica/local-api/1")`，用 `http.Server{Handler: d.localV2.ServeRemote, ConnContext: withPeer, ReadHeaderTimeout: 10s, IdleTimeout: 90s}` 服务。
+  - 关闭时：调用 `Listen` 返回的 stop、`srv.Close()`，并断开所有远端 `wsConn`。
+  - p2p 未启用或守护进程不提供本地对话时，接口返回 `unavailable`。
+- 在 `health.go` 的 mux 上注册以下接口，都先调用 `Authorize`：
+  - `GET`/`PUT /local/device-link`。
+  - `GET /local/devices`：`Peers()` 中已连接、且 `Peerstore().SupportsProtocols` 包含该协议的设备，返回 `{ peerId, deviceName, connection }`。
+  - `/local/devices/{peerId}/...`：每台设备一个 `httputil.ReverseProxy`。
+
+```go
+&httputil.ReverseProxy{
+    Rewrite: func(r *httputil.ProxyRequest) {
+        r.Out.URL.Scheme, r.Out.URL.Host = "http", "device-link"
+        r.Out.URL.Path = strings.TrimPrefix(r.In.URL.Path, "/local/devices/"+peerID)
+        r.Out.Header.Del("Authorization")
+    },
+    Transport:     &http.Transport{DialContext: dialPeer, IdleConnTimeout: 90 * time.Second},
+    FlushInterval: -1,
+    ErrorHandler:  deviceLinkError, // 502 device_unreachable / 503 device_link_off / 404 device_unknown
+}
+```
+
+- WebSocket upgrade 由 `ReverseProxy` 原生转发。代理记录每台设备已升级的连接；`OnDirect` 回调时，对 Transport 调用 `CloseIdleConnections()`，并关闭走中继的已升级连接。
+- 仅经中继时：上传在转发前按请求的 `Content-Length` 检查，读取在 `ModifyResponse` 中按响应的 `Content-Length` 检查，超过 5 MB 返回 `relay_transfer_limited`。
+- 错误格式与 v2 一致：`{ error: { kind, message } }`。
+
+#### 其他
+
+- `GET /local/v2/directories?path=`：service 新增 `ListDirectories`，只列目录，跳过隐藏项，空路径时返回 home 目录。
 - `hello` 的 `capabilities` 增加 `device-link`。
 
 ### Desktop 主进程和 preload
 
-- `LocalV2Proxy`：
-  - 增加 `basePath`，默认空，远端为 `/local/devices/{peerId}`；`/local/v2${path}` 改为 `${basePath}/local/v2${path}`。
-  - 保存服务端分配的 `client_id`，重连时带回；命令请求带上 `client_id`。
-  - 错误映射：`device_unreachable`、`device_link_off`、`api_url_mismatch`、`incompatible` 更新 availability；只有本机回环接口返回 403 时才重读 token。
-  - 远端 proxy 不调用 `drain`、`undrain`、`stopProviders`。
-- `DeviceProxies`：`peerId → LocalV2Proxy`，生命周期跟随远端 tab（引用计数），不跟随设备列表；计数归零 60 秒后关闭。远端 proxy 使用远端 host 处理函数（第 ③ 类）。
-- IPC 显式带 deviceId 参数（本机为 `"local"`），不从 scope 推断，缺失时报错。涉及 `local-v2:request`、`local-v2:send`、`local-v2:message`、`local-v2:connection`、`local-conversation:availability`、文件协议、`local-file-context-menu`、`side-workspace`、`resource-preview`。
-- 新增 `local-v2:choose-remote`、`local-v2:save-file`；设备列表轮询、开关读写的 IPC；`tab:attach`/`tab:detach` 维护引用计数。
+- `LocalV2Proxy`（`apps/desktop/src/main/local-conversation-v2.ts`）：
+  - 选项增加 `basePath`（默认空，远端为 `/local/devices/{peerId}`）和 `remote`。`/local/v2${path}` 统一改为 `${basePath}/local/v2${path}`。
+  - 构造时生成 `clientId`，`headers()` 带上 `X-Multica-Client-ID`。
+  - `remote` 为 true 时，`drain`、`undrain`、`stopProviders` 直接抛错。
+  - `BLOCKING` 增加 `device_unreachable`、`device_link_off`、`api_url_mismatch`；availability 增加对应 reason。只有本机回环接口返回 403 时才重读 token。
+- `device-proxies.ts`（新文件）：`peerId → LocalV2Proxy`，生命周期跟随远端 tab（`tab:attach`/`tab:detach` 维护引用计数），不跟随设备列表；计数归零 60 秒后关闭。
+- `index.ts`：
+  - 单例 `localV2` 改为按 deviceId 取 proxy（本机为 `"local"`）。约 20 处引用，单独一个 commit。
+  - `mainFrame(event, deviceId, scope)` 返回对应 proxy。
+  - IPC 显式带 deviceId，不从 scope 推断，缺失时报错：`local-v2:request`、`local-v2:send`、`local-v2:choose`；推给渲染进程的 `local-v2:message`、`local-v2:connection`、`local-conversation:availability` 也带 deviceId。
+  - 文件协议从 URL 读取 `deviceId`。
+  - `local-file-context-menu`、`side-workspace`、`resource-preview` 的 owner 带 deviceId。
+- 远端 host 处理函数：复用 `localV2HostHandler`（`local-v2-host.ts`），按第 ③ 类处理：
+  - `settings.confirm`：忽略 payload 里的 `apply`，由 `packages/core/settings/operations.ts` 根据 operation 和 input 重新生成；
+  - 设备类 `settings.host`、`developer_logs.export`：拒绝；
+  - `side.control`：预览 owner 带 deviceId。
+- 新增 IPC：
+  - `local-v2:choose-remote(deviceId, scope, request, path)`：拒绝 `"local"`，按 purpose 发出与 `local-v2:choose` 相同的 POST；
+  - `local-v2:save-file(deviceId, scope, target)`：`showSaveDialog` 后把 `proxy.file()` 流式写入本机；
+  - `device-link:get`、`device-link:set`、`device-link:devices`。
+- preload：`localV2.forDevice(deviceId)` 返回 `LocalV2Transport`；现有 `localV2` 等同于 `forDevice("local")`。
 
 ### 渲染进程和 views
 
-- 设备专属 transport：`LocalV2Transport` 增加 deviceId 绑定，`LocalV2ScopeClient` 按 `(deviceId, scope)` 缓存。`LocalConversationFlowPage` 从路由读取 deviceId，通过 context 提供；子组件通过 hook 获取，拿不到时抛错，不回落到本机。替换现有直接引用 `window.desktopAPI.localConversations` 的位置：`local-conversation-flow.tsx`、`local-resource-preview.tsx`、`local-runtime-notice.tsx`、`local-side-workspace.tsx`、`side-workspace-bridge.tsx`、`use-local-v2-conversation.ts`。
-- `LocalConversationScope` 不增加字段。第 ⑤ 类的 key 改为显式带 deviceId。
+- `LocalV2Transport`（`packages/core/local-conversation/v2.ts`）已经以参数形式注入各页面和工具函数，不需要改接口。
+- `LocalDeviceProvider` 提供 `{ deviceId, deviceName, transport }`。`LocalConversationFlowPage` 从路由读取 peerId 后提供；`useLocalDevice()` 拿不到时抛错，不回落到本机。以下 6 处直接读取 `window.desktopAPI` 的地方改为使用它：`local-conversation-flow.tsx`、`local-resource-preview.tsx`、`local-runtime-notice.tsx`、`local-side-workspace.tsx`、`side-workspace-bridge.tsx`、`use-local-v2-conversation.ts`。
+- `LocalV2ScopeClient` 的缓存 key 改为 `(deviceId, scope)`；`LocalConversationScope` 不增加字段。第 ⑤ 类的其他 key 改为显式带 deviceId。
+- 使用中标识：`localV2ServerMessageSchema` 增加 `scope.presence`；`LocalV2ScopeClient` 增加 `presence(id)` 和变更通知；会话列表行显示 `MonitorSmartphone` 图标和 Tooltip。
 - 路由 `/{slug}/conversations/devices/{peerId}`；`paths.ts` 增加对应路径函数。
 - `app-sidebar` 增加平台插槽，由 Desktop 注入「对话流（本地）」和「对话流（{设备名}）」，并按上文规则判断选中状态。
-- 远端目录和文件选择 Dialog；设置「设备互联」tab 和 AlertDialog；`LocalRuntimeNotice` 按设备订阅并补充远端文案；翻译（en、zh-Hans、ja、ko）。
+- 远端目录和文件选择 Dialog（调用 `/directories`，确认后调用 `choose-remote`）；设置「设备互联」tab 和 AlertDialog；`LocalRuntimeNotice` 按设备订阅并补充远端文案；翻译（en、zh-Hans、ja、ko）。
 - 云端任务会话链接的跨设备查找。
-- 使用中标识：`localV2ServerMessageSchema` 解析 `scope.presence`（未知字段和消息按现有方式降级），`LocalV2ScopeClient` 保存 presence，会话列表行显示图标和 Tooltip。
+
+### 主要风险
+
+- `ReverseProxy`、WebSocket 和 libp2p stream 半关闭的组合最容易出问题。第一个 PR 就用同一台机器的两个 profile，以 curl 和 websocat 验证 hello、WS 长连接、Range 读取和上传。
+- `index.ts` 中 `localV2` 的引用多，改动机械但面广。
 
 ## 安全边界
 
@@ -355,11 +435,11 @@ presence 只在内存中，不写入 SQLite，不占用 `summary_seq`。
 
 ## 实施顺序
 
-1. 守护进程：p2p 适配器和直连优先、开关、`ServeRemote`（含 origin 校验）、`client_id` 路由和宽限期、`/directories`、`/local/devices` 和反向代理、错误码。用同一台机器的两个 profile，以 curl 验证 hello、ws、文件。
-2. Desktop 主进程和 preload：`basePath`、`client_id`、错误映射、`DeviceProxies` 和引用计数、显式 deviceId 的 IPC、文件协议、`choose-remote`、保存到本机、反向请求和 settings 分流、设备轮询、开关 IPC。
+1. 守护进程：p2p 适配器和直连优先、开关、`ServeRemote`（含 origin 校验）、`clientKey` 路由和宽限期、`/directories`、`/local/devices` 和反向代理、错误码。用同一台机器的两个 profile，以 curl 验证 hello、ws、文件。
+2. Desktop 主进程和 preload：`basePath`、`clientId`、错误映射、`DeviceProxies` 和引用计数、显式 deviceId 的 IPC、文件协议、`choose-remote`、保存到本机、反向请求和 settings 分流、设备轮询、开关 IPC。
 3. 渲染进程和 views：设备专属 transport 和 context、路由、侧边栏插槽和选中规则、第 ⑤ 类 key、远端选择 Dialog、右键菜单和网页预览的远端行为、设置 tab、提示文案、翻译、云端任务会话链接。
 4. 验证：
-   - Go：presence 的加入、宽限期后移除、只推送给本机连接；适配器（含半关闭）、`ServeRemote` 白名单和 origin 校验、反向代理和错误码、`client_id` 路由（两条连接同 scope 时确认发往发起方）、宽限期、直连迁移。
+   - Go：presence 的加入、宽限期后移除、只推送给本机连接；适配器（含半关闭）、`ServeRemote` 白名单和 origin 校验、反向代理和错误码、`clientKey` 路由（两条连接同 scope 时确认发往发起方）、宽限期、直连迁移。
    - Desktop 主进程：`basePath` 拼接、远端 proxy 不调用 drain、`choose-remote` 拒绝本机 deviceId。
    - 渲染进程：使用中标识的显示和 Tooltip、侧边栏两种状态和选中规则、远端 tab、key 隔离、缺少设备 transport 时报错。
    - 手动：先用同一台机器的两个 profile，再用两台不同网络的机器验证打洞和中继回退。浅色和深色主题截图保存在 `.tmp/device-link/`。
