@@ -163,6 +163,16 @@ describe("local conversation parent service over v2", () => {
     expect(requests[0]!.path).toBe("/usage?provider=claude&conversation_id=c1");
   });
 
+  it("routes compaction to the selected local conversation and validates its acknowledgement", async () => {
+    let reply: unknown = { turn_id: "turn-compact-1" };
+    routes.unshift((method, path) => method === "POST" && path === "/sessions/c1/commands" ? reply : undefined);
+    const { service } = setup();
+    expect(await service.request("session.compact", { sessionId: "c1", requestId: "compact-1" })).toEqual({ turnId: "turn-compact-1" });
+    expect(requests[0]).toMatchObject({ method: "POST", path: "/sessions/c1/commands", body: { type: "compact", request_id: "compact-1" } });
+    reply = {};
+    await expect(service.request("session.compact", { sessionId: "c1", requestId: "compact-2" })).rejects.toThrow();
+  });
+
   it("keeps only the latest GUI selection when reads finish in reverse order", async () => {
     let intent = "a";
     let release: () => void = () => {};

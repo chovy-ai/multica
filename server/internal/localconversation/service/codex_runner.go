@@ -83,6 +83,8 @@ type CodexRunner struct {
 
 type codexTurn struct {
 	id           string
+	compacting   bool
+	compacted    bool
 	threadID     string
 	nativeTurnID string
 	// normMu serializes the normalizer between the app-server reader and
@@ -148,7 +150,7 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		r.mu.Unlock()
 		return err
 	}
-	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References, createTask: req.CreateTask}
+	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References, createTask: req.CreateTask, compacting: req.Compact}
 	r.turn = turn
 	r.mu.Unlock()
 
@@ -176,6 +178,18 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		effort = *r.session.ReasoningEffort
 	}
 	r.mu.Unlock()
+
+	if req.Compact {
+		_, err := server.Request(ctx, "thread/compact/start", map[string]any{"threadId": threadID})
+		if err != nil {
+			if codex.IsClosed(err) || errors.Is(err, context.DeadlineExceeded) {
+				r.finish(turn, "failed", &turnError{kind: "outcome_unknown", message: err.Error()})
+				return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
+			}
+			r.finish(turn, "failed", &turnError{kind: "compaction_failed", message: err.Error()})
+		}
+		return err
+	}
 
 	var effortParam any
 	if effort != "" {
@@ -505,6 +519,17 @@ func (r *CodexRunner) handle(frame codexappserver.Frame) {
 		return
 	}
 	if turn.nativeTurnID == "" {
+		if turn.compacting && frame.Method == "turn/started" && p.Turn.ID != "" {
+			turn.nativeTurnID = p.Turn.ID
+			buffered := turn.buffered
+			turn.buffered = nil
+			r.mu.Unlock()
+			for _, previous := range buffered {
+				r.handle(previous)
+			}
+			r.handle(frame)
+			return
+		}
 		if len(turn.buffered) < maxBufferedTurnFrame {
 			turn.buffered = append(turn.buffered, frame)
 		}
@@ -546,6 +571,8 @@ func (r *CodexRunner) handle(frame codexappserver.Frame) {
 		switch {
 		case storageFailed:
 			r.finish(turn, "failed", &turnError{kind: "storage_limit", message: ErrStorageBacklog.Error()})
+		case p.Turn.Status == "completed" && turn.compacting && !turn.compacted:
+			r.finish(turn, "failed", &turnError{kind: "compaction_failed", message: "The provider did not confirm context compaction"})
 		case p.Turn.Status == "completed":
 			r.finish(turn, "completed", nil)
 		case p.Turn.Status == "interrupted" || cancelRequested:
@@ -558,6 +585,16 @@ func (r *CodexRunner) handle(frame codexappserver.Frame) {
 			r.finish(turn, "failed", &turnError{kind: "provider_error", message: message})
 		}
 		return
+	}
+	if turn.compacting && frame.Method == "item/completed" {
+		var item struct {
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
+		}
+		if json.Unmarshal(frame.Params, &item) == nil && item.Item.Type == "contextCompaction" {
+			turn.compacted = true
+		}
 	}
 	turn.normMu.Lock()
 	events := turn.norm.Accept(frame.Method, frame.Params)

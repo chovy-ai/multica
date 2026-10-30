@@ -450,10 +450,17 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 		return
 	}
 	switch body.Type {
-	case "send", "answer", "queue_enqueue":
+	case "send", "answer", "queue_enqueue", "compact":
 		v.actedOn(id, callerOf(r.Context()))
 	}
 	switch body.Type {
+	case "compact":
+		result, err := v.svc.Compact(r.Context(), scopeID, id, body.RequestID)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"turn_id": result.TurnID, "replayed": result.Replayed})
 	case "send":
 		if body.RequestID == "" {
 			writeV2Error(w, AppError("invalid_request", "request_id is required"))
@@ -864,6 +871,8 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusTooManyRequests, "concurrency_limit"
 	case errors.Is(err, service.ErrTurnRunning):
 		status, code = http.StatusConflict, "turn_running"
+	case errors.Is(err, service.ErrCompactUnavailable):
+		status, code = http.StatusConflict, "compact_unavailable"
 	case errors.Is(err, service.ErrInteractionAnswered):
 		status, code = http.StatusConflict, "already_answered"
 	case errors.Is(err, service.ErrInteractionClosed):
