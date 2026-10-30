@@ -1,16 +1,34 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { SideWorkspaceControl } from "./side-workspace-control";
+import { SideWorkspaceControl, parseSideWorkspaceResponse } from "./side-workspace-control";
+import { sideWorkspaceSyncSchema } from "@multica/core/local-conversation/protocol";
 import type { SideWorkspaceCommand } from "../shared/side-workspace";
 vi.mock("electron", () => ({ nativeImage: {} }));
 const scope = { userId: "user", workspaceId: "workspace" };
 function setup() {
   const snapshot = { conversationId: "main", revision: 1, panelOpen: true, visible: true, selectedTabId: "web:user", tabs: [{ id: "web:user", kind: "web" as const, url: "https://example.test" }] };
   const sent: SideWorkspaceCommand[] = [];
-  const controller = new SideWorkspaceControl({ currentUser: () => "user", snapshot: async () => snapshot, assertTurn: async () => {}, preview: vi.fn(), send: (value) => { sent.push(value); }, activity: vi.fn() });
+  const controller = new SideWorkspaceControl({ currentUser: () => "user", snapshot: async () => parseSideWorkspaceResponse({ workspace: { ...snapshot, updatedAt: "2026-10-29T23:26:04-07:00" } }), assertTurn: async () => {}, preview: vi.fn(), send: (value) => { sent.push(value); }, activity: vi.fn() });
   return { controller, snapshot, sent };
 }
 describe("Side main-process boundary", () => {
+  it("accepts server snapshot metadata while keeping sync commands strict", () => {
+    const { snapshot, controller } = setup();
+    const workspace = { ...snapshot, updatedAt: "2026-10-29T23:26:04-07:00", futureMetadata: true };
+    expect(parseSideWorkspaceResponse({ workspace })).toEqual(snapshot);
+    expect(() => sideWorkspaceSyncSchema.parse(workspace)).toThrow();
+    expect(parseSideWorkspaceResponse({ workspace: null })).toBeNull();
+    controller.dispose();
+  });
+  it("rejects malformed server state and unsafe tabs before controlling the UI", () => {
+    const { snapshot, controller } = setup();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const raw of [{}, { workspace: {} }, { workspace: { ...snapshot, selectedTabId: "foreign" } }, { workspace: { ...snapshot, tabs: [...snapshot.tabs, ...snapshot.tabs] } }, { workspace: { ...snapshot, tabs: [{ ...snapshot.tabs[0], url: "javascript:alert(1)" }] } }]) {
+        expect(() => parseSideWorkspaceResponse(raw)).toThrow("Invalid Side workspace response");
+      }
+    } finally { warning.mockRestore(); controller.dispose(); }
+  });
   it("rejects foreign owners and tabs before changing the UI", async () => {
     const { controller, sent } = setup();
     await expect(controller.handle({ op: "select", scope: { ...scope, userId: "foreign" }, conversationId: "main", turnId: "turn", tabId: "web:user" }, new AbortController().signal)).rejects.toThrow("account");

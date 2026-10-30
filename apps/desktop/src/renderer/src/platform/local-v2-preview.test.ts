@@ -31,7 +31,7 @@ describe("LocalV2Preview", () => {
     });
     vi.stubGlobal("fetch", fetch);
     const { value } = transport({ mime_type: "text/plain", size: limit + 5 });
-    const file = await new LocalV2Preview(value, scope).read({ path: "/repo/a" });
+    const file = await new LocalV2Preview(value, scope).read({ root: "/repo", path: "/repo/a" });
     expect(file.text).toHaveLength(limit);
     expect(file.truncated).toBe(true);
   });

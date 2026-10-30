@@ -1,5 +1,4 @@
-import { SideWorkspaceControl } from "./side-workspace-control";
-import { sideWorkspaceSyncSchema } from "@multica/core/local-conversation/protocol";
+import { SideWorkspaceControl, parseSideWorkspaceResponse } from "./side-workspace-control";
 import { LocalTimingLog } from "./local-timing-log";
 import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
 import { DeveloperLogExporter } from "./developer-log-export";
@@ -756,8 +755,7 @@ if (!gotTheLock) {
     const sideWorkspaceControl = new SideWorkspaceControl({
       currentUser: () => settingsUserId,
       snapshot: async (scope, conversationId, deviceId) => {
-        const { workspace } = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(conversationId)}/side-workspace`, undefined, deviceId) as { workspace: unknown };
-        return workspace ? sideWorkspaceSyncSchema.parse(workspace) : null;
+        return parseSideWorkspaceResponse(await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(conversationId)}/side-workspace`, undefined, deviceId));
       },
       assertTurn: async (scope, id, turnId, deviceId) => {
         const snapshot = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(id)}/snapshot`, undefined, deviceId) as { turns: { id: string; status: string }[] };
