@@ -42,6 +42,7 @@ const (
 //	GET    /v1/config                          relay address
 //	POST   /v1/devices                         register or refresh this device
 //	GET    /v1/devices                         list the account's live devices
+//	GET    /v1/events                          watch account device invalidations (SSE)
 //	DELETE /v1/devices?daemon_id=..&profile=.. remove a device
 //	GET    /healthz
 //
@@ -57,6 +58,8 @@ type Server struct {
 
 	limiterOnce sync.Once
 	limiter     *ipLimiter
+	watchMu     sync.Mutex
+	watchers    map[string]map[chan struct{}]struct{}
 }
 
 // Handler returns the HTTP handler.
@@ -67,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/config", s.authed(s.config))
 	mux.HandleFunc("POST /v1/devices", s.authed(s.register))
 	mux.HandleFunc("GET /v1/devices", s.authed(s.list))
+	mux.HandleFunc("GET /v1/events", s.authed(s.watchDevices))
 	mux.HandleFunc("DELETE /v1/devices", s.authed(s.remove))
 	return mux
 }
@@ -247,6 +251,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request, userID string)
 		writeError(w, http.StatusInternalServerError, "failed to register device")
 		return
 	}
+	s.devicesChanged(userID)
 	writeJSON(w, http.StatusOK, d)
 }
 
@@ -280,6 +285,7 @@ func (s *Server) remove(w http.ResponseWriter, r *http.Request, userID string) {
 		s.Relay.Forget(peerID)
 	}
 	s.logger().Info("p2pserver: device removed", "user_id", userID, "peer_id", peerID)
+	s.devicesChanged(userID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

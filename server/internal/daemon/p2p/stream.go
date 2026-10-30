@@ -4,16 +4,11 @@ import (
 	"context"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 )
-
-// directWait is how long a dial over a relay-only connection waits for hole
-// punching to find a direct path before it uses the relay.
-const directWait = 5 * time.Second
 
 // Addr is a device's address as net.Addr: its peer ID.
 type Addr peer.ID
@@ -86,29 +81,11 @@ func (l *streamListener) Close() error {
 
 func (l *streamListener) Addr() net.Addr { return l.addr }
 
-// Dial opens a protocol stream to a device as net.Conn. When the device is
-// reachable only through the relay, it first waits briefly for hole
-// punching, so long-lived streams start on a direct connection when one is
-// coming.
+// Dial uses the available path immediately. Hole punching proceeds in the
+// background; OnDirect lets consumers move long-lived streams afterward.
 func (s *Service) Dial(ctx context.Context, p peer.ID, proto protocol.ID) (net.Conn, error) {
 	if !s.allow.allowed(p) {
 		return nil, ErrNotAllowed
-	}
-	if s.Connection(p) == ConnectionRelayed {
-		deadline := time.NewTimer(directWait)
-		tick := time.NewTicker(100 * time.Millisecond)
-		defer deadline.Stop()
-		defer tick.Stop()
-	wait:
-		for s.Connection(p) != ConnectionDirect {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-deadline.C:
-				break wait
-			case <-tick.C:
-			}
-		}
 	}
 	st, err := s.Open(ctx, p, proto)
 	if err != nil {
@@ -137,6 +114,23 @@ func (s *Service) Peer(p peer.ID) (Peer, bool) { return s.allow.get(p) }
 func (s *Service) SupportsProtocol(p peer.ID, proto protocol.ID) bool {
 	got, err := s.host.Peerstore().SupportsProtocols(p, proto)
 	return err == nil && len(got) > 0
+}
+
+// WatchConnection invalidates a peer's connection state. Subscribe before
+// reading Connection, and read again on each notification to coalesce churn.
+func (s *Service) WatchConnection(id peer.ID) (<-chan struct{}, func()) {
+	updates := make(chan struct{}, 1)
+	notify := func(_ network.Network, c network.Conn) {
+		if c.RemotePeer() == id {
+			select {
+			case updates <- struct{}{}:
+			default:
+			}
+		}
+	}
+	bundle := &network.NotifyBundle{ConnectedF: notify, DisconnectedF: notify}
+	s.host.Network().Notify(bundle)
+	return updates, func() { s.host.Network().StopNotify(bundle) }
 }
 
 // OnDirect calls fn whenever a direct connection to a device opens, such as

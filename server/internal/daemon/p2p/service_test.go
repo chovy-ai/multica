@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // testAccount is a mutable server-side device list.
@@ -299,6 +300,102 @@ func TestUnresponsivePeerConnectionIsClosedForReconnect(t *testing.T) {
 		if !c.IsClosed() {
 			t.Fatal("unresponsive connection remained cached")
 		}
+	}
+}
+
+func TestRegistryInvalidationInterruptsPeerDialBackoff(t *testing.T) {
+	keyA, idA := newKey(t)
+	keyB, idB := newKey(t)
+	acct := &testAccount{}
+	acct.set(Peer{ID: idA}, Peer{ID: idB})
+	a, b := startDevice(t, keyA, acct, ""), startDevice(t, keyB, acct, "")
+	// A failed address leaves the existing job in its five-second retry delay.
+	bad, _ := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/1")
+	acct.set(Peer{ID: idA}, Peer{ID: idB, RegisteredAddrs: []ma.Multiaddr{bad}})
+	if err := a.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, time.Second, func() bool {
+		a.dialMu.Lock()
+		defer a.dialMu.Unlock()
+		job := a.dialing[idB]
+		return job != nil && job.cancel == nil && a.host.Network().(*swarm.Swarm).Backoff().Backoff(idB, bad)
+	}) {
+		t.Fatal("dial did not enter retry delay")
+	}
+	acct.set(Peer{ID: idA}, Peer{ID: idB, RegisteredAddrs: b.host.Addrs()})
+	if err := a.PeersChanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, time.Second, func() bool { return peerStatus(a, idB).Connected }) {
+		t.Fatal("registry invalidation did not bypass dial backoff")
+	}
+}
+
+func TestNetworkChangeRebuildsPathsWithoutWaitingForHeartbeat(t *testing.T) {
+	keyA, idA := newKey(t)
+	keyB, idB := newKey(t)
+	acct := &testAccount{}
+	acct.set(Peer{ID: idA}, Peer{ID: idB})
+	a, b := startDevice(t, keyA, acct, ""), startDevice(t, keyB, acct, "")
+	acct.set(Peer{ID: idA, RegisteredAddrs: a.host.Addrs()}, Peer{ID: idB, RegisteredAddrs: b.host.Addrs()})
+	if err := a.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, time.Second, func() bool { return peerStatus(a, idB).Connected }) {
+		t.Fatal("not connected")
+	}
+	old := a.host.Network().ConnsToPeer(idB)
+	a.NetworkChanged()
+	for _, conn := range old {
+		if !conn.IsClosed() {
+			t.Fatal("old network path retained")
+		}
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return peerStatus(a, idB).Connected }) {
+		t.Fatal("did not reconnect promptly after a local network change")
+	}
+}
+
+func TestPeerProbePreservesAnAlreadyHealthyReplacementPath(t *testing.T) {
+	keyA, idA := newKey(t)
+	keyB, idB := newKey(t)
+	acct := &testAccount{}
+	acct.set(Peer{ID: idA}, Peer{ID: idB})
+	a := startDevice(t, keyA, acct, "", "/ip4/127.0.0.1/tcp/0")
+	b := startDevice(t, keyB, acct, "", "/ip4/127.0.0.1/tcp/0")
+	introduce(a, b)
+	if !waitFor(t, time.Second, func() bool { return peerStatus(a, idB).Connected }) {
+		t.Fatal("initial connection failed")
+	}
+	const held = "/multica/held/1"
+	done := make(chan struct{})
+	b.Handle(held, func(st network.Stream) { defer st.Close(); <-done })
+	defer close(done)
+	st, err := a.Open(context.Background(), idB, held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	old := a.host.Network().ConnsToPeer(idB)[0]
+	b.host.SetStreamHandler(ping.ID, func(st network.Stream) { defer st.Close(); io.Copy(io.Discard, st) })
+	next := startDevice(t, keyB, acct, "", "/ip4/127.0.0.1/tcp/0")
+	introduce(next, a)
+	if !waitFor(t, time.Second, func() bool { return len(a.host.Network().ConnsToPeer(idB)) == 2 }) {
+		t.Fatal("replacement connection not established")
+	}
+	var replacement network.Conn
+	for _, conn := range a.host.Network().ConnsToPeer(idB) {
+		if conn.ID() != old.ID() {
+			replacement = conn
+		}
+	}
+	a.checkPeerWithin(idB, time.Second)
+	if !old.IsClosed() {
+		t.Fatal("stale original path retained")
+	}
+	if replacement.IsClosed() {
+		t.Fatal("healthy replacement path closed with stale original")
 	}
 }
 

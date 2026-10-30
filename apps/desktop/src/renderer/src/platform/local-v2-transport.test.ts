@@ -213,6 +213,46 @@ describe("DirectLocalV2Transport", () => {
     } finally { transport.release(scope); await vi.advanceTimersByTimeAsync(0); vi.useRealTimers(); }
   });
 
+  it("wakes an exhausted WebSocket retry delay as soon as the local daemon reports a ready path", async () => {
+    vi.useFakeTimers();
+    let online = false;
+    const sockets: LinkSocket[] = [];
+    class LinkSocket extends EventTarget {
+      static OPEN = 1; static CONNECTING = 0;
+      readyState = 0;
+      constructor(_url: string) {
+        super(); sockets.push(this);
+        queueMicrotask(() => { this.readyState = online ? 1 : 3; this.dispatchEvent(new Event(online ? "open" : "error")); });
+      }
+      close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+      send = vi.fn();
+    }
+    let events!: ReadableStreamDefaultController<Uint8Array>;
+    const request = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith("/link-events")) return new Response(new ReadableStream({ start(controller) { events = controller; } }), { headers: { "Content-Type": "text/event-stream" } });
+      return new Response('{"ticket":"fresh"}', { headers: { "Content-Type": "application/json" } });
+    });
+    const transport = new DirectLocalV2Transport({
+      bridge: { endpoint: vi.fn(async () => ({ base: "127.0.0.1:1", apiUrl: "https://api.multica.ai", token: "r1", fileKey: "fk" })), choose: vi.fn(), chooseRemote: vi.fn(), hostRequest: vi.fn() },
+      deviceId: "peer-1", WebSocket: LinkSocket as unknown as NonNullable<DirectLocalV2Options["WebSocket"]>, fetch: request,
+    });
+    const connection = vi.fn(); transport.onConnection(connection);
+    try {
+      await expect(transport.send(scope, { version: 2, type: "subscribe_scope", after_scope_seq: 0 })).rejects.toThrow();
+      for (const delay of [500, 1000, 2000, 4000, 8000]) await vi.advanceTimersByTimeAsync(delay);
+      expect(sockets).toHaveLength(6);
+      online = true;
+      events.enqueue(new TextEncoder().encode("event: unknown\ndata: {}\n\nevent: link.con"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(6);
+      events.enqueue(new TextEncoder().encode("nected\r\ndata: {}\r\n\r\n"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(7);
+      expect(connection).toHaveBeenLastCalledWith(scope, true);
+      expect(sockets.every((socket) => socket.send.mock.calls.length === 0)).toBe(true);
+    } finally { events.close(); transport.release(scope); await vi.advanceTimersByTimeAsync(0); vi.useRealTimers(); }
+  });
+
   it("reaches another device under this daemon's /local/devices route with a stable client ID", async () => {
     const chooseRemote = vi.fn<NonNullable<DirectLocalV2Options["chooseRemote"]>>(async () => ({ id: "f1" }));
     const { daemon, transport, bridge } = await setup(undefined, { deviceId: "peer 1", chooseRemote });
@@ -243,6 +283,53 @@ describe("DirectLocalV2Transport", () => {
     daemon.server.on("request", (_req, res) => { res.writeHead(503, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { kind: "device_link_off", message: "off" } })); });
     await expect(transport.request(scope, "GET", "/sessions")).rejects.toThrow(/^device_link_off: /);
     expect(transport.availability()).toEqual({ state: "unavailable", reason: "device_link_off" });
+  });
+
+  it("replaces a stalled remote read after reconnect without replaying writes or other scopes", async () => {
+    const { daemon, transport } = await setup(undefined, { deviceId: "peer-1" });
+    await transport.send(scope, { version: 2, type: "subscribe_scope", after_scope_seq: 0 });
+    await until(() => daemon.sockets.length === 1);
+    const handler = daemon.server.listeners("request")[0]!;
+    let reads = 0, writes = 0, otherReads = 0;
+    const held: import("node:http").ServerResponse[] = [];
+    daemon.server.removeAllListeners("request");
+    daemon.server.on("request", (req, res) => {
+      if (req.url?.endsWith("/snapshot")) {
+        if (req.headers["x-workspace-id"] === "other") { otherReads++; held.push(res); return; }
+        reads++;
+        if (reads === 1) { res.writeHead(200, { "Content-Type": "application/json" }); res.write('{"stalled":'); held.push(res); return; }
+        res.writeHead(200, { "Content-Type": "application/json" }).end('{"restored":true}'); return;
+      }
+      if (req.url?.endsWith("/commands")) { writes++; held.push(res); return; }
+      handler(req, res);
+    });
+    cleanups.unshift(() => { for (const res of held) res.destroy(); });
+    const other = transport.request({ ...scope, workspaceId: "other" }, "GET", "/sessions/c1/snapshot").catch(() => undefined);
+    const read = transport.request(scope, "GET", "/sessions/c1/snapshot");
+    const write = transport.request(scope, "POST", "/sessions/c1/commands", { type: "send" });
+    const written = write.catch(() => undefined);
+    await until(() => reads === 1 && writes === 1 && otherReads === 1);
+    daemon.sockets[0]!.terminate();
+    await until(() => daemon.sockets.length === 2);
+    const result = await Promise.race([read, new Promise((resolve) => setTimeout(() => resolve("still stalled"), 300))]);
+    expect(result).toEqual({ restored: true });
+    expect(reads).toBe(2);
+    expect(writes).toBe(1);
+    expect(otherReads).toBe(1);
+    for (const res of held) res.destroy();
+    await Promise.all([written, other]);
+  });
+
+  it("cancels a remote read on scope release without retrying it", async () => {
+    const { daemon, transport } = await setup(undefined, { deviceId: "peer-1" });
+    let held: import("node:http").ServerResponse | undefined;
+    daemon.server.removeAllListeners("request");
+    daemon.server.on("request", (_req, res) => { held = res; });
+    cleanups.unshift(() => { held?.destroy(); });
+    const read = expect(transport.request(scope, "GET", "/sessions/c1/snapshot")).rejects.toThrow("scope_released");
+    await until(() => !!held);
+    transport.release(scope);
+    await read;
   });
 
   it("passes host requests to main with the device that asked", async () => {

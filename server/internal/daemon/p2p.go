@@ -79,6 +79,20 @@ func (d *Daemon) startP2P(ctx context.Context) error {
 		svc.Close()
 	}()
 	go d.p2pRegistrationLoop(ctx, registry, svc, key.GetPublic(), reregister)
+	networks := make(chan struct{}, 1)
+	go d.p2pWatchLoop(ctx, registry, svc, networks)
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		watchNetwork(ctx, ticker.C, networkFingerprint, func() {
+			registry.networkChanged()
+			svc.NetworkChanged()
+			select {
+			case networks <- struct{}{}:
+			default:
+			}
+		})
+	}()
 	return nil
 }
 
@@ -111,8 +125,15 @@ func (d *Daemon) p2pRegistrationLoop(ctx context.Context, registry *p2pRegistryC
 			}
 			delay := p2pRegisterRetrySchedule[min(attempt, len(p2pRegisterRetrySchedule)-1)]
 			d.logger.Warn("p2p: identity registration failed", "error", err, "retry_in", delay)
-			if sleepWithContext(ctx, delay) != nil {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
 				return
+			case <-reregister:
+				timer.Stop()
+				attempt = -1
+			case <-timer.C:
 			}
 		}
 		timer := time.NewTimer(p2pReregisterInterval)

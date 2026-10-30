@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -39,7 +40,7 @@ const (
 	connectTimeout  = 10 * time.Second
 	// addrsDebounce coalesces the address churn of startup, port mapping
 	// and relay reservation into one re-registration.
-	addrsDebounce = 2 * time.Second
+	addrsDebounce = 250 * time.Millisecond
 	// relayRenewMargin renews a relay reservation this long before expiry.
 	relayRenewMargin = 5 * time.Minute
 	// relayRecheckInterval is how often a registry without a relay is asked
@@ -83,6 +84,11 @@ type Config struct {
 	Logger         *slog.Logger
 }
 
+type peerDial struct {
+	wake   chan struct{}
+	cancel context.CancelFunc
+}
+
 // Service is this device's endpoint on the account's peer-to-peer network.
 type Service struct {
 	host     host.Host
@@ -100,7 +106,7 @@ type Service struct {
 	refreshMu   sync.Mutex
 	lastRefresh time.Time
 	dialMu      sync.Mutex
-	dialing     map[peer.ID]bool
+	dialing     map[peer.ID]*peerDial
 
 	discoveredMu sync.Mutex
 	discovered   map[peer.ID]peer.AddrInfo
@@ -114,6 +120,7 @@ type Service struct {
 	relayInfo     *peer.AddrInfo
 	relayReserved bool
 	relayExpires  time.Time
+	relayCancel   context.CancelFunc
 }
 
 // Start builds the libp2p host, starts LAN discovery and the allowlist
@@ -150,7 +157,7 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 		kick:       make(chan struct{}, 1),
-		dialing:    map[peer.ID]bool{},
+		dialing:    map[peer.ID]*peerDial{},
 		discovered: map[peer.ID]peer.AddrInfo{},
 		relayFetch: cfg.Relay,
 		onAddrs:    cfg.OnAddrsChanged,
@@ -287,16 +294,31 @@ func (s *Service) connect(info peer.AddrInfo) {
 		return
 	}
 	s.dialMu.Lock()
-	if s.ctx.Err() != nil || s.dialing[info.ID] {
+	if s.ctx.Err() != nil || s.dialing[info.ID] != nil {
 		s.dialMu.Unlock()
 		return
 	}
-	s.dialing[info.ID] = true
+	job := &peerDial{wake: make(chan struct{}, 1)}
+	s.dialing[info.ID] = job
 	s.wg.Add(1)
 	s.dialMu.Unlock()
 	go func() {
 		defer s.wg.Done()
-		defer func() { s.dialMu.Lock(); delete(s.dialing, info.ID); s.dialMu.Unlock() }()
+		defer func() {
+			s.dialMu.Lock()
+			delete(s.dialing, info.ID)
+			pending := false
+			select {
+			case <-job.wake:
+				pending = true
+			default:
+			}
+			s.dialMu.Unlock()
+			// Do not lose a network event racing with a successful dial's exit.
+			if pending && s.ctx.Err() == nil {
+				s.connect(info)
+			}
+		}()
 		for delay := minKickInterval; s.ctx.Err() == nil; delay = min(delay*2, peerRetryMax) {
 			p, allowed := s.allow.get(info.ID)
 			if !allowed || s.host.Network().Connectedness(info.ID) == network.Connected {
@@ -314,9 +336,22 @@ func (s *Service) connect(info peer.AddrInfo) {
 			if sw, ok := s.host.Network().(*swarm.Swarm); ok {
 				sw.Backoff().Clear(info.ID)
 			}
+			s.dialMu.Lock()
+			// A network event interrupts both the current dial and its retry delay.
+			select {
+			case <-job.wake:
+				s.dialMu.Unlock()
+				continue
+			default:
+			}
 			ctx, cancel := context.WithTimeout(network.WithAllowLimitedConn(s.ctx, "multica-device-link"), connectTimeout)
+			job.cancel = cancel
+			s.dialMu.Unlock()
 			err := s.host.Connect(ctx, target)
 			cancel()
+			s.dialMu.Lock()
+			job.cancel = nil
+			s.dialMu.Unlock()
 			if err == nil || s.ctx.Err() != nil {
 				return
 			}
@@ -328,6 +363,9 @@ func (s *Service) connect(info peer.AddrInfo) {
 				timer.Stop()
 				return
 			case <-timer.C:
+			case <-job.wake:
+				timer.Stop()
+				delay = minKickInterval / 2
 			}
 		}
 	}()
@@ -339,11 +377,13 @@ func (s *Service) checkPeersLoop() {
 	ticker := time.NewTicker(peerProbeInterval)
 	defer ticker.Stop()
 	for {
+		timeout := peerProbeTimeout
 		select {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
 		case <-s.probePeers:
+			timeout = time.Second
 		}
 		s.relayMu.Lock()
 		var relayID peer.ID
@@ -351,30 +391,44 @@ func (s *Service) checkPeersLoop() {
 			relayID = s.relayInfo.ID
 		}
 		s.relayMu.Unlock()
+		var probes sync.WaitGroup
+		probe := func(id peer.ID) {
+			probes.Add(1)
+			go func() { defer probes.Done(); s.checkPeerWithin(id, timeout) }()
+		}
 		if relayID != "" {
-			s.checkPeer(relayID)
+			probe(relayID)
 		}
 		for _, p := range s.allow.list() {
-			if s.ctx.Err() != nil {
-				return
-			}
-			s.checkPeer(p.ID)
+			probe(p.ID)
 		}
+		probes.Wait()
 	}
 }
 
-func (s *Service) checkPeer(id peer.ID) {
+func (s *Service) checkPeer(id peer.ID) { s.checkPeerWithin(id, peerProbeTimeout) }
+
+func (s *Service) checkPeerWithin(id peer.ID, timeout time.Duration) {
 	if !s.allow.allowed(id) && !s.isRelay(id) {
 		return
 	}
-	conns := s.host.Network().ConnsToPeer(id)
-	if len(conns) == 0 {
+	var probes sync.WaitGroup
+	for _, conn := range s.host.Network().ConnsToPeer(id) {
+		probes.Add(1)
+		go func() { defer probes.Done(); s.checkConnection(conn, timeout) }()
+	}
+	probes.Wait()
+}
+
+func (s *Service) checkConnection(conn network.Conn, timeout time.Duration) {
+	if conn.IsClosed() {
 		return
 	}
-	ctx, cancel := context.WithTimeout(network.WithAllowLimitedConn(s.ctx, "multica-peer-probe"), peerProbeTimeout)
+	id := conn.RemotePeer()
+	ctx, cancel := context.WithTimeout(network.WithAllowLimitedConn(s.ctx, "multica-peer-probe"), timeout)
 	var err error
 	select {
-	case result, ok := <-ping.Ping(ctx, s.host, id):
+	case result, ok := <-ping.Ping(ctx, connectionProbeHost{Host: s.host, conn: conn}, id):
 		if !ok {
 			err = errors.New("p2p: ping ended before a response")
 		} else {
@@ -387,12 +441,67 @@ func (s *Service) checkPeer(id peer.ID) {
 	if err == nil || s.ctx.Err() != nil {
 		return
 	}
-	s.logger.Info("p2p: peer path stopped responding; reconnecting", "peer_id", id.String(), "error", err)
-	// A replacement connection established during the probe is left alone.
-	for _, c := range conns {
-		_ = c.Close()
+	s.logger.Info("p2p: peer path stopped responding; reconnecting", "peer_id", id.String(), "connection_id", conn.ID(), "error", err)
+	_ = conn.Close()
+	s.requestRefresh()
+	if p, allowed := s.allow.get(id); allowed {
+		s.connect(peer.AddrInfo{ID: id, Addrs: p.RegisteredAddrs})
+	}
+}
+
+// PeersChanged refreshes after an authenticated registry invalidation. It also
+// checks stale paths and interrupts dial backoff even if a relay address is unchanged.
+func (s *Service) PeersChanged(ctx context.Context) error {
+	if err := s.Refresh(ctx); err != nil {
+		return err
+	}
+	s.wakeDials()
+	select {
+	case s.probePeers <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (s *Service) wakeDials(ids ...peer.ID) {
+	s.dialMu.Lock()
+	defer s.dialMu.Unlock()
+	for id, job := range s.dialing {
+		if len(ids) > 0 && !slices.Contains(ids, id) {
+			continue
+		}
+		if job.cancel != nil {
+			job.cancel()
+		}
+		select {
+		case job.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// NetworkChanged is called when local interfaces or routes change, rather than
+// waiting for the old TCP/QUIC paths to time out. New incoming paths are retained.
+func (s *Service) NetworkChanged() {
+	conns := s.host.Network().Conns()
+	s.relayMu.Lock()
+	if s.relayCancel != nil {
+		s.relayCancel()
+	}
+	s.relayMu.Unlock()
+	s.logger.Info("p2p: local network changed; rebuilding paths")
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+	s.wakeDials()
+	select {
+	case s.relayLost <- struct{}{}:
+	default:
 	}
 	s.requestRefresh()
+	if s.onAddrs != nil {
+		s.onAddrs()
+	}
 }
 
 func (s *Service) requestRefresh() {
@@ -446,6 +555,12 @@ func (s *Service) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var changed []peer.ID
+	for _, p := range peers {
+		if previous, ok := s.allow.get(p.ID); ok && !slices.EqualFunc(previous.RegisteredAddrs, p.RegisteredAddrs, func(a, b ma.Multiaddr) bool { return a.Equal(b) }) {
+			changed = append(changed, p.ID)
+		}
+	}
 	_, removed := s.allow.replace(peers)
 	for _, id := range removed {
 		s.host.Network().ClosePeer(id)
@@ -467,6 +582,9 @@ func (s *Service) Refresh(ctx context.Context) error {
 	s.discoveredMu.Unlock()
 	for _, info := range infos {
 		s.connect(info)
+	}
+	if len(changed) > 0 {
+		s.wakeDials(changed...)
 	}
 	return nil
 }
@@ -560,8 +678,9 @@ func (s *Service) onDisconnected(n network.Network, c network.Conn) {
 	if s.ctx.Err() != nil || n.Connectedness(c.RemotePeer()) == network.Connected {
 		return
 	}
-	if s.allow.allowed(c.RemotePeer()) {
+	if p, allowed := s.allow.get(c.RemotePeer()); allowed {
 		s.requestRefresh()
+		s.connect(peer.AddrInfo{ID: p.ID, Addrs: p.RegisteredAddrs})
 	}
 	if !s.isRelay(c.RemotePeer()) {
 		return
@@ -609,7 +728,10 @@ func (s *Service) relayLoop() {
 // before the next one.
 func (s *Service) reserve() (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, connectTimeout+20*time.Second)
-	defer cancel()
+	s.relayMu.Lock()
+	s.relayCancel = cancel
+	s.relayMu.Unlock()
+	defer func() { cancel(); s.relayMu.Lock(); s.relayCancel = nil; s.relayMu.Unlock() }()
 	info, err := s.relayFetch(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("fetch relay: %w", err)

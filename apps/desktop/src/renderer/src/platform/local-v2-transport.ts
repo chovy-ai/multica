@@ -18,6 +18,8 @@ interface Socket {
   ws?: WebSocket;
   connecting?: Promise<WebSocket>;
   backoff: number;
+  watch?: AbortController;
+  retryNow?: boolean;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -42,6 +44,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   private endpointValue?: LocalV2RendererEndpoint;
   private endpointLoad?: Promise<LocalV2RendererEndpoint>;
   private sockets = new Map<string, Socket>();
+  private reads = new Map<string, Set<AbortController>>();
   private messageListeners = new Set<(scope: LocalV2Scope, message: unknown) => void>();
   private connectionListeners = new Set<(scope: LocalV2Scope, connected: boolean) => void>();
   private availabilityListeners = new Set<(value: LocalHostAvailability) => void>();
@@ -128,15 +131,16 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   // --- requests ---
 
   /** One authenticated request; credentials refused once are read again. */
-  private async fetchDaemon(scope: LocalV2Scope, method: string, path: string, init: { body?: BodyInit; headers?: Record<string, string> } = {}): Promise<Response> {
+  private async fetchDaemon(scope: LocalV2Scope, method: string, path: string, init: { body?: BodyInit; headers?: Record<string, string> } = {}, signal?: AbortSignal): Promise<Response> {
     if (!path.startsWith("/") || path.includes("..")) throw failure("invalid_request", "Invalid local conversation path");
     for (let attempt = 0; attempt < 2; attempt++) {
       let endpoint: LocalV2RendererEndpoint;
       let response: Response;
       try {
         endpoint = await this.endpoint(attempt > 0);
-        response = await this.fetch(this.url(endpoint, path), { method, headers: { ...this.headers(endpoint, scope), ...init.headers }, body: init.body, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-      } catch {
+        response = await this.fetch(this.url(endpoint, path), { method, headers: { ...this.headers(endpoint, scope), ...init.headers }, body: init.body, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(path === "/ws-ticket" ? 5_000 : REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(path === "/ws-ticket" ? 5_000 : REQUEST_TIMEOUT_MS) });
+      } catch (error) {
+        if (signal?.aborted) throw error;
         this.outcome("daemon_offline");
         throw failure("daemon_offline", "Start the local daemon to use local conversations");
       }
@@ -148,8 +152,38 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   }
 
   private async json(scope: LocalV2Scope, method: string, path: string, init: { body?: BodyInit; headers?: Record<string, string> } = {}): Promise<unknown> {
-    const response = await this.fetchDaemon(scope, method, path, init);
-    const value: unknown = await response.json().catch(() => null);
+    const key = this.key(scope);
+    for (let recovery = 0; recovery < 2; recovery++) {
+      const controller = this.deviceId !== "local" && method === "GET" ? new AbortController() : undefined;
+      if (controller) {
+        let reads = this.reads.get(key);
+        if (!reads) { reads = new Set(); this.reads.set(key, reads); }
+        reads.add(controller);
+      }
+      try {
+        const response = await this.fetchDaemon(scope, method, path, init, controller?.signal);
+        // Keep the abort controller until the body is consumed: headers can
+        // arrive before the network disappears halfway through a snapshot.
+        const body = await response.text();
+        let value: unknown = null;
+        try { value = JSON.parse(body); } catch { /* Invalid bodies retain the HTTP error handling below. */ }
+        return this.jsonOutcome(response, value);
+      } catch (error) {
+        if (controller?.signal.reason === "connection_replaced" && recovery === 0) continue;
+        if (controller?.signal.reason === "scope_released") throw failure("scope_released", "The conversation connection was released");
+        throw error;
+      } finally {
+        if (controller) {
+          const reads = this.reads.get(key);
+          reads?.delete(controller);
+          if (!reads?.size) this.reads.delete(key);
+        }
+      }
+    }
+    throw failure("device_unreachable", "The device connection changed while reading");
+  }
+
+  private jsonOutcome(response: Response, value: unknown): unknown {
     if (!response.ok) {
       const error = (value as { error?: { kind?: unknown; message?: unknown } } | null)?.error;
       const kind = typeof error?.kind === "string" ? error.kind : `http_${response.status}`;
@@ -232,7 +266,10 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   private connect(scope: LocalV2Scope): Promise<WebSocket> {
     const key = this.key(scope);
     let socket = this.sockets.get(key);
-    if (!socket) { socket = { scope, backoff: RECONNECT_MIN_MS }; this.sockets.set(key, socket); }
+    if (!socket) {
+      socket = { scope, backoff: RECONNECT_MIN_MS }; this.sockets.set(key, socket);
+      if (this.deviceId !== "local") this.watchLink(socket);
+    }
     if (socket.ws?.readyState === this.WS.OPEN) return Promise.resolve(socket.ws);
     const current = socket;
     return current.connecting ??= (async () => {
@@ -275,11 +312,16 @@ export class DirectLocalV2Transport implements LocalV2Transport {
           this.reconnect(current);
         }
         throw error;
-      } finally { current.connecting = undefined; }
+      } finally {
+        current.connecting = undefined;
+        if (current.retryNow) { current.retryNow = false; this.resume(current); }
+      }
     })();
   }
 
   private attach(socket: Socket, ws: WebSocket) {
+    if (this.deviceId !== "local" && !socket.watch) this.watchLink(socket);
+    this.abortReads(socket.scope, "connection_replaced");
     socket.ws = ws; socket.backoff = RECONNECT_MIN_MS;
     ws.addEventListener("message", (event) => {
       if (typeof event.data !== "string") return;
@@ -315,6 +357,71 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     if (ws.readyState === this.WS.OPEN) ws.send(JSON.stringify({ version: LOCAL_V2_VERSION, type: "host.reply", request_id: requestId, ...reply }));
   }
 
+  private resume(socket: Socket) {
+    if (this.sockets.get(this.key(socket.scope)) !== socket || socket.ws?.readyState === this.WS.OPEN) return;
+    socket.backoff = RECONNECT_MIN_MS;
+    if (socket.timer) { clearTimeout(socket.timer); socket.timer = undefined; }
+    if (socket.connecting) {
+      socket.retryNow = true;
+      if (socket.ws?.readyState === this.WS.CONNECTING) socket.ws.close();
+      return;
+    }
+    void this.connect(socket.scope).catch(() => this.reconnect(socket));
+  }
+
+  private watchLink(socket: Socket) {
+    const watch = new AbortController(); socket.watch = watch;
+    void (async () => {
+      let lastConnected: boolean | undefined;
+      let delay = RECONNECT_MIN_MS;
+      while (!watch.signal.aborted) {
+        try {
+          const endpoint = await this.endpoint();
+          const response = await this.fetch(this.url(endpoint, "/link-events"), {
+            headers: this.headers(endpoint, socket.scope), signal: AbortSignal.any([watch.signal, AbortSignal.timeout(25_000)]),
+          });
+          // Older daemons continue using the existing socket retry path.
+          if (response.status === 404 || (response.ok && !response.headers.get("Content-Type")?.startsWith("text/event-stream"))) {
+            await response.body?.cancel(); return;
+          }
+          if (!response.ok || !response.body) {
+            await response.body?.cancel();
+            if (response.status === 401 || response.status === 403) await this.endpoint(true);
+            throw new Error("The local daemon cannot watch the device link yet");
+          }
+          delay = RECONNECT_MIN_MS;
+          const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+          let pending = "";
+          try {
+            while (!watch.signal.aborted) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              pending += value;
+              if (pending.length > 4096) throw new Error("Invalid device link event");
+              let end: number;
+              while ((end = pending.indexOf("\n")) >= 0) {
+                const line = pending.slice(0, end).trim(); pending = pending.slice(end + 1);
+                if (watch.signal.aborted) break;
+                if (line === "event: link.connected") {
+                  const recovered = lastConnected === false; lastConnected = true;
+                  if (recovered || !socket.connecting) this.resume(socket);
+                }
+                if (line === "event: link.disconnected") { lastConnected = false; socket.ws?.close(); }
+              }
+            }
+          } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+        } catch { /* The local daemon may be restarting; retry until the scope is released. */ }
+        if (watch.signal.aborted) return;
+        await new Promise<void>((resolve) => {
+          const finish = () => { clearTimeout(timer); watch.signal.removeEventListener("abort", finish); resolve(); };
+          const timer = setTimeout(finish, delay);
+          watch.signal.addEventListener("abort", finish, { once: true });
+        });
+        delay = Math.min(delay * 2, 5_000);
+      }
+    })().finally(() => { if (socket.watch === watch) socket.watch = undefined; });
+  }
+
   private reconnect(socket: Socket) {
     if (socket.timer || this.sockets.get(this.key(socket.scope)) !== socket) return;
     const delay = socket.backoff; socket.backoff = Math.min(socket.backoff * 2, RECONNECT_MAX_MS);
@@ -324,12 +431,18 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     }, delay);
   }
 
+  private abortReads(scope: LocalV2Scope, reason: string) {
+    for (const read of this.reads.get(this.key(scope)) ?? []) read.abort(reason);
+  }
+
   /** Stops keeping a scope connected, e.g. after the account changed. */
   release(scope: LocalV2Scope): void {
+    this.abortReads(scope, "scope_released");
     const socket = this.sockets.get(this.key(scope));
     if (!socket) return;
     this.sockets.delete(this.key(scope));
     if (socket.timer) clearTimeout(socket.timer);
+    socket.watch?.abort();
     socket.ws?.close();
     for (const listener of this.connectionListeners) listener(scope, false);
   }

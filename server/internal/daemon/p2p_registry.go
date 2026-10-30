@@ -51,13 +51,41 @@ type p2pRegistryClient struct {
 	http    *http.Client
 	now     func() time.Time
 
-	mu      sync.Mutex
-	session string
-	expires time.Time
+	mu             sync.Mutex
+	session        string
+	expires        time.Time
+	networkMu      sync.Mutex
+	networkContext context.Context
+	networkCancel  context.CancelFunc
 }
 
 func newP2PRegistryClient(baseURL string, token func() string) *p2pRegistryClient {
-	return &p2pRegistryClient{baseURL: baseURL, token: token, http: &http.Client{Timeout: 30 * time.Second}, now: time.Now}
+	transport := http.DefaultTransport
+	if base, ok := transport.(*http.Transport); ok {
+		transport = base.Clone()
+	}
+	networkContext, networkCancel := context.WithCancel(context.Background())
+	return &p2pRegistryClient{baseURL: baseURL, token: token, http: &http.Client{Timeout: 5 * time.Second, Transport: transport}, now: time.Now, networkContext: networkContext, networkCancel: networkCancel}
+}
+
+// Reset requests and pooled TCP connections bound to the old local network.
+// Registration is idempotent, so an interrupted publish can be retried safely.
+func (c *p2pRegistryClient) networkChanged() {
+	c.networkMu.Lock()
+	old := c.networkCancel
+	c.networkContext, c.networkCancel = context.WithCancel(context.Background())
+	c.networkMu.Unlock()
+	old()
+	c.http.CloseIdleConnections()
+}
+
+func (c *p2pRegistryClient) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	c.networkMu.Lock()
+	networkContext := c.networkContext
+	c.networkMu.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(networkContext, cancel)
+	return ctx, func() { stop(); cancel() }
 }
 
 func (c *p2pRegistryClient) register(ctx context.Context, daemonID, profile, publicKey, deviceName string, addrs []string) error {
@@ -142,6 +170,8 @@ func (c *p2pRegistryClient) sessionToken(ctx context.Context, renew bool) (strin
 }
 
 func (c *p2pRegistryClient) send(ctx context.Context, method, path, bearer string, body []byte, out any) error {
+	ctx, cancel := c.requestContext(ctx)
+	defer cancel()
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
