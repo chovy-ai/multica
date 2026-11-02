@@ -7,7 +7,8 @@ import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timi
 import type { DeveloperLogQuery, DeveloperLogSaveResult } from "../shared/developer-logs";
 import type { WorkspaceMcpTool } from "./mcp-tool";
 import { developerLogTool } from "./developer-log-tool";
-import { LocalTimingLog } from "./local-timing-log";
+import { buildTurnWaterfalls, summarizeFirstOutput } from "./developer-log-waterfall";
+import { snapshotDaemonTiming, type DaemonTimingSource, type LocalTimingLog, type LocalTimingSnapshot } from "./local-timing-log";
 import type { DaemonLogSource, RuntimeLogSource } from "./developer-runtime-logs";
 
 const querySchema = z.object({
@@ -33,6 +34,8 @@ interface Options {
   assertScope(scope: LocalConversationScope): void;
   conversations(scope: LocalConversationScope): Promise<string[]>;
   runtimeLogs(scope: LocalConversationScope, since: number, until: number): Promise<{ web: RuntimeLogSource; daemon: DaemonLogSource }>;
+  /** The daemon's timing file on this device, null while no daemon profile is known. */
+  daemonTimingPath?(): string | null;
   chooseSavePath(filename: string): Promise<string | null>;
 }
 
@@ -49,7 +52,7 @@ function summarize(records: LocalTimingRecord[]) {
   }
   return {
     recordCount: records.length,
-    conversationCount: new Set(records.map((record) => record.conversationId)).size,
+    conversationCount: new Set(records.flatMap((record) => record.conversationId ? [record.conversationId] : [])).size,
     turnCount: new Set(records.flatMap((record) => record.turnId ? [record.turnId] : [])).size,
     failureCount: records.filter((record) => record.failure !== undefined).length,
     stages: [...stages.values()].map(({ durations, ...stage }) => {
@@ -57,6 +60,7 @@ function summarize(records: LocalTimingRecord[]) {
       return { ...stage, ...(durations.length ? {
         samples: durations.length,
         p50DurationMs: durations[Math.ceil(durations.length * 0.5) - 1]!,
+        p90DurationMs: durations[Math.ceil(durations.length * 0.9) - 1]!,
         p95DurationMs: durations[Math.ceil(durations.length * 0.95) - 1]!,
         maxDurationMs: durations.at(-1)!,
       } : {}) };
@@ -67,23 +71,27 @@ function summarize(records: LocalTimingRecord[]) {
 /** Shared by the desktop exporter and the standalone stdio MCP so both files have one format. */
 export function buildDeveloperLogBundle(input: {
   runtime: RuntimeInfo; workspaceId: string | null; since: number; until: number; conversationId: string | null;
-  timing: { records: LocalTimingRecord[]; incomplete: boolean }; sources: { web: RuntimeLogSource; daemon: DaemonLogSource };
+  timing: LocalTimingSnapshot; daemonTiming?: DaemonTimingSource; sources: { web: RuntimeLogSource; daemon: DaemonLogSource };
   timingScope?: "device";
 }) {
-  const { records, incomplete } = input.timing;
+  const daemonTiming = input.daemonTiming ?? { status: "unavailable" as const, records: [], incomplete: false, droppedWrites: 0 };
+  const records = [...input.timing.records, ...daemonTiming.records].sort((a, b) => a.at.localeCompare(b.at));
+  const incomplete = input.timing.incomplete || daemonTiming.incomplete;
   const timingSummary = summarize(records);
+  const waterfalls = buildTurnWaterfalls(records);
   const webRecordCount = input.sources.web.records.length;
   const daemonLineCount = input.sources.daemon.text.split("\n").filter(Boolean).length;
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     exportedAt: new Date(input.until).toISOString(),
     runtime: input.runtime,
     workspaceId: input.workspaceId,
     filter: { since: new Date(input.since).toISOString(), until: new Date(input.until).toISOString(), conversationId: input.conversationId, ...(input.timingScope ? { timingScope: input.timingScope } : {}) },
-    coverage: { incomplete: incomplete || input.sources.web.incomplete || input.sources.daemon.incomplete, retainedFiles: 2, maxFileBytes: 5 * 1024 * 1024, historicalLogsMayHaveRotated: true },
-    summary: { ...timingSummary, timingRecordCount: timingSummary.recordCount, webRecordCount, daemonLineCount, recordCount: timingSummary.recordCount + webRecordCount + daemonLineCount },
+    coverage: { incomplete: incomplete || input.sources.web.incomplete || input.sources.daemon.incomplete, droppedTimingWrites: input.timing.droppedWrites + daemonTiming.droppedWrites, retainedFiles: 2, maxFileBytes: 5 * 1024 * 1024, historicalLogsMayHaveRotated: true },
+    summary: { ...timingSummary, timingRecordCount: timingSummary.recordCount, webRecordCount, daemonLineCount, daemonTimingRecordCount: daemonTiming.records.length, recordCount: timingSummary.recordCount + webRecordCount + daemonLineCount, waterfallCount: waterfalls.turns.length, firstOutput: summarizeFirstOutput(waterfalls.turns) },
     records,
-    sources: { web: { ...input.sources.web, scope: "account", timeFilterApplied: true }, daemon: input.sources.daemon },
+    waterfalls,
+    sources: { web: { ...input.sources.web, scope: "account", timeFilterApplied: true }, daemon: input.sources.daemon, daemonTiming: { status: daemonTiming.status, incomplete: daemonTiming.incomplete, droppedWrites: daemonTiming.droppedWrites } },
   };
 }
 type DeveloperLogBundle = ReturnType<typeof buildDeveloperLogBundle>;
@@ -103,7 +111,7 @@ export async function writeDeveloperLogExport(exportsRoot: string, bundle: Devel
     throw error;
   }
   await pruneDeveloperLogExports(exportsRoot).catch(() => undefined);
-  return { path, format: "json", ...bundle.summary, incomplete: bundle.coverage.incomplete, filter: bundle.filter, sources: { web: { status: bundle.sources.web.status, truncated: bundle.sources.web.truncated }, daemon: { status: bundle.sources.daemon.status, truncated: bundle.sources.daemon.truncated, timeFilterApplied: false } } };
+  return { path, format: "json", ...bundle.summary, incomplete: bundle.coverage.incomplete, filter: bundle.filter, sources: { web: { status: bundle.sources.web.status, truncated: bundle.sources.web.truncated }, daemon: { status: bundle.sources.daemon.status, truncated: bundle.sources.daemon.truncated, timeFilterApplied: false }, daemonTiming: { status: bundle.sources.daemonTiming.status } } };
 }
 
 async function pruneDeveloperLogExports(exportsRoot: string) {
@@ -124,11 +132,15 @@ export class DeveloperLogExporter {
     if (query.conversationId && !ids.includes(query.conversationId)) throw new Error("Conversation is unavailable in the current workspace");
     const until = Date.now();
     const since = until - query.sinceMinutes * 60_000;
-    const timing = await this.options.log.snapshot(new Set(query.conversationId ? [query.conversationId] : ids), since, until);
+    const selected = new Set(query.conversationId ? [query.conversationId] : ids);
+    const [timing, daemonTiming] = await Promise.all([
+      this.options.log.snapshot(selected, since, until),
+      snapshotDaemonTiming(this.options.daemonTimingPath?.() ?? null, selected, since, until),
+    ]);
     this.options.assertScope(scope); signal.throwIfAborted();
     const sources = await this.options.runtimeLogs(scope, since, until);
     this.options.assertScope(scope); signal.throwIfAborted();
-    return buildDeveloperLogBundle({ runtime: this.options.runtime, workspaceId: scope.workspaceId, since, until, conversationId: query.conversationId ?? null, timing, sources });
+    return buildDeveloperLogBundle({ runtime: this.options.runtime, workspaceId: scope.workspaceId, since, until, conversationId: query.conversationId ?? null, timing, daemonTiming, sources });
   }
 
   async save(scope: LocalConversationScope): Promise<DeveloperLogSaveResult> {

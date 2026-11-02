@@ -14,11 +14,12 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "multica-export-"));
   const log = new LocalTimingLog(root);
   const selected = join(root, "selected.json");
+  const daemonTimingPath = join(root, "daemon-timing.jsonl");
   const webLog = new WebDiagnosticLog(root, "https://test.invalid", scope.userId);
   const daemonPath = join(root, "daemon.log");
   let active = true;
   const options = {
-    log, exportsRoot: join(root, "exports"), runtime,
+    log, exportsRoot: join(root, "exports"), runtime, daemonTimingPath: () => daemonTimingPath,
     assertScope: () => { if (!active) throw new Error("Account is no longer active"); },
     conversations: vi.fn(async () => ["conversation", "second"]),
     runtimeLogs: vi.fn(async (_scope: typeof scope, since: number, until: number) => ({ web: await webLog.snapshot(since, until), daemon: await snapshotDaemonLog(daemonPath) })),
@@ -27,7 +28,7 @@ async function fixture() {
   const now = Date.now();
   const record = { version: 1, source: "main", stage: "provider.first_text", event: "mark", elapsedMs: 42, at: new Date(now).toISOString(), conversationId: "conversation", turnId: "turn", requestId: "request", provider: "codex", message: "NEVER_EXPORT", env: { token: "NEVER_EXPORT" } };
   for (const value of [record, { ...record, conversationId: "second" }, { ...record, conversationId: "foreign" }, { ...record, at: new Date(now - 2 * 86400000).toISOString() }]) log.write(value);
-  return { root, log, webLog, daemonPath, selected, options, exporter: new DeveloperLogExporter(options), deactivate: () => { active = false; }, cleanup: async () => { await log.flush(); await webLog.flush(); await rm(root, { recursive: true, force: true }); } };
+  return { root, log, webLog, daemonPath, daemonTimingPath, selected, options, exporter: new DeveloperLogExporter(options), deactivate: () => { active = false; }, cleanup: async () => { await log.flush(); await webLog.flush(); await rm(root, { recursive: true, force: true }); } };
 }
 
 describe("developer log export", () => {
@@ -63,7 +64,7 @@ describe("developer log export", () => {
       const saved = JSON.parse(await readFile(f.selected, "utf8"));
       expect(exported.stages).toEqual(saved.summary.stages);
       expect(exported.stages.filter((stage) => stage.stage === "context.dispose")).toEqual([false, true].map((background) => ({
-        stage: "context.dispose", background, records: 3, waits: 0, samples: 3, p50DurationMs: 20, p95DurationMs: 100, maxDurationMs: 100,
+        stage: "context.dispose", background, records: 3, waits: 0, samples: 3, p50DurationMs: 20, p90DurationMs: 100, p95DurationMs: 100, maxDurationMs: 100,
       })));
       const bundle = JSON.parse(await readFile(exported.path, "utf8"));
       expect(bundle.records.filter((record: { background?: boolean }) => record.background)).toHaveLength(3);
@@ -79,7 +80,7 @@ describe("developer log export", () => {
       const result = await createDeveloperLogTool(f.exporter, scope, "conversation").call({ request_id: "combined" }, signal()) as { path: string };
       const mcp = JSON.parse(await readFile(result.path, "utf8"));
       for (const bundle of [ui, mcp]) {
-        expect(bundle.schemaVersion).toBe(2);
+        expect(bundle.schemaVersion).toBe(3);
         expect(bundle.sources.web).toMatchObject({ status: "available", scope: "account", timeFilterApplied: true, records: [{ level: "error", message: "fetch failed token=[REDACTED]" }] });
         expect(bundle.sources.daemon).toMatchObject({ status: "available", scope: "desktop-profile", timeFilterApplied: false, text: expect.stringContaining("connection failed") });
         expect(bundle.summary).toMatchObject({ webRecordCount: 1, daemonLineCount: 1 });
@@ -178,6 +179,35 @@ describe("developer log export", () => {
       await expect(tool.call({ request_id: "same-export", scope: "workspace" }, signal())).rejects.toThrow("another log export");
       expect(await tool.call({ request_id: "all", scope: "workspace" }, signal())).toMatchObject({ recordCount: 2, filter: { conversationId: null } });
       await expect(tool.call({ request_id: "path", path: "/tmp/arbitrary.json" }, signal())).rejects.toThrow();
+    } finally { await f.cleanup(); }
+  });
+  it("merges the daemon's timing file into one per-turn waterfall in both exports", async () => {
+    const f = await fixture();
+    try {
+      const at = (ms: number) => new Date(Date.now() - 1000 + ms).toISOString();
+      const daemon = (ms: number, stage: string, extra: object = {}) => JSON.stringify({ version: 2, source: "daemon", at: at(ms), event: "mark", elapsedMs: ms, conversationId: "conversation", requestId: "r", turnId: "turn-r", provider: "claude", origin: "local", clientKind: "desktop", turnKind: "user", stage, ...extra });
+      await writeFile(f.daemonTimingPath, [daemon(10, "daemon.request_received"), daemon(90, "provider.first_text"), daemon(95, "ws.first_output_write"), daemon(200, "turn.finished", { outcome: "completed" }), daemon(15, "turn.persist", { conversationId: "foreign", turnId: "foreign", requestId: "foreign" })].join("\n") + "\n");
+      f.log.write({ version: 2, source: "gui", at: at(0), stage: "client.send", event: "mark", elapsedMs: 0, conversationId: "conversation", requestId: "r" });
+      f.log.write({ version: 2, source: "gui", at: at(120), stage: "client.first_event_received", event: "mark", elapsedMs: 0, conversationId: "conversation", turnId: "turn-r" });
+      const exported = await f.exporter.export(scope, { sinceMinutes: 60, conversationId: "conversation" }, signal());
+      await f.exporter.save(scope);
+      for (const bundle of [JSON.parse(await readFile(exported.path, "utf8")), JSON.parse(await readFile(f.selected, "utf8"))]) {
+        expect(bundle.sources.daemonTiming).toEqual({ status: "available", incomplete: false, droppedWrites: 0 });
+        const turn = bundle.waterfalls.turns.find((entry: { turnId?: string }) => entry.turnId === "turn-r");
+        expect(turn).toMatchObject({ provider: "claude", turnKind: "user", outcome: "completed", totals: { clientToFirstEventMs: 120, daemonToFirstOutputMs: 80, transportMs: 35 } });
+        expect(turn.segments.map((segment: { stage: string }) => segment.stage)).toEqual(["client.send", "daemon.request_received", "provider.first_text", "ws.first_output_write", "client.first_event_received", "turn.finished"]);
+        expect(JSON.stringify(bundle)).not.toContain("foreign");
+      }
+      expect(exported).toMatchObject({ daemonTimingRecordCount: 4, waterfallCount: 2, sources: { daemonTiming: { status: "available" } } });
+    } finally { await f.cleanup(); }
+  });
+  it("reports the export incomplete when the daemon or desktop recorded dropped writes", async () => {
+    const f = await fixture();
+    try {
+      await writeFile(f.daemonTimingPath, JSON.stringify({ version: 2, source: "daemon", at: new Date().toISOString(), stage: "timing.dropped", event: "mark", elapsedMs: 0, count: 7 }) + "\n");
+      const exported = await f.exporter.export(scope, { sinceMinutes: 60 }, signal());
+      expect(exported.incomplete).toBe(true);
+      expect(JSON.parse(await readFile(exported.path, "utf8")).coverage).toMatchObject({ incomplete: true, droppedTimingWrites: 7 });
     } finally { await f.cleanup(); }
   });
 });
