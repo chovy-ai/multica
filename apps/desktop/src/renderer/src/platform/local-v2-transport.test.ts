@@ -8,7 +8,7 @@ import { DirectLocalV2Transport, type DirectLocalV2Options } from "./local-v2-tr
 
 const scope = { userId: "user", workspaceId: "ws" };
 
-interface Daemon { helloVersion?: number; server: Server; base: string; token: string; tickets: Set<string>; sockets: WebSocket[]; requests: IncomingMessage[]; received: unknown[]; close(): Promise<void> }
+interface Daemon { helloVersion?: number; capabilities?: string[]; server: Server; base: string; token: string; tickets: Set<string>; sockets: WebSocket[]; requests: IncomingMessage[]; received: unknown[]; close(): Promise<void> }
 
 async function fakeDaemon(): Promise<Daemon> {
   const daemon = { token: "r1", tickets: new Set(), sockets: [], requests: [], received: [] } as unknown as Daemon;
@@ -17,7 +17,7 @@ async function fakeDaemon(): Promise<Daemon> {
   daemon.server = createServer((req, res) => {
     daemon.requests.push(req);
     if (req.headers.authorization !== `Bearer ${daemon.token}`) { res.writeHead(403).end("forbidden"); return; }
-    if (req.url === "/local/v2/hello") { json(res, 200, { version: daemon.helloVersion ?? 2 }); return; }
+    if (req.url === "/local/v2/hello") { json(res, 200, { version: daemon.helloVersion ?? 2, store_generation: "g", capabilities: daemon.capabilities ?? [] }); return; }
     if (req.url?.endsWith("/local/v2/ws-ticket")) { const ticket = `ticket-${daemon.requests.length}`; daemon.tickets.add(ticket); json(res, 200, { ticket }); return; }
     if (req.url === "/local/v2/sessions/other/snapshot") { json(res, 403, { error: { kind: "account_mismatch", message: "another account" } }); return; }
     if (req.url === "/local/v2/sessions/missing/snapshot") { json(res, 404, { error: { kind: "not_found", message: "conversation missing" } }); return; }
@@ -54,6 +54,16 @@ async function setup(hostRequest: LocalV2Bridge["hostRequest"] = vi.fn(async () 
 const until = async (check: () => boolean) => { for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 10)); expect(check()).toBe(true); };
 
 describe("DirectLocalV2Transport", () => {
+  it("reads what the daemon supports once per connection", async () => {
+    const { daemon, transport } = await setup();
+    daemon.capabilities = ["device-link"];
+    await expect(transport.capabilities()).resolves.toEqual(["device-link"]);
+    daemon.capabilities = ["device-link", "conversation-focus-v1"];
+    await expect(transport.capabilities()).resolves.toEqual(["device-link"]);
+    await transport.send(scope, { version: 2, type: "subscribe_scope" });
+    await expect(transport.capabilities()).resolves.toEqual(["device-link", "conversation-focus-v1"]);
+  });
+
   it("reports availability from the hello probe and from each request", async () => {
     const { daemon, transport } = await setup();
     const availability = vi.fn();

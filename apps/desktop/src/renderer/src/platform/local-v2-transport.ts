@@ -1,4 +1,4 @@
-import { LOCAL_V2_VERSION, localV2UploadSchema, type LocalV2ChooseRequest, type LocalV2ClientMessage, type LocalV2RendererEndpoint, type LocalV2Scope, type LocalV2Transport } from "@multica/core/local-conversation/v2";
+import { LOCAL_V2_VERSION, localV2HelloSchema, localV2UploadSchema, type LocalV2ChooseRequest, type LocalV2ClientMessage, type LocalV2RendererEndpoint, type LocalV2Scope, type LocalV2Transport } from "@multica/core/local-conversation/v2";
 import type { LocalHostAvailability, LocalHostUnavailableReason } from "../../../shared/local-host-availability";
 import type { LocalV2Bridge } from "../../../shared/local-v2-bridge";
 
@@ -57,6 +57,8 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   private readonly basePath: string;
   /** This client, so the daemon sends a conversation's host requests back here, also after a reconnect. */
   private readonly clientId = crypto.randomUUID();
+  /** Read once per connection; a reconnect may have reached an updated daemon. */
+  private capabilityLoad?: Promise<string[]>;
 
   constructor(private options: DirectLocalV2Options) {
     this.WS = options.WebSocket ?? WebSocket;
@@ -120,6 +122,16 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     const capabilities = Array.isArray((hello as { capabilities?: unknown } | null)?.capabilities) ? (hello as { capabilities: unknown[] }).capabilities : [];
     const compatible = hello?.version === LOCAL_V2_VERSION && (this.deviceId === "local" || capabilities.includes("device-link"));
     this.report(compatible ? { state: "connected" } : { state: "unavailable", reason: "incompatible" });
+  }
+
+  capabilities(): Promise<string[]> {
+    return this.capabilityLoad ??= (async () => {
+      const endpoint = await this.endpoint();
+      const response = await this.fetch(this.url(endpoint, "/hello"), { headers: { Authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(HANDSHAKE_TIMEOUT_MS) });
+      if (!response.ok) throw failure(`http_${response.status}`, "The daemon did not answer");
+      const hello = localV2HelloSchema.safeParse(await response.json());
+      return hello.success ? hello.data.capabilities : [];
+    })().catch((error: unknown) => { this.capabilityLoad = undefined; throw error; });
   }
 
   private outcome(kind: string | null) {
@@ -326,6 +338,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   private attach(socket: Socket, ws: WebSocket) {
     if (this.deviceId !== "local" && !socket.watch) this.watchLink(socket);
     this.abortReads(socket.scope, "connection_replaced");
+    this.capabilityLoad = undefined;
     socket.ws = ws; socket.backoff = RECONNECT_MIN_MS;
     ws.addEventListener("message", (event) => {
       if (typeof event.data !== "string") return;

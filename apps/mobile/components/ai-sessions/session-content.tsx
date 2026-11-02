@@ -65,6 +65,7 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
   const [readingHistory, setReadingHistory] = useState(false);
   const running = snapshot?.turns.some((turn) => turn.status === "running") ?? false;
   useEffect(() => { if (snapshot && connected && focused && active) client?.select(session); }, [client, connected, session, snapshot, focused, active]);
+  useEffect(() => (client && focused && active ? client.focus(session) : undefined), [client, session, focused, active]);
   useEffect(() => { if (nearBottom.current && rows.length) list.current?.scrollToEnd({ animated: false }); }, [rows]);
   useEffect(() => {
     if (!pending || !(snapshot?.queue.items.some((item) => item.requestId === pending.requestId) || snapshot?.turns.some((turn) => turn.request_id === pending.requestId))) return;

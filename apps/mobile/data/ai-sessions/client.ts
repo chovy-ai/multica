@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { QueryClient } from "@tanstack/react-query";
 import { LOCAL_V2_VERSION, localV2HelloSchema, localV2ServerMessageSchema, localV2SessionListSchema, localV2SnapshotSchema, type LocalV2Snapshot, type LocalV2Summary } from "@multica/core/local-conversation/v2";
+import { LOCAL_V2_FOCUS_CAPABILITY, LocalV2FocusTracker } from "@multica/core/local-conversation/focus";
 import { createRequestId } from "@/lib/request-id";
 import { applyEvents, retainSnapshotHistory } from "./projection";
 import { queueSchema, readResponse } from "./schemas";
@@ -43,6 +44,14 @@ export class AISessionClient {
   private rejected = new Set<string>();
   private refreshingQueues = new Set<string>();
   private listeners = new Set<() => void>();
+  private focusSupported = false;
+  private focused = new LocalV2FocusTracker((id, focused) => {
+    // A daemon that cannot use it has nothing to catch up on either.
+    if (!this.focusSupported) return true;
+    if (this.socket?.readyState !== 1) return false;
+    this.send({ version: LOCAL_V2_VERSION, type: "conversation.focus", conversation_id: id, focused });
+    return true;
+  });
   /** Stays true through the short reconnect window, so a brief drop shows nothing. */
   connected = false;
   readonly clientId = createRequestId();
@@ -130,6 +139,7 @@ export class AISessionClient {
       const hello = await this.request("GET", "/hello", localV2HelloSchema);
       if (hello.version !== LOCAL_V2_VERSION || !hello.capabilities.includes("device-link")) throw new Error("incompatible");
       if (this.stopped) return;
+      this.focusSupported = hello.capabilities.includes(LOCAL_V2_FOCUS_CAPABILITY);
       const ws = this.socketFactory(this.url("/ws").replace(/^http/, "ws"), this.headers());
       let openedAt: number | undefined;
       this.socket = ws;
@@ -142,6 +152,7 @@ export class AISessionClient {
         this.status(true);
         this.settleRecovery(true);
         ws.send(JSON.stringify({ version: 2, type: "subscribe_scope", after_scope_seq: 0 }));
+        this.focused.reconnected();
         void this.qc.invalidateQueries({ queryKey: aiKeys.list(this.scope) });
         if (!this.selected) return;
         // The daemon answers snapshot_required when a cached position is unusable.
@@ -175,6 +186,8 @@ export class AISessionClient {
     else this.backoff = Math.min(this.backoff * 2, 10_000);
     this.timer = setTimeout(() => { this.timer = undefined; void this.connect(); }, delay);
   }
+  /** The session screen is on show until the returned function is called. */
+  focus(id: string): () => void { return this.focused.hold(id); }
   select(id: string) {
     if (this.selected === id) return;
     if (this.selected && this.selected !== id) { this.rejected.delete(this.selected); this.send({ version: 2, type: "unsubscribe", conversation_id: this.selected }); }
@@ -247,6 +260,7 @@ export class AISessionClient {
   }
   close() {
     this.stopped = true; clearTimeout(this.timer); clearTimeout(this.handshake);
+    this.focused.dispose();
     this.cancelReads(); this.settleRecovery(false);
     if (this.socket) { this.socket.onclose = null; this.socket.onmessage = null; this.socket.onopen = null; this.socket.onerror = null; this.socket.close(); }
     this.socket = undefined; this.status(false);

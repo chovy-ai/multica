@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
+import { LOCAL_V2_FOCUS_STABLE_MS } from "@multica/core/local-conversation/focus";
 import { localV2EventSchema, localV2SnapshotSchema, localV2SummarySchema } from "@multica/core/local-conversation/v2";
 import { AISessionClient, aiKeys } from "./client";
 import { applyEvents, groupSessions, transcript, visibleSessions } from "./projection";
@@ -38,6 +39,71 @@ function linkedClient(read: typeof fetch = vi.fn<typeof fetch>(async () => Respo
 }
 
 afterEach(() => vi.useRealTimers());
+
+describe("mobile AI session focus", () => {
+  const focusHello = () => Response.json({ version: 2, store_generation: "generation-a", capabilities: ["device-link", "conversation-focus-v1"] });
+  const focusMessages = (socket: FakeSocket) => socket.sent.filter((message) => message.type === "conversation.focus");
+
+  function focusClient(respond = focusHello) {
+    const linked = linkedClient();
+    linked.fetcher.mockImplementation(async () => respond());
+    return linked;
+  }
+
+  it("reports a stable session screen, its end, and the current focus again after a reconnect", async () => {
+    vi.useFakeTimers();
+    const { client, sockets, flush } = focusClient();
+    void client.connect();
+    await flush();
+    sockets[0]!.open();
+    const leave = client.focus("session-a");
+    await vi.advanceTimersByTimeAsync(LOCAL_V2_FOCUS_STABLE_MS);
+    expect(focusMessages(sockets[0]!)).toEqual([{ version: 2, type: "conversation.focus", conversation_id: "session-a", focused: true }]);
+
+    sockets[0]!.close();
+    await flush();
+    sockets[1]!.open();
+    expect(focusMessages(sockets[1]!)).toEqual([{ version: 2, type: "conversation.focus", conversation_id: "session-a", focused: true }]);
+
+    leave();
+    await flush();
+    expect(focusMessages(sockets[1]!)).toEqual([
+      { version: 2, type: "conversation.focus", conversation_id: "session-a", focused: true },
+      { version: 2, type: "conversation.focus", conversation_id: "session-a", focused: false },
+    ]);
+    client.close();
+  });
+
+  it("says it left when a session was closed during a drop", async () => {
+    vi.useFakeTimers();
+    const { client, sockets, flush } = focusClient();
+    void client.connect();
+    await flush();
+    sockets[0]!.open();
+    const leave = client.focus("session-a");
+    await vi.advanceTimersByTimeAsync(LOCAL_V2_FOCUS_STABLE_MS);
+    sockets[0]!.readyState = 3;
+    sockets[0]!.onclose?.();
+    leave();
+    await flush();
+    sockets[1]!.open();
+    await flush();
+    expect(focusMessages(sockets[1]!)).toEqual([{ version: 2, type: "conversation.focus", conversation_id: "session-a", focused: false }]);
+    client.close();
+  });
+
+  it("does not send focus to a daemon without the capability", async () => {
+    vi.useFakeTimers();
+    const { client, sockets, flush } = focusClient(hello);
+    void client.connect();
+    await flush();
+    sockets[0]!.open();
+    client.focus("session-a");
+    await vi.advanceTimersByTimeAsync(LOCAL_V2_FOCUS_STABLE_MS);
+    expect(focusMessages(sockets[0]!)).toEqual([]);
+    client.close();
+  });
+});
 
 describe("mobile AI session event projection", () => {
   it("streams text once, accepts authoritative final text, and ignores duplicate events", () => {
