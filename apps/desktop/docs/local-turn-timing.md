@@ -167,6 +167,9 @@ current names in a waterfall (`recordedAs` keeps the name written).
 | Client | `client.send`, `client.request`, `client.first_event_received`, `client.first_event_applied`, `client.terminal_applied` |
 | Daemon entry | `daemon.request_received`, `queue.dispatch`, `turn.persist` |
 | Runner | `runner.create`, `runner.limiter`, `prepare.wait` |
+| Preheat | `focus.changed` (`count` is the conversation's focused clients), `preheat.requested`, `preheat.cancelled`, `preheat.started`, `preheat.finished`, `preheat.failed`; `reason` says why |
+| Spares | `spare.created`, `spare.claim`, `spare.claimed`, `spare.rejected`, `spare.discarded`, `mcp.set`; `reason` says why |
+| Reclaim | `runner.evicted` (`durationMs` is how long it sat idle; `reason` is `idle_preheated`, `idle_sent` or `over_limit`) |
 | Codex | `provider.spawn`, `provider.handshake`, `provider.config`, `context.bind`, `model.resolve`, `thread.prepare` (`reason` is `start` or `resume`), `provider.turn_start` |
 | Claude | `adapter.spawn`, `adapter.ready`, `context.bind`, `sdk.load` and `query.init` (from the adapter's start result; absent from an older adapter), `provider.input_queued`, `provider.first_message` |
 | Output | `provider.first_reasoning`, `provider.first_text`, `provider.first_tool`, `batcher.first_output_commit`, `hub.first_output_publish`, `ws.first_output_write` (per subscriber, with `reason` `live` or `catch_up` and that subscriber's identity) |
