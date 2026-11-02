@@ -93,6 +93,8 @@ export class ClaudeAdapter {
     const options: Options = {
       pathToClaudeCodeExecutable: message.executable, cwd: message.cwd, abortController: this.controller,
       includePartialMessages: true, settingSources: ["user", "project", "local"], plugins: [], strictMcpConfig: true,
+      // Only unlocks switching to bypassPermissions, including mid-session; permissionMode decides what applies.
+      allowDangerouslySkipPermissions: true,
       ...(message.env ? { env: message.env } : {}),
       ...(message.settings ? { settings: message.settings as Options["settings"] } : {}),
       ...(message.resume ? { resume: message.resume } : {}),

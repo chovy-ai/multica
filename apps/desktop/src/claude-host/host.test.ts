@@ -84,6 +84,15 @@ describe("Claude host", () => {
     });
   });
 
+  it.each([undefined, "default", "auto", "full-access"])("always allows bypass while permission_mode %s decides the mode", async (mode) => {
+    const h = harness();
+    h.send({ ...start, ...(mode ? { permission_mode: mode } : {}) });
+    await h.waitFor((f) => f.type === "result" && f.id === "r1");
+    const options = h.sdk.query.mock.calls[0]![0].options;
+    expect(options.allowDangerouslySkipPermissions).toBe(true);
+    expect(options.permissionMode).toBe(mode === "full-access" ? "bypassPermissions" : mode === "auto" ? "auto" : undefined);
+  });
+
   it("forwards SDK messages unchanged and queues user turns on the same Query", async () => {
     const h = harness();
     h.send(start);
