@@ -67,6 +67,9 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
   useEffect(() => { if (snapshot && connected && focused && active) client?.select(session); }, [client, connected, session, snapshot, focused, active]);
   useEffect(() => (client && focused && active ? client.focus(session) : undefined), [client, session, focused, active]);
   useEffect(() => { if (nearBottom.current && rows.length) list.current?.scrollToEnd({ animated: false }); }, [rows]);
+  useEffect(() => { if (snapshot) client?.committed(session); }, [client, session, snapshot]);
+  const pendingRequest = pending?.requestId;
+  useEffect(() => { if (pendingRequest) client?.pendingShown(session, pendingRequest); }, [client, session, pendingRequest]);
   useEffect(() => {
     if (!pending || !(snapshot?.queue.items.some((item) => item.requestId === pending.requestId) || snapshot?.turns.some((turn) => turn.request_id === pending.requestId))) return;
     if (draft === pending.text) setDraft(draftKey, "");
@@ -96,8 +99,8 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
     setPending(draftKey, request); setBusy(true); setSendFailed(false);
     try {
       if (request.queued) {
-        await client.submit(session, { type: "queue_enqueue", paused: snapshot!.queue.paused, item: { requestId: request.requestId, content: request.queueContent ?? request.text, attachmentIds: request.attachments, display: { id: request.requestId, clientSubmitId: request.requestId, createdAtUnixMs: request.createdAt, content: [{ type: "text", text: request.text }] } } }, queueSchema);
-      } else await client.submit(session, { type: "send", request_id: request.requestId, text: request.text, attachment_ids: request.attachments }, commandResultSchema);
+        await client.submit(session, { type: "queue_enqueue", paused: snapshot!.queue.paused, item: { requestId: request.requestId, content: request.queueContent ?? request.text, attachmentIds: request.attachments, display: { id: request.requestId, clientSubmitId: request.requestId, createdAtUnixMs: request.createdAt, content: [{ type: "text", text: request.text }] } } }, queueSchema, request.createdAt);
+      } else await client.submit(session, { type: "send", request_id: request.requestId, text: request.text, attachment_ids: request.attachments }, commandResultSchema, request.createdAt);
       setDraft(draftKey, ""); setPending(draftKey, null); setAttachments([]);
       void query.refetch();
     } catch (error) {

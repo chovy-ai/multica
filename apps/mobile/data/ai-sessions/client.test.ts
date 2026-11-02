@@ -6,6 +6,7 @@ import { localV2EventSchema, localV2SnapshotSchema, localV2SummarySchema } from 
 import { AISessionClient, aiKeys } from "./client";
 import { applyEvents, groupSessions, transcript, visibleSessions } from "./projection";
 import { commandResultSchema } from "./schemas";
+import { MobileTimingBuffer } from "./timing";
 
 const scope = { userId: "user-a", workspaceId: "workspace-a", deviceId: "peer-a" };
 const summary = (id = "session-a", seq = 1) => localV2SummarySchema.parse({ conversation_id: id, summary_seq: seq, provider: "codex", title: id, status: "idle", pinned: false, archived: false, updated_at: "2026-10-30T12:00:00Z" });
@@ -450,5 +451,138 @@ describe("mobile AI session transport and caches", () => {
       expect(read).toHaveBeenCalledOnce();
       client.close();
     });
+  });
+});
+
+describe("mobile AI session timing", () => {
+  const reportingHello = () => Response.json({ version: 2, store_generation: "generation-a", capabilities: ["device-link", "timing-report-v1"] });
+  const stagesOf = (timing: MobileTimingBuffer) => (timing.batch({ deviceId: scope.deviceId, workspaceId: scope.workspaceId })?.records ?? []).map((record) => record.stage);
+
+  function timedClient(capable = true, read: typeof fetch = async () => Response.json({ accepted: 1 })) {
+    const sockets: FakeSocket[] = [];
+    const qc = new QueryClient();
+    const timing = new MobileTimingBuffer();
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/hello")) return capable ? reportingHello() : hello();
+      if (url.includes("/diagnostics")) return Response.json({ records: [], next: 0 });
+      return read(input, init);
+    });
+    const client = new AISessionClient({ url: "http://127.0.0.1:1234", token: "loopback" }, scope, qc, () => { const socket = new FakeSocket(); sockets.push(socket); return socket as unknown as WebSocket; }, fetcher, timing);
+    return { client, qc, sockets, fetcher, timing, flush: () => vi.advanceTimersByTimeAsync(0) };
+  }
+  const reports = (fetcher: ReturnType<typeof timedClient>["fetcher"]) => fetcher.mock.calls.filter(([url]) => String(url).endsWith("/timing-reports"));
+
+  it("records a send and its request, tied together for the executor", async () => {
+    const { client, fetcher, timing } = timedClient();
+    await client.submit("session-a", { type: "send", request_id: "req-1", text: "SECRET" }, commandResultSchema, Date.UTC(2026, 10, 2));
+    client.pendingShown("session-a", "req-1");
+    const command = fetcher.mock.calls.find(([url]) => String(url).endsWith("/commands"))!;
+    expect((command[1]!.headers as Record<string, string>)["X-Multica-Request-ID"]).toBe("req-1");
+    const { records } = timing.batch({ deviceId: scope.deviceId, workspaceId: scope.workspaceId })!;
+    expect(records.map((record) => record.stage)).toEqual(["client.send", "client.request", "client.request", "client.pending_shown"]);
+    expect(records[0]).toMatchObject({ at: "2026-11-02T00:00:00.000Z", requestId: "req-1", conversationId: "session-a", attempt: 1, peer: "peer-a", source: "mobile", clientKind: "mobile" });
+    expect(records[2]).toMatchObject({ event: "end", outcome: "completed" });
+    expect(JSON.stringify(records)).not.toContain("SECRET");
+  });
+
+  it("records a failed request by category, never its text", async () => {
+    const { client, timing } = timedClient(true, async () => Response.json({ error: { kind: "turn_running", message: "/Users/me/secret" } }, { status: 409 }));
+    await expect(client.submit("session-a", { type: "send", request_id: "req-1", text: "x" }, commandResultSchema)).rejects.toThrow("turn_running");
+    const ended = timing.batch({ deviceId: scope.deviceId, workspaceId: scope.workspaceId })!.records.at(-1)!;
+    expect(ended).toMatchObject({ stage: "client.request", outcome: "failed", failure: "other" });
+    expect(JSON.stringify(ended)).not.toContain("secret");
+  });
+
+  it("marks the first output and its commit once per turn, and sums traffic into one record", async () => {
+    vi.useFakeTimers();
+    const { client, qc, sockets, flush, timing } = timedClient();
+    qc.setQueryData(aiKeys.snapshot(scope, "session-a"), snapshot());
+    void client.connect();
+    await flush();
+    sockets[0]!.open();
+    await flush();
+    timing.batch({ deviceId: scope.deviceId, workspaceId: scope.workspaceId });
+    const events = (seq: number, type: string, payload: Record<string, unknown>) => ({ version: 2, type: "conversation.events", conversation_id: "session-a", from_seq: seq, to_seq: seq, events: [{ ...event(seq, type, payload, type.startsWith("item.") ? "a" : null) }] });
+    client.receive(events(1, "turn.started", {}), 100);
+    client.receive(events(2, "item.started", { kind: "assistant_text" }), 100);
+    await vi.advanceTimersByTimeAsync(5000);
+    client.receive(events(3, "item.delta", { kind: "assistant_text", field: "text", delta: "hello" }), 50);
+    client.committed("session-a");
+    client.committed("session-a");
+    client.receive(events(4, "turn.completed", { status: "completed" }), 50);
+    const parsed = (timing as unknown as { entries: { record: { stage: string; count?: number; bytes?: number; maxGapMs?: number } }[] }).entries.map((entry) => entry.record);
+    const count = (stage: string) => parsed.filter((record) => record.stage === stage).length;
+    expect(count("client.first_event_received")).toBe(1);
+    expect(count("client.first_event_applied")).toBe(1);
+    expect(count("client.first_commit")).toBe(1);
+    expect(count("client.terminal_applied")).toBe(1);
+    expect(parsed.find((record) => record.stage === "link.event_received")).toMatchObject({ count: 4, bytes: 300, maxGapMs: 5000 });
+    client.close();
+  });
+
+  it("records the socket's life with closed reasons", async () => {
+    vi.useFakeTimers();
+    const { client, qc, sockets, flush, timing } = timedClient(false);
+    qc.setQueryData(aiKeys.snapshot(scope, "session-a"), snapshot());
+    void client.connect();
+    await flush();
+    sockets[0]!.open();
+    client.select("session-a");
+    client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "subscribed", high_water: 0 });
+    (sockets[0]!.onclose as unknown as (event: { code: number }) => void)({ code: 1006 });
+    await flush();
+    sockets[1]!.open();
+    client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "subscribed", high_water: 0 });
+    client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "live", high_water: 0 });
+    const records = timing.batch({ deviceId: scope.deviceId, workspaceId: scope.workspaceId })!.records;
+    expect(records.map((record) => record.stage)).toEqual(["ws.hello", "ws.open", "ws.subscribe", "ws.subscribed", "ws.closed", "ws.retry", "ws.hello", "ws.open", "ws.subscribe", "ws.subscribed", "ws.resubscribed", "ws.catch_up"]);
+    expect(records.find((record) => record.stage === "ws.closed")).toMatchObject({ reason: "ws_abnormal" });
+    client.close();
+  });
+
+  it("reports with an acknowledgement, retries the same batch after a reconnect", async () => {
+    vi.useFakeTimers();
+    let fail = true;
+    const { client, sockets, fetcher, flush, timing } = timedClient(true, async () => fail ? new Response("{}", { status: 502 }) : Response.json({ accepted: 3 }));
+    void client.connect();
+    await flush();
+    sockets[0]!.open();
+    await flush();
+    expect(reports(fetcher)).toHaveLength(1);
+    const first = JSON.parse(String(reports(fetcher)[0]![1]!.body)) as { batch_id: string; records: unknown[] };
+    expect(first.records.length).toBeGreaterThan(0);
+    fail = false;
+    sockets[0]!.close();
+    await flush();
+    sockets[1]!.open();
+    await flush();
+    const second = JSON.parse(String(reports(fetcher)[1]![1]!.body)) as { batch_id: string };
+    expect(second.batch_id).toBe(first.batch_id);
+    expect(stagesOf(timing)).not.toContain("ws.hello");
+    client.close();
+  });
+
+  it("does not report to a daemon that did not offer it, and keeps the marks bounded", async () => {
+    vi.useFakeTimers();
+    const { client, sockets, fetcher, flush, timing } = timedClient(false);
+    void client.connect();
+    await flush();
+    sockets[0]!.open();
+    await flush();
+    expect(reports(fetcher)).toHaveLength(0);
+    expect(fetcher.mock.calls.some(([url]) => String(url).includes("/diagnostics"))).toBe(false);
+    expect(stagesOf(timing)).toContain("ws.open");
+    client.close();
+  });
+
+  it("records a snapshot read with its size and when it rendered", async () => {
+    const { client, timing } = timedClient(true, async () => Response.json(snapshot()));
+    await client.snapshot("session-a");
+    client.committed("session-a");
+    client.committed("session-a");
+    const records = timing.batch({ deviceId: scope.deviceId, workspaceId: scope.workspaceId })!.records;
+    expect(records.map((record) => record.stage)).toEqual(["snapshot.request", "snapshot.first_byte", "snapshot.received", "snapshot.parsed", "snapshot.rendered"]);
+    expect(records[2]!.bytes).toBeGreaterThan(0);
   });
 });
