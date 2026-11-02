@@ -133,7 +133,7 @@ func TestCodexPrepareLoadsTheThreadWithoutATurn(t *testing.T) {
 		t.Fatalf("second prepare did work: %d requests, %d processes", got, p.count())
 	}
 	codexSend(t, r, "t1")
-	if got := fmt.Sprint(p.server(0).sent()); got != "[config/read model/list thread/resume model/list thread/resume turn/start]" {
+	if got := fmt.Sprint(p.server(0).sent()); got != "[config/read model/list thread/resume thread/resume turn/start]" {
 		t.Fatalf("requests after send = %s", got)
 	}
 	if idle, _ := r.IdleProcess(); idle.preheated {

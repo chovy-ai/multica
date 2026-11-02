@@ -136,3 +136,48 @@ func TestUnavailableAndFailingProviders(t *testing.T) {
 		t.Fatalf("unknown provider = %v", err)
 	}
 }
+
+func TestClaudeDefaultRowMarksTheRowItResolvesTo(t *testing.T) {
+	t.Parallel()
+
+	models := claudeModels([]byte(`{"models":[{"value":"default","resolvedModel":"claude-opus-5[1m]","displayName":"Default"},{"value":"sonnet","resolvedModel":"claude-sonnet-5"},{"value":"opus[1m]","resolvedModel":"claude-opus-5[1m]","displayName":"Opus 1M"}]}`)).Models
+	if len(models) != 2 || models[0].ID != "sonnet" || models[0].IsDefault || models[1].ID != "opus[1m]" || !models[1].IsDefault {
+		t.Fatalf("models = %+v", models)
+	}
+}
+
+func TestClaudeDefaultRowBecomesARowOnlyWhenNothingElseNamesIt(t *testing.T) {
+	t.Parallel()
+
+	models := claudeModels([]byte(`{"models":[{"value":"default","resolvedModel":"org-model","displayName":"Org"},{"value":"sonnet"}]}`)).Models
+	if len(models) != 2 || models[1].ID != "org-model" || !models[1].IsDefault {
+		t.Fatalf("restricted install = %+v", models)
+	}
+	for name, raw := range map[string]string{
+		"disabled":   `{"models":[{"value":"default","resolvedModel":"org-model","disabled":true}]}`,
+		"unresolved": `{"models":[{"value":"default"}]}`,
+	} {
+		if models := claudeModels([]byte(raw)).Models; len(models) != 0 {
+			t.Errorf("%s: %+v", name, models)
+		}
+	}
+}
+
+func TestCodexDefaultComesFromWhatARunningProcessReported(t *testing.T) {
+	t.Parallel()
+
+	codexDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte(`{"models":[{"slug":"a"},{"slug":"b"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := New(finder(nil), t.TempDir(), codexDir)
+	models, _ := c.Models(context.Background(), "codex", false)
+	if models.Models[0].IsDefault || models.Models[1].IsDefault {
+		t.Fatalf("nothing reported yet: %+v", models)
+	}
+	c.NoteCodexDefault("b")
+	models, _ = c.Models(context.Background(), "codex", false)
+	if models.Models[0].IsDefault || !models.Models[1].IsDefault {
+		t.Fatalf("after report: %+v", models)
+	}
+}

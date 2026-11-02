@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/timing"
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 var (
@@ -497,7 +498,15 @@ func (r *ClaudeRunner) Close(ctx context.Context) error {
 func (r *ClaudeRunner) ensureAdapter(ctx context.Context, trace *timing.Trace) error {
 	r.mu.Lock()
 	fresh := r.session.ProviderSessionID == ""
+	model, _ := r.session.Fields["model"].(string)
 	r.mu.Unlock()
+	// Claude resolves its own default inside the Query; asking first would add a
+	// process round trip for an answer nothing here needs.
+	if model == "" || model == agent.ClaudeDefaultModelValue {
+		trace.MarkReason(timing.StageModelResolve, timing.ReasonNativeDefault)
+	} else {
+		trace.MarkReason(timing.StageModelResolve, timing.ReasonExplicit)
+	}
 	if fresh && r.claimSpare != nil {
 		if spare := r.claimSpare(ctx, "claude"); spare != nil {
 			err := r.adoptSpare(ctx, spare, trace)

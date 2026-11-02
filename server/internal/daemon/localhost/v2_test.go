@@ -351,6 +351,12 @@ func TestV2UpdateSettingsCommand(t *testing.T) {
 	if conv.Model.String != "claude-opus-5-5" || conv.PermissionMode != "full-access" {
 		t.Fatalf("stored = %+v", conv)
 	}
+	if status, _ := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "update_settings", "model": "default"}, h); status != http.StatusOK {
+		t.Fatal("could not store the old default row")
+	}
+	if _, snap := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-1/snapshot", nil, h); snap["settings"].(map[string]any)["model"] != nil {
+		t.Fatalf("the old default row must read as following the default: %v", snap["settings"])
+	}
 	if status, _ := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-1/commands", map[string]any{"type": "update_settings", "model": nil}, h); status != http.StatusOK {
 		t.Fatalf("reset model = %d", status)
 	}

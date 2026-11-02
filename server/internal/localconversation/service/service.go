@@ -622,8 +622,14 @@ func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (
 	return NewCodexRunner(CodexRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
-		ClaimSpare: s.spares.claim,
+		ClaimSpare: s.spares.claim, NoteDefault: s.noteCodexDefault,
 	}), nil
+}
+
+func (s *Service) noteCodexDefault(model string) {
+	if s.opts.Catalog != nil {
+		s.opts.Catalog.NoteCodexDefault(model)
+	}
 }
 
 // keepRunner registers r unless a concurrent call registered one first.

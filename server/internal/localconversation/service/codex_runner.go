@@ -60,6 +60,11 @@ const (
 // when the process goes away. Like the TypeScript host it has no approval
 // surface: approval requests are declined, never treated as approved.
 type CodexRunner struct {
+	// catalogDefault is what catalogServer's model/list answered.
+	catalogServer  CodexServer
+	catalogDefault string
+	noteDefault    func(string)
+
 	rec     turnRecorder
 	start   StartCodexServer
 	batcher *Batcher
@@ -142,6 +147,8 @@ type CodexRunnerOptions struct {
 	Context ContextBinder
 	// ClaimSpare, when set, offers a running process for a new conversation.
 	ClaimSpare func(ctx context.Context, provider string) *parkedSpare
+	// NoteDefault, when set, hears the default model a running Codex reported.
+	NoteDefault func(model string)
 }
 
 // NewCodexRunner returns a runner for one conversation.
@@ -152,7 +159,7 @@ func NewCodexRunner(opts CodexRunnerOptions) *CodexRunner {
 	return &CodexRunner{
 		rec:   turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		start: opts.Start, batcher: opts.Batcher, limiter: opts.Limiter, context: contextName(opts.ContextMCPName), session: opts.Session,
-		bind: opts.Context, claimSpare: opts.ClaimSpare, onTurnEnd: opts.OnTurnEnd, gate: newPrepareGate(),
+		bind: opts.Context, claimSpare: opts.ClaimSpare, onTurnEnd: opts.OnTurnEnd, noteDefault: opts.NoteDefault, gate: newPrepareGate(),
 	}
 }
 
@@ -737,19 +744,9 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 	session := r.session
 	r.mu.Unlock()
 
-	model := native.Model
-	if session.Model != nil {
-		model = *session.Model
-	}
-	if session.ThreadID != "" && model == "" {
-		// An explicit model keeps resume from restoring a previous effort.
-		resolved := trace.Begin(timing.StageModelResolve)
-		def, err := defaultModel(ctx, server)
-		resolved(err)
-		if err != nil {
-			return "", err
-		}
-		model = def
+	model, err := r.resolveModel(ctx, server, session, native, trace)
+	if err != nil {
+		return "", err
 	}
 	// Native MCP servers stay disabled in local conversations.
 	mcp := map[string]any{}
@@ -849,24 +846,47 @@ func nativePermissions(native *codexNative) (approval any, reviewer, sandbox str
 	return approval, reviewer, sandbox
 }
 
-func defaultModel(ctx context.Context, server CodexServer) (string, error) {
-	raw, err := server.Request(ctx, "model/list", map[string]any{"limit": 100})
+// resolveModel applies explicit, then runtime config, then runtime catalog. A new
+// thread stops short of the catalog: Codex applies its own default anyway, so
+// asking would only add a blocking query. The result is never stored as a setting,
+// and the catalog's answer is kept for as long as the process that gave it runs.
+func (r *CodexRunner) resolveModel(ctx context.Context, server CodexServer, session CodexSession, native *codexNative, trace *timing.Trace) (string, error) {
+	if session.Model != nil && *session.Model != "" {
+		trace.MarkReason(timing.StageModelResolve, timing.ReasonExplicit)
+		return *session.Model, nil
+	}
+	if native.Model != "" {
+		trace.MarkReason(timing.StageModelResolve, timing.ReasonConfig)
+		return native.Model, nil
+	}
+	if session.ThreadID == "" {
+		trace.MarkReason(timing.StageModelResolve, timing.ReasonNativeDefault)
+		return "", nil
+	}
+	r.mu.Lock()
+	cached := r.catalogDefault
+	if r.catalogServer != server {
+		cached = ""
+	}
+	r.mu.Unlock()
+	if cached != "" {
+		trace.MarkReason(timing.StageModelResolve, timing.ReasonCatalogCached)
+		return cached, nil
+	}
+	// An explicit model keeps resume from restoring a previous effort.
+	resolved := trace.BeginReason(timing.StageModelResolve, timing.ReasonCatalog)
+	model, err := codexappserver.CatalogDefaultModel(ctx, server.Request)
+	resolved(err)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("could not resolve the default Codex model; select a model explicitly and retry: %w", err)
 	}
-	var list struct {
-		Data []struct {
-			ID        string `json:"id"`
-			IsDefault bool   `json:"isDefault"`
-		} `json:"data"`
+	r.mu.Lock()
+	r.catalogServer, r.catalogDefault = server, model
+	r.mu.Unlock()
+	if r.noteDefault != nil {
+		r.noteDefault(model)
 	}
-	_ = json.Unmarshal(raw, &list)
-	for _, m := range list.Data {
-		if m.IsDefault && m.ID != "" {
-			return m.ID, nil
-		}
-	}
-	return "", errors.New("could not resolve the default Codex model; select a model explicitly and retry")
+	return model, nil
 }
 
 // handle runs on the app-server reader and must not block.

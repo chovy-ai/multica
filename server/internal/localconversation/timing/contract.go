@@ -144,6 +144,14 @@ const (
 	ReasonIdlePreheated = "idle_preheated"
 	ReasonIdleSent      = "idle_sent"
 	ReasonOverLimit     = "over_limit"
+
+	// Where model.resolve got its answer. "resolving" and "failed" read from the
+	// record's event and outcome.
+	ReasonExplicit      = "explicit"
+	ReasonConfig        = "config"
+	ReasonCatalog       = "catalog"
+	ReasonCatalogCached = "catalog_cached"
+	ReasonNativeDefault = "native_default"
 )
 
 var (
@@ -196,7 +204,8 @@ var (
 		ReasonNotFocused, ReasonDraining, ReasonDisabled, ReasonNoSession, ReasonArchived,
 		ReasonClaimRefused, ReasonOptionNotApplied, ReasonSettingsNotApplied, ReasonMCPFailed, ReasonBindFailed, ReasonUnsupported,
 		ReasonMaxAge, ReasonConfigChanged, ReasonCLIChanged, ReasonEnvironmentChanged, ReasonNoClients, ReasonExited, ReasonStopped,
-		ReasonIdlePreheated, ReasonIdleSent, ReasonOverLimit)
+		ReasonIdlePreheated, ReasonIdleSent, ReasonOverLimit,
+		ReasonExplicit, ReasonConfig, ReasonCatalog, ReasonCatalogCached, ReasonNativeDefault)
 	outcomes = setOf("completed", "failed", "cancelled")
 	failures = setOf("rate_limit", "authentication", "transport", "cancelled", "other")
 	events   = setOf(EventStart, EventEnd, EventMark, "wait")

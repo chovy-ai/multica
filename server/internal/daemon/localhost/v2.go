@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/service"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 // V2Version is the wire protocol served under /local/v2.
@@ -414,7 +415,8 @@ func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id 
 	}
 	c := snap.Conversation
 	settings := map[string]any{"model": nil, "reasoning_effort": nil, "permission_mode": c.PermissionMode}
-	if c.Model.Valid {
+	// A conversation that picked Claude's old "default" row follows the default.
+	if c.Model.Valid && c.Model.String != agent.ClaudeDefaultModelValue {
 		settings["model"] = c.Model.String
 	}
 	if c.ReasoningEffort.Valid {

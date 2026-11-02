@@ -27,6 +27,9 @@ type Catalog struct {
 	models  map[string]cached[Models]
 	account map[string]cached[accountRead]
 	paths   map[string]string
+	// codexDefault is the default a running Codex last reported; its model cache
+	// does not say.
+	codexDefault string
 }
 
 type cached[T any] struct {
@@ -80,6 +83,9 @@ type Model struct {
 	ID       string    `json:"id"`
 	Label    string    `json:"label"`
 	Thinking *Thinking `json:"thinking,omitempty"`
+	// IsDefault marks what following the default runs now. It is only a label:
+	// the setting stays "follow the default", so it can change underneath.
+	IsDefault bool `json:"isDefault,omitempty"`
 }
 
 // Thinking lists a model's reasoning efforts.
@@ -107,13 +113,32 @@ const (
 // ErrUnknownProvider rejects a provider this catalog does not support.
 var ErrUnknownProvider = errors.New("catalog: unknown provider")
 
+// NoteCodexDefault remembers the default model a running Codex reported.
+func (c *Catalog) NoteCodexDefault(model string) {
+	c.mu.Lock()
+	c.codexDefault = model
+	c.mu.Unlock()
+}
+
+func markDefault(models Models, id string) Models {
+	for i := range models.Models {
+		if models.Models[i].ID == id {
+			models.Models[i].IsDefault = true
+		}
+	}
+	return models
+}
+
 // Models returns a provider's models. Claude's come from the CLI's
 // initialize response and are cached for a minute unless force is set;
 // Codex's come from its local model cache.
 func (c *Catalog) Models(ctx context.Context, provider string, force bool) (Models, error) {
 	switch provider {
 	case "codex":
-		return codexModels(c.codexDir), nil
+		c.mu.Lock()
+		reported := c.codexDefault
+		c.mu.Unlock()
+		return markDefault(codexModels(c.codexDir), reported), nil
 	case "claude":
 	default:
 		return Models{}, ErrUnknownProvider

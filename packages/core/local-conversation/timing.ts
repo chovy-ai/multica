@@ -96,6 +96,7 @@ export const LOCAL_TIMING_REASONS = [
   "claim_refused", "option_not_applied", "settings_not_applied", "mcp_failed", "bind_failed", "unsupported",
   "max_age", "config_changed", "cli_changed", "environment_changed", "no_clients", "exited", "stopped",
   "idle_preheated", "idle_sent", "over_limit",
+  "explicit", "config", "catalog", "catalog_cached", "native_default",
 ] as const;
 export type LocalTimingReason = typeof LOCAL_TIMING_REASONS[number];
 

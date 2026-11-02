@@ -948,3 +948,82 @@ func TestFinalsForOpenItemsKeepsStreamedReasoning(t *testing.T) {
 		t.Fatalf("finals = %+v", finals)
 	}
 }
+
+func TestCodexResolvesEachModelSourceWithoutWritingItBack(t *testing.T) {
+	t.Parallel()
+
+	explicit, configured := "picked", "from-config"
+	for _, tc := range []struct {
+		name     string
+		session  CodexSession
+		config   string
+		wantList int
+		want     any
+	}{
+		{name: "explicit wins", session: CodexSession{ThreadID: "th-1", Model: &explicit}, config: configured, want: explicit},
+		{name: "runtime config before catalog", session: CodexSession{ThreadID: "th-1"}, config: configured, want: configured},
+		{name: "catalog last on resume", session: CodexSession{ThreadID: "th-1"}, wantList: 1, want: "gpt-5.5"},
+		{name: "a new thread uses the native default without asking", session: CodexSession{}, want: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, r, server := newCodexFixture(t, tc.session, func(f *fakeCodex) {
+				f.reply = func(method string, _ map[string]any) (json.RawMessage, bool) {
+					if method == "config/read" && tc.config != "" {
+						return json.RawMessage(`{"config":{"model":"` + tc.config + `"}}`), true
+					}
+					return nil, false
+				}
+			})
+			before := r.session.Model
+			codexSend(t, r, "t1")
+			method := "thread/start"
+			if tc.session.ThreadID != "" {
+				method = "thread/resume"
+			}
+			lists := 0
+			for _, sent := range server.sent() {
+				if sent == "model/list" {
+					lists++
+				}
+			}
+			if got := server.paramsOf(method)["model"]; lists != tc.wantList || got != tc.want {
+				t.Fatalf("model/list %d times, thread model %v", lists, got)
+			}
+			if r.session.Model != before {
+				t.Fatalf("resolved model was written back: %v", r.session.Model)
+			}
+		})
+	}
+}
+
+func TestCodexAsksForTheCatalogOncePerProcess(t *testing.T) {
+	t.Parallel()
+
+	f := newCodexRestartFixture(t, CodexSession{ThreadID: "th-1"})
+	lists := func(i int) (n int) {
+		for _, sent := range f.server(i).sent() {
+			if sent == "model/list" {
+				n++
+			}
+		}
+		return n
+	}
+	codexSend(t, f.runner, "t1")
+	f.finishTurn(t, 0, "t1")
+	codexSend(t, f.runner, "t2")
+	if got := lists(0); got != 1 {
+		t.Fatalf("one process asked %d times", got)
+	}
+	f.finishTurn(t, 0, "t2")
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "full-access"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	codexSend(t, f.runner, "t3")
+	if f.started() != 2 || lists(1) != 1 {
+		t.Fatalf("a new process must ask again: %d processes, %d asks", f.started(), lists(1))
+	}
+}
