@@ -27,15 +27,17 @@ import (
 // /local/v2 API. Claude conversations run Desktop's Claude adapter with
 // Desktop's Electron in Node mode.
 func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.Sidecar) error {
+	d.conversationPreheat = newConversationPreheat(d.cfg.ProfileDir, d.cfg.LocalAPIToken)
 	svc, err := service.Open(ctx, service.Options{
-		Computer:    computer.Command{Executable: sidecar.Electron, Entry: filepath.Join(filepath.Dir(sidecar.ClaudeEntry), "computer-host.cjs")},
-		Path:        filepath.Join(d.cfg.ProfileDir, "local-conversations", "conversations.sqlite"),
-		TimingPath:  filepath.Join(d.cfg.ProfileDir, "local-conversations", "diagnostics", "daemon-timing.jsonl"),
-		Claude:      d.claudeLauncher(sidecar),
-		Codex:       d.codexLauncher(),
-		CodexSpare:  d.codexSpareLauncher(),
-		ClaudeSpare: d.claudeSpareLauncher(sidecar),
-		Cloud:       d.contextCloud,
+		Computer:                computer.Command{Executable: sidecar.Electron, Entry: filepath.Join(filepath.Dir(sidecar.ClaudeEntry), "computer-host.cjs")},
+		Path:                    filepath.Join(d.cfg.ProfileDir, "local-conversations", "conversations.sqlite"),
+		TimingPath:              filepath.Join(d.cfg.ProfileDir, "local-conversations", "diagnostics", "daemon-timing.jsonl"),
+		Claude:                  d.claudeLauncher(sidecar),
+		Codex:                   d.codexLauncher(),
+		CodexSpare:              d.codexSpareLauncher(),
+		ClaudeSpare:             d.claudeSpareLauncher(sidecar),
+		PreheatOldConversations: d.conversationPreheat.enabled,
+		Cloud:                   d.contextCloud,
 		Catalog: catalog.New(func(ctx context.Context, provider string) (string, error) {
 			entry, ok := d.cfg.Agents[provider]
 			if !ok {

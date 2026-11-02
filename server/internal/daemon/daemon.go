@@ -447,6 +447,9 @@ type Daemon struct {
 	// devices; nil without local conversations.
 	deviceLink    *deviceLink
 	conversations *service.Service
+	// conversationPreheat is this device's preheat choice; nil without local
+	// conversations.
+	conversationPreheat *conversationPreheat
 
 	// gitCALastErr is the last applyGitCACerts failure, so a persistent one
 	// (e.g. on Windows) is logged once rather than on every repo refresh.

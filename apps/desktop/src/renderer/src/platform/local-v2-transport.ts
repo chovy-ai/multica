@@ -240,6 +240,10 @@ export class DirectLocalV2Transport implements LocalV2Transport {
 
   setDeviceLink(enabled: boolean): Promise<unknown> { return this.own("PUT", "/local/device-link", { enabled }); }
 
+  /** Whether opening a conversation on this device may start its agent early. */
+  conversationPreheat(): Promise<unknown> { return this.own("GET", "/local/conversation-preheat"); }
+  setConversationPreheat(enabled: boolean): Promise<unknown> { return this.own("PUT", "/local/conversation-preheat", { old_conversations: enabled }); }
+
   servicePreview(): Promise<unknown> { return this.own("GET", "/local/service-preview"); }
   setServicePreview(value: { enabled: boolean; ports: number[] }): Promise<unknown> { return this.own("PUT", "/local/service-preview", value); }
   clearAgentServicePreviews(): Promise<unknown> { return this.own("DELETE", "/local/service-preview"); }
