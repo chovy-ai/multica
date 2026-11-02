@@ -5,7 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { buildDeveloperLogBundle, writeDeveloperLogExport, type RuntimeInfo } from "./developer-log-export";
 import { WebDiagnosticLog, snapshotDaemonLog, type RuntimeLogSource } from "./developer-runtime-logs";
-import { LocalTimingLog, snapshotDaemonTiming } from "./local-timing-log";
+import { LocalTimingLog, snapshotDaemonTiming, snapshotLinkTiming } from "./local-timing-log";
 
 export const DEVELOPER_LOGS_MCP_NAME = "multica_developer_logs";
 const MANIFEST_FILE = "developer-logs-mcp.json";
@@ -66,15 +66,16 @@ export function createDeveloperLogsMcpServer(diagnosticsDir: string): McpServer 
       if (!manifest) throw new Error("Multica Desktop has not published its diagnostics on this computer. Open Multica Desktop and try again.");
       const until = Date.now();
       const since = until - since_minutes * 60_000;
-      const [timing, daemonTiming] = await Promise.all([
+      const [timing, daemonTiming, linkTiming] = await Promise.all([
         new LocalTimingLog(diagnosticsDir).snapshot(null, since, until),
         snapshotDaemonTiming(manifest.daemonTimingPath ?? null, null, since, until),
+        snapshotLinkTiming(manifest.daemonTimingPath ?? null, since, until),
       ]);
       const [web, daemon] = await Promise.all([
         manifest.userId ? new WebDiagnosticLog(diagnosticsDir, manifest.apiUrl, manifest.userId).snapshot(since, until) : unavailableWeb,
         snapshotDaemonLog(manifest.daemonLogPath),
       ]);
-      const bundle = buildDeveloperLogBundle({ runtime: manifest.runtime, workspaceId: null, since, until, conversationId: null, timing, daemonTiming, sources: { web, daemon }, timingScope: "device" });
+      const bundle = buildDeveloperLogBundle({ runtime: manifest.runtime, workspaceId: null, since, until, conversationId: null, timing, daemonTiming, linkTiming, sources: { web, daemon }, timingScope: "device" });
       const result = await writeDeveloperLogExport(exportsRoot, bundle);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {

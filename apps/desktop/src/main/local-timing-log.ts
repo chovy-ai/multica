@@ -1,6 +1,6 @@
 import { mkdir, appendFile, rename, stat, open } from "node:fs/promises";
-import { join } from "node:path";
-import { LOCAL_TIMING_PREFIX, parseLocalTiming, type LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
+import { dirname, join } from "node:path";
+import { LOCAL_TIMING_PREFIX, localTimingTime, parseLocalTiming, type LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -9,11 +9,14 @@ export interface LocalTimingSnapshot {
   incomplete: boolean;
   /** Writes known to be lost in this range; they make the snapshot incomplete. */
   droppedWrites: number;
+  /** A scoped read's records of no conversation, request or turn: the device's connection state. */
+  deviceRecords?: LocalTimingRecord[];
 }
 
 /** A read of one rotated log; `present` tells a missing log from an empty one. */
 async function readTimingFiles(path: string, maxBytes: number, conversationIds: ReadonlySet<string> | null, since: number, until: number): Promise<LocalTimingSnapshot & { present: boolean }> {
   const records: LocalTimingRecord[] = [];
+  const deviceRecords: LocalTimingRecord[] = [];
   let incomplete = false;
   let droppedWrites = 0;
   let present = false;
@@ -29,11 +32,13 @@ async function readTimingFiles(path: string, maxBytes: number, conversationIds: 
           try {
             const record = parseLocalTiming(JSON.parse(line));
             if (!record) { incomplete = true; continue; }
-            const at = Date.parse(record.at);
+            // A report is filtered on when it arrived: the sender's clock can be wrong.
+            const at = Date.parse(localTimingTime(record));
             if (at < since || at > until) continue;
             if (record.stage === "timing.dropped") { droppedWrites += record.count ?? 0; incomplete = true; continue; }
             // Device-level records belong to no conversation, so only a device-wide read includes them.
             if (!conversationIds || (record.conversationId !== undefined && conversationIds.has(record.conversationId))) records.push(record);
+            else if (record.conversationId === undefined && record.requestId === undefined && record.turnId === undefined) deviceRecords.push(record);
           } catch { incomplete = true; }
         }
       } finally { await file.close(); }
@@ -41,8 +46,9 @@ async function readTimingFiles(path: string, maxBytes: number, conversationIds: 
       if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) incomplete = true;
     }
   }
-  records.sort((a, b) => a.at.localeCompare(b.at));
-  return { records, incomplete, droppedWrites, present };
+  const byTime = (a: LocalTimingRecord, b: LocalTimingRecord) => localTimingTime(a).localeCompare(localTimingTime(b));
+  records.sort(byTime);
+  return { records, incomplete, droppedWrites, present, ...(deviceRecords.length ? { deviceRecords: deviceRecords.sort(byTime) } : {}) };
 }
 
 export interface DaemonTimingSource extends LocalTimingSnapshot {
@@ -55,6 +61,25 @@ export async function snapshotDaemonTiming(path: string | null, conversationIds:
   const { present, ...snapshot } = await readTimingFiles(path, DEFAULT_MAX_BYTES, conversationIds, since, until);
   const status = snapshot.records.length ? "available" : present ? (snapshot.incomplete ? "unreadable" : "empty") : (snapshot.incomplete ? "unreadable" : "missing");
   return { status, ...snapshot };
+}
+
+export interface LinkTimingSource extends DaemonTimingSource {
+  /** What other devices reported about their side of this device's conversations. */
+  reports: LocalTimingRecord[];
+}
+
+/** Reads the files the daemon keeps next to its turn records. A later step ties their records to a turn. */
+export async function snapshotLinkTiming(daemonTimingPath: string | null, since: number, until: number): Promise<LinkTimingSource> {
+  if (!daemonTimingPath) return { status: "unavailable", records: [], reports: [], incomplete: false, droppedWrites: 0 };
+  const directory = dirname(daemonTimingPath);
+  const [device, reports] = await Promise.all([
+    readTimingFiles(join(directory, "device-timing.jsonl"), DEFAULT_MAX_BYTES, null, since, until),
+    readTimingFiles(join(directory, "timing-reports.jsonl"), DEFAULT_MAX_BYTES, null, since, until),
+  ]);
+  const incomplete = device.incomplete || reports.incomplete;
+  const present = device.present || reports.present;
+  const found = device.records.length + reports.records.length > 0;
+  return { status: found ? "available" : present ? (incomplete ? "unreadable" : "empty") : (incomplete ? "unreadable" : "missing"), records: device.records, reports: reports.records, incomplete, droppedWrites: device.droppedWrites + reports.droppedWrites };
 }
 
 /** A bounded, best-effort diagnostic log, separate from saved conversation content. */

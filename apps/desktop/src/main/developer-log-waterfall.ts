@@ -46,10 +46,10 @@ function groupKeys(records: LocalTimingRecord[]) {
   return (record: LocalTimingRecord) => record.turnId ?? (record.requestId ? turnOfRequest.get(record.requestId) ?? `request:${record.requestId}` : undefined);
 }
 
-function earliest(records: LocalTimingRecord[], stages: readonly LocalTimingStage[], event?: LocalTimingRecord["event"]) {
+function earliest(records: LocalTimingRecord[], stages: readonly LocalTimingStage[], matches: (record: LocalTimingRecord) => boolean = () => true) {
   let found: number | undefined;
   for (const record of records) {
-    if (!stages.includes(canonicalLocalTimingStage(record.stage)) || (event && record.event !== event)) continue;
+    if (!stages.includes(canonicalLocalTimingStage(record.stage)) || !matches(record)) continue;
     const at = Date.parse(record.at);
     if (found === undefined || at < found) found = at;
   }
@@ -57,10 +57,13 @@ function earliest(records: LocalTimingRecord[], stages: readonly LocalTimingStag
 }
 
 function totals(records: LocalTimingRecord[]): TurnWaterfall["totals"] {
+  // Several clients can watch one turn; the total is about the one that sent it.
+  const sender = records.find((record) => canonicalLocalTimingStage(record.stage) === "client.send");
   const send = earliest(records, ["client.send"]);
-  const received = earliest(records, ["client.first_event_received"]);
+  const received = earliest(records, ["client.first_event_received"], (record) => !sender || record.source === sender.source);
   const requested = earliest(records, ["daemon.request_received"]);
-  const written = earliest(records, ["ws.first_output_write"]);
+  const senderKind = sender?.clientKind;
+  const written = earliest(records, ["ws.first_output_write"], (record) => !senderKind || record.clientKind === senderKind) ?? earliest(records, ["ws.first_output_write"]);
   const output = earliest(records, FIRST_OUTPUT);
   const result: TurnWaterfall["totals"] = {};
   if (send !== undefined && received !== undefined) result.clientToFirstEventMs = received - send;
@@ -80,7 +83,9 @@ function segments(records: LocalTimingRecord[], first: number): WaterfallSegment
     if (record.event === "wait" || (record.event === "start" && ended.has(`${record.source}:${record.stage}`))) continue;
     const stage = canonicalLocalTimingStage(record.stage);
     const end = Date.parse(record.at) - first;
-    const segment: WaterfallSegment = { stage, source: record.source, at: record.at, startMs: Math.max(0, end - (record.durationMs ?? 0)), endMs: end };
+    // A report on a wrong clock can land before the turn's first local record.
+    const start = end - (record.durationMs ?? 0);
+    const segment: WaterfallSegment = { stage, source: record.source, at: record.at, startMs: record.receivedAt ? start : Math.max(0, start), endMs: end };
     if (stage !== record.stage) segment.recordedAs = record.stage;
     if (record.durationMs !== undefined) segment.durationMs = record.durationMs;
     if (record.event === "start") segment.unfinished = true;
@@ -94,7 +99,9 @@ function segments(records: LocalTimingRecord[], first: number): WaterfallSegment
 }
 
 function waterfall(records: LocalTimingRecord[]): TurnWaterfall {
-  const first = Math.min(...records.map((record) => Date.parse(record.at)));
+  // A report's clock is not this device's, so it only anchors a turn with nothing else.
+  const local = records.filter((record) => !record.receivedAt);
+  const first = Math.min(...(local.length ? local : records).map((record) => Date.parse(record.at)));
   const result: TurnWaterfall = { background: records.some((record) => record.background === true), startedAt: new Date(first).toISOString(), totals: totals(records), segments: segments(records, first) };
   // A delivery record names whoever it reached, not who started the turn.
   const identity = records.filter((record) => canonicalLocalTimingStage(record.stage) !== "ws.first_output_write");

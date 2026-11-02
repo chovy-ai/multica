@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { LocalTimingLog } from "./local-timing-log";
@@ -199,6 +199,64 @@ describe("developer log export", () => {
         expect(JSON.stringify(bundle)).not.toContain("foreign");
       }
       expect(exported).toMatchObject({ daemonTimingRecordCount: 4, waterfallCount: 2, sources: { daemonTiming: { status: "available" } } });
+    } finally { await f.cleanup(); }
+  });
+  it("reads one phone-to-desktop turn end to end on the executor, with a wrong phone clock and hashed devices", async () => {
+    const f = await fixture();
+    try {
+      const base = Date.now() - 2000;
+      const at = (ms: number) => new Date(base + ms).toISOString();
+      const hours = 10 * 3_600_000;
+      const peer = "12D3KooWPhonePeerIdentifier";
+      const line = (value: object) => JSON.stringify({ version: 2, event: "mark", elapsedMs: 0, ...value });
+      const dir = dirname(f.daemonTimingPath);
+      await writeFile(f.daemonTimingPath, [
+        line({ source: "daemon", at: at(100), stage: "daemon.request_received", conversationId: "conversation", requestId: "r", origin: "p2p", clientKind: "mobile", connection: "relayed" }),
+        line({ source: "daemon", at: at(600), stage: "provider.first_text", conversationId: "conversation", requestId: "r", turnId: "turn-r", provider: "codex" }),
+        line({ source: "daemon", at: at(650), stage: "ws.first_output_write", conversationId: "conversation", requestId: "r", turnId: "turn-r", clientKind: "desktop", connection: "loopback" }),
+        line({ source: "daemon", at: at(700), stage: "ws.first_output_write", conversationId: "conversation", requestId: "r", turnId: "turn-r", clientKind: "mobile", connection: "relayed" }),
+      ].join("\n") + "\n");
+      await writeFile(join(dir, "device-timing.jsonl"), [
+        line({ source: "daemon", at: at(90), stage: "link.request_received", requestId: "r", peer, role: "executor", connection: "relayed" }),
+        line({ source: "daemon", at: at(10), stage: "connection.relayed", peer, addrType: "relay" }),
+        line({ source: "daemon", at: at(20), stage: "proxy.request", requestId: "someone-elses", peer }),
+      ].join("\n") + "\n");
+      const received = at(1500);
+      const phone = (ms: number, value: object) => line({ source: "mobile", at: new Date(Date.parse(at(ms)) - hours).toISOString(), receivedAt: received, reporter: peer, clientKind: "mobile", ...value });
+      await writeFile(join(dir, "timing-reports.jsonl"), [
+        phone(0, { stage: "client.send", conversationId: "conversation", requestId: "r" }),
+        phone(800, { stage: "client.first_event_received", conversationId: "conversation", turnId: "turn-r" }),
+        phone(5, { stage: "peer.connect", event: "end", durationMs: 40, addrType: "lan", peer }),
+        phone(1, { stage: "client.send", conversationId: "foreign", requestId: "foreign" }),
+      ].join("\n") + "\n");
+
+      const exported = await f.exporter.export(scope, { sinceMinutes: 60, conversationId: "conversation" }, signal());
+      const bundle = JSON.parse(await readFile(exported.path, "utf8"));
+      const turn = bundle.waterfalls.turns.find((entry: { turnId?: string }) => entry.turnId === "turn-r");
+      // (800 - 0) on the phone minus (700 - 100) on the computer, with the phone ten hours off.
+      expect(turn.totals.transportMs).toBe(200);
+      expect(turn).toMatchObject({ origin: "p2p", clientKind: "mobile", connection: "relayed", startedAt: at(90) });
+      expect(turn.segments.map((segment: { stage: string }) => segment.stage)).toEqual(expect.arrayContaining(["client.send", "link.request_received", "daemon.request_received", "client.first_event_received"]));
+      const text = JSON.stringify(bundle);
+      expect(text).not.toContain(peer);
+      expect(text).not.toContain("foreign");
+      expect(text).not.toContain("someone-elses");
+      expect(bundle.deviceTimeline.map((record: { stage: string }) => record.stage)).toEqual(["connection.relayed", "peer.connect"]);
+      expect(bundle.deviceTimeline[1].reporter).toMatch(/^[0-9a-f]{16}$/);
+      expect(exported).toMatchObject({ sources: { linkTiming: { status: "available" } } });
+    } finally { await f.cleanup(); }
+  });
+  it("keeps a report out of a time window by when it arrived, not by its own clock", async () => {
+    const f = await fixture();
+    try {
+      const dir = dirname(f.daemonTimingPath);
+      const report = (at: string, receivedAt: string) => JSON.stringify({ version: 2, source: "mobile", event: "mark", elapsedMs: 0, stage: "client.send", conversationId: "conversation", requestId: receivedAt.slice(0, 4), at, receivedAt });
+      const now = new Date().toISOString();
+      await writeFile(join(dir, "timing-reports.jsonl"), [report("2001-01-01T00:00:00.000Z", now), report(now, "2001-01-01T00:00:00.000Z")].join("\n") + "\n");
+      const exported = await f.exporter.export(scope, { sinceMinutes: 60, conversationId: "conversation" }, signal());
+      const bundle = JSON.parse(await readFile(exported.path, "utf8"));
+      const reports = bundle.records.filter((record: { source: string }) => record.source === "mobile");
+      expect(reports.map((record: { at: string }) => record.at)).toEqual(["2001-01-01T00:00:00.000Z"]);
     } finally { await f.cleanup(); }
   });
   it("reports the export incomplete when the daemon or desktop recorded dropped writes", async () => {
