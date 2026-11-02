@@ -1,0 +1,241 @@
+package timing
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
+)
+
+// Caller is who asked for a turn, as plain values so the service needs no
+// transport knowledge. Zero values read as unknown.
+type Caller struct {
+	Origin     string
+	ClientKind string
+	Connection string
+}
+
+// TraceOptions identifies one turn's records.
+type TraceOptions struct {
+	// Now defaults to time.Now.
+	Now func() time.Time
+	// Start is when the request was received; defaults to now.
+	Start          time.Time
+	ConversationID string
+	RequestID      string
+	TurnID         string
+	Provider       string
+	TurnKind       string
+	// TurnIndex is nil when unknown.
+	TurnIndex *int64
+	Attempt   int64
+	Caller    Caller
+}
+
+// Trace writes one turn's marks. A nil Trace does nothing, so runners and
+// tests that have no timing need no checks.
+type Trace struct {
+	log   *Log
+	now   func() time.Time
+	start time.Time
+
+	mu   sync.Mutex
+	base Record
+	seen map[string]bool
+}
+
+// NewTrace returns a trace writing to log, or nil when log is nil.
+func NewTrace(log *Log, opts TraceOptions) *Trace {
+	if log == nil {
+		return nil
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	if opts.Start.IsZero() {
+		opts.Start = opts.Now()
+	}
+	base := Record{
+		ConversationID: validID(opts.ConversationID), RequestID: validID(opts.RequestID), TurnID: validID(opts.TurnID),
+		Provider: opts.Provider, TurnKind: opts.TurnKind, Origin: valueOr(opts.Caller.Origin, OriginUnknown), ClientKind: valueOr(opts.Caller.ClientKind, ClientUnknown),
+		Connection: valueOr(opts.Caller.Connection, ConnectionUnknown),
+		Background: opts.TurnKind == TurnBackground || opts.TurnKind == TurnNative,
+	}
+	base.TurnIndex = opts.TurnIndex
+	if opts.Attempt > 0 {
+		base.Attempt = &opts.Attempt
+	}
+	return &Trace{log: log, now: opts.Now, start: opts.Start, base: base, seen: map[string]bool{}}
+}
+
+func validID(id string) string {
+	if identifier.MatchString(id) {
+		return id
+	}
+	return ""
+}
+
+func valueOr(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+// Now reads the trace's clock; a nil trace reads the wall clock.
+func (t *Trace) Now() time.Time {
+	if t == nil {
+		return time.Now()
+	}
+	return t.now()
+}
+
+// Started is when the trace's request was received.
+func (t *Trace) Started() time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return t.start
+}
+
+// SetPrepareKind records how later marks of this turn got ready.
+func (t *Trace) SetPrepareKind(kind string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.base.PrepareKind = kind
+	t.mu.Unlock()
+}
+
+func (t *Trace) write(at time.Time, stage, event string, fill func(*Record)) {
+	t.mu.Lock()
+	r := t.base
+	t.mu.Unlock()
+	r.Stage, r.Event, r.At = stage, event, formatAt(at)
+	if elapsed := at.Sub(t.start).Milliseconds(); elapsed > 0 {
+		r.ElapsedMs = elapsed
+	}
+	if fill != nil {
+		fill(&r)
+	}
+	t.log.Write(r)
+}
+
+// Mark records that stage was reached.
+func (t *Trace) Mark(stage string) { t.MarkReason(stage, "") }
+
+// MarkReason records that stage was reached, with a closed-enum reason.
+func (t *Trace) MarkReason(stage, reason string) {
+	if t == nil {
+		return
+	}
+	t.write(t.now(), stage, EventMark, func(r *Record) { r.Reason = reason })
+}
+
+// MarkFailed records a stage that failed at once.
+func (t *Trace) MarkFailed(stage, reason string) {
+	if t == nil {
+		return
+	}
+	t.write(t.now(), stage, EventMark, func(r *Record) { r.Reason, r.Outcome, r.Failure = reason, "failed", "other" })
+}
+
+// Once records stage the first time it is reached and reports whether it did.
+func (t *Trace) Once(stage string) bool {
+	if t == nil || !t.claim(stage) {
+		return false
+	}
+	t.Mark(stage)
+	return true
+}
+
+// OnceFor is Once per key, for marks recorded per subscriber. It carries the
+// subscriber's identity: a delivery belongs to whoever it reached, not to the
+// caller who started the turn.
+func (t *Trace) OnceFor(stage, key, reason string, caller Caller) bool {
+	if t == nil || !t.claim(stage+"\x00"+key) {
+		return false
+	}
+	t.write(t.now(), stage, EventMark, func(r *Record) {
+		r.Reason = reason
+		r.Origin, r.ClientKind, r.Connection = valueOr(caller.Origin, OriginUnknown), valueOr(caller.ClientKind, ClientUnknown), valueOr(caller.Connection, ConnectionUnknown)
+	})
+	return true
+}
+
+func (t *Trace) claim(key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.seen[key] {
+		return false
+	}
+	t.seen[key] = true
+	return true
+}
+
+// Begin records the start of stage and returns the function recording its
+// end; a slow stage that never ends still shows where a turn stopped.
+func (t *Trace) Begin(stage string) func(error) { return t.BeginReason(stage, "") }
+
+// BeginReason is Begin with a closed-enum reason on both records.
+func (t *Trace) BeginReason(stage, reason string) func(error) {
+	if t == nil {
+		return func(error) {}
+	}
+	began := t.now()
+	t.write(began, stage, EventStart, func(r *Record) { r.Reason = reason })
+	return func(err error) {
+		end := t.now()
+		t.write(end, stage, EventEnd, func(r *Record) {
+			r.Reason = reason
+			fillDuration(r, end.Sub(began))
+			fillOutcome(r, err)
+		})
+	}
+}
+
+// Completed records a stage measured elsewhere that ended at end.
+func (t *Trace) Completed(stage string, end time.Time, d time.Duration, err error) {
+	if t == nil {
+		return
+	}
+	t.write(end, stage, EventEnd, func(r *Record) {
+		fillDuration(r, d)
+		fillOutcome(r, err)
+	})
+}
+
+// Finish records the turn's end. message is classified and never stored.
+func (t *Trace) Finish(status, kind, message string) {
+	if t == nil || !t.claim(StageTurnFinished) {
+		return
+	}
+	t.write(t.now(), StageTurnFinished, EventEnd, func(r *Record) {
+		r.Outcome, r.Reason = status, kind
+		if status != "completed" {
+			r.Failure = Classify(message)
+			if status == "cancelled" {
+				r.Failure = "cancelled"
+			}
+		}
+	})
+}
+
+func fillDuration(r *Record, d time.Duration) {
+	ms := max(d.Milliseconds(), 0)
+	r.DurationMs = &ms
+}
+
+func fillOutcome(r *Record, err error) {
+	switch {
+	case err == nil:
+		r.Outcome = "completed"
+	case errors.Is(err, context.Canceled):
+		r.Outcome, r.Failure = "cancelled", "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		r.Outcome, r.Failure = "failed", "transport"
+	default:
+		r.Outcome, r.Failure = "failed", Classify(err.Error())
+	}
+}
