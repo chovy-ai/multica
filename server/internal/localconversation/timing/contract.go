@@ -13,8 +13,12 @@ import (
 // Version is the record schema this package writes.
 const Version = 2
 
-// SourceDaemon names records this process writes.
-const SourceDaemon = "daemon"
+// Source values. A daemon writes its own records; mobilelink and a phone's
+// reports write SourceMobile.
+const (
+	SourceDaemon = "daemon"
+	SourceMobile = "mobile"
+)
 
 // Event values.
 const (
@@ -65,6 +69,61 @@ const (
 	StageSpareDiscarded         = "spare.discarded"
 	StageRunnerEvicted          = "runner.evicted"
 	StageTimingDropped          = "timing.dropped"
+	StageProviderFirstFrame     = "provider.first_frame"
+	StageProviderExit           = "provider.exit"
+	StageProviderSessionReady   = "provider.session_ready"
+	StageTurnOutputSummary      = "turn.output_summary"
+
+	StageLinkStart        = "link.start"
+	StageLinkReady        = "link.ready"
+	StageLinkRegistered   = "link.registered"
+	StageLinkStop         = "link.stop"
+	StageRegistryFetch    = "registry.fetch"
+	StagePeerKnown        = "peer.known"
+	StagePeerMDNSFound    = "peer.mdns_found"
+	StagePeerConnect      = "peer.connect"
+	StageRelayReserve     = "relay.reserve"
+	StageRelayConnected   = "relay.connected"
+	StageRelayRefused     = "relay.refused"
+	StageHolepunchStart   = "holepunch.start"
+	StageHolepunchSuccess = "holepunch.success"
+	StageHolepunchFailed  = "holepunch.failed"
+	StageConnectionDirect = "connection.direct"
+	StageConnectionRelay  = "connection.relayed"
+	StageConnectionLost   = "connection.lost"
+	StageNetworkChanged   = "network.changed"
+
+	StageTunnelConn          = "tunnel.conn"
+	StageTunnelStreamOpen    = "tunnel.stream_open"
+	StageProxyRequest        = "proxy.request"
+	StageProxyFirstByte      = "proxy.first_byte"
+	StageMigrateStart        = "migrate.start"
+	StageMigrateStreamClosed = "migrate.stream_closed"
+	StageMigrateReconnected  = "migrate.reconnected"
+	StageMigrateResubscribed = "migrate.resubscribed"
+
+	StageLinkRequestSent      = "link.request_sent"
+	StageLinkRequestReceived  = "link.request_received"
+	StageLinkResponseSent     = "link.response_sent"
+	StageLinkResponseReceived = "link.response_received"
+	StageLinkEventSent        = "link.event_sent"
+	StageSnapshotServerRead   = "snapshot.server_read"
+)
+
+// Role values: which side of a hole punch or a proxied request a record is from.
+const (
+	RoleInitiator = "initiator"
+	RoleReceiver  = "receiver"
+	RoleExecutor  = "executor"
+)
+
+// AddrType values. A record never holds the address itself.
+const (
+	AddrLoopback = "loopback"
+	AddrLAN      = "lan"
+	AddrPublic   = "public"
+	AddrRelay    = "relay"
+	AddrUnknown  = "unknown"
 )
 
 // Origin values: where a request came from.
@@ -152,6 +211,23 @@ const (
 	ReasonCatalog       = "catalog"
 	ReasonCatalogCached = "catalog_cached"
 	ReasonNativeDefault = "native_default"
+
+	ReasonBackground = "background"
+	ReasonSlow       = "slow"
+	ReasonLateDirect = "late_direct"
+
+	// Why a relay refused; its own text can name addresses.
+	ReasonReservationRefused = "reservation_refused"
+	ReasonResourceLimit      = "resource_limit"
+	ReasonPermissionDenied   = "permission_denied"
+	ReasonConnectionFailed   = "connection_failed"
+
+	// Why a WebSocket closed.
+	ReasonWSNormal           = "ws_normal"
+	ReasonWSGoingAway        = "ws_going_away"
+	ReasonWSAbnormal         = "ws_abnormal"
+	ReasonWSProtocol         = "ws_protocol"
+	ReasonWSHandshakeTimeout = "ws_handshake_timeout"
 )
 
 var (
@@ -189,8 +265,12 @@ var (
 		"ws.closed", "ws.retry", "ws.resubscribed",
 		"link.request_sent", "link.request_received", "link.response_sent", "link.response_received", "link.event_sent", "link.event_received",
 		"snapshot.request", "snapshot.server_read", "snapshot.first_byte", "snapshot.received", "snapshot.parsed", "snapshot.rendered",
+		StageTurnOutputSummary,
 		StageTimingDropped,
 	)
+	sources      = setOf(SourceDaemon, SourceMobile)
+	roles        = setOf(RoleInitiator, RoleReceiver, RoleExecutor)
+	addrTypes    = setOf(AddrLoopback, AddrLAN, AddrPublic, AddrRelay, AddrUnknown)
 	origins      = setOf(OriginLocal, OriginP2P, OriginUnknown)
 	clientKinds  = setOf(ClientDesktop, ClientMobile, ClientUnknown)
 	connections  = setOf(ConnectionLoopback, ConnectionDirect, ConnectionRelayed, ConnectionUnknown)
@@ -205,7 +285,10 @@ var (
 		ReasonClaimRefused, ReasonOptionNotApplied, ReasonSettingsNotApplied, ReasonMCPFailed, ReasonBindFailed, ReasonUnsupported,
 		ReasonMaxAge, ReasonConfigChanged, ReasonCLIChanged, ReasonEnvironmentChanged, ReasonNoClients, ReasonExited, ReasonStopped,
 		ReasonIdlePreheated, ReasonIdleSent, ReasonOverLimit,
-		ReasonExplicit, ReasonConfig, ReasonCatalog, ReasonCatalogCached, ReasonNativeDefault)
+		ReasonExplicit, ReasonConfig, ReasonCatalog, ReasonCatalogCached, ReasonNativeDefault,
+		ReasonBackground, ReasonSlow, ReasonLateDirect,
+		ReasonReservationRefused, ReasonResourceLimit, ReasonPermissionDenied, ReasonConnectionFailed,
+		ReasonWSNormal, ReasonWSGoingAway, ReasonWSAbnormal, ReasonWSProtocol, ReasonWSHandshakeTimeout)
 	outcomes = setOf("completed", "failed", "cancelled")
 	failures = setOf("rate_limit", "authentication", "transport", "cancelled", "other")
 	events   = setOf(EventStart, EventEnd, EventMark, "wait")
@@ -254,13 +337,25 @@ type Record struct {
 	Attempt        *int64 `json:"attempt,omitempty"`
 	PrepareID      string `json:"prepareId,omitempty"`
 	Count          *int64 `json:"count,omitempty"`
+	// Bytes and MaxGapMs summarize traffic, one record per turn or snapshot.
+	Bytes    *int64 `json:"bytes,omitempty"`
+	MaxGapMs *int64 `json:"maxGapMs,omitempty"`
+	// Peer is the other device, hashed at export.
+	Peer     string `json:"peer,omitempty"`
+	Role     string `json:"role,omitempty"`
+	AddrType string `json:"addrType,omitempty"`
+	Reused   bool   `json:"reused,omitempty"`
+	// Reporter and ReceivedAt are stamped by the executor on a phone's report:
+	// who sent it, on the executor's clock, because the phone's own can be wrong.
+	Reporter   string `json:"reporter,omitempty"`
+	ReceivedAt string `json:"receivedAt,omitempty"`
 }
 
 // Sanitize returns r with unknown closed-enum values dropped, or false when
 // r cannot be a valid record: an unknown stage or an identifier that could
 // carry anything but an opaque id.
 func Sanitize(r Record) (Record, bool) {
-	if r.Version != Version || r.Source != SourceDaemon || !stages[r.Stage] || !events[r.Event] || !atPattern.MatchString(r.At) || r.ElapsedMs < 0 {
+	if r.Version != Version || !sources[r.Source] || !stages[r.Stage] || !events[r.Event] || !atPattern.MatchString(r.At) || r.ElapsedMs < 0 {
 		return Record{}, false
 	}
 	for _, id := range []string{r.ConversationID, r.RequestID, r.TurnID} {
@@ -284,6 +379,19 @@ func Sanitize(r Record) (Record, bool) {
 	r.TurnIndex = nonNegative(r.TurnIndex)
 	r.Attempt = nonNegative(r.Attempt)
 	r.Count = nonNegative(r.Count)
+	r.Bytes = nonNegative(r.Bytes)
+	r.MaxGapMs = nonNegative(r.MaxGapMs)
+	r.Role = closed(roles, r.Role)
+	r.AddrType = closed(addrTypes, r.AddrType)
+	if r.Peer != "" && !identifier.MatchString(r.Peer) {
+		r.Peer = ""
+	}
+	if r.Reporter != "" && !identifier.MatchString(r.Reporter) {
+		r.Reporter = ""
+	}
+	if r.ReceivedAt != "" && !atPattern.MatchString(r.ReceivedAt) {
+		r.ReceivedAt = ""
+	}
 	return r, true
 }
 

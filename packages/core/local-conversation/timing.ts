@@ -44,6 +44,7 @@ export const LOCAL_TIMING_MARKS = [
   "ws.closed", "ws.retry", "ws.resubscribed",
   "link.request_sent", "link.request_received", "link.response_sent", "link.response_received", "link.event_sent", "link.event_received",
   "snapshot.request", "snapshot.server_read", "snapshot.first_byte", "snapshot.received", "snapshot.parsed", "snapshot.rendered",
+  "turn.output_summary",
   "timing.dropped",
 ] as const;
 
@@ -97,14 +98,23 @@ export const LOCAL_TIMING_REASONS = [
   "max_age", "config_changed", "cli_changed", "environment_changed", "no_clients", "exited", "stopped",
   "idle_preheated", "idle_sent", "over_limit",
   "explicit", "config", "catalog", "catalog_cached", "native_default",
+  "background", "slow", "late_direct", "reservation_refused", "resource_limit", "permission_denied", "connection_failed", "ws_normal", "ws_going_away", "ws_abnormal", "ws_protocol", "ws_handshake_timeout",
 ] as const;
 export type LocalTimingReason = typeof LOCAL_TIMING_REASONS[number];
+
+/** A daemon that takes a phone's marks says so in /hello. */
+export const LOCAL_TIMING_REPORT_CAPABILITY = "timing-report-v1";
 
 export const LOCAL_TIMING_SOURCES = ["main", "renderer", "gui", "daemon", "mobile"] as const;
 export type LocalTimingSource = typeof LOCAL_TIMING_SOURCES[number];
 export type LocalTimingEvent = "start" | "end" | "mark" | "wait";
 export type LocalTimingOutcome = "completed" | "failed" | "cancelled";
 export type LocalTimingFailure = "rate_limit" | "authentication" | "transport" | "cancelled" | "other";
+
+export const LOCAL_TIMING_ROLES = ["initiator", "receiver", "executor"] as const;
+export type LocalTimingRole = typeof LOCAL_TIMING_ROLES[number];
+export const LOCAL_TIMING_ADDR_TYPES = ["loopback", "lan", "public", "relay", "unknown"] as const;
+export type LocalTimingAddrType = typeof LOCAL_TIMING_ADDR_TYPES[number];
 
 export interface LocalTimingDimensions {
   provider?: LocalTimingProvider;
@@ -138,12 +148,24 @@ export interface LocalTimingRecord extends LocalTimingIdentity {
   reason?: LocalTimingReason;
   /** A count, such as the writes a `timing.dropped` record stands for. */
   count?: number;
+  /** Bytes and the largest gap of a per-turn or per-snapshot summary. */
+  bytes?: number;
+  maxGapMs?: number;
+  /** The other device; exports replace it with a hash. */
+  peer?: string;
+  role?: LocalTimingRole;
+  addrType?: LocalTimingAddrType;
+  reused?: boolean;
+  /** Stamped by the executor on a report, on its own clock: the sender's clock can be wrong. */
+  reporter?: string;
+  receivedAt?: string;
 }
 
 const stages = new Set<string>(LOCAL_TIMING_STAGES);
 const sources = new Set<string>(LOCAL_TIMING_SOURCES);
 const reasons = new Set<string>(LOCAL_TIMING_REASONS);
 const IDENTIFIER = /^[\w:.-]{1,160}$/;
+const AT = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 const isIdentifier = (value: unknown): value is string => typeof value === "string" && IDENTIFIER.test(value);
 const isMs = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -159,7 +181,7 @@ export function parseLocalTiming(value: unknown): LocalTimingRecord | null {
   const raw = value as Record<string, unknown>;
   if ((raw.version !== 1 && raw.version !== 2) || !sources.has(String(raw.source))
     || !stages.has(String(raw.stage)) || !["start", "end", "mark", "wait"].includes(String(raw.event))
-    || typeof raw.at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(raw.at) || !Number.isFinite(Date.parse(raw.at)) || !isMs(raw.elapsedMs)) return null;
+    || typeof raw.at !== "string" || !AT.test(raw.at) || !Number.isFinite(Date.parse(raw.at)) || !isMs(raw.elapsedMs)) return null;
   if (raw.version === 1 ? !isIdentifier(raw.conversationId) : raw.conversationId !== undefined && !isIdentifier(raw.conversationId)) return null;
   if ((raw.requestId !== undefined && !isIdentifier(raw.requestId)) || (raw.turnId !== undefined && !isIdentifier(raw.turnId))) return null;
   const result: LocalTimingRecord = {
@@ -193,8 +215,21 @@ export function parseLocalTiming(value: unknown): LocalTimingRecord | null {
   if (isCount(raw.attempt)) result.attempt = raw.attempt;
   if (isIdentifier(raw.prepareId)) result.prepareId = raw.prepareId;
   if (isCount(raw.count)) result.count = raw.count;
+  if (isCount(raw.bytes)) result.bytes = raw.bytes;
+  if (isMs(raw.maxGapMs)) result.maxGapMs = raw.maxGapMs;
+  if (isIdentifier(raw.peer)) result.peer = raw.peer;
+  const role = member(LOCAL_TIMING_ROLES, raw.role);
+  if (role) result.role = role;
+  const addrType = member(LOCAL_TIMING_ADDR_TYPES, raw.addrType);
+  if (addrType) result.addrType = addrType;
+  if (raw.reused === true) result.reused = true;
+  if (isIdentifier(raw.reporter)) result.reporter = raw.reporter;
+  if (typeof raw.receivedAt === "string" && AT.test(raw.receivedAt) && Number.isFinite(Date.parse(raw.receivedAt))) result.receivedAt = raw.receivedAt;
   return result;
 }
+
+/** When a record arrived, for filtering and ordering: a report's own clock can be wrong. */
+export function localTimingTime(record: LocalTimingRecord): string { return record.receivedAt ?? record.at; }
 
 /** Whether a committed event carries model output, not the user message or lifecycle events every turn commits first. */
 export function isLocalTimingModelOutput(eventType: string, kind: unknown): boolean {

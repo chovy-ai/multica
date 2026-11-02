@@ -34,6 +34,7 @@
     "ws.closed", "ws.retry", "ws.resubscribed",
     "link.request_sent", "link.request_received", "link.response_sent", "link.response_received", "link.event_sent", "link.event_received",
     "snapshot.request", "snapshot.server_read", "snapshot.first_byte", "snapshot.received", "snapshot.parsed", "snapshot.rendered",
+    "turn.output_summary",
     "timing.dropped"
   ],
   "legacyMapping": {
@@ -59,7 +60,7 @@
     "prepareKind": ["hot", "preheated", "spare", "cold"],
     "turnKind": ["user", "queued", "steer", "background", "native", "agent"]
   },
-  "reasons": ["start", "resume", "skipped", "live", "catch_up", "concurrency_limit", "provider_unavailable", "provider_error", "provider_exited", "outcome_unknown", "storage_limit", "compaction_failed", "interrupt_unconfirmed", "remote_failed", "focused", "unfocused", "connection_lost", "not_focused", "draining", "disabled", "no_session", "archived", "claim_refused", "option_not_applied", "settings_not_applied", "mcp_failed", "bind_failed", "unsupported", "max_age", "config_changed", "cli_changed", "environment_changed", "no_clients", "exited", "stopped", "idle_preheated", "idle_sent", "over_limit", "explicit", "config", "catalog", "catalog_cached", "native_default"],
+  "reasons": ["start", "resume", "skipped", "live", "catch_up", "concurrency_limit", "provider_unavailable", "provider_error", "provider_exited", "outcome_unknown", "storage_limit", "compaction_failed", "interrupt_unconfirmed", "remote_failed", "focused", "unfocused", "connection_lost", "not_focused", "draining", "disabled", "no_session", "archived", "claim_refused", "option_not_applied", "settings_not_applied", "mcp_failed", "bind_failed", "unsupported", "max_age", "config_changed", "cli_changed", "environment_changed", "no_clients", "exited", "stopped", "idle_preheated", "idle_sent", "over_limit", "explicit", "config", "catalog", "catalog_cached", "native_default", "background", "slow", "late_direct", "reservation_refused", "resource_limit", "permission_denied", "connection_failed", "ws_normal", "ws_going_away", "ws_abnormal", "ws_protocol", "ws_handshake_timeout"],
   "records": [
     {
       "name": "daemon mark with every dimension",
@@ -75,6 +76,16 @@
       "name": "unknown dimension values and free text are dropped, not the record",
       "input": { "version": 2, "source": "daemon", "at": "2026-11-02T10:00:00.000Z", "stage": "provider.first_text", "event": "mark", "elapsedMs": 5, "conversationId": "conv-1", "origin": "/Users/me/secret", "clientKind": "watch", "connection": "10.0.0.1:443", "provider": "gemini", "prepareKind": "warm", "turnKind": "robot", "reason": "dial tcp 10.0.0.1: refused", "failure": "boom", "outcome": "exploded", "turnIndex": -1, "attempt": -2, "prepareId": "/tmp/x y", "count": -3, "durationMs": -1, "prompt": "SECRET", "cwd": "/SECRET" },
       "expected": { "version": 2, "source": "daemon", "at": "2026-11-02T10:00:00.000Z", "stage": "provider.first_text", "event": "mark", "elapsedMs": 5, "conversationId": "conv-1" }
+    },
+    {
+      "name": "connection record keeps its closed fields and drops an address",
+      "input": { "version": 2, "source": "mobile", "at": "2026-11-02T10:00:00.000Z", "stage": "peer.connect", "event": "end", "elapsedMs": 0, "durationMs": 9, "peer": "12D3KooWExample", "role": "initiator", "addrType": "/ip4/10.0.0.1/tcp/1", "reused": true, "bytes": 12, "maxGapMs": 3, "reporter": "12D3KooWPhone", "receivedAt": "2026-11-02T10:00:01.000Z" },
+      "expected": { "version": 2, "source": "mobile", "at": "2026-11-02T10:00:00.000Z", "stage": "peer.connect", "event": "end", "elapsedMs": 0, "durationMs": 9, "peer": "12D3KooWExample", "role": "initiator", "reused": true, "bytes": 12, "maxGapMs": 3, "reporter": "12D3KooWPhone", "receivedAt": "2026-11-02T10:00:01.000Z" }
+    },
+    {
+      "name": "free text in a device field is dropped, not the record",
+      "input": { "version": 2, "source": "mobile", "at": "2026-11-02T10:00:00.000Z", "stage": "relay.refused", "event": "mark", "elapsedMs": 0, "peer": "/ip4/10.0.0.1", "reporter": "a b", "role": "boss", "bytes": -1, "maxGapMs": -1, "receivedAt": "yesterday", "reason": "dial tcp 10.0.0.1" },
+      "expected": { "version": 2, "source": "mobile", "at": "2026-11-02T10:00:00.000Z", "stage": "relay.refused", "event": "mark", "elapsedMs": 0 }
     },
     {
       "name": "unknown stage is rejected",

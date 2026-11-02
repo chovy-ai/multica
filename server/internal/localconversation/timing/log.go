@@ -63,7 +63,10 @@ func (l *Log) Write(r Record) {
 	if l == nil {
 		return
 	}
-	r.Version, r.Source = Version, SourceDaemon
+	r.Version = Version
+	if r.Source == "" {
+		r.Source = SourceDaemon
+	}
 	if r.At == "" {
 		r.At = formatAt(time.Now())
 	}

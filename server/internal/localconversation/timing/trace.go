@@ -41,9 +41,16 @@ type Trace struct {
 	now   func() time.Time
 	start time.Time
 
-	mu   sync.Mutex
-	base Record
-	seen map[string]bool
+	mu      sync.Mutex
+	base    Record
+	seen    map[string]bool
+	summary outputSummary
+}
+
+type outputSummary struct {
+	events, bytes int64
+	last          time.Time
+	maxGap        time.Duration
 }
 
 // NewTrace returns a trace writing to log, or nil when log is nil.
@@ -177,6 +184,45 @@ func (t *Trace) MarkCount(stage, reason string, count int64) {
 		return
 	}
 	t.write(t.now(), stage, EventMark, func(r *Record) { r.Reason, r.Count = reason, &count })
+}
+
+// MarkBytes records a stage with a closed-enum reason and a size.
+func (t *Trace) MarkBytes(stage, reason string, bytes int64) {
+	if t == nil {
+		return
+	}
+	t.write(t.now(), stage, EventMark, func(r *Record) { r.Reason, r.Bytes = reason, &bytes })
+}
+
+// ObserveOutput adds one committed event to the turn's summary. Tokens arrive far
+// too often for a record each, so a turn writes OutputSummary once instead.
+func (t *Trace) ObserveOutput(bytes int64) {
+	if t == nil {
+		return
+	}
+	now := t.now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.summary.events++
+	t.summary.bytes += bytes
+	if !t.summary.last.IsZero() {
+		t.summary.maxGap = max(t.summary.maxGap, now.Sub(t.summary.last))
+	}
+	t.summary.last = now
+}
+
+// OutputSummary records the turn's event count, bytes and largest gap, once.
+func (t *Trace) OutputSummary() {
+	if t == nil || !t.claim(StageTurnOutputSummary) {
+		return
+	}
+	t.mu.Lock()
+	summary := t.summary
+	t.mu.Unlock()
+	t.write(t.now(), StageTurnOutputSummary, EventMark, func(r *Record) {
+		gap := summary.maxGap.Milliseconds()
+		r.Count, r.Bytes, r.MaxGapMs = &summary.events, &summary.bytes, &gap
+	})
 }
 
 // MarkFailed records a stage that failed at once.
