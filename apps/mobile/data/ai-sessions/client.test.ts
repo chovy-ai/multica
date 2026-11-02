@@ -53,6 +53,24 @@ describe("mobile AI session event projection", () => {
     expect(final.turns[0].status).toBe("completed");
   });
 
+  it("presents reasoning as thinking while it runs, including before any text", () => {
+    const started = applyEvents(snapshot(), [event(1, "turn.started", {}), event(2, "item.started", { kind: "reasoning" }, "think")])!;
+    expect(transcript(started)).toEqual([{ id: "think", role: "reasoning", content: "", running: true, turnId: "turn-a" }]);
+    const streaming = applyEvents(started, [event(3, "item.delta", { kind: "reasoning", field: "text", text: "Reading " }, "think"), event(4, "item.delta", { kind: "reasoning", field: "text", text: "files" }, "think")])!;
+    expect(transcript(streaming)[0]).toMatchObject({ role: "reasoning", content: "Reading files", running: true });
+    const done = applyEvents(streaming, [event(5, "item.completed", { kind: "reasoning", text: "Reading the files" }, "think")])!;
+    expect(transcript(done)[0]).toMatchObject({ role: "reasoning", content: "Reading the files", running: false });
+  });
+
+  it("keeps streamed reasoning when completion has no text and drops empty reasoning that ended", () => {
+    const streamed = applyEvents(snapshot(), [event(1, "turn.started", {}), event(2, "item.started", { kind: "reasoning" }, "think"), event(3, "item.delta", { kind: "reasoning", field: "text", text: "Plan" }, "think"), event(4, "item.completed", { kind: "reasoning" }, "think")])!;
+    expect(transcript(streamed)[0]).toMatchObject({ content: "Plan", running: false });
+    const empty = applyEvents(snapshot(), [event(1, "turn.started", {}), event(2, "item.started", { kind: "reasoning" }, "think"), event(3, "item.completed", { kind: "reasoning" }, "think")])!;
+    expect(transcript(empty)).toEqual([]);
+    const cancelled = applyEvents(snapshot(), [event(1, "turn.started", {}), event(2, "item.started", { kind: "reasoning" }, "think"), event(3, "turn.completed", { status: "cancelled" })])!;
+    expect(transcript(cancelled)).toEqual([]);
+  });
+
   it("requests a fresh snapshot on a sequence gap and keeps the old snapshot unchanged", () => {
     const initial = snapshot();
     expect(applyEvents(initial, [event(2, "turn.started", {})])).toBeNull();
