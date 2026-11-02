@@ -42,7 +42,7 @@ async function fakeDaemon(): Promise<Daemon> {
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 
-async function setup(hostRequest: LocalV2Bridge["hostRequest"] = vi.fn(async () => ({ ok: true })), device?: { deviceId: string; chooseRemote?: DirectLocalV2Options["chooseRemote"] }) {
+async function setup(hostRequest: LocalV2Bridge["hostRequest"] = vi.fn(async () => ({ ok: true })), device?: { deviceId: string; chooseRemote?: DirectLocalV2Options["chooseRemote"]; timing?: DirectLocalV2Options["timing"] }) {
   const daemon = await fakeDaemon();
   let token = daemon.token, base = daemon.base;
   const bridge = { endpoint: vi.fn(async () => ({ base, apiUrl: "https://api.multica.ai", token, fileKey: "fk" })), choose: vi.fn(), chooseRemote: vi.fn(), hostRequest };
@@ -351,5 +351,35 @@ describe("DirectLocalV2Transport", () => {
     daemon.sockets[0]!.send(JSON.stringify({ version: 2, type: "host.request", request_id: "h1", kind: "settings.confirm", payload: {} }));
     await until(() => hostRequest.mock.calls.length === 1);
     expect(hostRequest).toHaveBeenCalledWith("peer-1", scope, "settings.confirm", {});
+  });
+
+  it("records another device's link and leaves this device's silent", async () => {
+    const records: { stage: string; peer?: string; reason?: string; bytes?: number; conversationId?: string }[] = [];
+    const remote = await setup(undefined, { deviceId: "peer-a", timing: (record) => records.push(record) });
+    await remote.transport.send(scope, { version: 2, type: "subscribe", conversation_id: "c1", after_seq: 0, store_generation: "g" });
+    await vi.waitFor(() => expect(remote.daemon.sockets).toHaveLength(1));
+    remote.daemon.sockets[0]!.send(JSON.stringify({ version: 2, type: "subscription.status", conversation_id: "c1", status: "subscribed", high_water: 0 }));
+    remote.daemon.sockets[0]!.send(JSON.stringify({ version: 2, type: "subscription.status", conversation_id: "c1", status: "live", high_water: 0 }));
+    await vi.waitFor(() => expect(records.map((record) => record.stage)).toContain("ws.catch_up"));
+    remote.daemon.sockets[0]!.close(1001);
+    await vi.waitFor(() => expect(records.map((record) => record.stage)).toContain("ws.closed"));
+    expect(records.find((record) => record.stage === "ws.closed")?.reason).toBe("ws_going_away");
+    expect(records.map((record) => record.stage)).toEqual(expect.arrayContaining(["ws.ticket", "ws.open", "ws.subscribe", "ws.subscribed", "ws.retry"]));
+    expect(records.every((record) => record.peer === "peer-a")).toBe(true);
+
+    await remote.transport.request(scope, "POST", "/sessions/c1/commands", { type: "send", request_id: "req-1" });
+    const command = remote.daemon.requests.find((req) => req.url?.endsWith("/commands"));
+    expect(command?.headers["x-multica-request-id"]).toBe("req-1");
+
+    await remote.transport.request(scope, "GET", "/sessions/c1/snapshot");
+    expect(records.filter((record) => record.stage.startsWith("snapshot.")).map((record) => record.stage)).toEqual(["snapshot.request", "snapshot.first_byte", "snapshot.received", "snapshot.parsed"]);
+    expect(records.find((record) => record.stage === "snapshot.received")?.bytes).toBeGreaterThan(0);
+
+    const local: unknown[] = [];
+    const own = await setup(undefined, { deviceId: "local", timing: (record) => local.push(record) });
+    await own.transport.send(scope, { version: 2, type: "subscribe", conversation_id: "c1", after_seq: 0, store_generation: "g" });
+    await own.transport.request(scope, "POST", "/sessions/c1/commands", { type: "send", request_id: "req-1" });
+    expect(local).toEqual([]);
+    expect(own.daemon.requests.find((req) => req.url?.endsWith("/commands"))?.headers["x-multica-request-id"]).toBeUndefined();
   });
 });

@@ -88,6 +88,21 @@ describe("local turn timing", () => {
     expect(records.map((record) => record.stage)).toEqual(["client.first_event_received", "client.first_event_applied", "client.terminal_applied"]);
     expect(records[0]).toMatchObject({ version: 2, source: "gui", clientKind: "desktop", conversationId: "c", turnId: "fast" });
   });
+  it("marks the pending message on the next frame, and not at all without a window", () => {
+    const records: LocalTimingRecord[] = [];
+    createLocalSendTiming((record) => records.push(record)).begin("c", "r", Date.now());
+    expect(records.map((record) => record.stage)).toEqual(["client.send"]);
+    const frames: (() => void)[] = [];
+    vi.stubGlobal("requestAnimationFrame", (run: () => void) => frames.push(run));
+    try {
+      records.length = 0;
+      createLocalSendTiming((record) => records.push(record)).begin("c", "r2", Date.now());
+      expect(records.map((record) => record.stage)).toEqual(["client.send"]);
+      frames[0]!();
+      expect(records.map((record) => record.stage)).toEqual(["client.send", "client.pending_shown"]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("dates client.send back to the user's action and counts retries of one request", () => {
     vi.useFakeTimers({ toFake: ["Date", "performance"] });
     vi.setSystemTime(new Date("2026-11-02T10:00:00.000Z"));

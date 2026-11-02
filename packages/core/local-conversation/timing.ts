@@ -228,6 +228,36 @@ export function parseLocalTiming(value: unknown): LocalTimingRecord | null {
   return result;
 }
 
+/** A failure's closed category; the error text itself never goes on a record. */
+export function localTimingFailure(error: unknown): LocalTimingFailure {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (/429|rate.?limit|insufficient|quota|余额不足/i.test(message)) return "rate_limit";
+  if (/401|403|unauthorized|authentication|not signed in/i.test(message)) return "authentication";
+  if (/abort|cancel/i.test(message)) return "cancelled";
+  if (/websocket|disconnect|ECONN|ETIMEDOUT|fetch failed|timeout|timed out/i.test(message)) return "transport";
+  return "other";
+}
+
+/** A WebSocket close code as a closed reason; codes can come from the other side's text-bearing frame. */
+export function localTimingCloseReason(code: number | undefined): LocalTimingReason {
+  switch (code) {
+    case 1000: return "ws_normal";
+    case 1001: return "ws_going_away";
+    case 1006: case undefined: return "ws_abnormal";
+    default: return "ws_protocol";
+  }
+}
+
+/** The request a command belongs to, so its link marks can join that turn's waterfall. */
+export function localTimingRequestId(body: unknown): string | undefined {
+  const value = body as { request_id?: unknown; item?: { requestId?: unknown } } | null | undefined;
+  const id = value?.request_id ?? value?.item?.requestId;
+  return isIdentifier(id) ? id : undefined;
+}
+
+/** Ties a proxied command to its turn. Older daemons ignore it. */
+export const LOCAL_TIMING_REQUEST_HEADER = "X-Multica-Request-ID";
+
 /** When a record arrived, for filtering and ordering: a report's own clock can be wrong. */
 export function localTimingTime(record: LocalTimingRecord): string { return record.receivedAt ?? record.at; }
 

@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { canonicalLocalTimingStage, isLocalTimingModelOutput, LOCAL_TIMING_DIMENSIONS, LOCAL_TIMING_LEGACY_MAPPING, LOCAL_TIMING_LEGACY_STAGES, LOCAL_TIMING_MARKS, LOCAL_TIMING_REASONS, parseLocalTiming } from "./timing";
+import { canonicalLocalTimingStage, isLocalTimingModelOutput, localTimingCloseReason, localTimingRequestId, localTimingTime, LOCAL_TIMING_DIMENSIONS, LOCAL_TIMING_LEGACY_MAPPING, LOCAL_TIMING_LEGACY_STAGES, LOCAL_TIMING_MARKS, LOCAL_TIMING_REASONS, parseLocalTiming } from "./timing";
 
 const contract = JSON.parse(readFileSync(join(__dirname, "../../../server/internal/localconversation/timing/testdata/contract.json"), "utf8")) as {
   legacyStages: string[]; marks: string[]; legacyMapping: Record<string, string>; dimensions: Record<string, string[]>; reasons: string[];
@@ -43,6 +43,20 @@ describe("local timing contract", () => {
 
   it("drops a non-integer count instead of the record", () => {
     expect(parseLocalTiming({ ...base, stage: "turn.persist", attempt: 1.5, turnIndex: "3" })).toEqual({ ...base, stage: "turn.persist" });
+  });
+
+  it("orders a report by when it arrived, since its own clock can be wrong", () => {
+    const report = parseLocalTiming({ ...base, source: "mobile", stage: "client.send", at: "2001-01-01T00:00:00.000Z", receivedAt: "2026-11-02T10:00:00.000Z", reused: "yes" })!;
+    expect(localTimingTime(report)).toBe("2026-11-02T10:00:00.000Z");
+    expect(report.reused).toBeUndefined();
+    expect(localTimingTime(parseLocalTiming({ ...base, stage: "client.send" })!)).toBe(base.at);
+  });
+
+  it("closes the reason of a WebSocket close and refuses free text in a request id", () => {
+    expect([1000, 1001, 1006, undefined, 4000].map(localTimingCloseReason)).toEqual(["ws_normal", "ws_going_away", "ws_abnormal", "ws_abnormal", "ws_protocol"]);
+    expect(localTimingRequestId({ request_id: "r-1" })).toBe("r-1");
+    expect(localTimingRequestId({ item: { requestId: "r-2" } })).toBe("r-2");
+    for (const body of [{ request_id: "a b/c" }, { request_id: 4 }, {}, null, undefined]) expect(localTimingRequestId(body)).toBeUndefined();
   });
 
   it("treats only provider items as model output", () => {

@@ -1,17 +1,9 @@
-import { parseLocalTiming, type LocalTimingFailure, type LocalTimingIdentity, type LocalTimingOutcome, type LocalTimingRecord, type LocalTimingStage } from "@multica/core/local-conversation/timing";
+import { localTimingFailure, parseLocalTiming, type LocalTimingFailure, type LocalTimingIdentity, type LocalTimingOutcome, type LocalTimingRecord, type LocalTimingStage } from "@multica/core/local-conversation/timing";
 
 export * from "@multica/core/local-conversation/timing";
 
 /** Diagnostics contain identifiers and timings only, never prompts or provider payloads. */
 export const LOCAL_TIMING_PREFIX = "[local-turn-timing] ";
-export function localTimingFailure(error: unknown): LocalTimingFailure {
-  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  if (/429|rate.?limit|insufficient|quota|余额不足/i.test(message)) return "rate_limit";
-  if (/401|403|unauthorized|authentication|not signed in/i.test(message)) return "authentication";
-  if (/abort|cancel/i.test(message)) return "cancelled";
-  if (/websocket|disconnect|ECONN|ETIMEDOUT|fetch failed|timeout|timed out/i.test(message)) return "transport";
-  return "other";
-}
 export type LocalTimingSink = (record: LocalTimingRecord) => void;
 
 export const consoleLocalTiming: LocalTimingSink = (record) => {
@@ -99,6 +91,8 @@ export function createLocalSendTiming(sink: LocalTimingSink = consoleLocalTiming
       if (attempts.size > 512) attempts.delete(attempts.keys().next().value!);
       const timing = createLocalTiming({ source: "gui", clientKind: "desktop", conversationId, requestId, attempt }, sink, startedAt);
       timing.markStart("client.send");
+      // The engine shows the pending message before this runs, so the next frame paints it.
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => timing.mark("client.pending_shown"));
       return timing;
     },
   };
