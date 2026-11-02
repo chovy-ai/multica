@@ -30,6 +30,8 @@ type TraceOptions struct {
 	TurnIndex *int64
 	Attempt   int64
 	Caller    Caller
+	// PrepareID ties a record to the prepare task it waited for or ran.
+	PrepareID string
 }
 
 // Trace writes one turn's marks. A nil Trace does nothing, so runners and
@@ -59,7 +61,7 @@ func NewTrace(log *Log, opts TraceOptions) *Trace {
 		ConversationID: validID(opts.ConversationID), RequestID: validID(opts.RequestID), TurnID: validID(opts.TurnID),
 		Provider: opts.Provider, TurnKind: opts.TurnKind, Origin: closedOr(origins, opts.Caller.Origin, OriginUnknown), ClientKind: closedOr(clientKinds, opts.Caller.ClientKind, ClientUnknown),
 		Connection: closedOr(connections, opts.Caller.Connection, ConnectionUnknown),
-		Background: opts.TurnKind == TurnBackground || opts.TurnKind == TurnNative,
+		Background: opts.TurnKind == TurnBackground || opts.TurnKind == TurnNative, PrepareID: validID(opts.PrepareID),
 	}
 	base.TurnIndex = opts.TurnIndex
 	if opts.Attempt > 0 {
@@ -110,6 +112,20 @@ func (t *Trace) SetPrepareKind(kind string) {
 	t.mu.Unlock()
 }
 
+// SetPrepare records how later marks of this turn got ready and which prepare
+// task they relate to; an empty id keeps the current one.
+func (t *Trace) SetPrepare(kind, id string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.base.PrepareKind = kind
+	if id != "" {
+		t.base.PrepareID = validID(id)
+	}
+	t.mu.Unlock()
+}
+
 func (t *Trace) write(at time.Time, stage, event string, fill func(*Record)) {
 	t.mu.Lock()
 	r := t.base
@@ -141,6 +157,18 @@ func (t *Trace) MarkAt(stage string, at time.Time) {
 		return
 	}
 	t.write(at, stage, EventMark, nil)
+}
+
+// MarkDuration records a stage with a closed-enum reason and a duration that
+// is not the time since the trace began, such as how long a process sat idle.
+func (t *Trace) MarkDuration(stage, reason string, d time.Duration) {
+	if t == nil {
+		return
+	}
+	t.write(t.now(), stage, EventMark, func(r *Record) {
+		r.Reason = reason
+		fillDuration(r, d)
+	})
 }
 
 // MarkFailed records a stage that failed at once.

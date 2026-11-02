@@ -51,6 +51,19 @@ const (
 	StageHubFirstOutputPublish  = "hub.first_output_publish"
 	StageWSFirstOutputWrite     = "ws.first_output_write"
 	StageTurnFinished           = "turn.finished"
+	StageSpareClaim             = "spare.claim"
+	StageMCPSet                 = "mcp.set"
+	StageFocusChanged           = "focus.changed"
+	StagePreheatRequested       = "preheat.requested"
+	StagePreheatCancelled       = "preheat.cancelled"
+	StagePreheatStarted         = "preheat.started"
+	StagePreheatFinished        = "preheat.finished"
+	StagePreheatFailed          = "preheat.failed"
+	StageSpareCreated           = "spare.created"
+	StageSpareClaimed           = "spare.claimed"
+	StageSpareRejected          = "spare.rejected"
+	StageSpareDiscarded         = "spare.discarded"
+	StageRunnerEvicted          = "runner.evicted"
 	StageTimingDropped          = "timing.dropped"
 )
 
@@ -102,6 +115,35 @@ const (
 	ReasonLive             = "live"
 	ReasonCatchUp          = "catch_up"
 	ReasonConcurrencyLimit = "concurrency_limit"
+
+	ReasonFocused        = "focused"
+	ReasonUnfocused      = "unfocused"
+	ReasonConnectionLost = "connection_lost"
+
+	ReasonNotFocused = "not_focused"
+	ReasonDraining   = "draining"
+	ReasonDisabled   = "disabled"
+	ReasonNoSession  = "no_session"
+	ReasonArchived   = "archived"
+
+	ReasonClaimRefused       = "claim_refused"
+	ReasonOptionNotApplied   = "option_not_applied"
+	ReasonSettingsNotApplied = "settings_not_applied"
+	ReasonMCPFailed          = "mcp_failed"
+	ReasonBindFailed         = "bind_failed"
+	ReasonUnsupported        = "unsupported"
+
+	ReasonMaxAge             = "max_age"
+	ReasonConfigChanged      = "config_changed"
+	ReasonCLIChanged         = "cli_changed"
+	ReasonEnvironmentChanged = "environment_changed"
+	ReasonNoClients          = "no_clients"
+	ReasonExited             = "exited"
+	ReasonStopped            = "stopped"
+
+	ReasonIdlePreheated = "idle_preheated"
+	ReasonIdleSent      = "idle_sent"
+	ReasonOverLimit     = "over_limit"
 )
 
 var (
@@ -124,10 +166,10 @@ var (
 		StageTurnFinished, "client.terminal_applied",
 		StageProviderSpawn, StageProviderHandshake, StageProviderConfig, StageContextBind, StageModelResolve, StageThreadPrepare,
 		StageProviderTurnStart, "provider.first_frame", StageProviderFirstReasoning, StageProviderFirstText, StageProviderFirstTool, "provider.exit",
-		StageAdapterSpawn, StageAdapterReady, StageSDKLoad, StageQueryInit, "spare.claim", "mcp.set",
+		StageAdapterSpawn, StageAdapterReady, StageSDKLoad, StageQueryInit, StageSpareClaim, StageMCPSet,
 		StageProviderInputQueued, StageProviderFirstMessage, "provider.session_ready", "provider.first_thinking",
-		"focus.changed", "preheat.requested", "preheat.cancelled", "preheat.started", "preheat.finished", "preheat.failed",
-		"spare.created", "spare.claimed", "spare.rejected", "spare.discarded", "runner.evicted",
+		StageFocusChanged, StagePreheatRequested, StagePreheatCancelled, StagePreheatStarted, StagePreheatFinished, StagePreheatFailed,
+		StageSpareCreated, StageSpareClaimed, StageSpareRejected, StageSpareDiscarded, StageRunnerEvicted,
 		"link.start", "link.ready", "link.registered", "link.stop",
 		"registry.fetch", "peer.known", "peer.mdns_found",
 		"peer.connect", "relay.reserve", "relay.connected", "relay.refused",
@@ -149,7 +191,12 @@ var (
 	turnKinds    = setOf(TurnUser, TurnQueued, TurnSteer, TurnBackground, TurnNative, TurnAgent)
 	reasons      = setOf(ReasonStart, ReasonResume, ReasonSkipped, ReasonLive, ReasonCatchUp, ReasonConcurrencyLimit,
 		"provider_unavailable", "provider_error", "provider_exited", "outcome_unknown",
-		"storage_limit", "compaction_failed", "interrupt_unconfirmed", "remote_failed")
+		"storage_limit", "compaction_failed", "interrupt_unconfirmed", "remote_failed",
+		ReasonFocused, ReasonUnfocused, ReasonConnectionLost,
+		ReasonNotFocused, ReasonDraining, ReasonDisabled, ReasonNoSession, ReasonArchived,
+		ReasonClaimRefused, ReasonOptionNotApplied, ReasonSettingsNotApplied, ReasonMCPFailed, ReasonBindFailed, ReasonUnsupported,
+		ReasonMaxAge, ReasonConfigChanged, ReasonCLIChanged, ReasonEnvironmentChanged, ReasonNoClients, ReasonExited, ReasonStopped,
+		ReasonIdlePreheated, ReasonIdleSent, ReasonOverLimit)
 	outcomes = setOf("completed", "failed", "cancelled")
 	failures = setOf("rate_limit", "authentication", "transport", "cancelled", "other")
 	events   = setOf(EventStart, EventEnd, EventMark, "wait")

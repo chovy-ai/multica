@@ -91,6 +91,11 @@ export const LOCAL_TIMING_REASONS = [
   "start", "resume", "skipped", "live", "catch_up",
   "concurrency_limit", "provider_unavailable", "provider_error", "provider_exited", "outcome_unknown",
   "storage_limit", "compaction_failed", "interrupt_unconfirmed", "remote_failed",
+  "focused", "unfocused", "connection_lost",
+  "not_focused", "draining", "disabled", "no_session", "archived",
+  "claim_refused", "option_not_applied", "settings_not_applied", "mcp_failed", "bind_failed", "unsupported",
+  "max_age", "config_changed", "cli_changed", "environment_changed", "no_clients", "exited", "stopped",
+  "idle_preheated", "idle_sent", "over_limit",
 ] as const;
 export type LocalTimingReason = typeof LOCAL_TIMING_REASONS[number];
 
