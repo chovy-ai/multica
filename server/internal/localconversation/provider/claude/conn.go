@@ -11,12 +11,27 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
 // ProtocolVersion is the adapter protocol this daemon speaks.
 const ProtocolVersion = 1
+
+// Capabilities an adapter announces in its ready frame. An adapter that lists
+// neither predates spares and only serves start.
+const (
+	CapabilityPrewarm = "prewarm"
+	CapabilityClaim   = "claim"
+)
+
+// Error codes the daemon acts on.
+const (
+	CodePrewarmUnsupported = "prewarm_unsupported"
+	CodeNotClaimed         = "not_claimed"
+	CodeSpareExited        = "spare_exited"
+)
 
 // maxFrameBytes bounds one adapter output line. Tool output is forwarded
 // unchanged, so the limit only guards against a runaway frame.
@@ -279,6 +294,26 @@ func messageText(raw json.RawMessage) string {
 		return s
 	}
 	return string(raw)
+}
+
+// ClaimReason is the SDK's reason for a refused claim: the leading token of a
+// not_claimed message, such as option_not_applied.
+func ClaimReason(err error) string {
+	var adapterErr *AdapterError
+	if !errors.As(err, &adapterErr) || adapterErr.Code != CodeNotClaimed {
+		return ""
+	}
+	reason, _, _ := strings.Cut(adapterErr.Message, ":")
+	return reason
+}
+
+// MCPSetFailed reports whether a set_mcp_servers result lists a server the
+// session could not bind.
+func MCPSetFailed(raw json.RawMessage) bool {
+	var result struct {
+		Errors map[string]any `json:"errors"`
+	}
+	return json.Unmarshal(raw, &result) == nil && len(result.Errors) > 0
 }
 
 // StartTiming is what the adapter measured inside a start request. Fields are

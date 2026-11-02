@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,11 @@ type Process struct {
 // StartDurations is how long launching the process and its ready frame took.
 func (p *Process) StartDurations() (spawn, ready time.Duration) {
 	return p.spawnTook, p.readyTook
+}
+
+// Supports reports whether the adapter announced a capability.
+func (p *Process) Supports(capability string) bool {
+	return slices.Contains(p.Ready.Capabilities, capability)
 }
 
 // Start launches the adapter and waits for its ready frame.
