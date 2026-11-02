@@ -171,6 +171,14 @@ func (t *Trace) MarkDuration(stage, reason string, d time.Duration) {
 	})
 }
 
+// MarkCount records a stage with a closed-enum reason and a count.
+func (t *Trace) MarkCount(stage, reason string, count int64) {
+	if t == nil {
+		return
+	}
+	t.write(t.now(), stage, EventMark, func(r *Record) { r.Reason, r.Count = reason, &count })
+}
+
 // MarkFailed records a stage that failed at once.
 func (t *Trace) MarkFailed(stage, reason string) {
 	if t == nil {

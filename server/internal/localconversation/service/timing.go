@@ -152,6 +152,16 @@ func (t *turnTraces) newTraceLocked(conv sqlitedb.Conversation, requestID, turnI
 	return timing.NewTrace(t.log, opts)
 }
 
+// conversation is a trace for a conversation's records that belong to no turn.
+func (t *turnTraces) conversation(conv sqlitedb.Conversation, caller timing.Caller) *timing.Trace {
+	return timing.NewTrace(t.log, timing.TraceOptions{Now: t.now, ConversationID: conv.ID, Provider: conv.Provider, Caller: caller})
+}
+
+// process is a trace for a conversation's process, known only by id and provider.
+func (t *turnTraces) process(conversationID, provider string) *timing.Trace {
+	return timing.NewTrace(t.log, timing.TraceOptions{Now: t.now, ConversationID: conversationID, Provider: provider})
+}
+
 func (t *turnTraces) lookup(turnID string) *timing.Trace {
 	t.mu.Lock()
 	defer t.mu.Unlock()

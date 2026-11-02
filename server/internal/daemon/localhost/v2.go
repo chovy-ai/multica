@@ -26,6 +26,9 @@ import (
 // V2Version is the wire protocol served under /local/v2.
 const V2Version = 2
 
+// ConversationFocusCapability tells clients they may send conversation.focus.
+const ConversationFocusCapability = "conversation-focus-v1"
+
 const (
 	v2MaxSubscriptions = 32
 	v2WriteTimeout     = 10 * time.Second
@@ -177,6 +180,7 @@ func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 		if v.servicePreview != nil {
 			capabilities = append(capabilities, "remote-service-preview-v1")
 		}
+		capabilities = append(capabilities, ConversationFocusCapability)
 		writeJSON(w, http.StatusOK, map[string]any{"version": V2Version, "store_generation": v.svc.Generation(), "capabilities": capabilities})
 		return
 	}
@@ -691,6 +695,14 @@ type wsConn struct {
 	scopeID int64
 }
 
+// key names the client; one without an id is one client per connection.
+func (c *wsConn) key() string {
+	if c.caller.clientKey != "" {
+		return c.caller.clientKey
+	}
+	return fmt.Sprintf("%p", c)
+}
+
 func (c *wsConn) send(v any) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
@@ -705,6 +717,8 @@ type wsClientMessage struct {
 	AfterSeq        int64  `json:"after_seq"`
 	AfterScopeSeq   int64  `json:"after_scope_seq"`
 	StoreGeneration string `json:"store_generation"`
+	// conversation.focus
+	Focused *bool `json:"focused"`
 	// host.reply
 	RequestID string          `json:"request_id"`
 	Result    json.RawMessage `json:"result"`
@@ -722,7 +736,9 @@ func (v *V2) serveWS(w http.ResponseWriter, r *http.Request, scopeID int64) {
 	c := &wsConn{conn: ws, subs: map[string]*service.Subscription{}, caller: callerOf(r.Context()), scopeID: scopeID}
 	detach := v.hosts.attach(scopeID, c)
 	ctx, cancel := context.WithCancel(context.Background())
+	disconnected := v.svc.ClientConnected(c.key())
 	defer func() {
+		disconnected()
 		detach()
 		cancel()
 		c.mu.Lock()
@@ -769,6 +785,12 @@ func (v *V2) serveWS(w http.ResponseWriter, r *http.Request, scopeID int64) {
 			}
 		case "subscribe_scope":
 			v.wsSubscribeScope(ctx, c, scopeID, msg)
+		case "conversation.focus":
+			// A view only asks for a preheat, so a refused one has nothing to
+			// report. Every caller kind may do it: remote viewers preheat here.
+			if msg.Focused != nil {
+				_ = v.svc.SetFocus(ctx, scopeID, msg.ConversationID, c.key(), *msg.Focused, c.caller.timing())
+			}
 		}
 	}
 }
@@ -803,11 +825,7 @@ func (v *V2) wsSubscribe(ctx context.Context, c *wsConn, scopeID int64, msg wsCl
 	c.mu.Unlock()
 	_ = c.send(statusMessage(msg.ConversationID, "subscribed", high, nil))
 	v.setPresence(c, msg.ConversationID, true)
-	// A client without an id is still one subscriber per connection.
-	subscriberKey := c.caller.clientKey
-	if subscriberKey == "" {
-		subscriberKey = fmt.Sprintf("%p", c)
-	}
+	subscriberKey := c.key()
 	go func() {
 		live := false
 		for {

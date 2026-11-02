@@ -94,6 +94,12 @@ type Options struct {
 	Now     func() time.Time
 	// TimingPath is the daemon's timing file; empty records no timing.
 	TimingPath string
+	// PreheatOldConversations reports whether opening a conversation with a
+	// native session may start its process, which runs its SessionStart hooks.
+	// nil allows it.
+	PreheatOldConversations func() bool
+	// maintenanceEvery replaces maintenanceInterval in tests.
+	maintenanceEvery time.Duration
 }
 
 // Service is the Go-owned local conversation service: one store, one
@@ -129,8 +135,13 @@ type Service struct {
 	side    sideWorkspaces
 	imports imports
 	traces  *turnTraces
+	focus   *focusTracker
 	// closed is closed when Close begins.
 	closed chan struct{}
+	// maintenanceKick asks for an early maintenance pass.
+	maintenanceKick chan struct{}
+	// background is the goroutines Close waits for before closing the store.
+	background sync.WaitGroup
 }
 
 // Open opens the store, closes turns a previous daemon left running, removes
@@ -180,7 +191,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		side:      sideWorkspaces{entries: map[string]SideWorkspace{}},
 		imports:   imports{busy: map[int64]context.CancelFunc{}},
 		traces:    newTurnTraces(timing.Open(opts.TimingPath, timing.Options{}), opts.Now),
-		closed:    make(chan struct{})}
+		focus:     newFocusTracker(),
+		closed:    make(chan struct{}), maintenanceKick: make(chan struct{}, 1)}
 	s.computer = &computer.Manager{Command: opts.Computer}
 	s.computers.active = map[string]*computerExecution{}
 	s.batcher = NewBatcher(writer, BatcherOptions{
@@ -206,6 +218,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		}
 	}
 	s.resumeRemote(ctx)
+	s.goBackground(s.maintain)
 	return s, nil
 }
 
@@ -240,6 +253,7 @@ func (s *Service) Close(ctx context.Context) error {
 		errs = append(errs, r.Close(closeCtx))
 		cancel()
 	}
+	s.background.Wait()
 	errs = append(errs, s.context.Close())
 	if preview := s.previewServices(); preview != nil {
 		preview.Revoke()
@@ -281,6 +295,8 @@ func (s *Service) Undrain(ctx context.Context) error {
 		}
 	}
 	s.mu.Unlock()
+	s.preheatFocused()
+	s.kickMaintenance()
 	return err
 }
 
