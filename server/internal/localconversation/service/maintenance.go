@@ -46,6 +46,7 @@ func (s *Service) maintain() {
 func (s *Service) runMaintenance() {
 	s.sweepFocus()
 	s.sweepIdle()
+	s.spares.check()
 }
 
 func (s *Service) kickMaintenance() {

@@ -66,6 +66,8 @@ type CodexRunner struct {
 	limiter *Limiter
 	context string
 	bind    ContextBinder
+	// claimSpare takes a running process for a conversation with no thread yet.
+	claimSpare func(ctx context.Context, provider string) *parkedSpare
 	// onTurnEnd runs after a turn's completion is recorded.
 	onTurnEnd func(turnID string)
 
@@ -138,6 +140,8 @@ type CodexRunnerOptions struct {
 	OnTurnEnd func(turnID string)
 	// Context, when set, gives app-server Multica's context tools.
 	Context ContextBinder
+	// ClaimSpare, when set, offers a running process for a new conversation.
+	ClaimSpare func(ctx context.Context, provider string) *parkedSpare
 }
 
 // NewCodexRunner returns a runner for one conversation.
@@ -148,7 +152,7 @@ func NewCodexRunner(opts CodexRunnerOptions) *CodexRunner {
 	return &CodexRunner{
 		rec:   turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		start: opts.Start, batcher: opts.Batcher, limiter: opts.Limiter, context: contextName(opts.ContextMCPName), session: opts.Session,
-		bind: opts.Context, onTurnEnd: opts.OnTurnEnd, gate: newPrepareGate(),
+		bind: opts.Context, claimSpare: opts.ClaimSpare, onTurnEnd: opts.OnTurnEnd, gate: newPrepareGate(),
 	}
 }
 
@@ -342,11 +346,21 @@ func (r *CodexRunner) startPrepareLocked(trace *timing.Trace, preheat bool) *pre
 }
 
 func (r *CodexRunner) prepare(ctx context.Context, trace *timing.Trace, preheat bool) (threadID, failKind string, err error) {
-	server, native, err := r.ensureServer(ctx, trace)
+	server, native, spared, err := r.ensureServer(ctx, trace, true)
 	if err != nil {
 		return "", "provider_unavailable", err
 	}
 	threadID, err = r.thread(ctx, server, native, trace)
+	if err != nil && spared && ctx.Err() == nil {
+		// No message was submitted, so the normal start can simply take over.
+		r.dropServer(server)
+		trace.MarkReason(timing.StageSpareRejected, timing.ReasonBindFailed)
+		trace.SetPrepare(timing.PrepareCold, "")
+		if server, native, _, err = r.ensureServer(ctx, trace, false); err != nil {
+			return "", "provider_unavailable", err
+		}
+		threadID, err = r.thread(ctx, server, native, trace)
+	}
 	if err != nil {
 		// Nothing depends on a preheat's process, and one that could not load
 		// its thread may be what a later send would hang on.
@@ -577,12 +591,12 @@ func (r *CodexRunner) Close(ctx context.Context) error {
 
 // ensureServer runs only inside the prepare task, which is what keeps two
 // callers from starting two processes.
-func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (CodexServer, *codexNative, error) {
+func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace, allowSpare bool) (CodexServer, *codexNative, bool, error) {
 	r.mu.Lock()
 	if r.server != nil && !r.restart {
 		server, native := r.server, r.native
 		r.mu.Unlock()
-		return server, native, nil
+		return server, native, false, nil
 	}
 	stale := r.server
 	r.server, r.native, r.restart = nil, nil, false
@@ -590,9 +604,21 @@ func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (Co
 	// A settings restart keeps the context binding: releasing it would also
 	// reset the conversation's Computer Use runtime.
 	bound, token := r.releaseContext != nil, r.contextToken
+	fresh := r.session.ThreadID == ""
 	r.mu.Unlock()
 	if stale != nil {
 		stale.Stop()
+	}
+	if allowSpare && fresh && !bound && stale == nil && r.claimSpare != nil {
+		if spare := r.claimSpare(ctx, "codex"); spare != nil {
+			server, native, err := r.adoptSpare(ctx, spare, cwd, trace)
+			if err == nil {
+				return server, native, true, nil
+			}
+			if errors.Is(err, ErrClosing) {
+				return nil, nil, false, err
+			}
+		}
 	}
 
 	var env []string
@@ -600,7 +626,7 @@ func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (Co
 		if !bound {
 			var err error
 			if token, err = contextmcp.NewToken(); err != nil {
-				return nil, nil, err
+				return nil, nil, false, err
 			}
 		}
 		env = []string{ContextTokenEnv + "=" + token}
@@ -609,25 +635,12 @@ func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (Co
 	server, err := r.start(ctx, r.handle, env)
 	markProcessStart(trace, timing.StageProviderSpawn, timing.StageProviderHandshake, began, server, err)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	configured := trace.Begin(timing.StageProviderConfig)
-	raw, err := server.Request(ctx, "config/read", map[string]any{"cwd": cwd, "includeLayers": false})
-	configured(err)
+	native, err := r.readConfig(ctx, server, cwd, trace)
 	if err != nil {
 		server.Stop()
-		return nil, nil, err
-	}
-	var result struct {
-		Config codexNative `json:"config"`
-	}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		server.Stop()
-		return nil, nil, errors.New("invalid Codex configuration response")
-	}
-	if _, reserved := result.Config.MCPServers[r.context]; reserved {
-		server.Stop()
-		return nil, nil, fmt.Errorf("native Codex settings use the reserved Multica MCP name %s", r.context)
+		return nil, nil, false, err
 	}
 	contextURL, release, systemPrompt := "", func() {}, ""
 	if r.bind != nil && !bound {
@@ -636,7 +649,7 @@ func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (Co
 		bound(err)
 		if err != nil {
 			server.Stop()
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		contextURL, release, systemPrompt = binding.URL, rel, binding.SystemPrompt
 	}
@@ -647,15 +660,75 @@ func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (Co
 			release()
 		}
 		server.Stop()
-		return nil, nil, ErrClosing
+		return nil, nil, false, ErrClosing
 	}
-	r.server, r.native = server, &result.Config
+	r.server, r.native = server, native
 	if !bound {
 		r.contextURL, r.contextToken, r.releaseContext, r.systemPrompt = contextURL, token, release, systemPrompt
 	}
 	r.mu.Unlock()
 	go r.watch(server)
-	return server, &result.Config, nil
+	return server, native, false, nil
+}
+
+// readConfig reads the native configuration for the conversation's directory.
+// The directory comes from the request, never from where the process started:
+// a spare runs elsewhere, and what it reports must still be this project's.
+func (r *CodexRunner) readConfig(ctx context.Context, server CodexServer, cwd string, trace *timing.Trace) (*codexNative, error) {
+	configured := trace.Begin(timing.StageProviderConfig)
+	raw, err := server.Request(ctx, "config/read", map[string]any{"cwd": cwd, "includeLayers": false})
+	configured(err)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Config codexNative `json:"config"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, errors.New("invalid Codex configuration response")
+	}
+	if _, reserved := result.Config.MCPServers[r.context]; reserved {
+		return nil, fmt.Errorf("native Codex settings use the reserved Multica MCP name %s", r.context)
+	}
+	return &result.Config, nil
+}
+
+// adoptSpare binds a spare to this conversation. On failure the spare is gone
+// and nothing was submitted, so the caller starts a process the normal way.
+func (r *CodexRunner) adoptSpare(ctx context.Context, spare *parkedSpare, cwd string, trace *timing.Trace) (CodexServer, *codexNative, error) {
+	claiming := trace.Begin(timing.StageSpareClaim)
+	server := spare.server
+	native, err := r.readConfig(ctx, server, cwd, trace)
+	contextURL, release, systemPrompt := "", func() {}, ""
+	if err == nil && r.bind != nil {
+		binding := trace.Begin(timing.StageContextBind)
+		var bound BoundContext
+		bound, release, err = r.bind(context.Background(), spare.token, r.currentContext)
+		binding(err)
+		if err == nil {
+			contextURL, systemPrompt = bound.URL, bound.SystemPrompt
+		}
+	}
+	claiming(err)
+	if err != nil {
+		spare.reject(timing.ReasonBindFailed)
+		return nil, nil, err
+	}
+	spare.codexFrames.adopt(r.handle)
+	r.mu.Lock()
+	if r.gate.closed {
+		r.mu.Unlock()
+		release()
+		server.Stop()
+		return nil, nil, ErrClosing
+	}
+	r.server, r.native = server, native
+	r.contextURL, r.contextToken, r.releaseContext, r.systemPrompt = contextURL, spare.token, release, systemPrompt
+	r.mu.Unlock()
+	go r.watch(server)
+	trace.SetPrepare(timing.PrepareSpare, "")
+	trace.Mark(timing.StageSpareClaimed)
+	return server, native, nil
 }
 
 // thread starts the conversation's native thread or resumes it.

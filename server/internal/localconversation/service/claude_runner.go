@@ -107,7 +107,9 @@ type ClaudeRunner struct {
 	limiter        *Limiter
 	now            func() time.Time
 	bindContext    ContextBinder
-	onTurnEnd      func(turnID string)
+	// claimSpare takes a parked process for a conversation with no session yet.
+	claimSpare func(ctx context.Context, provider string) *parkedSpare
+	onTurnEnd  func(turnID string)
 	// onBackgroundEnded runs when background tasks end with no turn
 	// running and no native reply started.
 	onBackgroundEnded func(results []BackgroundResult)
@@ -193,6 +195,8 @@ type ClaudeRunnerOptions struct {
 	Context ContextBinder
 	// NativeTrace, when set, starts the timing of a turn Claude began itself.
 	NativeTrace func(turnID string) *timing.Trace
+	// ClaimSpare, when set, offers a parked process for a new conversation.
+	ClaimSpare func(ctx context.Context, provider string) *parkedSpare
 }
 
 // NewClaudeRunner returns a runner for one conversation.
@@ -204,7 +208,7 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 		rec:            turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		conversationID: opts.ConversationID, start: opts.Start, session: opts.Session,
 		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName, bindContext: opts.Context,
-		onTurnEnd: opts.OnTurnEnd, onBackgroundEnded: opts.OnBackgroundEnded, nativeTrace: opts.NativeTrace,
+		claimSpare: opts.ClaimSpare, onTurnEnd: opts.OnTurnEnd, onBackgroundEnded: opts.OnBackgroundEnded, nativeTrace: opts.NativeTrace,
 		taskTurns: map[string]string{}, stopped: map[string]bool{}, gate: newPrepareGate(),
 	}
 }
@@ -491,6 +495,20 @@ func (r *ClaudeRunner) Close(ctx context.Context) error {
 // ensureAdapter starts the adapter. It runs only inside the prepare task, which
 // is what keeps two callers from starting two processes.
 func (r *ClaudeRunner) ensureAdapter(ctx context.Context, trace *timing.Trace) error {
+	r.mu.Lock()
+	fresh := r.session.ProviderSessionID == ""
+	r.mu.Unlock()
+	if fresh && r.claimSpare != nil {
+		if spare := r.claimSpare(ctx, "claude"); spare != nil {
+			err := r.adoptSpare(ctx, spare, trace)
+			if err == nil || errors.Is(err, ErrClosing) {
+				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+	}
 	norm := claude.NewNormalizer(r.contextName)
 	began := trace.Now()
 	adapter, err := r.start(ctx, func(out claude.Output) { r.handle(norm, out) })
@@ -533,6 +551,85 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context, trace *timing.Trace) e
 	}
 	markAdapterStart(trace, starting, started)
 	return r.install(ctx, adapter, norm, release, version)
+}
+
+// adoptSpare binds a parked process to this conversation: claim, then MCP, and
+// only then is it ready for the first message, so every failure here happens
+// before anything reached the model and the caller can start normally with a new
+// adapter and normalizer. Output stays held until the bind succeeds, which also
+// keeps its session id from being remembered for a resume with no transcript.
+func (r *ClaudeRunner) adoptSpare(ctx context.Context, spare *parkedSpare, trace *timing.Trace) error {
+	spare.claudeFrames.hold()
+	r.mu.Lock()
+	session := r.session.Fields
+	version := r.settingsVersion
+	r.mu.Unlock()
+	fields := map[string]any{"cwd": session["cwd"]}
+	if model, ok := session["model"]; ok {
+		fields["model"] = model
+	}
+	if mode, ok := session["permission_mode"]; ok {
+		fields["permission_mode"] = mode
+	}
+	if effort, ok := session["reasoning_effort"]; ok {
+		fields["settings"] = map[string]any{"effortLevel": effort}
+	}
+	release := func() {}
+	var servers map[string]any
+	if r.bindContext != nil {
+		bound := trace.Begin(timing.StageContextBind)
+		binding, rel, err := r.bindContext(context.Background(), "", r.currentContext)
+		bound(err)
+		if err != nil {
+			spare.reject(timing.ReasonBindFailed)
+			return err
+		}
+		release = rel
+		servers = contextServerEntry(contextName(r.contextName), binding.Binding)
+		if binding.SystemPrompt != "" {
+			fields["append_system_prompt"] = binding.SystemPrompt
+		}
+	}
+	claiming := trace.Begin(timing.StageSpareClaim)
+	_, err := spare.adapter.Request(ctx, "claim", fields)
+	claiming(err)
+	if err != nil {
+		release()
+		spare.reject(claimRejection(err))
+		return err
+	}
+	if servers != nil {
+		binding := trace.Begin(timing.StageMCPSet)
+		raw, err := spare.adapter.Request(ctx, "set_mcp_servers", map[string]any{"servers": servers})
+		if err == nil && claude.MCPSetFailed(raw) {
+			err = errors.New("Claude Code could not bind the Multica tools")
+		}
+		binding(err)
+		if err != nil {
+			release()
+			spare.reject(timing.ReasonMCPFailed)
+			return err
+		}
+	}
+	norm := claude.NewNormalizer(r.contextName)
+	spare.claudeFrames.adopt(func(out claude.Output) { r.handle(norm, out) })
+	if err := r.install(ctx, spare.adapter, norm, release, version); err != nil {
+		return err
+	}
+	trace.SetPrepare(timing.PrepareSpare, "")
+	trace.Mark(timing.StageSpareClaimed)
+	return nil
+}
+
+// claimRejection is the closed-enum form of why a claim did not bind.
+func claimRejection(err error) string {
+	switch claude.ClaimReason(err) {
+	case "option_not_applied":
+		return timing.ReasonOptionNotApplied
+	case "settings_not_applied":
+		return timing.ReasonSettingsNotApplied
+	}
+	return timing.ReasonClaimRefused
 }
 
 // install makes a started adapter the runner's, unless Close came first, and

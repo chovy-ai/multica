@@ -94,6 +94,10 @@ type Options struct {
 	Now     func() time.Time
 	// TimingPath is the daemon's timing file; empty records no timing.
 	TimingPath string
+	// CodexSpare and ClaudeSpare, when set, keep a spare process of the provider
+	// ready for new conversations.
+	CodexSpare  *CodexSpareLauncher
+	ClaudeSpare *ClaudeSpareLauncher
 	// PreheatOldConversations reports whether opening a conversation with a
 	// native session may start its process, which runs its SessionStart hooks.
 	// nil allows it.
@@ -136,6 +140,7 @@ type Service struct {
 	imports imports
 	traces  *turnTraces
 	focus   *focusTracker
+	spares  *sparePool
 	// closed is closed when Close begins.
 	closed chan struct{}
 	// maintenanceKick asks for an early maintenance pass.
@@ -193,6 +198,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		traces:    newTurnTraces(timing.Open(opts.TimingPath, timing.Options{}), opts.Now),
 		focus:     newFocusTracker(),
 		closed:    make(chan struct{}), maintenanceKick: make(chan struct{}, 1)}
+	s.spares = newSparePool(s, opts)
 	s.computer = &computer.Manager{Command: opts.Computer}
 	s.computers.active = map[string]*computerExecution{}
 	s.batcher = NewBatcher(writer, BatcherOptions{
@@ -247,6 +253,7 @@ func (s *Service) Close(ctx context.Context) error {
 		s.endComputer(id)
 	}
 	s.computer.Close()
+	s.spares.close()
 	var errs []error
 	for _, r := range runners {
 		closeCtx, cancel := context.WithTimeout(ctx, closeTimeout)
@@ -309,6 +316,7 @@ func (s *Service) StopProviders(ctx context.Context) error {
 	runners := s.runners
 	s.runners = map[string]runner{}
 	s.mu.Unlock()
+	s.spares.stopAll()
 	var errs []error
 	for _, r := range runners {
 		closeCtx, cancel := context.WithTimeout(ctx, closeTimeout)
@@ -591,6 +599,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
 		OnBackgroundEnded: func([]BackgroundResult) { s.scheduleDelivery(conv.ID) },
 		NativeTrace:       func(turnID string) *timing.Trace { return s.traces.turn(conv, turnID, turnID, timing.TurnNative) },
+		ClaimSpare:        s.spares.claim,
 	}))
 }
 
@@ -613,6 +622,7 @@ func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (
 	return NewCodexRunner(CodexRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
+		ClaimSpare: s.spares.claim,
 	}), nil
 }
 
