@@ -75,7 +75,7 @@ describe("Claude host", () => {
     h.send({ ...start, resume: "native-1", model: "claude-opus-5-5", reasoning_effort: "high", permission_mode: "full-access",
       append_system_prompt: "ctx", mcp_servers: { multica: { type: "http", url: "http://127.0.0.1:1/mcp/t" } }, allowed_tools: ["mcp__multica__*"] });
     const result = await h.waitFor((f) => f.type === "result" && f.id === "r1");
-    expect(result.data).toEqual({ models: [{ value: "claude-opus-5-5" }] });
+    expect(result.data).toEqual({ models: [{ value: "claude-opus-5-5" }], timing: { sdk_load_ms: expect.any(Number), query_init_ms: expect.any(Number) } });
     const options = h.sdk.query.mock.calls[0]![0].options;
     expect(options).toMatchObject({
       pathToClaudeCodeExecutable: "/bin/claude", cwd: "/repo", resume: "native-1", model: "claude-opus-5-5", effort: "high",

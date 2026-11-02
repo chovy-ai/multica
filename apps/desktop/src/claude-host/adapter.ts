@@ -86,7 +86,9 @@ export class ClaudeAdapter {
 
   private async start(message: DaemonRequest<"start">): Promise<unknown> {
     if (this.query) throw new AdapterError("already_started", "this adapter already serves a conversation");
+    const loading = performance.now();
     const sdk = await this.sdk();
+    const sdkLoadMs = performance.now() - loading;
     this.prompts = new PromptQueue();
     this.controller = new AbortController();
     this.sessionId = message.resume;
@@ -110,8 +112,9 @@ export class ClaudeAdapter {
     this.pump = this.consume(this.query, this.generation);
     void this.pump.catch(() => {});
     // Initialization completes the handshake; failures surface to the start request.
+    const initializing = performance.now();
     const models = await this.query.supportedModels();
-    return { models };
+    return { models, timing: { sdk_load_ms: sdkLoadMs, query_init_ms: performance.now() - initializing } };
   }
 
   private send(message: DaemonRequest<"send">): undefined {

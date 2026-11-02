@@ -11,6 +11,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 	"github.com/multica-ai/multica/server/pkg/codexappserver"
 )
 
@@ -107,6 +108,7 @@ type codexTurn struct {
 	storageFailed bool
 	references    []Reference
 	createTask    bool
+	trace         *timing.Trace
 }
 
 type codexNative struct {
@@ -161,27 +163,37 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		r.mu.Unlock()
 		return ErrTurnRunning
 	}
+	trace := req.Trace
 	if err := r.limiter.TryAcquire(); err != nil {
 		r.mu.Unlock()
+		trace.MarkFailed(timing.StageRunnerLimiter, timing.ReasonConcurrencyLimit)
 		return err
 	}
-	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References, createTask: req.CreateTask, compacting: req.Compact}
+	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References, createTask: req.CreateTask, compacting: req.Compact, trace: trace}
 	r.turn = turn
+	trace.SetPrepareKind(prepareKindOf(r.server != nil && !r.restart))
 	r.mu.Unlock()
+	trace.Mark(timing.StageRunnerLimiter)
 
-	if _, err := r.batcher.AppendWait(ctx, r.rec.startBatch(req)); err != nil {
+	persisted := trace.Begin(timing.StageTurnPersist)
+	_, err := r.batcher.AppendWait(ctx, r.rec.startBatch(req))
+	persisted(err)
+	if err != nil {
 		r.mu.Lock()
 		r.turn = nil
 		r.mu.Unlock()
 		r.limiter.Release()
 		return err
 	}
-	server, native, err := r.ensureServer(ctx)
+	prepared := trace.Begin(timing.StagePrepareWait)
+	server, native, err := r.ensureServer(ctx, trace)
 	if err != nil {
+		prepared(err)
 		r.finish(turn, "failed", &turnError{kind: "provider_unavailable", message: err.Error()})
 		return err
 	}
-	threadID, err := r.thread(ctx, server, native)
+	threadID, err := r.thread(ctx, server, native, trace)
+	prepared(err)
 	if err != nil {
 		r.finish(turn, "failed", &turnError{kind: "provider_error", message: err.Error()})
 		return err
@@ -197,8 +209,10 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		return nil
 	}
 
+	submitted := trace.Begin(timing.StageProviderTurnStart)
 	if req.Compact {
 		_, err := server.Request(ctx, "thread/compact/start", map[string]any{"threadId": threadID})
+		submitted(err)
 		if err != nil {
 			if codexOutcomeUnknown(err) {
 				r.finish(turn, "failed", &turnError{kind: "outcome_unknown", message: err.Error()})
@@ -217,6 +231,7 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		"threadId": threadID, "effort": effortParam,
 		"input": []map[string]any{{"type": "text", "text": req.prompt(), "text_elements": []any{}}},
 	})
+	submitted(err)
 	if err != nil {
 		if codexOutcomeUnknown(err) {
 			r.finish(turn, "failed", &turnError{kind: "outcome_unknown", message: err.Error()})
@@ -374,7 +389,7 @@ func (r *CodexRunner) Close(context.Context) error {
 	return nil
 }
 
-func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNative, error) {
+func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (CodexServer, *codexNative, error) {
 	r.mu.Lock()
 	if r.server != nil && !r.restart {
 		server, native := r.server, r.native
@@ -402,11 +417,15 @@ func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNati
 		}
 		env = []string{ContextTokenEnv + "=" + token}
 	}
+	began := trace.Now()
 	server, err := r.start(ctx, r.handle, env)
+	markProcessStart(trace, timing.StageProviderSpawn, timing.StageProviderHandshake, began, server, err)
 	if err != nil {
 		return nil, nil, err
 	}
+	configured := trace.Begin(timing.StageProviderConfig)
 	raw, err := server.Request(ctx, "config/read", map[string]any{"cwd": cwd, "includeLayers": false})
+	configured(err)
 	if err != nil {
 		server.Stop()
 		return nil, nil, err
@@ -424,7 +443,9 @@ func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNati
 	}
 	contextURL, release, systemPrompt := "", func() {}, ""
 	if r.bind != nil && !bound {
+		bound := trace.Begin(timing.StageContextBind)
 		binding, rel, err := r.bind(context.Background(), token, r.currentContext)
+		bound(err)
 		if err != nil {
 			server.Stop()
 			return nil, nil, err
@@ -442,7 +463,7 @@ func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNati
 }
 
 // thread starts the conversation's native thread or resumes it.
-func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *codexNative) (string, error) {
+func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *codexNative, trace *timing.Trace) (string, error) {
 	r.mu.Lock()
 	session := r.session
 	r.mu.Unlock()
@@ -453,7 +474,9 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 	}
 	if session.ThreadID != "" && model == "" {
 		// An explicit model keeps resume from restoring a previous effort.
+		resolved := trace.Begin(timing.StageModelResolve)
 		def, err := defaultModel(ctx, server)
+		resolved(err)
 		if err != nil {
 			return "", err
 		}
@@ -511,14 +534,16 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 			params["approvalPolicy"], params["approvalsReviewer"], params["sandbox"] = nativePermissions(native)
 		}
 	}
-	method := "thread/start"
+	method, reason := "thread/start", timing.ReasonStart
 	if session.ThreadID != "" {
-		method = "thread/resume"
+		method, reason = "thread/resume", timing.ReasonResume
 		params["threadId"], params["excludeTurns"] = session.ThreadID, true
 	}
 	setupCtx, cancel := context.WithTimeout(ctx, threadSetupTimeout)
 	defer cancel()
+	threadReady := trace.BeginReason(timing.StageThreadPrepare, reason)
 	raw, err := server.Request(setupCtx, method, params)
+	threadReady(err)
 	if err != nil {
 		return "", err
 	}
@@ -688,6 +713,7 @@ func (r *CodexRunner) handle(frame codexappserver.Frame) {
 }
 
 func (r *CodexRunner) appendOutput(turn *codexTurn, events []outputEvent) {
+	markProviderOutput(turn.trace, events)
 	r.mu.Lock()
 	failed := turn.storageFailed
 	r.mu.Unlock()
@@ -753,6 +779,7 @@ func (r *CodexRunner) finish(turn *codexTurn, status string, failure *turnError)
 	}
 	turn.normMu.Unlock()
 	_ = r.batcher.Append(r.rec.completionBatch(turn.id, turn.nativeTurnID, status, failure, finals), true)
+	finishTrace(turn.trace, status, failure)
 	if r.onTurnEnd != nil {
 		r.onTurnEnd(turn.id)
 	}

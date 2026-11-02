@@ -57,8 +57,8 @@ func NewTrace(log *Log, opts TraceOptions) *Trace {
 	}
 	base := Record{
 		ConversationID: validID(opts.ConversationID), RequestID: validID(opts.RequestID), TurnID: validID(opts.TurnID),
-		Provider: opts.Provider, TurnKind: opts.TurnKind, Origin: valueOr(opts.Caller.Origin, OriginUnknown), ClientKind: valueOr(opts.Caller.ClientKind, ClientUnknown),
-		Connection: valueOr(opts.Caller.Connection, ConnectionUnknown),
+		Provider: opts.Provider, TurnKind: opts.TurnKind, Origin: closedOr(origins, opts.Caller.Origin, OriginUnknown), ClientKind: closedOr(clientKinds, opts.Caller.ClientKind, ClientUnknown),
+		Connection: closedOr(connections, opts.Caller.Connection, ConnectionUnknown),
 		Background: opts.TurnKind == TurnBackground || opts.TurnKind == TurnNative,
 	}
 	base.TurnIndex = opts.TurnIndex
@@ -75,11 +75,13 @@ func validID(id string) string {
 	return ""
 }
 
-func valueOr(value, fallback string) string {
-	if value == "" {
-		return fallback
+// closedOr keeps an unrecognized caller value out of a record: the caller is
+// then unknown, which is what the dimension means, rather than absent.
+func closedOr(set map[string]bool, value, fallback string) string {
+	if set[value] {
+		return value
 	}
-	return value
+	return fallback
 }
 
 // Now reads the trace's clock; a nil trace reads the wall clock.
@@ -133,6 +135,14 @@ func (t *Trace) MarkReason(stage, reason string) {
 	t.write(t.now(), stage, EventMark, func(r *Record) { r.Reason = reason })
 }
 
+// MarkAt records that stage was reached earlier, at at.
+func (t *Trace) MarkAt(stage string, at time.Time) {
+	if t == nil {
+		return
+	}
+	t.write(at, stage, EventMark, nil)
+}
+
 // MarkFailed records a stage that failed at once.
 func (t *Trace) MarkFailed(stage, reason string) {
 	if t == nil {
@@ -159,9 +169,25 @@ func (t *Trace) OnceFor(stage, key, reason string, caller Caller) bool {
 	}
 	t.write(t.now(), stage, EventMark, func(r *Record) {
 		r.Reason = reason
-		r.Origin, r.ClientKind, r.Connection = valueOr(caller.Origin, OriginUnknown), valueOr(caller.ClientKind, ClientUnknown), valueOr(caller.Connection, ConnectionUnknown)
+		r.Origin = closedOr(origins, caller.Origin, OriginUnknown)
+		r.ClientKind = closedOr(clientKinds, caller.ClientKind, ClientUnknown)
+		r.Connection = closedOr(connections, caller.Connection, ConnectionUnknown)
 	})
 	return true
+}
+
+// Reached reports whether Once or OnceFor already recorded this mark, so a
+// caller can skip the work of deciding whether to record it again.
+func (t *Trace) Reached(stage, key string) bool {
+	if t == nil {
+		return true
+	}
+	if key != "" {
+		stage += "\x00" + key
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.seen[stage]
 }
 
 func (t *Trace) claim(key string) bool {

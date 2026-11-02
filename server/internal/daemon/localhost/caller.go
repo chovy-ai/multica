@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 )
 
 // callerKind is who reached the v2 API. The entry layer authenticates a
@@ -36,6 +38,10 @@ const (
 // client reconnecting.
 const headerClientID = "X-Multica-Client-ID"
 
+// headerClientKind names the kind of client on the other device. It only
+// labels timing records, so an unknown or absent value is just unknown.
+const headerClientKind = "X-Multica-Client-Kind"
+
 // caller is who made a request: its kind, the client key host requests
 // route by ("local/<id>" or "<peer>/<id>"), and for a remote device its
 // identity.
@@ -44,6 +50,18 @@ type caller struct {
 	clientKey  string
 	peer       string
 	deviceName string
+	// clientKind is what a remote device says it is; see timing.
+	clientKind string
+}
+
+// timing is who this caller is on a timing record. Only this device's own
+// callers are known to be Desktop on a loopback connection; the connection a
+// remote caller's stream uses is not visible here.
+func (c caller) timing() timing.Caller {
+	if c.kind != callerRemote {
+		return timing.Caller{Origin: timing.OriginLocal, ClientKind: timing.ClientDesktop, Connection: timing.ConnectionLoopback}
+	}
+	return timing.Caller{Origin: timing.OriginP2P, ClientKind: c.clientKind, Connection: timing.ConnectionUnknown}
 }
 
 func clientKey(prefix string, h http.Header) string {

@@ -11,6 +11,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 )
 
 var (
@@ -67,6 +68,8 @@ type SendRequest struct {
 	Hidden bool
 	// Compact invokes the provider's native context compaction.
 	Compact bool
+	// Trace records the turn's timing; nil records nothing.
+	Trace *timing.Trace
 }
 
 func (r SendRequest) prompt() string {
@@ -108,6 +111,8 @@ type ClaudeRunner struct {
 	// onBackgroundEnded runs when background tasks end with no turn
 	// running and no native reply started.
 	onBackgroundEnded func(results []BackgroundResult)
+	// nativeTrace starts the timing of a turn Claude began on its own.
+	nativeTrace func(turnID string) *timing.Trace
 	// taskTurns maps a background task item to the turn that started it;
 	// later events of the task are recorded under that turn.
 	taskTurns map[string]string
@@ -146,6 +151,10 @@ type claudeTurn struct {
 	// unlimited marks a native turn that started over the concurrency
 	// limit; it holds no limiter slot.
 	unlimited bool
+	trace     *timing.Trace
+	// inputSent is set once the prompt went to the adapter; earlier messages
+	// are the Query starting up, not a reply. Guarded by ClaudeRunner.mu.
+	inputSent bool
 }
 
 // BackgroundResult is a background task that ended after its turn.
@@ -173,6 +182,8 @@ type ClaudeRunnerOptions struct {
 	OnBackgroundEnded func(results []BackgroundResult)
 	// Context, when set, gives the adapter Multica's context tools.
 	Context ContextBinder
+	// NativeTrace, when set, starts the timing of a turn Claude began itself.
+	NativeTrace func(turnID string) *timing.Trace
 }
 
 // NewClaudeRunner returns a runner for one conversation.
@@ -184,7 +195,7 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 		rec:            turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		conversationID: opts.ConversationID, start: opts.Start, session: opts.Session,
 		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName, bindContext: opts.Context,
-		onTurnEnd: opts.OnTurnEnd, onBackgroundEnded: opts.OnBackgroundEnded,
+		onTurnEnd: opts.OnTurnEnd, onBackgroundEnded: opts.OnBackgroundEnded, nativeTrace: opts.NativeTrace,
 		taskTurns: map[string]string{}, stopped: map[string]bool{},
 	}
 }
@@ -203,15 +214,21 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		r.mu.Unlock()
 		return ErrTurnRunning
 	}
+	trace := req.Trace
 	if err := r.limiter.TryAcquire(); err != nil {
 		r.mu.Unlock()
+		trace.MarkFailed(timing.StageRunnerLimiter, timing.ReasonConcurrencyLimit)
 		return err
 	}
-	turn := &claudeTurn{id: req.TurnID, references: req.References, createTask: req.CreateTask, compacting: req.Compact}
+	turn := &claudeTurn{id: req.TurnID, references: req.References, createTask: req.CreateTask, compacting: req.Compact, trace: trace}
 	r.turn = turn
+	trace.SetPrepareKind(prepareKindOf(r.adapter != nil))
 	r.mu.Unlock()
+	trace.Mark(timing.StageRunnerLimiter)
 
+	persisted := trace.Begin(timing.StageTurnPersist)
 	_, err := r.batcher.AppendWait(ctx, r.rec.startBatch(req))
+	persisted(err)
 	if err != nil {
 		r.mu.Lock()
 		r.turn = nil
@@ -220,7 +237,9 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		return err
 	}
 
-	adapter, err := r.ensureAdapter(ctx)
+	prepared := trace.Begin(timing.StagePrepareWait)
+	adapter, err := r.ensureAdapter(ctx, trace)
+	prepared(err)
 	if err != nil {
 		r.finish(turn, "failed", &turnError{kind: "provider_unavailable", message: err.Error()})
 		return err
@@ -229,7 +248,13 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		return nil
 	}
 	content := []map[string]any{{"type": "text", "text": req.prompt()}}
-	if _, err := adapter.Request(ctx, "send", map[string]any{"request_id": req.RequestID, "content": content}); err != nil {
+	r.mu.Lock()
+	turn.inputSent = true
+	r.mu.Unlock()
+	queued := trace.Begin(timing.StageProviderInputQueued)
+	_, err = adapter.Request(ctx, "send", map[string]any{"request_id": req.RequestID, "content": content})
+	queued(err)
+	if err != nil {
 		var adapterErr *claude.AdapterError
 		if errors.As(err, &adapterErr) && (adapterErr.Dispatch == "not_dispatched" || adapterErr.Dispatch == "rejected") {
 			r.finish(turn, "failed", &turnError{kind: "provider_error", message: err.Error()})
@@ -322,7 +347,7 @@ func (r *ClaudeRunner) Close(ctx context.Context) error {
 	return adapter.Close(ctx)
 }
 
-func (r *ClaudeRunner) ensureAdapter(ctx context.Context) (ClaudeAdapter, error) {
+func (r *ClaudeRunner) ensureAdapter(ctx context.Context, trace *timing.Trace) (ClaudeAdapter, error) {
 	r.mu.Lock()
 	if r.adapter != nil {
 		a := r.adapter
@@ -332,7 +357,9 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context) (ClaudeAdapter, error)
 	r.mu.Unlock()
 
 	norm := claude.NewNormalizer(r.contextName)
+	began := trace.Now()
 	adapter, err := r.start(ctx, func(out claude.Output) { r.handle(norm, out) })
+	markProcessStart(trace, timing.StageAdapterSpawn, timing.StageAdapterReady, began, adapter, err)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +374,9 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context) (ClaudeAdapter, error)
 	r.mu.Unlock()
 	release := func() {}
 	if r.bindContext != nil {
+		bound := trace.Begin(timing.StageContextBind)
 		binding, rel, err := r.bindContext(context.Background(), "", r.currentContext)
+		bound(err)
 		if err != nil {
 			_ = adapter.Close(ctx)
 			return nil, err
@@ -359,11 +388,14 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context) (ClaudeAdapter, error)
 		}
 		fields["allowed_tools"] = []string{"mcp__" + contextName(r.contextName) + "__*"}
 	}
-	if _, err := adapter.Request(ctx, "start", fields); err != nil {
+	starting := trace.Now()
+	started, err := adapter.Request(ctx, "start", fields)
+	if err != nil {
 		release()
 		_ = adapter.Close(ctx)
 		return nil, err
 	}
+	markAdapterStart(trace, starting, started)
 	r.mu.Lock()
 	r.adapter, r.norm, r.releaseContext = adapter, norm, release
 	r.mu.Unlock()
@@ -400,9 +432,13 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 	r.mu.Lock()
 	turn := r.turn
 	cancelRequested := turn != nil && turn.cancelRequested
+	inputSent := turn != nil && turn.inputSent
 	r.mu.Unlock()
 	switch out.Type {
 	case "sdk_message":
+		if inputSent {
+			turn.trace.Once(timing.StageProviderFirstMessage)
+		}
 		if turn != nil && turn.compacting {
 			var status struct {
 				Type          string `json:"type"`
@@ -511,6 +547,7 @@ func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
 	for i, e := range events {
 		out[i] = claudeOutput(e)
 	}
+	markProviderOutput(turn.trace, out)
 	batch := r.rec.outputBatch(turn.id, out)
 	if err := r.batcher.Append(batch, false); err != nil {
 		r.mu.Lock()
@@ -561,6 +598,7 @@ func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnErro
 	lastMessageID := turn.lastMessageID
 	r.mu.Unlock()
 	_ = r.batcher.Append(r.rec.completionBatch(turn.id, lastMessageID, status, failure, finals), true)
+	finishTrace(turn.trace, status, failure)
 	if r.onTurnEnd != nil {
 		r.onTurnEnd(turn.id)
 	}
@@ -731,6 +769,9 @@ func (r *ClaudeRunner) startNativeTurn() *claudeTurn {
 	r.turn = turn
 	r.ended = nil
 	r.mu.Unlock()
+	if r.nativeTrace != nil {
+		turn.trace = r.nativeTrace(turn.id)
+	}
 	_ = r.batcher.Append(r.rec.startBatch(SendRequest{TurnID: turn.id, RequestID: turn.id, Hidden: true}), true)
 	return turn
 }

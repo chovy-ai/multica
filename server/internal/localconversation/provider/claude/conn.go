@@ -12,6 +12,7 @@ import (
 	"io"
 	"strconv"
 	"sync"
+	"time"
 )
 
 // ProtocolVersion is the adapter protocol this daemon speaks.
@@ -278,4 +279,34 @@ func messageText(raw json.RawMessage) string {
 		return s
 	}
 	return string(raw)
+}
+
+// StartTiming is what the adapter measured inside a start request. Fields are
+// nil when an older adapter's result does not carry them.
+type StartTiming struct {
+	SDKLoad   *time.Duration
+	QueryInit *time.Duration
+}
+
+// ParseStartTiming reads the optional timing of a start result; anything
+// malformed reads as absent, because timing must never fail a start.
+func ParseStartTiming(raw json.RawMessage) StartTiming {
+	var result struct {
+		Timing struct {
+			SDKLoadMs   *float64 `json:"sdk_load_ms"`
+			QueryInitMs *float64 `json:"query_init_ms"`
+		} `json:"timing"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return StartTiming{}
+	}
+	return StartTiming{SDKLoad: millis(result.Timing.SDKLoadMs), QueryInit: millis(result.Timing.QueryInitMs)}
+}
+
+func millis(ms *float64) *time.Duration {
+	if ms == nil || *ms < 0 {
+		return nil
+	}
+	d := time.Duration(*ms * float64(time.Millisecond))
+	return &d
 }

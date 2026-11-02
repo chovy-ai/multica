@@ -204,7 +204,7 @@
         "version": { "$ref": "#/$defs/version" },
         "type": { "const": "result" },
         "id": { "$ref": "#/$defs/id" },
-        "data": {}
+        "data": { "description": "Request-specific. A start result carries { models, timing: { sdk_load_ms, query_init_ms } }; an older adapter omits timing, so the daemon treats it as optional." }
       }
     },
     "error_message": {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/url"
@@ -156,7 +157,7 @@ func (v *V2) ServeRemote(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]any{"kind": "device_link_off", "message": "This device does not share its conversations"}})
 		return
 	}
-	v.serve(w, r, caller{kind: callerRemote, clientKey: clientKey(peer.ID, r.Header), peer: peer.ID, deviceName: peer.DeviceName})
+	v.serve(w, r, caller{kind: callerRemote, clientKey: clientKey(peer.ID, r.Header), peer: peer.ID, deviceName: peer.DeviceName, clientKind: r.Header.Get(headerClientKind)})
 }
 
 func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
@@ -505,6 +506,7 @@ func optionalString(raw json.RawMessage) (value *string, clear bool, err error) 
 }
 
 func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id string) {
+	received := time.Now()
 	var body commandBody
 	if err := decodeBody(r, &body); err != nil {
 		writeV2Error(w, err)
@@ -517,6 +519,17 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 	switch body.Type {
 	case "send", "answer", "queue_enqueue", "compact":
 		v.actedOn(id, callerOf(r.Context()))
+	}
+	switch body.Type {
+	case "send", "compact":
+		v.svc.NoteRequest(id, body.RequestID, received, callerOf(r.Context()).timing())
+	case "queue_enqueue":
+		var item struct {
+			RequestID string `json:"requestId"`
+		}
+		if json.Unmarshal(body.Item, &item) == nil {
+			v.svc.NoteRequest(id, item.RequestID, received, callerOf(r.Context()).timing())
+		}
 	}
 	switch body.Type {
 	case "compact":
@@ -790,6 +803,11 @@ func (v *V2) wsSubscribe(ctx context.Context, c *wsConn, scopeID int64, msg wsCl
 	c.mu.Unlock()
 	_ = c.send(statusMessage(msg.ConversationID, "subscribed", high, nil))
 	v.setPresence(c, msg.ConversationID, true)
+	// A client without an id is still one subscriber per connection.
+	subscriberKey := c.caller.clientKey
+	if subscriberKey == "" {
+		subscriberKey = fmt.Sprintf("%p", c)
+	}
 	go func() {
 		live := false
 		for {
@@ -809,6 +827,7 @@ func (v *V2) wsSubscribe(ctx context.Context, c *wsConn, scopeID int64, msg wsCl
 				sub.Close()
 				return
 			}
+			v.svc.NoteDelivered(events, subscriberKey, c.caller.timing(), sub.Live())
 			if !live && sub.Live() {
 				live = true
 				_ = c.send(statusMessage(msg.ConversationID, "live", events[len(events)-1].Seq, nil))

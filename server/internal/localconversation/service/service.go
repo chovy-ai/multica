@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/settings"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 	"github.com/multica-ai/multica/server/internal/localconversation/workspace"
 )
 
@@ -83,6 +84,8 @@ type Options struct {
 	Catalog *catalog.Catalog
 	Logger  *slog.Logger
 	Now     func() time.Time
+	// TimingPath is the daemon's timing file; empty records no timing.
+	TimingPath string
 }
 
 // Service is the Go-owned local conversation service: one store, one
@@ -117,6 +120,7 @@ type Service struct {
 	turnEnd func(conversationID string)
 	side    sideWorkspaces
 	imports imports
+	traces  *turnTraces
 	// closed is closed when Close begins.
 	closed chan struct{}
 }
@@ -167,11 +171,16 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		delivery:  deliveries{timers: map[string]*time.Timer{}},
 		side:      sideWorkspaces{entries: map[string]SideWorkspace{}},
 		imports:   imports{busy: map[int64]context.CancelFunc{}},
+		traces:    newTurnTraces(timing.Open(opts.TimingPath, timing.Options{}), opts.Now),
 		closed:    make(chan struct{})}
 	s.computer = &computer.Manager{Command: opts.Computer}
 	s.computers.active = map[string]*computerExecution{}
 	s.batcher = NewBatcher(writer, BatcherOptions{
-		Published: s.hub.Publish,
+		Published: func(id string, committed store.Committed) {
+			s.traces.reached(committed.Events, timing.StageBatcherFirstOutput)
+			s.hub.Publish(id, committed)
+			s.traces.reached(committed.Events, timing.StageHubFirstOutputPublish)
+		},
 		Failed: func(id string, err error) {
 			if !errors.Is(err, store.ErrDuplicateRequest) {
 				opts.Logger.Error("local conversations: commit failed", "conversation_id", id, "error", err)
@@ -230,6 +239,7 @@ func (s *Service) Close(ctx context.Context) error {
 	s.batcher.Close()
 	s.writer.Close()
 	errs = append(errs, s.store.Close())
+	s.traces.log.Close()
 	return errors.Join(errs...)
 }
 
@@ -410,13 +420,16 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 	if err := s.acceptTurn(); err != nil {
 		return SendResult{}, err
 	}
+	turnID := "turn-" + cmd.RequestID
+	trace := s.traces.turn(conv, cmd.RequestID, turnID, timing.TurnUser)
+	created := trace.Begin(timing.StageRunnerCreate)
 	runner, err := s.runner(ctx, conv)
+	created(err)
 	if err != nil {
 		return SendResult{}, err
 	}
-	turnID := "turn-" + cmd.RequestID
 	err = runner.Send(ctx, SendRequest{TurnID: turnID, RequestID: cmd.RequestID, Fingerprint: fingerprint, MessageID: "msg-" + cmd.RequestID, Text: cmd.Text, Prompt: prompt, AttachmentIDs: cmd.AttachmentIDs, References: readableReferences(cmd.References), CreateTask: len(readableReferences(cmd.References)) < len(cmd.References),
-		Title: firstTitle(conv.TurnCount, conv.TitleMode, conv.Title, cmd.Text)})
+		Title: firstTitle(conv.TurnCount, conv.TitleMode, conv.Title, cmd.Text), Trace: trace})
 	switch {
 	case errors.Is(err, store.ErrDuplicateRequest):
 		// A concurrent retry committed first.
@@ -553,6 +566,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
 		OnBackgroundEnded: func([]BackgroundResult) { s.scheduleDelivery(conv.ID) },
+		NativeTrace:       func(turnID string) *timing.Trace { return s.traces.turn(conv, turnID, turnID, timing.TurnNative) },
 	}))
 }
 
