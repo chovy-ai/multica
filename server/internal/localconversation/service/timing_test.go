@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
@@ -415,4 +416,113 @@ func TestTimingRunnerRecordsAFullLimiter(t *testing.T) {
 	if !strings.Contains(string(raw), `"stage":"runner.limiter"`) || !strings.Contains(string(raw), `"reason":"concurrency_limit"`) {
 		t.Fatalf("records = %s", raw)
 	}
+}
+
+func TestTimingRecordsTheFirstFrameAndATurnSummaryOnce(t *testing.T) {
+	t.Parallel()
+
+	path := timingPath(t)
+	f, server := timedCodexService(t, path, nil)
+	f.create(t, "conv-1", "codex")
+	if _, err := f.svc.Send(context.Background(), SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	server.notify(t, "item/agentMessage/delta", `{"threadId":"th-1","turnId":"tu-1","itemId":"a1","delta":"one"}`)
+	server.notify(t, "item/agentMessage/delta", `{"threadId":"th-1","turnId":"tu-1","itemId":"a1","delta":"two"}`)
+	server.notify(t, "turn/completed", `{"threadId":"th-1","turn":{"id":"tu-1","status":"completed"}}`)
+	eventually(t, "the summary", func() bool {
+		return slices.Contains(stagesOf(timingRecords(t, f.svc, path)), timing.StageTurnOutputSummary)
+	})
+	records := timingRecords(t, f.svc, path)
+	first, summaries := 0, 0
+	for _, r := range records {
+		switch r.Stage {
+		case timing.StageProviderFirstFrame:
+			first++
+		case timing.StageTurnOutputSummary:
+			summaries++
+			if r.TurnID != "turn-r1" || r.Count == nil || *r.Count < 3 || r.Bytes == nil || *r.Bytes == 0 || r.MaxGapMs == nil {
+				t.Fatalf("summary = %+v", r)
+			}
+		}
+	}
+	if first != 1 || summaries != 1 {
+		t.Fatalf("first frames %d, summaries %d in %v", first, summaries, stagesOf(records))
+	}
+}
+
+func TestTimingRecordsWhyACodexProcessEnded(t *testing.T) {
+	t.Parallel()
+
+	path := timingPath(t)
+	f, server := timedCodexService(t, path, nil)
+	f.create(t, "conv-1", "codex")
+	if _, err := f.svc.Send(context.Background(), SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	server.Stop()
+	eventually(t, "the exit", func() bool {
+		return slices.Contains(stagesOf(timingRecords(t, f.svc, path)), timing.StageProviderExit)
+	})
+	if r := findRecord(t, timingRecords(t, f.svc, path), timing.StageProviderExit, ""); r.Reason != timing.ReasonExited || r.TurnID != "turn-r1" {
+		t.Fatalf("exit during a turn = %+v", r)
+	}
+}
+
+func TestTimingRecordsClaudeSessionAndResumeTranscriptSize(t *testing.T) {
+	t.Parallel()
+
+	path := timingPath(t)
+	f := newServiceFixtureWith(t, filepath.Join(t.TempDir(), "c.sqlite"), Options{TimingPath: path})
+	f.create(t, "conv-1", "claude")
+	ctx := context.Background()
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	a := f.allAdapters()[0]
+	a.emit(t, `{"type":"system","subtype":"init","session_id":"sess-1"}`, `{"type":"assistant","uuid":"u1","session_id":"sess-1","message":{"id":"m1","content":[{"type":"text","text":"hello"}]}}`, turnDone)
+	eventually(t, "the turn to finish", func() bool {
+		return slices.Contains(stagesOf(timingRecords(t, f.svc, path)), timing.StageTurnFinished)
+	})
+	records := timingRecords(t, f.svc, path)
+	if r := findRecord(t, records, timing.StageProviderSessionReady, ""); r.TurnID != "turn-r1" {
+		t.Fatalf("session ready = %+v", r)
+	}
+
+}
+
+func TestTimingRecordsTheTranscriptSizeOfAResume(t *testing.T) {
+	t.Parallel()
+
+	path := timingPath(t)
+	log := timing.Open(path, timing.Options{})
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	r := NewClaudeRunner(ClaudeRunnerOptions{
+		ConversationID: "conv-1", ScopeID: f.scopeID, Files: f.store, Session: ClaudeSession{ProviderSessionID: "sess-1", Fields: map[string]any{}}, Batcher: f.batcher, Limiter: f.limiter,
+		TranscriptSize: func(id string) (int64, bool) { return int64(len(id)) * 100, id == "sess-1" },
+		Start: func(_ context.Context, h claude.Handler) (ClaudeAdapter, error) {
+			return &fakeAdapter{handler: h, done: make(chan struct{})}, nil
+		},
+	})
+	t.Cleanup(func() { _ = r.Close(context.Background()) })
+	if err := r.Prepare(context.Background(), timing.NewTrace(log, timing.TraceOptions{ConversationID: "conv-1"})); err != nil {
+		t.Fatal(err)
+	}
+	var found *timing.Record
+	eventually(t, "the size", func() bool {
+		log.Flush()
+		raw, _ := os.ReadFile(path)
+		for _, line := range bytes.Split(raw, []byte("\n")) {
+			var record timing.Record
+			if json.Unmarshal(line, &record) == nil && record.Stage == timing.StageThreadPrepare && record.Bytes != nil {
+				found = &record
+				return true
+			}
+		}
+		return false
+	})
+	if *found.Bytes != 600 || found.Reason != timing.ReasonResume {
+		t.Fatalf("record = %+v", found)
+	}
+	log.Close()
 }

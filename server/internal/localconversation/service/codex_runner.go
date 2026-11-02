@@ -64,6 +64,7 @@ type CodexRunner struct {
 	catalogServer  CodexServer
 	catalogDefault string
 	noteDefault    func(string)
+	processTrace   func() *timing.Trace
 
 	rec     turnRecorder
 	start   StartCodexServer
@@ -149,6 +150,8 @@ type CodexRunnerOptions struct {
 	ClaimSpare func(ctx context.Context, provider string) *parkedSpare
 	// NoteDefault, when set, hears the default model a running Codex reported.
 	NoteDefault func(model string)
+	// ProcessTrace, when set, records what happens to the process between turns.
+	ProcessTrace func() *timing.Trace
 }
 
 // NewCodexRunner returns a runner for one conversation.
@@ -159,7 +162,7 @@ func NewCodexRunner(opts CodexRunnerOptions) *CodexRunner {
 	return &CodexRunner{
 		rec:   turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		start: opts.Start, batcher: opts.Batcher, limiter: opts.Limiter, context: contextName(opts.ContextMCPName), session: opts.Session,
-		bind: opts.Context, claimSpare: opts.ClaimSpare, onTurnEnd: opts.OnTurnEnd, noteDefault: opts.NoteDefault, gate: newPrepareGate(),
+		bind: opts.Context, claimSpare: opts.ClaimSpare, onTurnEnd: opts.OnTurnEnd, noteDefault: opts.NoteDefault, processTrace: opts.ProcessTrace, gate: newPrepareGate(),
 	}
 }
 
@@ -913,6 +916,7 @@ func (r *CodexRunner) handle(frame codexappserver.Frame) {
 		}
 		return
 	}
+	turn.trace.Once(timing.StageProviderFirstFrame)
 	if turn.nativeTurnID == "" {
 		if turn.compacting && frame.Method == "turn/started" && p.Turn.ID != "" {
 			turn.nativeTurnID = p.Turn.ID
@@ -1029,12 +1033,18 @@ func (r *CodexRunner) watch(server CodexServer) {
 	r.mu.Lock()
 	if r.server != server {
 		r.mu.Unlock()
+		markProcessExit(r.processTrace, nil, timing.ReasonStopped)
 		return
 	}
 	r.server, r.native, r.contextURL, r.contextToken = nil, nil, "", ""
 	turn, release := r.turn, r.releaseContext
 	r.releaseContext = nil
 	r.mu.Unlock()
+	var running *timing.Trace
+	if turn != nil {
+		running = turn.trace
+	}
+	markProcessExit(r.processTrace, running, timing.ReasonExited)
 	if release != nil {
 		release()
 	}

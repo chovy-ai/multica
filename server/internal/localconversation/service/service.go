@@ -204,6 +204,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	s.batcher = NewBatcher(writer, BatcherOptions{
 		Published: func(id string, committed store.Committed) {
 			s.traces.reached(committed.Events, timing.StageBatcherFirstOutput)
+			s.traces.observe(committed.Events)
 			s.hub.Publish(id, committed)
 			s.traces.reached(committed.Events, timing.StageHubFirstOutputPublish)
 		},
@@ -599,6 +600,8 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
 		OnBackgroundEnded: func([]BackgroundResult) { s.scheduleDelivery(conv.ID) },
 		NativeTrace:       func(turnID string) *timing.Trace { return s.traces.turn(conv, turnID, turnID, timing.TurnNative) },
+		ProcessTrace:      func() *timing.Trace { return s.traces.process(conv.ID, conv.Provider) },
+		TranscriptSize:    s.claudeTranscriptSize,
 		ClaimSpare:        s.spares.claim,
 	}))
 }
@@ -623,7 +626,15 @@ func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
 		ClaimSpare: s.spares.claim, NoteDefault: s.noteCodexDefault,
+		ProcessTrace: func() *timing.Trace { return s.traces.process(conv.ID, conv.Provider) },
 	}), nil
+}
+
+func (s *Service) claudeTranscriptSize(id string) (int64, bool) {
+	if s.opts.Catalog == nil {
+		return 0, false
+	}
+	return s.opts.Catalog.ClaudeTranscriptSize(id)
 }
 
 func (s *Service) noteCodexDefault(model string) {

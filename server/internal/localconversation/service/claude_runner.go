@@ -116,6 +116,10 @@ type ClaudeRunner struct {
 	onBackgroundEnded func(results []BackgroundResult)
 	// nativeTrace starts the timing of a turn Claude began on its own.
 	nativeTrace func(turnID string) *timing.Trace
+	// processTrace records what happens to the process between turns.
+	processTrace func() *timing.Trace
+	// transcriptSize measures the session file a resume reloads.
+	transcriptSize func(id string) (int64, bool)
 	// taskTurns maps a background task item to the turn that started it;
 	// later events of the task are recorded under that turn.
 	taskTurns map[string]string
@@ -196,6 +200,10 @@ type ClaudeRunnerOptions struct {
 	Context ContextBinder
 	// NativeTrace, when set, starts the timing of a turn Claude began itself.
 	NativeTrace func(turnID string) *timing.Trace
+	// ProcessTrace, when set, records what happens to the process between turns.
+	ProcessTrace func() *timing.Trace
+	// TranscriptSize, when set, measures the session file a resume reloads.
+	TranscriptSize func(id string) (int64, bool)
 	// ClaimSpare, when set, offers a parked process for a new conversation.
 	ClaimSpare func(ctx context.Context, provider string) *parkedSpare
 }
@@ -209,7 +217,7 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 		rec:            turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		conversationID: opts.ConversationID, start: opts.Start, session: opts.Session,
 		batcher: opts.Batcher, limiter: opts.Limiter, now: opts.Now, contextName: opts.ContextMCPName, bindContext: opts.Context,
-		claimSpare: opts.ClaimSpare, onTurnEnd: opts.OnTurnEnd, onBackgroundEnded: opts.OnBackgroundEnded, nativeTrace: opts.NativeTrace,
+		claimSpare: opts.ClaimSpare, onTurnEnd: opts.OnTurnEnd, onBackgroundEnded: opts.OnBackgroundEnded, nativeTrace: opts.NativeTrace, processTrace: opts.ProcessTrace, transcriptSize: opts.TranscriptSize,
 		taskTurns: map[string]string{}, stopped: map[string]bool{}, gate: newPrepareGate(),
 	}
 }
@@ -530,11 +538,20 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context, trace *timing.Trace) e
 	for k, v := range r.session.Fields {
 		fields[k] = v
 	}
-	if id := r.session.ProviderSessionID; id != "" {
-		fields["resume"] = id
+	resume := r.session.ProviderSessionID
+	if resume != "" {
+		fields["resume"] = resume
 	}
 	version := r.settingsVersion
 	r.mu.Unlock()
+	if resume != "" && r.transcriptSize != nil {
+		// Finding the file walks the projects folder, which must not delay a start.
+		go func() {
+			if size, ok := r.transcriptSize(resume); ok {
+				trace.MarkBytes(timing.StageThreadPrepare, timing.ReasonResume, size)
+			}
+		}()
+	}
 	release := func() {}
 	if r.bindContext != nil {
 		bound := trace.Begin(timing.StageContextBind)
@@ -673,12 +690,18 @@ func (r *ClaudeRunner) watch(adapter ClaudeAdapter) {
 	r.mu.Lock()
 	if r.adapter != adapter {
 		r.mu.Unlock()
+		markProcessExit(r.processTrace, nil, timing.ReasonStopped)
 		return
 	}
 	r.adapter = nil
 	turn, release := r.turn, r.releaseContext
 	r.releaseContext = nil
 	r.mu.Unlock()
+	var running *timing.Trace
+	if turn != nil {
+		running = turn.trace
+	}
+	markProcessExit(r.processTrace, running, timing.ReasonExited)
 	if release != nil {
 		release()
 	}
@@ -729,6 +752,9 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 		r.normMu.Unlock()
 		if sessionID != "" {
 			r.rememberSession(sessionID)
+			if turn != nil {
+				turn.trace.Once(timing.StageProviderSessionReady)
+			}
 		}
 		events = r.routeTaskEvents(turn, events)
 		if turn == nil && len(events) > 0 {

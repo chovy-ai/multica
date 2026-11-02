@@ -273,8 +273,8 @@ func (c *Catalog) readAccount(ctx context.Context, provider string, session *Ses
 	return read
 }
 
-// transcript reads the tail of the provider's own session file.
-func (c *Catalog) transcript(provider, id string) [][]byte {
+// sessionFile finds the provider's own session file, or "" when it has none.
+func (c *Catalog) sessionFile(provider, id string) string {
 	root, depth := filepath.Join(c.claudeDir, "projects"), 1
 	if provider == "codex" {
 		root, depth = filepath.Join(c.codexDir, "sessions"), 4
@@ -286,11 +286,33 @@ func (c *Catalog) transcript(provider, id string) [][]byte {
 	if path == "" {
 		path = findSessionFile(root, id+".jsonl", depth)
 		if path == "" {
-			return nil
+			return ""
 		}
 		c.mu.Lock()
 		c.paths[key] = path
 		c.mu.Unlock()
+	}
+	return path
+}
+
+// ClaudeTranscriptSize is the size of the session file a resume reloads.
+func (c *Catalog) ClaudeTranscriptSize(id string) (int64, bool) {
+	path := c.sessionFile("claude", id)
+	if path == "" {
+		return 0, false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	return info.Size(), true
+}
+
+// transcript reads the tail of the provider's own session file.
+func (c *Catalog) transcript(provider, id string) [][]byte {
+	path := c.sessionFile(provider, id)
+	if path == "" {
+		return nil
 	}
 	f, err := os.Open(path)
 	if err != nil {

@@ -71,6 +71,12 @@ func TestClaudeModelsAndUsageComeFromTheCLI(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(projects, "abc-123.jsonl"), []byte(transcript), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if size, ok := c.ClaudeTranscriptSize("abc-123"); !ok || size != int64(len(transcript)) {
+		t.Fatalf("transcript size = %d, %v", size, ok)
+	}
+	if _, ok := c.ClaudeTranscriptSize("missing"); ok {
+		t.Fatal("a session with no file has no size")
+	}
 	usage, err := c.Usage(ctx, "claude", &Session{ProviderSessionID: "abc-123", Cwd: t.TempDir()}, false)
 	if err != nil {
 		t.Fatal(err)

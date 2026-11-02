@@ -198,6 +198,33 @@ func (t *turnTraces) each(events []store.CommittedEvent, stage, key string, mark
 	}
 }
 
+// observe adds committed events to their turns' summaries and writes each summary
+// when its turn's last event commits, so a turn's final batch is counted.
+func (t *turnTraces) observe(events []store.CommittedEvent) {
+	if t.log == nil {
+		return
+	}
+	for _, e := range events {
+		if e.TurnID == "" {
+			continue
+		}
+		trace := t.lookup(e.TurnID)
+		trace.ObserveOutput(int64(len(e.Payload)))
+		if e.Type == "turn.completed" {
+			trace.OutputSummary()
+		}
+	}
+}
+
+// markProcessExit records a provider process ending, on the turn it interrupted
+// or otherwise on the process itself.
+func markProcessExit(process func() *timing.Trace, running *timing.Trace, reason string) {
+	if running == nil && process != nil {
+		running = process()
+	}
+	running.MarkReason(timing.StageProviderExit, reason)
+}
+
 // startDurations is implemented by provider processes that can tell launching
 // apart from their handshake; a test's fake reports one span instead.
 type startDurations interface {
