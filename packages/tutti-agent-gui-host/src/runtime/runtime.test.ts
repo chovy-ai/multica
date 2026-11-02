@@ -3,6 +3,7 @@ import { executionTargets } from "../protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Agent, AgentTask, Attachment, ChatMessage, ChatSession, PendingChatTaskItem, TaskMessagePayload } from "@multica/core/types";
 import type { AgentGuiHostEvent, AgentGuiInitSnapshot, AgentGuiRpcClient, AgentGuiRpcMethods, AgentGuiSessionDetail, AgentGuiTaskMessagePayload } from "../protocol";
+import { LOCAL_TIMING_PREFIX } from "../local-timing";
 import { createMulticaAgentGuiRuntime, MulticaAgentGuiError } from "./create-multica-agent-gui-runtime";
 import { RuntimeLedger } from "./ledger";
 import { projectDetail } from "./projection";
@@ -110,6 +111,25 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
     await vi.waitFor(() => expect(data.request).toHaveBeenCalledWith("queue.update", { sessionId: session.id, action: "sendNow", requestId: "ordinary" }));
     expect(data.request.mock.calls.filter(([method]) => method === "queue.enqueue")).toHaveLength(1);
     expect(data.request.mock.calls.filter(([method]) => method === "session.send" || method === "host.showMessage")).toEqual([]);
+  });
+  it("marks the send and its request under the mapped client stages, once for each attempt", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const data = backend(); data.sessions.push(session);
+      const original = data.request.getMockImplementation()!;
+      data.request.mockImplementation(async (method, params) => {
+        if (method === "workspace.load") return { ...await original(method, params), local: true, queueOwner: "desktop" };
+        if (method === "queue.enqueue") return { revision: 1, paused: true, items: [params.item] };
+        return original(method, params);
+      });
+      const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true, queueOwner: "desktop", sessions: [session] });
+      handles.push(handle); await handle.initialize();
+      await handle.runtime.getSession(init.workspaceId, session.id);
+      handle.runtime.getSessionEngine(init.workspaceId).submitPrompt({ agentSessionId: session.id, clientSubmitId: "timed", content: [{ type: "text", text: "Help" }] });
+      const records = () => info.mock.calls.map(([line]) => String(line)).filter((line) => line.startsWith(LOCAL_TIMING_PREFIX)).map((line) => JSON.parse(line.slice(LOCAL_TIMING_PREFIX.length)) as { stage: string; event: string; requestId?: string; conversationId?: string; attempt?: number }).filter((record) => record.requestId === "timed");
+      await vi.waitFor(() => expect(records().map((record) => [record.stage, record.event])).toEqual([["client.send", "mark"], ["client.request", "start"], ["client.request", "end"]]));
+      expect(records()[0]).toMatchObject({ conversationId: session.id, attempt: 1 });
+    } finally { info.mockRestore(); }
   });
   it("keeps first-send content recoverable for an explicit queue retry after admission failure", async () => {
     const data = backend();
@@ -1319,6 +1339,21 @@ describe("local conversations over protocol v2", () => {
     await vi.waitFor(() => expect(messages().find((message) => message.messageId === "it-1")?.payload.content).toBe("Hello!"));
     // Live events never re-read the conversation.
     expect(data.request.mock.calls.filter(([method]) => method === "session.load")).toHaveLength(1);
+  });
+
+  it("marks the first model output received and applied, not the user's message", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const stages = () => info.mock.calls.map(([line]) => String(line)).filter((line) => line.startsWith(LOCAL_TIMING_PREFIX)).map((line) => JSON.parse(line.slice(LOCAL_TIMING_PREFIX.length)) as { stage: string; turnId?: string }).filter((record) => record.turnId === "turn-1").map((record) => record.stage);
+      const { data, messages } = await localRuntime();
+      data.emit({ type: "local.events", sessionId: session.id, message: batch([event(1, "user.message", { message_id: "m1", content: "hi" }), event(2, "turn.started", { request_id: "r1" })]) });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(stages()).toEqual([]);
+      data.emit({ type: "local.events", sessionId: session.id, message: batch([event(3, "item.delta", { kind: "assistant_text", field: "text", text: "Hel" }, { item_id: "it-1" })]) });
+      data.emit({ type: "local.events", sessionId: session.id, message: batch([event(4, "item.delta", { kind: "assistant_text", field: "text", text: "lo" }, { item_id: "it-1" })]) });
+      await vi.waitFor(() => expect(messages().some((message) => message.messageId === "it-1")).toBe(true));
+      await vi.waitFor(() => expect(stages()).toEqual(["client.first_event_received", "client.first_event_applied"]));
+    } finally { info.mockRestore(); }
   });
 
   it("continues a stopped turn from the empty composer", async () => {

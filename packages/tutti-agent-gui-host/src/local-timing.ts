@@ -18,8 +18,9 @@ export const consoleLocalTiming: LocalTimingSink = (record) => {
   console.info(LOCAL_TIMING_PREFIX + JSON.stringify(record));
 };
 
-export function createLocalTiming(identity: LocalTimingIdentity, sink: LocalTimingSink = consoleLocalTiming) {
-  const start = performance.now();
+/** `startedAt` dates the span back to a wall-clock moment before its conversation was known. */
+export function createLocalTiming(identity: LocalTimingIdentity, sink: LocalTimingSink = consoleLocalTiming, startedAt?: number) {
+  const start = performance.now() - (startedAt === undefined ? 0 : Date.now() - startedAt);
   const seen = new Set<LocalTimingStage>();
   const tools = new Map<string, number>();
   const active: { stage: LocalTimingStage }[] = [];
@@ -50,6 +51,13 @@ export function createLocalTiming(identity: LocalTimingIdentity, sink: LocalTimi
     }
   };
   return {
+    markStart(stage: LocalTimingStage) {
+      try {
+        const record = parseLocalTiming({ ...identity, version: 2, at: new Date(startedAt ?? Date.now()).toISOString(), stage, event: "mark", elapsedMs: 0 });
+        if (record) sink(record);
+      }
+      catch { /* Diagnostics must not change execution or delivery. */ }
+    },
     mark(stage: LocalTimingStage, extra?: Partial<Pick<LocalTimingRecord, "durationMs" | "outcome" | "failure">>) {
       phase = stage; lastActivity = performance.now(); write(stage, "mark", extra);
     },
@@ -81,20 +89,45 @@ export function createLocalTiming(identity: LocalTimingIdentity, sink: LocalTimi
 }
 export type LocalTiming = ReturnType<typeof createLocalTiming>;
 
+/** One attempt at sending a message: a retry keeps its request id and counts as another attempt. */
+export function createLocalSendTiming(sink: LocalTimingSink = consoleLocalTiming) {
+  const attempts = new Map<string, number>();
+  return {
+    begin(conversationId: string, requestId: string, startedAt: number): LocalTiming {
+      const attempt = (attempts.get(requestId) ?? 0) + 1;
+      attempts.set(requestId, attempt);
+      if (attempts.size > 512) attempts.delete(attempts.keys().next().value!);
+      const timing = createLocalTiming({ source: "gui", clientKind: "desktop", conversationId, requestId, attempt }, sink, startedAt);
+      timing.markStart("client.send");
+      return timing;
+    },
+  };
+}
+
 /** Observe live turns only. Loading old history must not look like a new reply. */
 export function createLocalPresentationTiming(sink: LocalTimingSink = consoleLocalTiming) {
-  const turns = new Map<string, { timing: LocalTiming; output: boolean; terminal: boolean }>();
+  interface Turn { timing: LocalTiming; received: boolean; output: boolean; terminal: boolean }
+  const turns = new Map<string, Turn>();
+  const open = (conversationId: string, turnId: string): Turn => {
+    let turn = turns.get(turnId);
+    if (!turn) {
+      turn = { timing: createLocalTiming({ source: "gui", clientKind: "desktop", conversationId, turnId }, sink), received: false, output: false, terminal: false };
+      turns.set(turnId, turn);
+      if (turns.size > 512) turns.delete(turns.keys().next().value!);
+    }
+    return turn;
+  };
   return {
+    /** An event carrying model output reached this client; only live delivery calls this, never a history read. */
+    received(conversationId: string, turnId: string) {
+      const turn = open(conversationId, turnId);
+      if (!turn.received) { turn.received = true; turn.timing.mark("client.first_event_received"); }
+    },
     applied(conversationId: string, turnId: string, hasOutput: boolean, terminal: boolean) {
-      let turn = turns.get(turnId);
-      if (!turn && terminal) return;
-      if (!turn) {
-        turn = { timing: createLocalTiming({ source: "gui", conversationId, turnId }, sink), output: false, terminal: false };
-        turns.set(turnId, turn);
-        if (turns.size > 512) turns.delete(turns.keys().next().value!);
-      }
-      if (hasOutput && !turn.output) { turn.output = true; turn.timing.mark("gui.first_output_applied"); }
-      if (terminal && !turn.terminal) { turn.terminal = true; turn.timing.mark("gui.terminal_applied"); }
+      if (!turns.has(turnId) && terminal) return;
+      const turn = open(conversationId, turnId);
+      if (hasOutput && !turn.output) { turn.output = true; turn.timing.mark("client.first_event_applied"); }
+      if (terminal && !turn.terminal) { turn.terminal = true; turn.timing.mark("client.terminal_applied"); }
     },
   };
 }
