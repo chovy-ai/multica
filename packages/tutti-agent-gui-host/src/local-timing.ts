@@ -1,19 +1,9 @@
+import { parseLocalTiming, type LocalTimingFailure, type LocalTimingIdentity, type LocalTimingOutcome, type LocalTimingRecord, type LocalTimingStage } from "@multica/core/local-conversation/timing";
+
+export * from "@multica/core/local-conversation/timing";
+
 /** Diagnostics contain identifiers and timings only, never prompts or provider payloads. */
 export const LOCAL_TIMING_PREFIX = "[local-turn-timing] ";
-export const LOCAL_TIMING_STAGES = [
-  "gui.submit", "gui.first_output_applied", "gui.terminal_applied", "renderer.request", "renderer.first_output_received", "main.request",
-  "queue.dispatch", "queue.context", "turn.persist", "turn.execute", "turn.result", "attachments.resolve",
-  "context.prepare", "context.credentials", "context.mcp", "provider.lookup", "provider.config",
-  "provider.spawn", "provider.sdk_ready", "provider.refresh", "provider.input_written", "provider.input_yielded",
-  "provider.pool_admission", "provider.pool_wait", "provider.pool_create", "provider.pool_reused", "provider.bridge", "provider.handshake",
-  "provider.thread_wait", "provider.thread_ready", "provider.turn_start", "provider.thread_unload",
-  "provider.first_stdout", "provider.first_stderr", "provider.first_event", "provider.session_ready",
-  "provider.first_output", "provider.first_text", "provider.tool", "provider.result", "provider.exit", "provider.failure", "provider.retry",
-  "title.generate", "title.persist", "user.question", "images.save", "context.dispose", "images.recover", "turn.save", "turn.finished",
-] as const;
-export type LocalTimingStage = typeof LOCAL_TIMING_STAGES[number];
-export type LocalTimingOutcome = "completed" | "failed" | "cancelled";
-export type LocalTimingFailure = "rate_limit" | "authentication" | "transport" | "cancelled" | "other";
 export function localTimingFailure(error: unknown): LocalTimingFailure {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   if (/429|rate.?limit|insufficient|quota|余额不足/i.test(message)) return "rate_limit";
@@ -22,51 +12,7 @@ export function localTimingFailure(error: unknown): LocalTimingFailure {
   if (/websocket|disconnect|ECONN|ETIMEDOUT|fetch failed|timeout|timed out/i.test(message)) return "transport";
   return "other";
 }
-export interface LocalTimingIdentity {
-  source: "main" | "renderer" | "gui";
-  background?: boolean;
-  conversationId: string;
-  requestId?: string;
-  turnId?: string;
-  provider?: "codex" | "claude";
-}
-export interface LocalTimingRecord extends LocalTimingIdentity {
-  version: 1;
-  at: string;
-  stage: LocalTimingStage;
-  event: "start" | "end" | "mark" | "wait";
-  elapsedMs: number;
-  durationMs?: number;
-  idleMs?: number;
-  outcome?: LocalTimingOutcome;
-  failure?: LocalTimingFailure;
-}
 export type LocalTimingSink = (record: LocalTimingRecord) => void;
-
-/** Rebuild the allowlisted shape even for console records originating in another frame. */
-export function parseLocalTiming(value: unknown): LocalTimingRecord | null {
-  if (!value || typeof value !== "object") return null;
-  const raw = value as Record<string, unknown>;
-  const id = (v: unknown) => typeof v === "string" && /^[\w:.-]{1,160}$/.test(v);
-  const ms = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0;
-  if (raw.version !== 1 || !["main", "renderer", "gui"].includes(String(raw.source)) || !id(raw.conversationId)
-    || !LOCAL_TIMING_STAGES.includes(raw.stage as LocalTimingStage) || !["start", "end", "mark", "wait"].includes(String(raw.event))
-    || typeof raw.at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(raw.at) || !Number.isFinite(Date.parse(raw.at)) || !ms(raw.elapsedMs)) return null;
-  if ((raw.requestId !== undefined && !id(raw.requestId)) || (raw.turnId !== undefined && !id(raw.turnId))) return null;
-  const result: LocalTimingRecord = {
-    version: 1, source: raw.source as LocalTimingIdentity["source"], conversationId: raw.conversationId as string,
-    at: raw.at, stage: raw.stage as LocalTimingStage, event: raw.event as LocalTimingRecord["event"], elapsedMs: raw.elapsedMs as number,
-  };
-  if (raw.background === true) result.background = true;
-  if (raw.requestId !== undefined) result.requestId = raw.requestId as string;
-  if (raw.turnId !== undefined) result.turnId = raw.turnId as string;
-  if (raw.provider === "codex" || raw.provider === "claude") result.provider = raw.provider;
-  if (ms(raw.durationMs)) result.durationMs = raw.durationMs as number;
-  if (ms(raw.idleMs)) result.idleMs = raw.idleMs as number;
-  if (["completed", "failed", "cancelled"].includes(String(raw.outcome))) result.outcome = raw.outcome as LocalTimingOutcome;
-  if (["rate_limit", "authentication", "transport", "cancelled", "other"].includes(String(raw.failure))) result.failure = raw.failure as LocalTimingFailure;
-  return result;
-}
 
 export const consoleLocalTiming: LocalTimingSink = (record) => {
   console.info(LOCAL_TIMING_PREFIX + JSON.stringify(record));
@@ -84,7 +30,7 @@ export function createLocalTiming(identity: LocalTimingIdentity, sink: LocalTimi
   const write = (stage: LocalTimingStage, event: LocalTimingRecord["event"], extra: Partial<Pick<LocalTimingRecord, "durationMs" | "idleMs" | "outcome" | "failure">> = {}, background = false) => {
     if (closed && !background) return;
     try {
-      const record = parseLocalTiming({ ...identity, version: 1, at: new Date().toISOString(), stage, event, elapsedMs: Math.round(performance.now() - start), ...(background ? { background: true } : {}), ...extra });
+      const record = parseLocalTiming({ ...identity, version: 2, at: new Date().toISOString(), stage, event, elapsedMs: Math.round(performance.now() - start), ...(background ? { background: true } : {}), ...extra });
       if (record) sink(record);
     }
     catch { /* Diagnostics must not change execution or delivery. */ }
