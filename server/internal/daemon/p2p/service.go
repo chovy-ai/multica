@@ -559,6 +559,9 @@ func (s *Service) Refresh(ctx context.Context) error {
 	for _, p := range peers {
 		if previous, ok := s.allow.get(p.ID); ok && !slices.EqualFunc(previous.RegisteredAddrs, p.RegisteredAddrs, func(a, b ma.Multiaddr) bool { return a.Equal(b) }) {
 			changed = append(changed, p.ID)
+			if s.Connection(p.ID) == ConnectionRelayed {
+				s.dialDirect(p)
+			}
 		}
 	}
 	_, removed := s.allow.replace(peers)
@@ -587,6 +590,31 @@ func (s *Service) Refresh(ctx context.Context) error {
 		s.wakeDials(changed...)
 	}
 	return nil
+}
+
+// dialDirect tries a relayed device's newly registered direct addresses once.
+// connect treats a relayed device as connected, and hole punching ignores
+// private addresses, so nothing else would reach a LAN address registered late.
+func (s *Service) dialDirect(p Peer) {
+	addrs := slices.DeleteFunc(slices.Clone(p.RegisteredAddrs), isCircuit)
+	if len(addrs) == 0 {
+		return
+	}
+	s.dialMu.Lock()
+	if s.ctx.Err() != nil {
+		s.dialMu.Unlock()
+		return
+	}
+	s.wg.Add(1)
+	s.dialMu.Unlock()
+	go func() {
+		defer s.wg.Done()
+		ctx, cancel := context.WithTimeout(network.WithForceDirectDial(s.ctx, "multica-registered-direct"), connectTimeout)
+		defer cancel()
+		if err := s.host.Connect(ctx, peer.AddrInfo{ID: p.ID, Addrs: addrs}); err != nil {
+			s.logger.Debug("p2p: direct dial failed; staying on the relay", "peer_id", p.ID.String(), "error", err)
+		}
+	}()
 }
 
 // AdvertisedAddrs are the addresses to register for other devices: listen,
