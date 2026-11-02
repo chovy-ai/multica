@@ -52,16 +52,17 @@ type caller struct {
 	deviceName string
 	// clientKind is what a remote device says it is; see timing.
 	clientKind string
+	// connection is how this caller's own stream travels.
+	connection string
 }
 
 // timing is who this caller is on a timing record. Only this device's own
-// callers are known to be Desktop on a loopback connection; the connection a
-// remote caller's stream uses is not visible here.
+// callers are known to be Desktop on a loopback connection.
 func (c caller) timing() timing.Caller {
 	if c.kind != callerRemote {
 		return timing.Caller{Origin: timing.OriginLocal, ClientKind: timing.ClientDesktop, Connection: timing.ConnectionLoopback}
 	}
-	return timing.Caller{Origin: timing.OriginP2P, ClientKind: c.clientKind, Connection: timing.ConnectionUnknown}
+	return timing.Caller{Origin: timing.OriginP2P, ClientKind: c.clientKind, Connection: c.connection}
 }
 
 func clientKey(prefix string, h http.Header) string {
@@ -85,8 +86,9 @@ func callerOf(ctx context.Context) caller {
 
 type remotePeerKey struct{}
 
-// RemotePeer is the device a device-link connection comes from.
-type RemotePeer struct{ ID, DeviceName string }
+// RemotePeer is the device a device-link connection comes from, and how that
+// connection's stream travels: not how the device is connected overall.
+type RemotePeer struct{ ID, DeviceName, Connection string }
 
 // WithRemotePeer records the device a device-link connection comes from;
 // the device-link server sets it from the authenticated stream.
@@ -192,6 +194,9 @@ func (v *V2) authenticate(r *http.Request) (callerKind, bool) {
 // decoded command type for POST /sessions/{id}/commands, "" otherwise.
 func allowed(k callerKind, method, path, command string) bool {
 	switch {
+	// A report is a remote device's own marks. Local callers have their own log.
+	case path == timing.ReportsPath:
+		return k == callerRemote
 	case path == "/preview/services" || strings.HasPrefix(path, "/preview/services/"):
 		return k == callerMain || k == callerRemote
 	// Updates of this device stop its own providers.

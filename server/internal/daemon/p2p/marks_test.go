@@ -153,7 +153,7 @@ func TestTunnelMarksReadTheStreamsOwnConnection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req.Header.Set(HeaderRequestID, id)
+		req.Header.Set(timing.HeaderRequestID, id)
 		res, err := tunnel.RoundTrip(req)
 		if err != nil {
 			t.Fatal(err)

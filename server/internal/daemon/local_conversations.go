@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/service"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 )
 
 // openLocalConversations opens the local conversation service and its
@@ -57,6 +58,8 @@ func (d *Daemon) openLocalConversations(ctx context.Context, sidecar localhost.S
 	d.conversations = svc
 	d.localV2 = localhost.NewV2(svc, d.cfg.LocalAPIToken, d.cfg.ProfileDir)
 	d.localV2.SetServerOrigin(d.cfg.ServerBaseURL)
+	d.reportsTiming = timing.Open(filepath.Join(d.cfg.ProfileDir, "local-conversations", "diagnostics", reportsTimingFile), timing.Options{})
+	d.localV2.SetTiming(timing.NewMarks(d.openDeviceTiming(), timing.SourceDaemon), d.reportsTiming)
 	d.deviceLink = newDeviceLink(d.cfg.ProfileDir, d.localV2, d.cfg.LocalAPIToken, d.logger.With("component", "device-link"))
 	return nil
 }

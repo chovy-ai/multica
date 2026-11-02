@@ -15,21 +15,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 )
 
-// HeaderRequestID ties a proxied request to the turn it starts, so its marks join
-// that turn's waterfall. Only a client's own commands carry it.
-const HeaderRequestID = "X-Multica-Request-ID"
-
-// TimingReportsPath is the route phones report their marks on.
-const TimingReportsPath = "/timing-reports"
-
-// RequestIDOf is the request's correlation id, or "" unless it could be one.
-func RequestIDOf(req *http.Request) string {
-	if id := req.Header.Get(HeaderRequestID); timing.ValidID(id) {
-		return id
-	}
-	return ""
-}
-
 // Tunnel is the http.RoundTripper for one device's HTTP and upgraded WebSocket
 // traffic. It remembers which streams it dialed so relayed WebSockets can move
 // to a direct connection without interrupting requests still in flight.
@@ -85,11 +70,11 @@ func (t *Tunnel) RoundTrip(req *http.Request) (*http.Response, error) {
 	var conn *tunnelConn
 	marks := t.svc.marks
 	// A phone's report must not produce records for its next report.
-	if strings.HasSuffix(req.URL.Path, TimingReportsPath) {
+	if strings.HasSuffix(req.URL.Path, timing.ReportsPath) {
 		marks = nil
 	}
 	began := marks.Now()
-	requestID := RequestIDOf(req)
+	requestID := timing.RequestIDOf(req.Header)
 	base := timing.Record{RequestID: requestID, Peer: t.id.String(), Role: timing.RoleInitiator}
 	mark := func(stage string, fill func(*timing.Record)) {
 		record := base

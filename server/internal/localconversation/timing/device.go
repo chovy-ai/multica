@@ -1,6 +1,27 @@
 package timing
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
+
+// HeaderRequestID ties a proxied request to the turn it starts, so its marks join
+// that turn's waterfall. Only a client's own commands carry it.
+const HeaderRequestID = "X-Multica-Request-ID"
+
+// ReportsPath is the route a phone reports its marks on, under /local/v2.
+const ReportsPath = "/timing-reports"
+
+// RequestIDOf is the request's correlation id, or "" unless it could be one.
+func RequestIDOf(h http.Header) string {
+	if id := h.Get(HeaderRequestID); ValidID(id) {
+		return id
+	}
+	return ""
+}
+
+// FormatAt is t in a record's time format.
+func FormatAt(t time.Time) string { return formatAt(t) }
 
 // Sink takes records: a Log for a device with a file, a Ring for a phone.
 type Sink interface{ Write(Record) }

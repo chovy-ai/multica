@@ -126,6 +126,24 @@ const (
 	AddrUnknown  = "unknown"
 )
 
+// reportable is what a phone may report: its own client marks and its own link.
+// Anything about the turn itself is the executor's to say.
+var reportable = setOf(
+	"client.send", "client.pending_shown", "client.request", "client.first_event_received", "client.first_event_applied", "client.first_commit", "client.terminal_applied",
+	StageLinkStart, StageLinkReady, StageLinkRegistered, StageLinkStop, StageRegistryFetch, StagePeerKnown,
+	StagePeerConnect, StageRelayReserve, StageRelayConnected, StageRelayRefused, StageHolepunchStart, StageHolepunchSuccess, StageHolepunchFailed,
+	StageConnectionDirect, StageConnectionRelay, StageConnectionLost, StageNetworkChanged,
+	StageTunnelConn, StageTunnelStreamOpen, StageProxyRequest, StageProxyFirstByte,
+	"ws.hello", "ws.open", "ws.subscribe", "ws.subscribed", "ws.catch_up", "ws.closed", "ws.retry", "ws.resubscribed",
+	StageMigrateStart, StageMigrateStreamClosed, StageMigrateReconnected,
+	StageLinkRequestSent, StageLinkResponseReceived, "link.event_received",
+	"snapshot.request", "snapshot.first_byte", "snapshot.received", "snapshot.parsed", "snapshot.rendered",
+	StageTimingDropped,
+)
+
+// Reportable reports whether a phone may report stage.
+func Reportable(stage string) bool { return reportable[stage] }
+
 // Origin values: where a request came from.
 const (
 	OriginLocal   = "local"

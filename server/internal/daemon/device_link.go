@@ -144,7 +144,7 @@ func (l *deviceLink) apply() {
 				return ctx
 			}
 			info, _ := svc.Peer(id)
-			return localhost.WithRemotePeer(ctx, localhost.RemotePeer{ID: id.String(), DeviceName: info.DeviceName})
+			return localhost.WithRemotePeer(ctx, localhost.RemotePeer{ID: id.String(), DeviceName: info.DeviceName, Connection: p2p.StreamConnection(c)})
 		},
 	}
 	go func(s *http.Server) {
