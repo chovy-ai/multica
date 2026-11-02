@@ -25,6 +25,9 @@ import (
 var (
 	// ErrHostUnavailable means no Desktop of the scope is connected.
 	ErrHostUnavailable = errors.New("local conversation: Multica Desktop is not connected")
+	// ErrLocalHostUnavailable means no Desktop runs on this device; requests
+	// about the device itself cannot go to another device's Desktop.
+	ErrLocalHostUnavailable = errors.New("local conversation: open Multica Desktop on the device running this conversation; its diagnostics are not available from another device")
 	// ErrClosing rejects new work while the service shuts down.
 	ErrClosing = errors.New("local conversation: the service is shutting down")
 	// ErrDraining rejects new turns while the daemon waits to restart.
@@ -108,6 +111,7 @@ type Service struct {
 	titles    titleRuns
 	delivery  deliveries
 	host      Host
+	localHost Host
 	preview   PreviewServices
 	// turnEnd learns that a conversation's turn ended; see OnTurnEnd.
 	turnEnd func(conversationID string)
@@ -763,6 +767,24 @@ func (s *Service) SetHost(h Host) {
 	s.mu.Lock()
 	s.host = h
 	s.mu.Unlock()
+}
+
+// SetLocalHost connects the service to the Desktop of the executing device.
+func (s *Service) SetLocalHost(h Host) {
+	s.mu.Lock()
+	s.localHost = h
+	s.mu.Unlock()
+}
+
+// askLocalHost sends a host request that only this device's Desktop may answer.
+func (s *Service) askLocalHost(ctx context.Context, scopeID int64, conversationID, kind string, payload any) (json.RawMessage, error) {
+	s.mu.Lock()
+	h := s.localHost
+	s.mu.Unlock()
+	if h == nil {
+		return nil, ErrLocalHostUnavailable
+	}
+	return h(ctx, scopeID, conversationID, kind, payload)
 }
 
 // askHost sends a host request, or fails when no transport is set.

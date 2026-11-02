@@ -77,6 +77,7 @@ func NewV2(svc *service.Service, token, profileDir string) *V2 {
 		tickets: tickets{items: map[string]ticket{}, now: time.Now}, origins: map[string]string{}, presence: map[int64]map[string]map[string]RemotePeer{}}
 	v.hosts.origin = v.origin
 	svc.SetHost(v.hosts.request)
+	svc.SetLocalHost(v.hosts.requestLocal)
 	svc.SetComputerHost(v.computer.request)
 	svc.OnTurnEnd(v.turnEnded)
 	return v
