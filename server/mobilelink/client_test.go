@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multica-ai/multica/server/internal/daemon/p2p"
 )
 
@@ -100,6 +101,12 @@ func TestMobileClientUsesAuthenticatedDeviceStreamAndClosesWebSockets(t *testing
 		t.Fatal(err)
 	}
 	defer client.Close()
+	// Registration runs in the background; the desktop only admits a listed phone.
+	eventually(t, 15*time.Second, "phone registration", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(devices) == 2
+	})
 	if err := desktop.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +133,12 @@ func TestMobileClientUsesAuthenticatedDeviceStreamAndClosesWebSockets(t *testing
 		}
 		return res
 	}
+	// A dial that crossed the desktop's refresh is rejected right after its handshake.
+	eventually(t, 15*time.Second, "tunnel to accept requests", func() bool {
+		res := request(client.token, "workspace-a")
+		_ = res.Body.Close()
+		return res.StatusCode == 200
+	})
 	for _, test := range []struct {
 		token, workspace string
 		status           int
@@ -160,4 +173,142 @@ func TestMobileClientUsesAuthenticatedDeviceStreamAndClosesWebSockets(t *testing
 	if _, _, err := ws.ReadMessage(); err == nil {
 		t.Fatal("socket survived client close")
 	}
+}
+
+// fakeRegistry answers with desktopKey's device plus another phone. POST
+// /v1/devices and login checks are controllable per test.
+func fakeRegistry(t *testing.T, register http.HandlerFunc, validLogin func(string) bool) (*httptest.Server, peer.ID) {
+	t.Helper()
+	publicKey := func() (string, peer.ID) {
+		_, id := generateKey(t)
+		pub, err := id.ExtractPublicKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := crypto.MarshalPublicKey(pub)
+		return base64.StdEncoding.EncodeToString(raw), id
+	}
+	desktopKey, desktopID := publicKey()
+	phoneKey, _ := publicKey()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/sessions":
+			if !validLogin(r.Header.Get("Authorization")) {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"session_token": "session", "expires_at": time.Now().Add(time.Hour)})
+		case r.URL.Path == "/v1/devices" && r.Method == http.MethodPost:
+			register(w, r)
+		case r.URL.Path == "/v1/devices":
+			_ = json.NewEncoder(w).Encode(map[string]any{"devices": []map[string]any{
+				{"public_key": desktopKey, "device_name": "Test Mac", "daemon_id": "desktop", "profile": "default", "addrs": []string{"/ip4/127.0.0.1/tcp/1"}},
+				{"public_key": phoneKey, "device_name": "Other iPhone", "daemon_id": "ios-other", "profile": "mobile", "addrs": []string{"/ip4/127.0.0.1/tcp/2"}},
+			}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"relay": nil})
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, desktopID
+}
+
+func startTestClient(t *testing.T, registryURL string) *Client {
+	t.Helper()
+	config, _ := json.Marshal(configuration{RegistryURL: registryURL, APIURL: "https://api.example.test", Token: "login", UserID: "account-a", StoragePath: t.TempDir(), DeviceName: "Test iPhone"})
+	client, err := Start(string(config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	return client
+}
+
+func listDevices(t *testing.T, client *Client) (int, []string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, client.endpoint+"/devices", nil)
+	req.Header.Set("Authorization", "Bearer "+client.token)
+	res, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var body struct {
+		Devices []struct {
+			Name string `json:"device_name"`
+		} `json:"devices"`
+	}
+	_ = json.NewDecoder(res.Body).Decode(&body)
+	names := []string{}
+	for _, device := range body.Devices {
+		names = append(names, device.Name)
+	}
+	return res.StatusCode, names
+}
+
+func TestRegistrationFailureDoesNotBlockKnownDevices(t *testing.T) {
+	stuck := make(chan struct{})
+	defer close(stuck)
+	registry, desktopID := fakeRegistry(t, func(http.ResponseWriter, *http.Request) { <-stuck }, func(string) bool { return true })
+	started := make(chan *Client, 1)
+	go func() { started <- startTestClient(t, registry.URL) }()
+	var client *Client
+	select {
+	case client = <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start waited for registration")
+	}
+	status, names := listDevices(t, client)
+	if status != http.StatusOK || len(names) != 1 || names[0] != "Test Mac" {
+		t.Fatalf("devices = %d %v, want only the computer", status, names)
+	}
+	if _, known := client.svc.Peer(desktopID); !known {
+		t.Fatal("computer is not on the allowlist")
+	}
+}
+
+func TestOtherPhonesAreNotDialed(t *testing.T) {
+	registry, _ := fakeRegistry(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) }, func(string) bool { return true })
+	client := startTestClient(t, registry.URL)
+	if status, _ := listDevices(t, client); status != http.StatusOK {
+		t.Fatalf("status %d", status)
+	}
+	for _, p := range client.svc.Peers() {
+		if p.Profile == "mobile" {
+			t.Fatalf("another phone is on the dial list: %+v", p)
+		}
+	}
+}
+
+func TestTokenUpdateRestoresRegistryAccessWithoutRestart(t *testing.T) {
+	var loginMu sync.Mutex
+	current := "Bearer refreshed"
+	registry, _ := fakeRegistry(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) }, func(got string) bool {
+		loginMu.Lock()
+		defer loginMu.Unlock()
+		return got == current
+	})
+	client := startTestClient(t, registry.URL)
+	if status, _ := listDevices(t, client); status != http.StatusServiceUnavailable {
+		t.Fatalf("status %d with a rejected login, want 503", status)
+	}
+	endpoint := client.Endpoint()
+	client.UpdateToken("refreshed")
+	if err := client.svc.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if status, names := listDevices(t, client); status != http.StatusOK || len(names) != 1 {
+		t.Fatalf("devices after refresh = %d %v", status, names)
+	}
+	if client.Endpoint() != endpoint {
+		t.Fatal("token update replaced the loopback endpoint")
+	}
+}
+
+func TestNetworkChangedIsSafeAfterClose(t *testing.T) {
+	registry, _ := fakeRegistry(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) }, func(string) bool { return true })
+	client := startTestClient(t, registry.URL)
+	client.NetworkChanged()
+	client.Close()
+	client.NetworkChanged()
 }

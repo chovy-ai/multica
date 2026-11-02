@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,8 +17,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -36,24 +39,36 @@ type configuration struct {
 	DeviceName  string `json:"deviceName"`
 }
 
+// relayTransferLimit is the largest file moved while a device is only reachable
+// through the relay.
+const relayTransferLimit = 5 << 20
+
+var errRelayLimit = errors.New("relay_transfer_limited")
+
 // Client owns a foreground mobile device link. Close releases every socket and
 // clears the registry credential together; callers replace it on account change.
 type Client struct {
-	cfg         configuration
-	ctx         context.Context
-	cancel      context.CancelFunc
-	svc         *p2p.Service
-	registry    *registry
-	server      *http.Server
-	endpoint    string
-	token       string
-	mu          sync.Mutex
-	transports  map[peer.ID]*http.Transport
-	connections map[net.Conn]struct{}
-	once        sync.Once
+	cfg      configuration
+	ctx      context.Context
+	cancel   context.CancelFunc
+	svc      *p2p.Service
+	registry *registry
+	server   *http.Server
+	endpoint string
+	token    string
+	mu       sync.Mutex
+	tunnels  map[peer.ID]*p2p.Tunnel
+	once     sync.Once
+
+	// peersRead closes after the first device list attempt, so requests made
+	// right after Start do not report an empty account while it is in flight.
+	peersRead     chan struct{}
+	peersReadOnce sync.Once
+	peersKnown    atomic.Bool
 }
 
-// Start accepts JSON so the binding has no platform-specific DTO dependency.
+// Start returns once the loopback endpoint is serving. Registry calls run in the
+// background: a slow or failing registry must not block devices it already lists.
 func Start(configJSON string) (*Client, error) {
 	var cfg configuration
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
@@ -78,11 +93,24 @@ func Start(configJSON string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	publicKey, err := crypto.MarshalPublicKey(key.GetPublic())
+	if err != nil {
+		return nil, err
+	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, err
+	}
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Client{cfg: cfg, ctx: ctx, cancel: cancel, transports: map[peer.ID]*http.Transport{}, connections: map[net.Conn]struct{}{}}
+	c := &Client{cfg: cfg, ctx: ctx, cancel: cancel, token: hex.EncodeToString(secret), endpoint: "http://" + ln.Addr().String(),
+		tunnels: map[peer.ID]*p2p.Tunnel{}, peersRead: make(chan struct{})}
 	c.registry = &registry{url: strings.TrimRight(cfg.RegistryURL, "/"), login: cfg.Token, http: &http.Client{Timeout: 30 * time.Second}}
 	changed := make(chan struct{}, 1)
-	c.svc, err = p2p.Start(ctx, p2p.Config{Key: key, Fetch: c.registry.peers, Relay: c.registry.relay,
+	c.svc, err = p2p.Start(ctx, p2p.Config{Key: key, Fetch: c.fetchPeers, Relay: c.registry.relay,
 		RefreshInterval: 15 * time.Second, OnAddrsChanged: func() {
 			select {
 			case changed <- struct{}{}:
@@ -90,58 +118,90 @@ func Start(configJSON string) (*Client, error) {
 			}
 		}})
 	if err != nil {
+		_ = ln.Close()
 		cancel()
 		return nil, err
 	}
-	publicKey, err := crypto.MarshalPublicKey(key.GetPublic())
-	if err != nil {
-		c.Close()
-		return nil, err
-	}
-	if err := c.register(publicKey); err != nil {
-		c.Close()
-		return nil, err
-	}
-	_ = c.svc.Refresh(ctx)
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		c.Close()
-		return nil, err
-	}
-	c.token = hex.EncodeToString(secret)
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		c.Close()
-		return nil, err
-	}
-	c.endpoint = "http://" + ln.Addr().String()
+	c.svc.OnDirect(c.moveToDirect)
 	c.server = &http.Server{Handler: http.HandlerFunc(c.serve), ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = c.server.Serve(ln) }()
-	go func() {
-		tick := time.NewTicker(6 * time.Hour)
-		defer tick.Stop()
-		for {
+	go c.keepRegistered(publicKey, changed)
+	return c, nil
+}
+
+// fetchPeers leaves other phones off the allowlist: they serve no conversations,
+// and each relayed connection counts against the account's circuit limit.
+func (c *Client) fetchPeers(ctx context.Context) ([]p2p.Peer, error) {
+	peers, err := c.registry.peers(ctx)
+	if err == nil {
+		c.peersKnown.Store(true)
+		peers = slices.DeleteFunc(peers, func(p p2p.Peer) bool { return p.Profile == "mobile" && strings.HasPrefix(p.DaemonID, "ios-") })
+	}
+	if ctx.Err() == nil {
+		c.peersReadOnce.Do(func() { close(c.peersRead) })
+	}
+	return peers, err
+}
+
+// awaitPeers reports whether a device list has been read.
+func (c *Client) awaitPeers(ctx context.Context) bool {
+	select {
+	case <-c.peersRead:
+	case <-ctx.Done():
+	}
+	return c.peersKnown.Load()
+}
+
+// keepRegistered retries without retaining credentials from a stopped client.
+func (c *Client) keepRegistered(publicKey []byte, changed <-chan struct{}) {
+	tick := time.NewTicker(6 * time.Hour)
+	defer tick.Stop()
+	registered := false
+	for {
+		for c.register(publicKey) != nil {
 			select {
-			case <-ctx.Done():
+			case <-c.ctx.Done():
 				return
-			case <-changed:
-			case <-tick.C:
-			}
-			// Failed registrations retry on the next refresh, without retaining
-			// credentials from a stopped foreground client.
-			for ctx.Err() == nil {
-				if c.register(publicKey) == nil {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(15 * time.Second):
-				}
+			case <-time.After(15 * time.Second):
 			}
 		}
-	}()
-	return c, nil
+		if !registered {
+			registered = true
+			// Devices that rejected this phone as unknown may list it now.
+			_ = c.svc.PeersChanged(c.ctx)
+		}
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-changed:
+		case <-tick.C:
+		}
+	}
+}
+
+// NetworkChanged rebuilds connections after the phone's network changes instead
+// of waiting for the old paths to time out.
+func (c *Client) NetworkChanged() {
+	if c.ctx.Err() == nil {
+		c.svc.NetworkChanged()
+	}
+}
+
+// UpdateToken replaces the login credential for later registry calls. Device
+// connections do not depend on it, so they stay up.
+func (c *Client) UpdateToken(token string) {
+	if token != "" {
+		c.registry.setLogin(token)
+	}
+}
+
+func (c *Client) moveToDirect(id peer.ID) {
+	c.mu.Lock()
+	tunnel := c.tunnels[id]
+	c.mu.Unlock()
+	if tunnel != nil {
+		tunnel.MoveToDirect()
+	}
 }
 
 func (c *Client) register(publicKey []byte) error {
@@ -161,28 +221,17 @@ func (c *Client) Endpoint() string {
 func (c *Client) Close() {
 	c.once.Do(func() {
 		c.cancel()
-		if c.server != nil {
-			_ = c.server.Close()
-		}
+		_ = c.server.Close()
 		c.mu.Lock()
-		connections := make([]net.Conn, 0, len(c.connections))
-		transports := make([]*http.Transport, 0, len(c.transports))
-		for conn := range c.connections {
-			connections = append(connections, conn)
-		}
-		for _, transport := range c.transports {
-			transports = append(transports, transport)
+		tunnels := make([]*p2p.Tunnel, 0, len(c.tunnels))
+		for _, tunnel := range c.tunnels {
+			tunnels = append(tunnels, tunnel)
 		}
 		c.mu.Unlock()
-		for _, transport := range transports {
-			transport.CloseIdleConnections()
+		for _, tunnel := range tunnels {
+			tunnel.Close()
 		}
-		for _, conn := range connections {
-			_ = conn.Close()
-		}
-		if c.svc != nil {
-			_ = c.svc.Close()
-		}
+		_ = c.svc.Close()
 	})
 }
 
@@ -199,11 +248,12 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/devices" {
+		if !c.awaitPeers(r.Context()) {
+			writeError(w, "registry_unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		devices := []map[string]any{}
 		for _, p := range c.svc.Peers() {
-			if p.Profile == "mobile" && strings.HasPrefix(p.DaemonID, "ios-") {
-				continue
-			}
 			devices = append(devices, map[string]any{"peer_id": p.ID.String(), "device_name": p.DeviceName,
 				"connected": p.Connected, "available": p.Connected && c.svc.SupportsProtocol(p.ID, deviceProtocol), "connection": p.Connection})
 		}
@@ -217,6 +267,7 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	c.awaitPeers(r.Context())
 	if _, known := c.svc.Peer(peerID); !known {
 		writeError(w, "device_unknown", http.StatusNotFound)
 		return
@@ -232,51 +283,34 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("Authorization")
 	r.URL.Path, r.URL.RawPath = "/"+inner, ""
 	c.mu.Lock()
-	transport := c.transports[peerID]
-	if transport == nil {
-		transport = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			conn, err := c.svc.Dial(ctx, peerID, deviceProtocol)
-			if err != nil {
-				return nil, err
-			}
-			tracked := &trackedConnection{Conn: conn, owner: c}
-			c.mu.Lock()
-			c.connections[tracked] = struct{}{}
-			c.mu.Unlock()
-			return tracked, nil
-		}, IdleConnTimeout: 30 * time.Second, ResponseHeaderTimeout: 30 * time.Second}
-		c.transports[peerID] = transport
+	tunnel := c.tunnels[peerID]
+	if tunnel == nil {
+		// The header timeout must outlast a send, which the app waits on for up
+		// to two minutes while the computer prepares its runner.
+		tunnel = c.svc.NewTunnel(peerID, deviceProtocol, &http.Transport{IdleConnTimeout: 30 * time.Second, ResponseHeaderTimeout: 130 * time.Second})
+		c.tunnels[peerID] = tunnel
 	}
 	c.mu.Unlock()
-	if c.svc.Connection(peerID) == p2p.ConnectionRelayed && r.ContentLength > 5<<20 {
-		writeError(w, "relay_transfer_limited", http.StatusRequestEntityTooLarge)
+	if c.svc.Connection(peerID) == p2p.ConnectionRelayed && r.ContentLength > relayTransferLimit {
+		writeError(w, errRelayLimit.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
 	proxy := &httputil.ReverseProxy{Rewrite: func(p *httputil.ProxyRequest) {
 		p.Out.URL.Scheme, p.Out.URL.Host, p.Out.Host = "http", "device-link", "device-link"
-	}, Transport: transport, ModifyResponse: func(response *http.Response) error {
-		if response.ContentLength > 5<<20 && c.svc.Connection(peerID) == p2p.ConnectionRelayed {
-			_ = response.Body.Close()
-			return fmt.Errorf("relay_transfer_limited")
+	}, Transport: tunnel, ModifyResponse: func(response *http.Response) error {
+		if response.ContentLength > relayTransferLimit && c.svc.Connection(peerID) == p2p.ConnectionRelayed {
+			return errRelayLimit
 		}
 		return nil
 	},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			if errors.Is(err, errRelayLimit) {
+				writeError(w, errRelayLimit.Error(), http.StatusRequestEntityTooLarge)
+				return
+			}
 			writeError(w, "device_unreachable", http.StatusBadGateway)
 		}}
 	proxy.ServeHTTP(w, r)
-}
-
-type trackedConnection struct {
-	net.Conn
-	owner *Client
-	once  sync.Once
-}
-
-func (c *trackedConnection) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(func() { c.owner.mu.Lock(); delete(c.owner.connections, c); c.owner.mu.Unlock() })
-	return err
 }
 
 func writeError(w http.ResponseWriter, kind string, status int) {
