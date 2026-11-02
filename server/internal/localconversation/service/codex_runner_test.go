@@ -512,3 +512,60 @@ func TestServiceSendSurvivesACancelledRequestAndReplaysTheRetry(t *testing.T) {
 		t.Fatalf("receipt = %+v", receipt)
 	}
 }
+
+// Stopping while Codex prepares must not spend tokens on the prompt.
+func TestCodexRunnerDoesNotDispatchATurnStoppedDuringPreparation(t *testing.T) {
+	t.Parallel()
+
+	for _, step := range []string{"config/read", "thread/start"} {
+		t.Run(step, func(t *testing.T) {
+			t.Parallel()
+			f, r, server := newCodexFixture(t, CodexSession{}, nil)
+			server.intercept = func(ctx context.Context, method string) error {
+				if method == step {
+					if err := r.Interrupt(ctx); err != nil {
+						t.Errorf("Interrupt: %v", err)
+					}
+				}
+				return nil
+			}
+			codexSend(t, r, "t1")
+			if got := f.turnEvents(t, "t1"); got[len(got)-1] != "turn.completed  cancelled" {
+				t.Fatalf("events = %v", got)
+			}
+			if got := fmt.Sprint(server.sent()); strings.Contains(got, "turn/start") {
+				t.Fatalf("prompt dispatched: %s", got)
+			}
+			if f.limiter.Running() != 0 {
+				t.Fatal("limiter slot leaked")
+			}
+
+			server.intercept = nil
+			codexSend(t, r, "t2")
+			if got := fmt.Sprint(server.sent()); !strings.Contains(got, "turn/start") {
+				t.Fatalf("next send did not dispatch: %s", got)
+			}
+		})
+	}
+}
+
+func TestCodexRunnerDoesNotCompactWhenStoppedDuringPreparation(t *testing.T) {
+	t.Parallel()
+
+	f, r, server := newCodexFixture(t, CodexSession{}, nil)
+	server.intercept = func(ctx context.Context, method string) error {
+		if method == "thread/start" {
+			return r.Interrupt(ctx)
+		}
+		return nil
+	}
+	if err := r.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "req-t1", Hidden: true, Compact: true, Text: "/compact"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got := f.turnEvents(t, "t1"); got[len(got)-1] != "turn.completed  cancelled" {
+		t.Fatalf("events = %v", got)
+	}
+	if got := fmt.Sprint(server.sent()); strings.Contains(got, "thread/compact/start") {
+		t.Fatalf("compaction dispatched: %s", got)
+	}
+}

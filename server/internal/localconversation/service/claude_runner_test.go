@@ -559,3 +559,34 @@ func TestClaudeRunnerKeepsTheAdapterOnOtherUnsolicitedErrors(t *testing.T) {
 		t.Fatalf("requests = %s", got)
 	}
 }
+
+// Stopping while the adapter starts must not spend tokens on the prompt.
+func TestClaudeRunnerDoesNotDispatchATurnStoppedDuringPreparation(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	f.intercept = func(ctx context.Context, typ string) {
+		if typ == "start" {
+			if err := f.runner.Interrupt(ctx); err != nil {
+				t.Errorf("Interrupt: %v", err)
+			}
+		}
+	}
+	send(t, f, "t1")
+	if got := f.turnEvents(t, "t1"); got[len(got)-1] != "turn.completed  cancelled" {
+		t.Fatalf("events = %v", got)
+	}
+	a := f.adapter(0)
+	if got := fmt.Sprint(a.sent()); got != "[start]" {
+		t.Fatalf("requests = %s", got)
+	}
+	if f.limiter.Running() != 0 {
+		t.Fatal("limiter slot leaked")
+	}
+
+	// The prepared adapter serves the next turn.
+	send(t, f, "t2")
+	if got := fmt.Sprint(a.sent()); got != "[start send]" {
+		t.Fatalf("requests after the next send = %s", got)
+	}
+}

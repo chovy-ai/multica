@@ -225,6 +225,9 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		r.finish(turn, "failed", &turnError{kind: "provider_unavailable", message: err.Error()})
 		return err
 	}
+	if r.stoppedBeforeDispatch(turn) {
+		return nil
+	}
 	content := []map[string]any{{"type": "text", "text": req.prompt()}}
 	if _, err := adapter.Request(ctx, "send", map[string]any{"request_id": req.RequestID, "content": content}); err != nil {
 		var adapterErr *claude.AdapterError
@@ -237,6 +240,18 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
 	}
 	return nil
+}
+
+// stoppedBeforeDispatch ends a turn cancelled during preparation and reports
+// whether the turn is over, so its prompt must not be sent.
+func (r *ClaudeRunner) stoppedBeforeDispatch(turn *claudeTurn) bool {
+	r.mu.Lock()
+	ended, cancelled := r.turn != turn, turn.cancelRequested
+	r.mu.Unlock()
+	if cancelled {
+		r.finish(turn, "cancelled", nil)
+	}
+	return ended || cancelled
 }
 
 // StopTasks asks Claude to stop background tasks. Without a running

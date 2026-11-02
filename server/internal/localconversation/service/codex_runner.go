@@ -183,6 +183,9 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		effort = *r.session.ReasoningEffort
 	}
 	r.mu.Unlock()
+	if r.stoppedBeforeDispatch(turn) {
+		return nil
+	}
 
 	if req.Compact {
 		_, err := server.Request(ctx, "thread/compact/start", map[string]any{"threadId": threadID})
@@ -232,6 +235,18 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		r.handle(frame)
 	}
 	return nil
+}
+
+// stoppedBeforeDispatch ends a turn cancelled during preparation and reports
+// whether the turn is over, so its prompt must not be sent.
+func (r *CodexRunner) stoppedBeforeDispatch(turn *codexTurn) bool {
+	r.mu.Lock()
+	ended, cancelled := r.turn != turn, turn.cancelRequested
+	r.mu.Unlock()
+	if cancelled {
+		r.finish(turn, "cancelled", nil)
+	}
+	return ended || cancelled
 }
 
 // codexOutcomeUnknown reports whether a dispatch ended without an answer from
