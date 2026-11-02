@@ -4,12 +4,38 @@ import { QueryClient } from "@tanstack/react-query";
 import { localV2EventSchema, localV2SnapshotSchema, localV2SummarySchema } from "@multica/core/local-conversation/v2";
 import { AISessionClient, aiKeys } from "./client";
 import { applyEvents, groupSessions, transcript, visibleSessions } from "./projection";
+import { commandResultSchema } from "./schemas";
 
 const scope = { userId: "user-a", workspaceId: "workspace-a", deviceId: "peer-a" };
 const summary = (id = "session-a", seq = 1) => localV2SummarySchema.parse({ conversation_id: id, summary_seq: seq, provider: "codex", title: id, status: "idle", pinned: false, archived: false, updated_at: "2026-10-30T12:00:00Z" });
 const snapshot = () => localV2SnapshotSchema.parse({ version: 2, store_generation: "generation-a", snapshot_seq: 0, conversation: summary(), turns: [] });
 const event = (seq: number, type: string, payload: Record<string, unknown>, item: string | null = null) => localV2EventSchema.parse({ seq, type, payload, turn_id: "turn-a", item_id: item, final: type.endsWith("completed"), created_at: "2026-10-30T12:00:00Z" });
 const unusedSocket = () => { throw new Error("Unexpected socket in a cache test"); };
+const hello = () => Response.json({ version: 2, store_generation: "generation-a", capabilities: ["device-link"] });
+
+class FakeSocket {
+  readyState = 0;
+  sent: Record<string, unknown>[] = [];
+  onopen: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  send(data: string) { this.sent.push(JSON.parse(data)); }
+  close() { this.readyState = 3; this.onclose?.(); }
+  open() { this.readyState = 1; this.onopen?.(); }
+  subscriptions() { return this.sent.filter((message) => message.type === "subscribe"); }
+}
+
+/** A client with a socket per dial, and a fetcher that only needs to answer non-hello requests. */
+function linkedClient(read: typeof fetch = vi.fn<typeof fetch>(async () => Response.json({}))) {
+  const sockets: FakeSocket[] = [];
+  const qc = new QueryClient();
+  const fetcher = vi.fn<typeof fetch>(async (input, init) => String(input).endsWith("/hello") ? hello() : read(input, init));
+  const factory = () => { const socket = new FakeSocket(); sockets.push(socket); return socket as unknown as WebSocket; };
+  const client = new AISessionClient({ url: "http://127.0.0.1:1234", token: "loopback" }, scope, qc, factory, fetcher);
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+  return { client, qc, sockets, fetcher, flush };
+}
 
 afterEach(() => vi.useRealTimers());
 
@@ -121,5 +147,224 @@ describe("mobile AI session transport and caches", () => {
     await new Promise((done) => setTimeout(done, 0));
     expect(qc.getQueryData(aiKeys.snapshot(scope, "session-a"))).toMatchObject({ snapshot_seq: 0 });
     qc.clear();
+  });
+
+  describe("reconnecting", () => {
+    it("never holds two sockets while the handshake request is in flight", async () => {
+      vi.useFakeTimers();
+      const { client, sockets, flush } = linkedClient();
+      void client.connect(); void client.connect();
+      await flush();
+      expect(sockets).toHaveLength(1);
+      client.close();
+    });
+
+    it("retries a dropped socket immediately and shows nothing when it recovers within the window", async () => {
+      vi.useFakeTimers();
+      const { client, sockets, flush } = linkedClient();
+      const statuses: boolean[] = [];
+      client.onConnection(() => statuses.push(client.connected));
+      await client.connect(); sockets[0].open();
+      statuses.length = 0;
+      sockets[0].close();
+      await flush();
+      expect(sockets).toHaveLength(2);
+      expect(client.connected).toBe(true);
+      sockets[1].open();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(statuses).not.toContain(false);
+      client.close();
+    });
+
+    it("shows disconnected once the window passes without a new socket", async () => {
+      vi.useFakeTimers();
+      const { client, sockets, flush } = linkedClient();
+      await client.connect(); sockets[0].open();
+      sockets[0].close();
+      await flush();
+      await vi.advanceTimersByTimeAsync(2400);
+      expect(client.connected).toBe(true);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(client.connected).toBe(false);
+      sockets[1].open();
+      expect(client.connected).toBe(true);
+      client.close();
+    });
+
+    it("backs off instead of looping when a device drops every new socket", async () => {
+      vi.useFakeTimers();
+      const { client, sockets, flush } = linkedClient();
+      await client.connect(); sockets[0].open(); sockets[0].close();
+      await flush();
+      sockets[1].open(); sockets[1].close();
+      await flush();
+      expect(sockets).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(sockets).toHaveLength(3);
+      client.close();
+    });
+
+    it("subscribes from the cached snapshot without reading it again", async () => {
+      vi.useFakeTimers();
+      const { client, qc, sockets, fetcher, flush } = linkedClient();
+      qc.setQueryData(aiKeys.snapshot(scope, "session-a"), { ...snapshot(), snapshot_seq: 7 });
+      await client.connect(); sockets[0].open();
+      client.select("session-a");
+      sockets[0].close();
+      await flush();
+      sockets[1].open();
+      await flush();
+      expect(sockets[1].subscriptions()).toEqual([{ version: 2, type: "subscribe", conversation_id: "session-a", after_seq: 7, store_generation: "generation-a" }]);
+      expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/snapshot"))).toEqual([]);
+      client.close();
+    });
+
+    it("rereads only when the daemon reports the cached position is unusable", async () => {
+      vi.useFakeTimers();
+      const read = vi.fn<typeof fetch>(async () => Response.json({ ...snapshot(), store_generation: "generation-b", snapshot_seq: 9 }));
+      const { client, qc, sockets, flush } = linkedClient(read);
+      qc.setQueryData(aiKeys.snapshot(scope, "session-a"), snapshot());
+      await client.connect(); sockets[0].open();
+      client.select("session-a");
+      client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "snapshot_required" });
+      await flush();
+      expect(read).toHaveBeenCalledOnce();
+      expect(sockets[0].subscriptions().at(-1)).toMatchObject({ after_seq: 9, store_generation: "generation-b" });
+      client.close();
+    });
+
+    it("subscribes the new socket when the old socket's read fails after the socket changed", async () => {
+      vi.useFakeTimers();
+      let fail!: (error: Error) => void;
+      const read = vi.fn<typeof fetch>(() => new Promise((_, reject) => { fail = reject; }));
+      const { client, qc, sockets, flush } = linkedClient(read);
+      qc.setQueryData(aiKeys.snapshot(scope, "session-a"), snapshot());
+      await client.connect(); sockets[0].open();
+      client.select("session-a");
+      client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "resubscribe" });
+      await flush();
+      const signal = read.mock.calls[0][1]?.signal;
+      sockets[0].close();
+      expect(signal?.aborted).toBe(true);
+      await flush();
+      sockets[1].open();
+      fail(new Error("stream reset"));
+      await flush();
+      expect(sockets[1].subscriptions()).toHaveLength(1);
+      client.close();
+    });
+
+    it("ignores the old socket's read when it succeeds after the socket changed", async () => {
+      vi.useFakeTimers();
+      let finish!: (response: Response) => void;
+      const read = vi.fn<typeof fetch>(() => new Promise((done) => { finish = done; }));
+      const { client, qc, sockets, flush } = linkedClient(read);
+      qc.setQueryData(aiKeys.snapshot(scope, "session-a"), { ...snapshot(), snapshot_seq: 2 });
+      await client.connect(); sockets[0].open();
+      client.select("session-a");
+      client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "resubscribe" });
+      await flush();
+      sockets[0].close();
+      await flush();
+      sockets[1].open();
+      finish(Response.json({ ...snapshot(), snapshot_seq: 50 }));
+      await flush();
+      expect(qc.getQueryData(aiKeys.snapshot(scope, "session-a"))).toMatchObject({ snapshot_seq: 2 });
+      expect(sockets[1].subscriptions()).toHaveLength(1);
+      expect(sockets[1].subscriptions()[0]).toMatchObject({ after_seq: 2 });
+      client.close();
+    });
+
+    it("retries a failed read on the same socket until it subscribes", async () => {
+      vi.useFakeTimers();
+      const read = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError("Network request failed"))
+        .mockImplementation(async () => Response.json({ ...snapshot(), snapshot_seq: 3 }));
+      const { client, qc, sockets, flush } = linkedClient(read);
+      qc.setQueryData(aiKeys.snapshot(scope, "session-a"), snapshot());
+      await client.connect(); sockets[0].open();
+      client.select("session-a");
+      client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "snapshot_required" });
+      await flush();
+      expect(sockets[0].subscriptions()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(sockets[0].subscriptions().at(-1)).toMatchObject({ after_seq: 3 });
+      client.close();
+    });
+
+    it("reports a rejected subscription and clears it when a retry subscribes", async () => {
+      vi.useFakeTimers();
+      const { client, qc, sockets, flush } = linkedClient();
+      qc.setQueryData(aiKeys.snapshot(scope, "session-a"), snapshot());
+      await client.connect(); sockets[0].open();
+      const listener = vi.fn();
+      client.onConnection(listener);
+      client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "rejected", error: { kind: "subscription_limit", message: "too many" } });
+      expect(client.subscriptionRejected("session-a")).toBe(true);
+      expect(listener).toHaveBeenCalled();
+      client.receive({ version: 2, type: "subscription.status", conversation_id: "session-a", status: "subscribed", high_water: 0 });
+      expect(client.subscriptionRejected("session-a")).toBe(false);
+      client.receive({ version: 2, type: "subscription.status", status: "rejected", error: { kind: "internal", message: "scope" } });
+      await flush();
+      expect(sockets).toHaveLength(2);
+      client.close();
+    });
+
+    it("gives commands the desktop timeout", async () => {
+      vi.useFakeTimers();
+      const aborted = (signal?: AbortSignal | null) => new Promise<Response>((_, reject) => { signal?.addEventListener("abort", () => reject(new Error("timeout"))); });
+      const { client, flush } = linkedClient(vi.fn<typeof fetch>((_url, init) => aborted(init?.signal)));
+      const outcome = client.command("session-a", { type: "send", request_id: "r" }, commandResultSchema).catch((error: Error) => error.message);
+      await vi.advanceTimersByTimeAsync(119_000);
+      await flush();
+      const early = await Promise.race([outcome, Promise.resolve("pending")]);
+      expect(early).toBe("pending");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await outcome).toBe("timeout");
+      client.close();
+    });
+
+    it("keeps a send made during the window and repeats it with its request id once the link recovers", async () => {
+      vi.useFakeTimers();
+      const read = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError("Network request failed"))
+        .mockImplementation(async () => Response.json({ turn_id: "turn-a" }));
+      const { client, sockets, flush } = linkedClient(read);
+      await client.connect(); sockets[0].open();
+      sockets[0].close();
+      await flush();
+      const sent = client.submit("session-a", { type: "send", request_id: "request-a" }, commandResultSchema);
+      await flush();
+      expect(read).toHaveBeenCalledOnce();
+      sockets[1].open();
+      await expect(sent).resolves.toMatchObject({ turn_id: "turn-a" });
+      expect(read.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).request_id)).toEqual(["request-a", "request-a"]);
+      client.close();
+    });
+
+    it("surfaces a send failure when the link does not recover within the window", async () => {
+      vi.useFakeTimers();
+      const read = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("Network request failed"));
+      const { client, sockets, flush } = linkedClient(read);
+      await client.connect(); sockets[0].open();
+      sockets[0].close();
+      await flush();
+      const sent = client.submit("session-a", { type: "send", request_id: "request-a" }, commandResultSchema).catch((error: Error) => error.message);
+      await vi.advanceTimersByTimeAsync(2_600);
+      expect(await sent).toBe("Network request failed");
+      expect(read).toHaveBeenCalledOnce();
+      client.close();
+    });
+
+    it("does not repeat a send the daemon rejected", async () => {
+      vi.useFakeTimers();
+      const read = vi.fn<typeof fetch>(async () => Response.json({ error: { kind: "turn_running", message: "busy" } }, { status: 409 }));
+      const { client, sockets, flush } = linkedClient(read);
+      await client.connect(); sockets[0].open();
+      sockets[0].close();
+      await flush();
+      await expect(client.submit("session-a", { type: "send", request_id: "request-a" }, commandResultSchema)).rejects.toThrow("turn_running");
+      expect(read).toHaveBeenCalledOnce();
+      client.close();
+    });
   });
 });

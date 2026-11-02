@@ -17,7 +17,7 @@ import { createRequestId } from "@/lib/request-id";
 import { THEME } from "@/lib/theme";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { aiKeys } from "@/data/ai-sessions/client";
-import { useAIConnection, useAISessionScope } from "@/data/ai-sessions/hooks";
+import { useAIConnection, useAISessionScope, useAISubscriptionRejected } from "@/data/ai-sessions/hooks";
 import { useAIDrafts, aiDraftKey } from "@/data/ai-sessions/drafts";
 import { commandResultSchema, historySchema, providersSchema, queueSchema, readResponse } from "@/data/ai-sessions/schemas";
 import { transcript } from "@/data/ai-sessions/projection";
@@ -34,6 +34,7 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
   useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false); }, []));
   const scope = useAISessionScope();
   const { client, connected } = useAIConnection();
+  const subscriptionRejected = useAISubscriptionRejected(session);
   const qc = useQueryClient();
   const key = aiKeys.snapshot(scope, session);
   const query = useQuery({ queryKey: key, enabled: !!client, retry: false, staleTime: Infinity, queryFn: ({ signal }) => client!.snapshot(session, signal) });
@@ -94,8 +95,8 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
     setPending(draftKey, request); setBusy(true); setSendFailed(false);
     try {
       if (request.queued) {
-        await client.command(session, { type: "queue_enqueue", paused: snapshot!.queue.paused, item: { requestId: request.requestId, content: request.queueContent ?? request.text, attachmentIds: request.attachments, display: { id: request.requestId, clientSubmitId: request.requestId, createdAtUnixMs: request.createdAt, content: [{ type: "text", text: request.text }] } } }, queueSchema);
-      } else await client.command(session, { type: "send", request_id: request.requestId, text: request.text, attachment_ids: request.attachments }, commandResultSchema);
+        await client.submit(session, { type: "queue_enqueue", paused: snapshot!.queue.paused, item: { requestId: request.requestId, content: request.queueContent ?? request.text, attachmentIds: request.attachments, display: { id: request.requestId, clientSubmitId: request.requestId, createdAtUnixMs: request.createdAt, content: [{ type: "text", text: request.text }] } } }, queueSchema);
+      } else await client.submit(session, { type: "send", request_id: request.requestId, text: request.text, attachment_ids: request.attachments }, commandResultSchema);
       setDraft(draftKey, ""); setPending(draftKey, null); setAttachments([]);
       void query.refetch();
     } catch (error) {
@@ -176,7 +177,7 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
     </View>} />}
     {!embedded && <View className="items-center py-1"><Text className="text-xs text-muted-foreground">{name || t("device_name")} · {t(connected ? "online" : "offline")}</Text></View>}
     {snapshot?.conversation.side_source_id && <Pressable className="mx-4 my-2 p-3 rounded-lg bg-secondary" accessibilityRole="button" onPress={() => onOpenSource ? onOpenSource() : router.push({ pathname: "/[workspace]/ai-sessions/[device]/[session]", params: { workspace, device, session: snapshot.conversation.side_source_id!, turn: snapshot.conversation.side_source_turn_id, name } })}><Text className="text-xs text-muted-foreground">{t("source")} ›</Text><Text numberOfLines={3}>{snapshot.conversation.side_quote}</Text></Pressable>}
-    <ConnectionNotice connected={connected} />
+    <ConnectionNotice connected={connected} subscriptionRejected={subscriptionRejected} onRetrySubscription={() => client?.retrySubscription(session)} />
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} className="flex-1">
       {query.isPending ? <ActivityIndicator className="mt-8" /> : <FlashList ref={list} data={allRows} keyExtractor={(item) => item.id}
         maintainVisibleContentPosition={{ startRenderingFromBottom: true }}

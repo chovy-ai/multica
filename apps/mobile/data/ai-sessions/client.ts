@@ -16,16 +16,34 @@ export const aiKeys = {
 
 export type SocketFactory = (url: string, headers: Record<string, string>) => WebSocket;
 
+const REQUEST_TIMEOUT_MS = 30_000;
+// Matches desktop: a send waits for thread setup, which can take up to a minute.
+const COMMAND_TIMEOUT_MS = 120_000;
+const DISCONNECT_NOTICE_MS = 2_500;
+// A socket that dies sooner keeps backing off, so a device that accepts and
+// immediately drops connections cannot cause a tight reconnect loop.
+const STABLE_SOCKET_MS = 5_000;
+
+const isLinkFailure = (error: unknown) => error instanceof TypeError || (error instanceof Error && error.message === "device_unreachable");
+
 export class AISessionClient {
   private socket?: WebSocket;
+  private connecting = false;
   private timer?: ReturnType<typeof setTimeout>;
   private handshake?: ReturnType<typeof setTimeout>;
+  private noticeTimer?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private backoff = 500;
+  private retryImmediately = true;
+  private closedSockets = 0;
   private selected?: string;
-  private resyncing = new Set<string>();
+  private reads = new Map<string, AbortController>();
+  private readRetries = new Set<ReturnType<typeof setTimeout>>();
+  private recoveryWaiters = new Set<(recovered: boolean) => void>();
+  private rejected = new Set<string>();
   private refreshingQueues = new Set<string>();
   private listeners = new Set<() => void>();
+  /** Stays true through the short reconnect window, so a brief drop shows nothing. */
   connected = false;
   readonly clientId = createRequestId();
 
@@ -34,12 +52,12 @@ export class AISessionClient {
   headers() { return { Authorization: `Bearer ${this.endpoint.token}`, "X-Workspace-ID": this.scope.workspaceId, "X-Multica-Client-ID": this.clientId }; }
   url(path: string) { return `${this.endpoint.url}/devices/${encodeURIComponent(this.scope.deviceId)}/local/v2${path}`; }
 
-  async request<T>(method: "GET" | "POST", path: string, schema: z.ZodType<T>, body?: unknown, signal?: AbortSignal): Promise<T> {
+  async request<T>(method: "GET" | "POST", path: string, schema: z.ZodType<T>, body?: unknown, signal?: AbortSignal, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort);
     if (signal?.aborted) controller.abort();
-    const timeout = setTimeout(abort, 30_000);
+    const timeout = setTimeout(abort, timeoutMs);
     try {
       const response = await this.fetcher(this.url(path), { method, headers: { ...this.headers(), "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), signal: controller.signal });
       const value: unknown = await response.json();
@@ -84,56 +102,111 @@ export class AISessionClient {
       if (!this.stopped && received >= 0 && current && current.queue.revision > received) void this.refreshQueue(id);
     }
   }
-  command<T>(id: string, body: Record<string, unknown>, schema: z.ZodType<T>) { return this.request("POST", `/sessions/${encodeURIComponent(id)}/commands`, schema, body); }
+  command<T>(id: string, body: Record<string, unknown>, schema: z.ZodType<T>) { return this.request("POST", `/sessions/${encodeURIComponent(id)}/commands`, schema, body, undefined, COMMAND_TIMEOUT_MS); }
+  /** For commands the daemon deduplicates by request ID: a failure during the reconnect window is retried once the link recovers. */
+  async submit<T>(id: string, body: Record<string, unknown>, schema: z.ZodType<T>) {
+    const closedSockets = this.closedSockets;
+    try { return await this.command(id, body, schema); }
+    catch (error) {
+      if (!isLinkFailure(error)) throw error;
+      const recovered = this.reconnecting() ? await this.linkRecovery() : this.closedSockets !== closedSockets;
+      if (!recovered) throw error;
+      return this.command(id, body, schema);
+    }
+  }
+  private reconnecting() { return this.connected && this.socket?.readyState !== 1; }
+  private linkRecovery() { return new Promise<boolean>((resolve) => { this.recoveryWaiters.add(resolve); }); }
+  private settleRecovery(recovered: boolean) { for (const resolve of this.recoveryWaiters) resolve(recovered); this.recoveryWaiters.clear(); }
   onConnection(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  private status(value: boolean) { this.connected = value; for (const listener of this.listeners) listener(); }
+  private notify() { for (const listener of this.listeners) listener(); }
+  private status(value: boolean) { clearTimeout(this.noticeTimer); this.noticeTimer = undefined; this.connected = value; this.notify(); }
+  subscriptionRejected(id: string) { return this.rejected.has(id); }
+  retrySubscription(id: string) { if (this.rejected.delete(id)) this.notify(); void this.resync(id); }
 
   async connect() {
-    if (this.stopped || this.socket) return;
+    if (this.stopped || this.socket || this.connecting) return;
+    this.connecting = true;
     try {
       const hello = await this.request("GET", "/hello", localV2HelloSchema);
       if (hello.version !== LOCAL_V2_VERSION || !hello.capabilities.includes("device-link")) throw new Error("incompatible");
       if (this.stopped) return;
       const ws = this.socketFactory(this.url("/ws").replace(/^http/, "ws"), this.headers());
+      let openedAt: number | undefined;
       this.socket = ws;
       this.handshake = setTimeout(() => ws.close(), 20_000);
       ws.onopen = () => {
         clearTimeout(this.handshake);
         if (this.stopped) return;
-        this.backoff = 500; this.status(true);
+        openedAt = Date.now();
+        this.rejected.clear();
+        this.status(true);
+        this.settleRecovery(true);
         ws.send(JSON.stringify({ version: 2, type: "subscribe_scope", after_scope_seq: 0 }));
         void this.qc.invalidateQueries({ queryKey: aiKeys.list(this.scope) });
-        if (this.selected) void this.resync(this.selected);
+        if (!this.selected) return;
+        // The daemon answers snapshot_required when a cached position is unusable.
+        const cached = this.qc.getQueryData<LocalV2Snapshot>(aiKeys.snapshot(this.scope, this.selected));
+        if (cached) this.subscribe(cached); else void this.resync(this.selected);
       };
       ws.onmessage = (event) => { if (typeof event.data === "string") { try { this.receive(JSON.parse(event.data)); } catch { /* Ignore non-protocol frames. */ } } };
       ws.onerror = () => ws.close();
-      ws.onclose = () => { clearTimeout(this.handshake); if (this.socket !== ws) return; this.socket = undefined; this.status(false); this.retry(); };
-    } catch { this.status(false); this.retry(); }
+      ws.onclose = () => {
+        clearTimeout(this.handshake);
+        if (this.socket !== ws) return;
+        this.socket = undefined;
+        this.closedSockets++;
+        this.cancelReads();
+        if (openedAt !== undefined && Date.now() - openedAt >= STABLE_SOCKET_MS) { this.backoff = 500; this.retryImmediately = true; }
+        this.linkLost();
+      };
+    } catch { this.linkLost(); }
+    finally { this.connecting = false; }
+  }
+  private linkLost() {
+    if (this.connected && !this.noticeTimer) {
+      this.noticeTimer = setTimeout(() => { this.noticeTimer = undefined; this.status(false); this.settleRecovery(false); }, DISCONNECT_NOTICE_MS);
+    }
+    this.retry();
   }
   private retry() {
     if (this.stopped || this.timer) return;
-    this.timer = setTimeout(() => { this.timer = undefined; void this.connect(); }, this.backoff);
-    this.backoff = Math.min(this.backoff * 2, 10_000);
+    const delay = this.retryImmediately ? 0 : this.backoff;
+    if (this.retryImmediately) this.retryImmediately = false;
+    else this.backoff = Math.min(this.backoff * 2, 10_000);
+    this.timer = setTimeout(() => { this.timer = undefined; void this.connect(); }, delay);
   }
   select(id: string) {
     if (this.selected === id) return;
-    if (this.selected && this.selected !== id) this.send({ version: 2, type: "unsubscribe", conversation_id: this.selected });
+    if (this.selected && this.selected !== id) { this.rejected.delete(this.selected); this.send({ version: 2, type: "unsubscribe", conversation_id: this.selected }); }
     this.selected = id;
     const snapshot = this.qc.getQueryData<LocalV2Snapshot>(aiKeys.snapshot(this.scope, id));
     if (snapshot && this.connected) this.subscribe(snapshot);
   }
   private send(value: unknown) { if (this.socket?.readyState === 1) this.socket.send(JSON.stringify(value)); }
   private subscribe(snapshot: LocalV2Snapshot) { this.send({ version: 2, type: "subscribe", conversation_id: snapshot.conversation.conversation_id, after_seq: snapshot.snapshot_seq, store_generation: snapshot.store_generation }); }
-  private async resync(id: string) {
-    if (this.resyncing.has(id)) return;
-    this.resyncing.add(id);
+  private cancelReads() {
+    for (const read of this.reads.values()) read.abort();
+    this.reads.clear();
+    for (const retry of this.readRetries) clearTimeout(retry);
+    this.readRetries.clear();
+  }
+  private async resync(id: string, attempt = 0) {
+    if (this.reads.has(id)) return;
+    const read = new AbortController();
+    this.reads.set(id, read);
     try {
-      const snapshot = await this.snapshot(id);
-      if (this.stopped) return;
+      const snapshot = await this.snapshot(id, read.signal);
+      if (this.stopped || read.signal.aborted) return;
       this.qc.setQueryData(aiKeys.snapshot(this.scope, id), snapshot);
       if (this.selected === id) this.subscribe(snapshot);
-    } catch { /* The connection state remains authoritative; retry on reconnect. */ }
-    finally { this.resyncing.delete(id); }
+    } catch {
+      // A socket change cancels reads and subscribes for itself; otherwise keep
+      // trying so the open conversation does not silently lose live events.
+      if (!read.signal.aborted && !this.stopped && this.selected === id) {
+        const retry = setTimeout(() => { this.readRetries.delete(retry); void this.resync(id, attempt + 1); }, Math.min(500 * 2 ** attempt, 10_000));
+        this.readRetries.add(retry);
+      }
+    } finally { if (this.reads.get(id) === read) this.reads.delete(id); }
   }
   receive(raw: unknown) {
     const result = localV2ServerMessageSchema.safeParse(raw);
@@ -150,15 +223,22 @@ export class AISessionClient {
           old && old.conversation.summary_seq < summary.summary_seq ? { ...old, conversation: summary } : old);
       }
     } else if (message.type === "conversation.events") {
-      if (this.resyncing.has(message.conversation_id)) return;
+      if (this.reads.has(message.conversation_id)) return;
       const key = aiKeys.snapshot(this.scope, message.conversation_id);
       const old = this.qc.getQueryData<LocalV2Snapshot>(key);
       const updated = old ? applyEvents(old, message.events) : null;
       if (updated) this.qc.setQueryData(key, updated); else void this.resync(message.conversation_id);
       if (message.events.some((event) => event.type === "queue.updated")) void this.refreshQueue(message.conversation_id);
-    } else if (message.type === "subscription.status" && ["resubscribe", "snapshot_required"].includes(message.status)) {
-      if (message.conversation_id) void this.resync(message.conversation_id);
-      else void this.qc.invalidateQueries({ queryKey: aiKeys.list(this.scope) });
+    } else if (message.type === "subscription.status") {
+      const id = message.conversation_id;
+      if (message.status === "resubscribe" || message.status === "snapshot_required") {
+        if (id) void this.resync(id);
+        else void this.qc.invalidateQueries({ queryKey: aiKeys.list(this.scope) });
+      } else if (message.status === "rejected") {
+        if (id) { this.rejected.add(id); this.notify(); }
+        // The session list has no notice of its own; a new socket retries it.
+        else this.socket?.close();
+      } else if (message.status === "subscribed" && id && this.rejected.delete(id)) this.notify();
     } else if (message.type === "host.request") {
       // Requests requiring desktop-only UI must fail explicitly, never hang
       // an execution or apply remote settings without the user's confirmation.
@@ -167,6 +247,7 @@ export class AISessionClient {
   }
   close() {
     this.stopped = true; clearTimeout(this.timer); clearTimeout(this.handshake);
+    this.cancelReads(); this.settleRecovery(false);
     if (this.socket) { this.socket.onclose = null; this.socket.onmessage = null; this.socket.onopen = null; this.socket.onerror = null; this.socket.close(); }
     this.socket = undefined; this.status(false);
   }
