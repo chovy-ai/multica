@@ -67,6 +67,14 @@ type runner interface {
 	Running() bool
 	// StopTasks stops the provider's background tasks with these ids.
 	StopTasks(ctx context.Context, taskIDs []string) error
+	// Prepare loads a conversation that already has a native session ahead of
+	// its next send; it takes no turn slot and sends no prompt.
+	Prepare(ctx context.Context, trace *timing.Trace) error
+	// IdleProcess reports the runner's process when it is doing nothing.
+	IdleProcess() (idleProcess, bool)
+	// Evict stops an idle process and reports whether it did; the next send
+	// starts a new one.
+	Evict(ctx context.Context) bool
 	Close(ctx context.Context) error
 }
 

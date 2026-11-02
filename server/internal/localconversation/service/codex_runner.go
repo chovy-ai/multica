@@ -74,6 +74,7 @@ type CodexRunner struct {
 	server  CodexServer
 	native  *codexNative
 	turn    *codexTurn
+	gate    prepareGate
 	// restart is set when the running server's loaded thread has settings
 	// that no longer apply: thread/resume ignores new model and permission
 	// values on a loaded thread, so only a new process applies them.
@@ -109,6 +110,7 @@ type codexTurn struct {
 	references    []Reference
 	createTask    bool
 	trace         *timing.Trace
+	stop          *stopSignal
 }
 
 type codexNative struct {
@@ -146,7 +148,7 @@ func NewCodexRunner(opts CodexRunnerOptions) *CodexRunner {
 	return &CodexRunner{
 		rec:   turnRecorder{conversationID: opts.ConversationID, scopeID: opts.ScopeID, files: opts.Files, now: opts.Now},
 		start: opts.Start, batcher: opts.Batcher, limiter: opts.Limiter, context: contextName(opts.ContextMCPName), session: opts.Session,
-		bind: opts.Context, onTurnEnd: opts.OnTurnEnd,
+		bind: opts.Context, onTurnEnd: opts.OnTurnEnd, gate: newPrepareGate(),
 	}
 }
 
@@ -159,6 +161,10 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 	ctx, cancel := detachSend(ctx)
 	defer cancel()
 	r.mu.Lock()
+	if r.gate.closed {
+		r.mu.Unlock()
+		return ErrClosing
+	}
 	if r.turn != nil {
 		r.mu.Unlock()
 		return ErrTurnRunning
@@ -169,9 +175,9 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		trace.MarkFailed(timing.StageRunnerLimiter, timing.ReasonConcurrencyLimit)
 		return err
 	}
-	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References, createTask: req.CreateTask, compacting: req.Compact, trace: trace}
+	turn := &codexTurn{id: req.TurnID, norm: codex.NewNormalizer(r.context), references: req.References, createTask: req.CreateTask, compacting: req.Compact, trace: trace, stop: newStopSignal()}
 	r.turn = turn
-	trace.SetPrepareKind(prepareKindOf(r.server != nil && !r.restart))
+	r.gate.sendReady(trace, r.server != nil && !r.restart)
 	r.mu.Unlock()
 	trace.Mark(timing.StageRunnerLimiter)
 
@@ -186,21 +192,24 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		return err
 	}
 	prepared := trace.Begin(timing.StagePrepareWait)
-	server, native, err := r.ensureServer(ctx, trace)
-	if err != nil {
-		prepared(err)
-		r.finish(turn, "failed", &turnError{kind: "provider_unavailable", message: err.Error()})
-		return err
+	ready, failKind, err := r.awaitReady(ctx, turn, trace)
+	if err == nil && ready.server != nil && ready.threadID == "" {
+		failKind = "provider_error"
+		ready.threadID, err = r.thread(ctx, ready.server, ready.native, trace)
 	}
-	threadID, err := r.thread(ctx, server, native, trace)
 	prepared(err)
 	if err != nil {
-		r.finish(turn, "failed", &turnError{kind: "provider_error", message: err.Error()})
+		r.finish(turn, "failed", &turnError{kind: failKind, message: err.Error()})
 		return err
 	}
+	if ready.server == nil {
+		r.stoppedBeforeDispatch(turn)
+		return nil
+	}
+	server, threadID := ready.server, ready.threadID
 	r.mu.Lock()
 	turn.threadID = threadID
-	effort := native.ReasoningEffort
+	effort := ready.native.ReasoningEffort
 	if r.session.ReasoningEffort != nil {
 		effort = *r.session.ReasoningEffort
 	}
@@ -262,6 +271,177 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 	return nil
 }
 
+// codexReady is a server a turn can use; an empty threadID still needs thread.
+type codexReady struct {
+	server   CodexServer
+	native   *codexNative
+	threadID string
+}
+
+// awaitReady returns once the runner has a usable server, starting or joining
+// the one prepare task. A turn that was stopped or ended meanwhile gets a zero
+// codexReady. A settings change during a task sets restart, which loops here so
+// the prompt never reaches a thread still loaded with the old settings.
+func (r *CodexRunner) awaitReady(ctx context.Context, turn *codexTurn, trace *timing.Trace) (codexReady, string, error) {
+	var last *prepareTask
+	for {
+		r.mu.Lock()
+		if r.turn != turn {
+			r.mu.Unlock()
+			return codexReady{}, "", nil
+		}
+		task := r.gate.task
+		if task == nil {
+			if r.server != nil && !r.restart {
+				ready := codexReady{server: r.server, native: r.native}
+				if last != nil {
+					ready.threadID = last.threadID
+				}
+				r.mu.Unlock()
+				return ready, "", nil
+			}
+			task = r.startPrepareLocked(trace, false)
+		}
+		r.mu.Unlock()
+		stopped, err := waitPrepare(ctx, task, turn.stop.wait())
+		if stopped {
+			return codexReady{}, "", nil
+		}
+		if err != nil {
+			return codexReady{}, "provider_unavailable", err
+		}
+		// A failed preheat was only ever an optimization: the send starts its own.
+		if task.err != nil && !task.preheat {
+			return codexReady{}, task.failKind, task.err
+		}
+		last = task
+		if task.err != nil {
+			last = nil
+		}
+	}
+}
+
+// startPrepareLocked starts the prepare task; r.mu is held.
+func (r *CodexRunner) startPrepareLocked(trace *timing.Trace, preheat bool) *prepareTask {
+	task, ctx, cancel := r.gate.begin(preheat)
+	if preheat {
+		trace.SetPrepare(timing.PreparePreheated, task.id)
+	} else {
+		trace.SetPrepare(timing.PrepareCold, task.id)
+	}
+	go func() {
+		defer cancel()
+		threadID, failKind, err := r.prepare(ctx, trace, preheat)
+		r.mu.Lock()
+		task.threadID, task.failKind, task.err = threadID, failKind, err
+		r.gate.finish(task, r.rec.now())
+		r.mu.Unlock()
+		close(task.done)
+	}()
+	return task
+}
+
+func (r *CodexRunner) prepare(ctx context.Context, trace *timing.Trace, preheat bool) (threadID, failKind string, err error) {
+	server, native, err := r.ensureServer(ctx, trace)
+	if err != nil {
+		return "", "provider_unavailable", err
+	}
+	threadID, err = r.thread(ctx, server, native, trace)
+	if err != nil {
+		// Nothing depends on a preheat's process, and one that could not load
+		// its thread may be what a later send would hang on.
+		if preheat {
+			r.dropServer(server)
+		}
+		return "", "provider_error", err
+	}
+	return threadID, "", nil
+}
+
+// dropServer stops server if it is still the runner's.
+func (r *CodexRunner) dropServer(server CodexServer) {
+	r.mu.Lock()
+	if r.server != server {
+		r.mu.Unlock()
+		return
+	}
+	release := r.detachServerLocked()
+	r.mu.Unlock()
+	if release != nil {
+		release()
+	}
+	server.Stop()
+}
+
+// detachServerLocked forgets the process and what was bound to it; r.mu is held.
+func (r *CodexRunner) detachServerLocked() (release func()) {
+	release = r.releaseContext
+	r.server, r.native, r.restart, r.contextURL, r.contextToken, r.releaseContext, r.systemPrompt = nil, nil, false, "", "", nil, ""
+	return release
+}
+
+// Prepare gets an existing conversation's thread loaded ahead of its next send,
+// without taking a turn slot or sending anything. It does nothing when a turn
+// runs or the process is ready, and a conversation without a native thread is
+// never prepared: starting one here would leave an empty thread behind. ctx only
+// bounds the wait; the task continues for whoever else waits on it.
+func (r *CodexRunner) Prepare(ctx context.Context, trace *timing.Trace) error {
+	r.mu.Lock()
+	if r.gate.closed {
+		r.mu.Unlock()
+		return ErrClosing
+	}
+	if r.turn != nil || r.session.ThreadID == "" {
+		r.mu.Unlock()
+		return nil
+	}
+	task := r.gate.task
+	if task == nil {
+		if r.server != nil && !r.restart {
+			r.mu.Unlock()
+			return nil
+		}
+		task = r.startPrepareLocked(trace, true)
+	} else {
+		trace.SetPrepare(timing.PreparePreheated, task.id)
+	}
+	r.mu.Unlock()
+	if _, err := waitPrepare(ctx, task, nil); err != nil {
+		return err
+	}
+	return task.err
+}
+
+// Evict stops an idle process to free its resources. The runner and thread stay;
+// the next send resumes on a new process. The process leaves the runner under
+// the lock, so a send can never pick up one that is exiting.
+func (r *CodexRunner) Evict(context.Context) bool {
+	r.mu.Lock()
+	if r.turn != nil || r.gate.task != nil || r.server == nil {
+		r.mu.Unlock()
+		return false
+	}
+	server := r.server
+	release := r.detachServerLocked()
+	r.gate.preheated = false
+	r.mu.Unlock()
+	if release != nil {
+		release()
+	}
+	server.Stop()
+	return true
+}
+
+// IdleProcess reports the runner's process when it is doing nothing.
+func (r *CodexRunner) IdleProcess() (idleProcess, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.server == nil || r.turn != nil || r.gate.task != nil {
+		return idleProcess{}, false
+	}
+	return idleProcess{provider: "codex", scopeID: r.rec.scopeID, since: r.gate.idleSince, preheated: r.gate.preheated, evictable: true}, true
+}
+
 // stoppedBeforeDispatch ends a turn cancelled during preparation and reports
 // whether the turn is over, so its prompt must not be sent.
 func (r *CodexRunner) stoppedBeforeDispatch(turn *codexTurn) bool {
@@ -294,6 +474,8 @@ func (r *CodexRunner) Interrupt(ctx context.Context) error {
 	active := turn.active
 	if active {
 		turn.interrupted = true
+	} else {
+		turn.stop.fire()
 	}
 	r.mu.Unlock()
 	if active {
@@ -372,8 +554,11 @@ func sameModel(a, b *string) bool {
 }
 
 // Close stops app-server, failing a running turn.
-func (r *CodexRunner) Close(context.Context) error {
+func (r *CodexRunner) Close(ctx context.Context) error {
 	r.mu.Lock()
+	r.gate.closed = true
+	r.gate.cancel()
+	task := r.gate.task
 	server, turn, release := r.server, r.turn, r.releaseContext
 	r.server, r.releaseContext, r.contextToken = nil, nil, ""
 	r.mu.Unlock()
@@ -386,9 +571,12 @@ func (r *CodexRunner) Close(context.Context) error {
 	if release != nil {
 		release()
 	}
+	waitClosed(ctx, task)
 	return nil
 }
 
+// ensureServer runs only inside the prepare task, which is what keeps two
+// callers from starting two processes.
 func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (CodexServer, *codexNative, error) {
 	r.mu.Lock()
 	if r.server != nil && !r.restart {
@@ -453,6 +641,14 @@ func (r *CodexRunner) ensureServer(ctx context.Context, trace *timing.Trace) (Co
 		contextURL, release, systemPrompt = binding.URL, rel, binding.SystemPrompt
 	}
 	r.mu.Lock()
+	if r.gate.closed {
+		r.mu.Unlock()
+		if !bound {
+			release()
+		}
+		server.Stop()
+		return nil, nil, ErrClosing
+	}
 	r.server, r.native = server, &result.Config
 	if !bound {
 		r.contextURL, r.contextToken, r.releaseContext, r.systemPrompt = contextURL, token, release, systemPrompt
@@ -766,6 +962,7 @@ func (r *CodexRunner) finish(turn *codexTurn, status string, failure *turnError)
 		return
 	}
 	r.turn = nil
+	r.gate.idleSince = r.rec.now()
 	r.mu.Unlock()
 	defer r.limiter.Release()
 	itemStatus := status

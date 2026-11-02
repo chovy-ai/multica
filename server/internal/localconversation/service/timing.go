@@ -188,13 +188,6 @@ func (t *turnTraces) each(events []store.CommittedEvent, stage, key string, mark
 	}
 }
 
-func prepareKindOf(ready bool) string {
-	if ready {
-		return timing.PrepareHot
-	}
-	return timing.PrepareCold
-}
-
 // startDurations is implemented by provider processes that can tell launching
 // apart from their handshake; a test's fake reports one span instead.
 type startDurations interface {
