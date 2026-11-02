@@ -79,7 +79,17 @@ func (r SendRequest) prompt() string {
 const (
 	interruptDeadline = 10 * time.Second
 	previewRunes      = 200
+	// sendDeadline bounds a send's preparation and dispatch. It is generous
+	// because a Claude start includes the project's SessionStart hooks.
+	sendDeadline = 5 * time.Minute
 )
+
+// detachSend is the context of a send's durable part: the caller's values
+// without its cancellation. Once the input is stored the turn exists and a
+// retry replays it, so a caller going away must not fail the turn.
+func detachSend(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), sendDeadline)
+}
 
 // ClaudeRunner runs one Claude conversation: it starts the adapter on
 // demand, records each turn through the batcher, normalizes adapter output
@@ -183,6 +193,11 @@ func NewClaudeRunner(opts ClaudeRunnerOptions) *ClaudeRunner {
 // receipt are durable and the prompt was handed to the adapter; output and
 // completion follow as events.
 func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ctx, cancel := detachSend(ctx)
+	defer cancel()
 	r.mu.Lock()
 	if r.turn != nil {
 		r.mu.Unlock()

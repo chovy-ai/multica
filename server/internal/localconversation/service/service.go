@@ -421,7 +421,7 @@ func (s *Service) Send(ctx context.Context, cmd SendCommand) (SendResult, error)
 		}
 		return SendResult{}, err
 	case errors.Is(err, ErrOutcomeUnknown):
-		if markErr := s.store.MarkUncertain(ctx, cmd.ScopeID, cmd.RequestID); markErr != nil {
+		if markErr := s.store.MarkUncertain(context.WithoutCancel(ctx), cmd.ScopeID, cmd.RequestID); markErr != nil {
 			err = errors.Join(err, markErr)
 		}
 		return SendResult{TurnID: turnID}, err

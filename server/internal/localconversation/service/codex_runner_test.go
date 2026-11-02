@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -29,19 +30,26 @@ type fakeCodex struct {
 	beforeTurnStart func()
 	// reply, when set, answers a method before the defaults.
 	reply func(method string, params map[string]any) (json.RawMessage, bool)
-	done  chan struct{}
-	once  sync.Once
+	// intercept, when set, sees each request's context and can fail it.
+	intercept func(ctx context.Context, method string) error
+	done      chan struct{}
+	once      sync.Once
 }
 
-func (f *fakeCodex) Request(_ context.Context, method string, params any) (json.RawMessage, error) {
+func (f *fakeCodex) Request(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	f.mu.Lock()
 	f.requests = append(f.requests, method)
 	data, _ := json.Marshal(params)
 	var p map[string]any
 	_ = json.Unmarshal(data, &p)
 	f.params[method] = p
-	hook, reply := f.beforeTurnStart, f.reply
+	hook, reply, intercept := f.beforeTurnStart, f.reply, f.intercept
 	f.mu.Unlock()
+	if intercept != nil {
+		if err := intercept(ctx, method); err != nil {
+			return nil, err
+		}
+	}
 	if reply != nil {
 		if out, ok := reply(method, p); ok {
 			return out, nil
@@ -356,5 +364,151 @@ func TestCodexRunnerConfiguresTheContextServer(t *testing.T) {
 	case <-released:
 	case <-time.After(2 * time.Second):
 		t.Fatal("context route not released when app-server exited")
+	}
+}
+
+func TestCodexRunnerSendOutlivesTheCaller(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	seen := map[string]error{}
+	f, r, server := newCodexFixture(t, CodexSession{}, nil)
+	server.intercept = func(reqCtx context.Context, method string) error {
+		if method == "config/read" {
+			cancel()
+		}
+		if _, bounded := reqCtx.Deadline(); !bounded {
+			t.Errorf("%s has no deadline", method)
+		}
+		seen[method] = reqCtx.Err()
+		return nil
+	}
+	if err := r.Send(ctx, SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, method := range []string{"config/read", "thread/start", "turn/start"} {
+		if err, ok := seen[method]; !ok || err != nil {
+			t.Fatalf("%s: reached=%v err=%v", method, ok, err)
+		}
+	}
+	server.notify(t, "turn/completed", `{"threadId":"th-1","turn":{"id":"tu-1","status":"completed"}}`)
+	if got := f.turnEvents(t, "t1"); got[len(got)-1] != "turn.completed  completed" {
+		t.Fatalf("events = %v", got)
+	}
+}
+
+func TestCodexRunnerRejectsACallerGoneBeforeTheInputIsStored(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f, r, server := newCodexFixture(t, CodexSession{}, nil)
+	if err := r.Send(ctx, SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "hi"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Send = %v", err)
+	}
+	if got := server.sent(); len(got) != 0 {
+		t.Fatalf("requests = %v", got)
+	}
+	if _, err := f.store.Receipt(context.Background(), f.scopeID, "req-t1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Receipt = %v", err)
+	}
+	if f.limiter.Running() != 0 {
+		t.Fatal("limiter slot leaked")
+	}
+}
+
+// The prompt may already have reached Codex, whichever way the wait ended.
+func TestCodexRunnerTreatsAnInterruptedDispatchAsOutcomeUnknown(t *testing.T) {
+	t.Parallel()
+
+	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, codexappserver.ErrProcessExited} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			t.Parallel()
+			f, r, server := newCodexFixture(t, CodexSession{}, nil)
+			server.intercept = func(_ context.Context, method string) error {
+				if method == "turn/start" {
+					return failure
+				}
+				return nil
+			}
+			err := r.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "hi"})
+			if !errors.Is(err, ErrOutcomeUnknown) {
+				t.Fatalf("Send = %v", err)
+			}
+			f.turnEvents(t, "t1")
+			snap, err := f.store.Snapshot(context.Background(), "conv-1", 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if turn := snap.Turns[0].Turn; turn.Status != "failed" || turn.ErrorKind != "outcome_unknown" {
+				t.Fatalf("turn = %+v", turn)
+			}
+		})
+	}
+}
+
+// A client that times out and retries must not start the turn twice, and the
+// abandoned send still finishes and records its outcome.
+func TestServiceSendSurvivesACancelledRequestAndReplaysTheRetry(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "c.sqlite")
+	release := make(chan struct{})
+	reached := make(chan struct{})
+	server := &fakeCodex{params: map[string]map[string]any{}, done: make(chan struct{})}
+	server.intercept = func(_ context.Context, method string) error {
+		if method == "turn/start" {
+			close(reached)
+			<-release
+			return codexappserver.ErrProcessExited
+		}
+		return nil
+	}
+	svc, err := Open(context.Background(), Options{Path: path,
+		Codex: func(context.Context, sqlitedb.Conversation) (CodexSession, StartCodexServer, error) {
+			return CodexSession{}, func(_ context.Context, h codex.Handler, _ []string) (CodexServer, error) {
+				server.handler = h
+				return server, nil
+			}, nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close(context.Background())
+	bg := context.Background()
+	scopeID, _ := svc.Store().EnsureScope(bg, store.Scope{APIOrigin: "o", UserID: "u", WorkspaceID: "w"})
+	if _, err := svc.Store().CreateConversation(bg, store.NewConversation{ID: "conv-c", ScopeID: scopeID, Provider: "codex", Cwd: "/repo", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := SendCommand{ScopeID: scopeID, ConversationID: "conv-c", RequestID: "r1", Text: "hi"}
+
+	ctx, cancel := context.WithCancel(bg)
+	defer cancel()
+	first := make(chan error, 1)
+	go func() {
+		_, err := svc.Send(ctx, cmd)
+		first <- err
+	}()
+	<-reached
+	cancel()
+
+	retry, err := svc.Send(bg, cmd)
+	if err != nil || !retry.Replayed || retry.TurnID != "turn-r1" {
+		t.Fatalf("retry = %+v, %v", retry, err)
+	}
+	close(release)
+	if err := <-first; err == nil {
+		t.Fatal("first Send succeeded")
+	}
+	if got := fmt.Sprint(server.sent()); strings.Count(got, "turn/start") != 1 {
+		t.Fatalf("requests = %s", got)
+	}
+	receipt, err := svc.Store().Receipt(bg, scopeID, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Uncertain != 1 {
+		t.Fatalf("receipt = %+v", receipt)
 	}
 }

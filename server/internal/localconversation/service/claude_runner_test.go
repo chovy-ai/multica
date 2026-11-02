@@ -23,17 +23,22 @@ type fakeAdapter struct {
 	requests []string
 	fields   []map[string]any
 	reply    func(typ string) (json.RawMessage, error)
-	done     chan struct{}
-	err      error
-	closed   bool
+	// intercept, when set, sees each request's context.
+	intercept func(ctx context.Context, typ string)
+	done      chan struct{}
+	err       error
+	closed    bool
 }
 
-func (a *fakeAdapter) Request(_ context.Context, typ string, fields map[string]any) (json.RawMessage, error) {
+func (a *fakeAdapter) Request(ctx context.Context, typ string, fields map[string]any) (json.RawMessage, error) {
 	a.mu.Lock()
 	a.requests = append(a.requests, typ)
 	a.fields = append(a.fields, fields)
-	reply := a.reply
+	reply, intercept := a.reply, a.intercept
 	a.mu.Unlock()
+	if intercept != nil {
+		intercept(ctx, typ)
+	}
 	if reply != nil {
 		return reply(typ)
 	}
@@ -80,7 +85,9 @@ type runnerFixture struct {
 	limiter  *Limiter
 	runner   *ClaudeRunner
 	adapters []*fakeAdapter
-	mu       sync.Mutex
+	// intercept is given to each adapter the fixture starts.
+	intercept func(ctx context.Context, typ string)
+	mu        sync.Mutex
 }
 
 func newRunnerFixture(t *testing.T, limiter *Limiter, reply func(string) (json.RawMessage, error)) *runnerFixture {
@@ -110,6 +117,7 @@ func newRunnerFixture(t *testing.T, limiter *Limiter, reply func(string) (json.R
 		Start: func(_ context.Context, handler claude.Handler) (ClaudeAdapter, error) {
 			a := &fakeAdapter{handler: handler, reply: reply, done: make(chan struct{})}
 			f.mu.Lock()
+			a.intercept = f.intercept
 			f.adapters = append(f.adapters, a)
 			f.mu.Unlock()
 			return a, nil
@@ -409,5 +417,48 @@ func TestClaudeRunnerReportsUnknownOutcomes(t *testing.T) {
 	err := f.runner.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "r", MessageID: "m", Text: "x"})
 	if !errors.Is(err, ErrOutcomeUnknown) {
 		t.Fatalf("Send = %v, want ErrOutcomeUnknown", err)
+	}
+}
+
+func TestClaudeRunnerSendOutlivesTheCaller(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	seen := map[string]error{}
+	f.intercept = func(reqCtx context.Context, typ string) {
+		if typ == "start" {
+			cancel()
+		}
+		if _, bounded := reqCtx.Deadline(); !bounded {
+			t.Errorf("%s has no deadline", typ)
+		}
+		seen[typ] = reqCtx.Err()
+	}
+	if err := f.runner.Send(ctx, SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, typ := range []string{"start", "send"} {
+		if err, ok := seen[typ]; !ok || err != nil {
+			t.Fatalf("%s: reached=%v err=%v", typ, ok, err)
+		}
+	}
+}
+
+func TestClaudeRunnerRejectsACallerGoneBeforeTheInputIsStored(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	if err := f.runner.Send(ctx, SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "hi"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Send = %v", err)
+	}
+	if len(f.adapters) != 0 {
+		t.Fatalf("started %d adapters", len(f.adapters))
+	}
+	if f.limiter.Running() != 0 {
+		t.Fatal("limiter slot leaked")
 	}
 }

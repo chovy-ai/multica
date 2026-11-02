@@ -52,7 +52,7 @@ func (s *Service) Compact(ctx context.Context, scopeID int64, conversationID, re
 			return result, replayErr
 		}
 	case errors.Is(err, ErrOutcomeUnknown):
-		if markErr := s.store.MarkUncertain(ctx, scopeID, requestID); markErr != nil {
+		if markErr := s.store.MarkUncertain(context.WithoutCancel(ctx), scopeID, requestID); markErr != nil {
 			err = errors.Join(err, markErr)
 		}
 	}

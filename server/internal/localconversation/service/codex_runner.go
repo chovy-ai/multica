@@ -141,6 +141,11 @@ func NewCodexRunner(opts CodexRunnerOptions) *CodexRunner {
 // Send starts a turn; it returns once the input is durable and Codex
 // accepted turn/start.
 func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ctx, cancel := detachSend(ctx)
+	defer cancel()
 	r.mu.Lock()
 	if r.turn != nil {
 		r.mu.Unlock()
@@ -182,7 +187,7 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 	if req.Compact {
 		_, err := server.Request(ctx, "thread/compact/start", map[string]any{"threadId": threadID})
 		if err != nil {
-			if codex.IsClosed(err) || errors.Is(err, context.DeadlineExceeded) {
+			if codexOutcomeUnknown(err) {
 				r.finish(turn, "failed", &turnError{kind: "outcome_unknown", message: err.Error()})
 				return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
 			}
@@ -200,7 +205,7 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		"input": []map[string]any{{"type": "text", "text": req.prompt(), "text_elements": []any{}}},
 	})
 	if err != nil {
-		if codex.IsClosed(err) || errors.Is(err, context.DeadlineExceeded) {
+		if codexOutcomeUnknown(err) {
 			r.finish(turn, "failed", &turnError{kind: "outcome_unknown", message: err.Error()})
 			return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
 		}
@@ -227,6 +232,12 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		r.handle(frame)
 	}
 	return nil
+}
+
+// codexOutcomeUnknown reports whether a dispatch ended without an answer from
+// Codex, so the request may or may not have taken effect.
+func codexOutcomeUnknown(err error) bool {
+	return codex.IsClosed(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // Interrupt asks Codex to stop the running turn. A turn Codex has not
