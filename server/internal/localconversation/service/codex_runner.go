@@ -114,6 +114,9 @@ type codexNative struct {
 	Model                 string         `json:"model"`
 	ReasoningEffort       string         `json:"model_reasoning_effort"`
 	MCPServers            map[string]any `json:"mcp_servers"`
+	ApprovalPolicy        any            `json:"approval_policy"`
+	ApprovalsReviewer     string         `json:"approvals_reviewer"`
+	SandboxMode           string         `json:"sandbox_mode"`
 }
 
 // CodexRunnerOptions configures a runner.
@@ -501,6 +504,12 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 		params["approvalPolicy"], params["approvalsReviewer"], params["sandbox"] = "on-request", "auto_review", "workspace-write"
 	case "full-access":
 		params["approvalPolicy"], params["sandbox"] = "never", "danger-full-access"
+	default:
+		// thread/resume without these restores what the thread stored, so
+		// returning from full access would silently keep it.
+		if session.ThreadID != "" {
+			params["approvalPolicy"], params["approvalsReviewer"], params["sandbox"] = nativePermissions(native)
+		}
 	}
 	method := "thread/start"
 	if session.ThreadID != "" {
@@ -528,6 +537,22 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 		_ = r.batcher.Append(r.rec.sessionBatch(result.Thread.ID), true)
 	}
 	return result.Thread.ID, nil
+}
+
+// nativePermissions are the user's own Codex permissions, with Codex's
+// defaults for a trusted project where the configuration sets none.
+func nativePermissions(native *codexNative) (approval any, reviewer, sandbox string) {
+	approval, reviewer, sandbox = native.ApprovalPolicy, native.ApprovalsReviewer, native.SandboxMode
+	if approval == nil {
+		approval = "on-request"
+	}
+	if reviewer == "" {
+		reviewer = "user"
+	}
+	if sandbox == "" {
+		sandbox = "workspace-write"
+	}
+	return approval, reviewer, sandbox
 }
 
 func defaultModel(ctx context.Context, server CodexServer) (string, error) {

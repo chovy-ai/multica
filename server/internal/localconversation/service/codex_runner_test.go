@@ -189,6 +189,28 @@ func TestCodexRunnerFiltersReplayBeforeTheTurnIsKnown(t *testing.T) {
 	}
 }
 
+func TestCodexRunnerResumeSendsNativePermissionsForDefaultMode(t *testing.T) {
+	t.Parallel()
+
+	_, r, server := newCodexFixture(t, CodexSession{ThreadID: "th-1", PermissionMode: "default"}, nil)
+	codexSend(t, r, "t1")
+	resume := server.paramsOf("thread/resume")
+	if resume["approvalPolicy"] != "on-request" || resume["approvalsReviewer"] != "user" || resume["sandbox"] != "workspace-write" {
+		t.Fatalf("resume permissions = %v %v %v", resume["approvalPolicy"], resume["approvalsReviewer"], resume["sandbox"])
+	}
+}
+
+func TestCodexRunnerNewThreadLeavesDefaultModeToCodex(t *testing.T) {
+	t.Parallel()
+
+	_, r, server := newCodexFixture(t, CodexSession{PermissionMode: "default"}, nil)
+	codexSend(t, r, "t1")
+	start := server.paramsOf("thread/start")
+	if _, sent := start["sandbox"]; sent {
+		t.Fatalf("thread/start sandbox = %v", start["sandbox"])
+	}
+}
+
 func TestCodexRunnerResumesWithAnExplicitDefaultModel(t *testing.T) {
 	t.Parallel()
 
@@ -663,7 +685,7 @@ func TestCodexRunnerRestartsTheProcessForNewSettings(t *testing.T) {
 		{
 			name: "permission to default", start: CodexSession{PermissionMode: "full-access"}, update: store.ConversationSettings{PermissionMode: "default"},
 			check: func(t *testing.T, resume map[string]any) {
-				if _, ok := resume["sandbox"]; ok {
+				if resume["sandbox"] != "workspace-write" || resume["approvalPolicy"] != "on-request" {
 					t.Fatalf("thread/resume params = %v", resume)
 				}
 			},
