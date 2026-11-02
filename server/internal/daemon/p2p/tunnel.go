@@ -5,11 +5,30 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 )
+
+// HeaderRequestID ties a proxied request to the turn it starts, so its marks join
+// that turn's waterfall. Only a client's own commands carry it.
+const HeaderRequestID = "X-Multica-Request-ID"
+
+// TimingReportsPath is the route phones report their marks on.
+const TimingReportsPath = "/timing-reports"
+
+// RequestIDOf is the request's correlation id, or "" unless it could be one.
+func RequestIDOf(req *http.Request) string {
+	if id := req.Header.Get(HeaderRequestID); timing.ValidID(id) {
+		return id
+	}
+	return ""
+}
 
 // Tunnel is the http.RoundTripper for one device's HTTP and upgraded WebSocket
 // traffic. It remembers which streams it dialed so relayed WebSockets can move
@@ -21,6 +40,8 @@ type Tunnel struct {
 
 	mu    sync.Mutex
 	conns map[*tunnelConn]struct{}
+	// migrating is when relayed WebSockets last closed, until one came back direct.
+	migrating time.Time
 }
 
 // tunnelConn embeds the raw stream connection, which Relayed inspects.
@@ -44,7 +65,9 @@ func (c *tunnelConn) Close() error {
 func (s *Service) NewTunnel(id peer.ID, proto protocol.ID, transport *http.Transport) *Tunnel {
 	t := &Tunnel{svc: s, id: id, transport: transport, conns: map[*tunnelConn]struct{}{}}
 	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		began := s.marks.Now()
 		raw, err := s.Dial(ctx, id, proto)
+		s.marks.Since(timing.Record{Stage: timing.StageTunnelStreamOpen, Peer: id.String(), Role: timing.RoleInitiator, Connection: StreamConnection(raw)}, began, err)
 		if err != nil {
 			return nil, err
 		}
@@ -60,10 +83,44 @@ func (s *Service) NewTunnel(id peer.ID, proto protocol.ID, transport *http.Trans
 func (t *Tunnel) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.dropIdleRelayed()
 	var conn *tunnelConn
+	marks := t.svc.marks
+	// A phone's report must not produce records for its next report.
+	if strings.HasSuffix(req.URL.Path, TimingReportsPath) {
+		marks = nil
+	}
+	began := marks.Now()
+	requestID := RequestIDOf(req)
+	base := timing.Record{RequestID: requestID, Peer: t.id.String(), Role: timing.RoleInitiator}
+	mark := func(stage string, fill func(*timing.Record)) {
+		record := base
+		record.Stage, record.DurationMs = stage, timing.Ms(marks.Now().Sub(began))
+		if fill != nil {
+			fill(&record)
+		}
+		marks.Write(record)
+	}
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
-		GotConn: func(info httptrace.GotConnInfo) { conn, _ = info.Conn.(*tunnelConn) },
+		GotConn: func(info httptrace.GotConnInfo) {
+			conn, _ = info.Conn.(*tunnelConn)
+			mark(timing.StageTunnelConn, func(r *timing.Record) {
+				r.Reused = info.Reused
+				if conn != nil {
+					r.Connection = StreamConnection(conn.Conn)
+				}
+			})
+		},
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			if requestID != "" {
+				mark(timing.StageLinkRequestSent, nil)
+			}
+		},
+		GotFirstResponseByte: func() { mark(timing.StageProxyFirstByte, nil) },
 	}))
 	res, err := t.transport.RoundTrip(req)
+	marks.Since(timing.Record{Stage: timing.StageProxyRequest, RequestID: requestID, Peer: base.Peer, Role: base.Role}, began, err)
+	if err == nil && requestID != "" {
+		mark(timing.StageLinkResponseReceived, nil)
+	}
 	if err == nil && conn != nil && res.StatusCode == http.StatusSwitchingProtocols {
 		t.markUpgraded(conn)
 	}
@@ -94,9 +151,17 @@ func (t *Tunnel) dropIdleRelayed() {
 // markUpgraded also covers an upgrade still in flight during MoveToDirect: it
 // marks before reading the connection state, so one of the two always closes it.
 func (t *Tunnel) markUpgraded(conn *tunnelConn) {
+	direct := !Relayed(conn.Conn)
 	t.mu.Lock()
 	conn.upgraded = true
+	migrating := t.migrating
+	if direct {
+		t.migrating = time.Time{}
+	}
 	t.mu.Unlock()
+	if direct && !migrating.IsZero() {
+		t.svc.marks.Since(timing.Record{Stage: timing.StageMigrateReconnected, Peer: t.id.String(), Role: timing.RoleInitiator, Connection: timing.ConnectionDirect}, migrating, nil)
+	}
 	if Relayed(conn.Conn) && t.svc.Connection(t.id) == ConnectionDirect {
 		_ = conn.Close()
 	}
@@ -114,10 +179,23 @@ func (t *Tunnel) MoveToDirect() {
 			relayed = append(relayed, c)
 		}
 	}
+	if len(relayed) > 0 {
+		t.migrating = t.svc.marks.Now()
+	}
 	t.mu.Unlock()
+	if len(relayed) == 0 {
+		return
+	}
+	base := timing.Record{Peer: t.id.String(), Role: timing.RoleInitiator, Count: timing.N(int64(len(relayed)))}
+	start := base
+	start.Stage = timing.StageMigrateStart
+	t.svc.marks.Write(start)
 	for _, c := range relayed {
 		_ = c.Close()
 	}
+	closed := base
+	closed.Stage = timing.StageMigrateStreamClosed
+	t.svc.marks.Write(closed)
 }
 
 // CloseIdleConnections leaves requests in flight and WebSockets open.

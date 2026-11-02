@@ -14,6 +14,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 )
 
 const tunnelProto = "/multica/test-tunnel/1"
@@ -22,20 +24,26 @@ const tunnelProto = "/multica/test-tunnel/1"
 // account serves circuit addresses until only is changed.
 func relayedPair(t *testing.T) (client, server *Service, acct *relayAccount) {
 	t.Helper()
+	return relayedPairMarked(t, nil)
+}
+
+// relayedPairMarked is relayedPair with the client's connection marks recorded.
+func relayedPairMarked(t *testing.T, clientMarks *timing.Marks) (client, server *Service, acct *relayAccount) {
+	t.Helper()
 	keyA, idA := newKey(t)
 	keyB, idB := newKey(t)
 	relay, _ := startRelay(t, idA, idB)
 	acct = &relayAccount{only: func(a string) bool { return strings.Contains(a, "/p2p-circuit") }}
-	start := func(key crypto.PrivKey) *Service {
+	start := func(key crypto.PrivKey, marks *timing.Marks) *Service {
 		svc, err := Start(context.Background(), Config{Key: key, Fetch: acct.fetch, ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"},
-			RefreshInterval: time.Hour, Relay: relayFunc(relay), Logger: testLogger})
+			RefreshInterval: time.Hour, Relay: relayFunc(relay), Logger: testLogger, Marks: marks})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { svc.Close() })
 		return svc
 	}
-	server, client = start(keyA), start(keyB)
+	server, client = start(keyA, nil), start(keyB, clientMarks)
 	acct.mu.Lock()
 	acct.svcs = []*Service{server, client}
 	acct.mu.Unlock()

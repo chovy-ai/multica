@@ -77,6 +77,9 @@ func NewTrace(log *Log, opts TraceOptions) *Trace {
 	return &Trace{log: log, now: opts.Now, start: opts.Start, base: base, seen: map[string]bool{}}
 }
 
+// ValidID reports whether id can go on a record; anything else would reject it.
+func ValidID(id string) bool { return identifier.MatchString(id) }
+
 func validID(id string) string {
 	if identifier.MatchString(id) {
 		return id
