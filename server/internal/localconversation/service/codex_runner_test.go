@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -567,5 +568,326 @@ func TestCodexRunnerDoesNotCompactWhenStoppedDuringPreparation(t *testing.T) {
 	}
 	if got := fmt.Sprint(server.sent()); strings.Contains(got, "thread/compact/start") {
 		t.Fatalf("compaction dispatched: %s", got)
+	}
+}
+
+// codexRestartFixture starts a new fake server per process, as the real
+// launcher does.
+type codexRestartFixture struct {
+	*runnerFixture
+	runner *CodexRunner
+
+	mu       sync.Mutex
+	servers  []*fakeCodex
+	envs     [][]string
+	startErr error
+
+	binds, releases atomic.Int32
+}
+
+func newCodexRestartFixture(t *testing.T, session CodexSession) *codexRestartFixture {
+	t.Helper()
+	f := &codexRestartFixture{runnerFixture: newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)}
+	session.Cwd = "/repo"
+	f.runner = NewCodexRunner(CodexRunnerOptions{
+		ConversationID: "conv-1", ScopeID: f.scopeID, Files: f.store, Session: session,
+		Batcher: f.batcher, Limiter: f.limiter,
+		Start: func(_ context.Context, h codex.Handler, env []string) (CodexServer, error) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if err := f.startErr; err != nil {
+				f.startErr = nil
+				return nil, err
+			}
+			server := &fakeCodex{params: map[string]map[string]any{}, done: make(chan struct{}), handler: h}
+			f.servers, f.envs = append(f.servers, server), append(f.envs, env)
+			return server, nil
+		},
+		Context: func(_ context.Context, token string, _ func() map[string]any) (BoundContext, func(), error) {
+			f.binds.Add(1)
+			return BoundContext{Binding: contextmcp.Binding{URL: "http://127.0.0.1:1/mcp/route", Token: token}, SystemPrompt: "multica prompt"}, func() { f.releases.Add(1) }, nil
+		},
+	})
+	return f
+}
+
+func (f *codexRestartFixture) server(i int) *fakeCodex {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.servers[i]
+}
+
+func (f *codexRestartFixture) started() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.servers)
+}
+
+// finishTurn completes the turn t on the server i.
+func (f *codexRestartFixture) finishTurn(t *testing.T, i int, turn string) {
+	t.Helper()
+	f.server(i).notify(t, "turn/completed", `{"threadId":"th-1","turn":{"id":"tu-1","status":"completed"}}`)
+	f.turnEvents(t, turn)
+}
+
+func stopped(server *fakeCodex) bool {
+	select {
+	case <-server.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// thread/resume on a loaded thread keeps the old model and permissions, so a
+// lowered permission must reach Codex through a new process.
+func TestCodexRunnerRestartsTheProcessForNewSettings(t *testing.T) {
+	t.Parallel()
+
+	model := "gpt-5.6"
+	cases := []struct {
+		name   string
+		start  CodexSession
+		update store.ConversationSettings
+		check  func(t *testing.T, resume map[string]any)
+	}{
+		{
+			name: "permission", start: CodexSession{PermissionMode: "full-access"}, update: store.ConversationSettings{PermissionMode: "auto"},
+			check: func(t *testing.T, resume map[string]any) {
+				if resume["sandbox"] != "workspace-write" || resume["approvalPolicy"] != "on-request" {
+					t.Fatalf("thread/resume params = %v", resume)
+				}
+			},
+		},
+		{
+			name: "permission to default", start: CodexSession{PermissionMode: "full-access"}, update: store.ConversationSettings{PermissionMode: "default"},
+			check: func(t *testing.T, resume map[string]any) {
+				if _, ok := resume["sandbox"]; ok {
+					t.Fatalf("thread/resume params = %v", resume)
+				}
+			},
+		},
+		{
+			name: "model", start: CodexSession{PermissionMode: "default"}, update: store.ConversationSettings{Model: &model, PermissionMode: "default"},
+			check: func(t *testing.T, resume map[string]any) {
+				if resume["model"] != model {
+					t.Fatalf("thread/resume params = %v", resume)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newCodexRestartFixture(t, tc.start)
+			codexSend(t, f.runner, "t1")
+			f.finishTurn(t, 0, "t1")
+			if err := f.runner.ApplySettings(context.Background(), tc.update); err != nil {
+				t.Fatal(err)
+			}
+			if stopped(f.server(0)) {
+				t.Fatal("restarted before the next send")
+			}
+
+			codexSend(t, f.runner, "t2")
+			if f.started() != 2 || !stopped(f.server(0)) {
+				t.Fatalf("started = %d, old stopped = %v", f.started(), stopped(f.server(0)))
+			}
+			second := f.server(1)
+			if got := fmt.Sprint(second.sent()); !strings.Contains(got, "config/read") || !strings.Contains(got, "thread/resume turn/start") {
+				t.Fatalf("new process requests = %s", got)
+			}
+			resume := second.paramsOf("thread/resume")
+			if resume["threadId"] != "th-1" {
+				t.Fatalf("thread/resume params = %v", resume)
+			}
+			tc.check(t, resume)
+
+			// The restart is once only.
+			f.finishTurn(t, 1, "t2")
+			codexSend(t, f.runner, "t3")
+			if f.started() != 2 {
+				t.Fatalf("started = %d after a third send", f.started())
+			}
+		})
+	}
+}
+
+func TestCodexRunnerKeepsTheProcessWhenSettingsNeedNoRestart(t *testing.T) {
+	t.Parallel()
+
+	model := "gpt-5.5"
+	sameValue, effort := "gpt-5.5", "high"
+	f := newCodexRestartFixture(t, CodexSession{Model: &model, PermissionMode: "auto"})
+	codexSend(t, f.runner, "t1")
+	f.finishTurn(t, 0, "t1")
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{Model: &sameValue, ReasoningEffort: &effort, PermissionMode: "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	codexSend(t, f.runner, "t2")
+	if f.started() != 1 || stopped(f.server(0)) {
+		t.Fatalf("started = %d, stopped = %v", f.started(), stopped(f.server(0)))
+	}
+	if got := f.server(0).paramsOf("turn/start")["effort"]; got != effort {
+		t.Fatalf("turn/start effort = %v", got)
+	}
+}
+
+func TestCodexRunnerRunningTurnKeepsItsSettings(t *testing.T) {
+	t.Parallel()
+
+	f := newCodexRestartFixture(t, CodexSession{PermissionMode: "full-access"})
+	codexSend(t, f.runner, "t1")
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.runner.Send(context.Background(), SendRequest{TurnID: "t2", RequestID: "req-t2", MessageID: "msg-t2", Text: "x"}); !errors.Is(err, ErrTurnRunning) {
+		t.Fatalf("Send while running = %v", err)
+	}
+	if stopped(f.server(0)) || f.started() != 1 {
+		t.Fatal("the running turn lost its process")
+	}
+	f.finishTurn(t, 0, "t1")
+
+	// The rejected send must not have consumed the pending restart.
+	codexSend(t, f.runner, "t2")
+	if f.started() != 2 || !stopped(f.server(0)) {
+		t.Fatalf("started = %d, old stopped = %v", f.started(), stopped(f.server(0)))
+	}
+}
+
+// The context route, and with it the Computer Use runtime, outlives a
+// settings restart.
+func TestCodexRunnerKeepsTheContextBindingAcrossARestart(t *testing.T) {
+	t.Parallel()
+
+	f := newCodexRestartFixture(t, CodexSession{PermissionMode: "full-access"})
+	codexSend(t, f.runner, "t1")
+	f.finishTurn(t, 0, "t1")
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	codexSend(t, f.runner, "t2")
+	if f.binds.Load() != 1 || f.releases.Load() != 0 {
+		t.Fatalf("binds = %d, releases = %d", f.binds.Load(), f.releases.Load())
+	}
+	if fmt.Sprint(f.envs[0]) != fmt.Sprint(f.envs[1]) {
+		t.Fatalf("token changed across the restart: %v / %v", f.envs[0], f.envs[1])
+	}
+	second := f.server(1)
+	mcp := second.paramsOf("thread/resume")["config"].(map[string]any)["mcp_servers"].(map[string]any)
+	if entry := mcp[contextmcp.Name].(map[string]any); entry["url"] != "http://127.0.0.1:1/mcp/route" {
+		t.Fatalf("context entry = %v", entry)
+	}
+	if instructions, _ := second.paramsOf("thread/resume")["developerInstructions"].(string); !strings.HasSuffix(instructions, "multica prompt") {
+		t.Fatalf("developer instructions = %q", instructions)
+	}
+
+	// A real exit still releases the binding, and the next process binds anew.
+	second.Stop()
+	eventually(t, "context release", func() bool { return f.releases.Load() == 1 })
+	f.turnEvents(t, "t2")
+	codexSend(t, f.runner, "t3")
+	if f.binds.Load() != 2 || f.started() != 3 {
+		t.Fatalf("binds = %d, started = %d", f.binds.Load(), f.started())
+	}
+	if fmt.Sprint(f.envs[2]) == fmt.Sprint(f.envs[1]) {
+		t.Fatal("a new binding reused the old token")
+	}
+}
+
+func TestCodexRunnerRecoversWhenTheRestartFailsToStart(t *testing.T) {
+	t.Parallel()
+
+	f := newCodexRestartFixture(t, CodexSession{PermissionMode: "full-access"})
+	codexSend(t, f.runner, "t1")
+	f.finishTurn(t, 0, "t1")
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.startErr = errors.New("spawn failed")
+	f.mu.Unlock()
+	if err := f.runner.Send(context.Background(), SendRequest{TurnID: "t2", RequestID: "req-t2", MessageID: "msg-t2", Text: "x"}); err == nil {
+		t.Fatal("Send succeeded")
+	}
+	if !stopped(f.server(0)) {
+		t.Fatal("the old process, with the old permissions, is still running")
+	}
+	if got := f.turnEvents(t, "t2"); got[len(got)-1] != "turn.completed  failed" {
+		t.Fatalf("events = %v", got)
+	}
+
+	codexSend(t, f.runner, "t3")
+	if f.started() != 2 || f.binds.Load() != 1 || f.releases.Load() != 0 {
+		t.Fatalf("started = %d, binds = %d, releases = %d", f.started(), f.binds.Load(), f.releases.Load())
+	}
+	if resume := f.server(1).paramsOf("thread/resume"); resume["sandbox"] != "workspace-write" {
+		t.Fatalf("thread/resume params = %v", resume)
+	}
+}
+
+// A queued message that changes settings while a turn runs waits for that
+// turn, then runs on a process that has the new settings.
+func TestCodexQueuedSettingsChangeRestartsTheProcess(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "c.sqlite")
+	var mu sync.Mutex
+	var servers []*fakeCodex
+	serverAt := func(i int) *fakeCodex {
+		mu.Lock()
+		defer mu.Unlock()
+		if i >= len(servers) {
+			return nil
+		}
+		return servers[i]
+	}
+	svc, err := Open(context.Background(), Options{Path: path,
+		Codex: func(context.Context, sqlitedb.Conversation) (CodexSession, StartCodexServer, error) {
+			return CodexSession{}, func(_ context.Context, h codex.Handler, _ []string) (CodexServer, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				server := &fakeCodex{params: map[string]map[string]any{}, done: make(chan struct{}), handler: h}
+				servers = append(servers, server)
+				return server, nil
+			}, nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close(context.Background())
+	ctx := context.Background()
+	scopeID, _ := svc.Store().EnsureScope(ctx, store.Scope{APIOrigin: "o", UserID: "u", WorkspaceID: "w"})
+	if _, err := svc.Store().CreateConversation(ctx, store.NewConversation{ID: "conv-c", ScopeID: scopeID, Provider: "codex", Cwd: "/repo", PermissionMode: "full-access", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Send(ctx, SendCommand{ScopeID: scopeID, ConversationID: "conv-c", RequestID: "r1", Text: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	item := json.RawMessage(`{"requestId":"r2","content":"second","permissionMode":"auto","display":{"id":"r2","createdAtUnixMs":1,"content":[{"type":"text","text":"second"}]}}`)
+	if _, err := svc.Enqueue(ctx, scopeID, "conv-c", item, false); err != nil {
+		t.Fatal(err)
+	}
+	// The dispatch that finds the turn running applies the settings first.
+	eventually(t, "queued settings", func() bool {
+		conv, err := svc.Store().Conversation(ctx, "conv-c")
+		return err == nil && conv.PermissionMode == "auto"
+	})
+	eventually(t, "the dispatch to end", func() bool { return svc.queues.dispatchingFor("conv-c") == "" })
+	if serverAt(1) != nil {
+		t.Fatal("the process restarted under the running turn")
+	}
+
+	serverAt(0).notify(t, "turn/completed", `{"threadId":"th-1","turn":{"id":"tu-1","status":"completed"}}`)
+	eventually(t, "the restarted process", func() bool {
+		next := serverAt(1)
+		return next != nil && next.paramsOf("turn/start") != nil
+	})
+	if resume := serverAt(1).paramsOf("thread/resume"); resume["sandbox"] != "workspace-write" {
+		t.Fatalf("thread/resume params = %v", resume)
+	}
+	if !stopped(serverAt(0)) {
+		t.Fatal("the old process is still running")
 	}
 }

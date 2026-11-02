@@ -73,8 +73,15 @@ type CodexRunner struct {
 	server  CodexServer
 	native  *codexNative
 	turn    *codexTurn
+	// restart is set when the running server's loaded thread has settings
+	// that no longer apply: thread/resume ignores new model and permission
+	// values on a loaded thread, so only a new process applies them.
+	restart bool
 	// contextURL is the running server's context route; empty without one.
 	contextURL string
+	// contextToken is the route's bearer token, handed to each process that
+	// uses the route.
+	contextToken string
 	// systemPrompt is the bound context's prompt, added to Codex's
 	// developer instructions.
 	systemPrompt   string
@@ -327,19 +334,30 @@ func (r *CodexRunner) Steer(ctx context.Context, text string) error {
 }
 
 // ApplySettings changes settings for the next turn; a running turn keeps
-// the settings it started with.
+// the settings it started with. Reasoning effort travels with turn/start, so
+// only a model or permission change restarts the process before the next turn.
 func (r *CodexRunner) ApplySettings(_ context.Context, st store.ConversationSettings) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.server != nil && (!sameModel(r.session.Model, st.Model) || r.session.PermissionMode != st.PermissionMode) {
+		r.restart = true
+	}
 	r.session.Model, r.session.ReasoningEffort, r.session.PermissionMode = st.Model, st.ReasoningEffort, st.PermissionMode
 	return nil
+}
+
+func sameModel(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // Close stops app-server, failing a running turn.
 func (r *CodexRunner) Close(context.Context) error {
 	r.mu.Lock()
 	server, turn, release := r.server, r.turn, r.releaseContext
-	r.server, r.releaseContext = nil, nil
+	r.server, r.releaseContext, r.contextToken = nil, nil, ""
 	r.mu.Unlock()
 	if turn != nil {
 		r.finish(turn, "failed", &turnError{kind: "provider_exited", message: "the conversation was closed"})
@@ -355,20 +373,29 @@ func (r *CodexRunner) Close(context.Context) error {
 
 func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNative, error) {
 	r.mu.Lock()
-	if r.server != nil {
+	if r.server != nil && !r.restart {
 		server, native := r.server, r.native
 		r.mu.Unlock()
 		return server, native, nil
 	}
+	stale := r.server
+	r.server, r.native, r.restart = nil, nil, false
 	cwd := r.session.Cwd
+	// A settings restart keeps the context binding: releasing it would also
+	// reset the conversation's Computer Use runtime.
+	bound, token := r.releaseContext != nil, r.contextToken
 	r.mu.Unlock()
+	if stale != nil {
+		stale.Stop()
+	}
 
 	var env []string
-	token := ""
 	if r.bind != nil {
-		var err error
-		if token, err = contextmcp.NewToken(); err != nil {
-			return nil, nil, err
+		if !bound {
+			var err error
+			if token, err = contextmcp.NewToken(); err != nil {
+				return nil, nil, err
+			}
 		}
 		env = []string{ContextTokenEnv + "=" + token}
 	}
@@ -393,7 +420,7 @@ func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNati
 		return nil, nil, fmt.Errorf("native Codex settings use the reserved Multica MCP name %s", r.context)
 	}
 	contextURL, release, systemPrompt := "", func() {}, ""
-	if r.bind != nil {
+	if r.bind != nil && !bound {
 		binding, rel, err := r.bind(context.Background(), token, r.currentContext)
 		if err != nil {
 			server.Stop()
@@ -402,7 +429,10 @@ func (r *CodexRunner) ensureServer(ctx context.Context) (CodexServer, *codexNati
 		contextURL, release, systemPrompt = binding.URL, rel, binding.SystemPrompt
 	}
 	r.mu.Lock()
-	r.server, r.native, r.contextURL, r.releaseContext, r.systemPrompt = server, &result.Config, contextURL, release, systemPrompt
+	r.server, r.native = server, &result.Config
+	if !bound {
+		r.contextURL, r.contextToken, r.releaseContext, r.systemPrompt = contextURL, token, release, systemPrompt
+	}
 	r.mu.Unlock()
 	go r.watch(server)
 	return server, &result.Config, nil
@@ -661,7 +691,7 @@ func (r *CodexRunner) watch(server CodexServer) {
 		r.mu.Unlock()
 		return
 	}
-	r.server, r.native, r.contextURL = nil, nil, ""
+	r.server, r.native, r.contextURL, r.contextToken = nil, nil, "", ""
 	turn, release := r.turn, r.releaseContext
 	r.releaseContext = nil
 	r.mu.Unlock()
