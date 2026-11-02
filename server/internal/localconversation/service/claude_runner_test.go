@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -460,5 +461,101 @@ func TestClaudeRunnerRejectsACallerGoneBeforeTheInputIsStored(t *testing.T) {
 	}
 	if f.limiter.Running() != 0 {
 		t.Fatal("limiter slot leaked")
+	}
+}
+
+// After the Query ends the adapter process lives on but cannot serve a turn,
+// so every later send would fail until the daemon restarted.
+func TestClaudeRunnerColdStartsAfterTheQueryEnds(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range []string{"query_ended", "sdk_error"} {
+		for _, running := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s running=%v", code, running), func(t *testing.T) {
+				t.Parallel()
+				f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+				var releases atomic.Int32
+				f.runner.bindContext = func(context.Context, string, func() map[string]any) (BoundContext, func(), error) {
+					return BoundContext{}, func() { releases.Add(1) }, nil
+				}
+				send(t, f, "t1")
+				first := f.adapter(0)
+				first.emit(t, `{"type":"system","subtype":"init","session_id":"native-1"}`)
+				if !running {
+					first.emit(t, `{"type":"result","subtype":"success","is_error":false,"result":""}`)
+					f.turnEvents(t, "t1")
+				}
+				first.handler(claude.Output{Type: "error", Error: &claude.AdapterError{Code: code, Message: "Claude Code ended the session"}})
+				if got := f.turnEvents(t, "t1"); running && got[len(got)-1] != "turn.completed  failed" {
+					t.Fatalf("events = %v", got)
+				}
+				select {
+				case <-first.Done():
+				case <-time.After(3 * time.Second):
+					t.Fatal("adapter was not closed")
+				}
+				eventually(t, "context release", func() bool { return releases.Load() == 1 })
+
+				send(t, f, "t2")
+				f.mu.Lock()
+				started := len(f.adapters)
+				f.mu.Unlock()
+				if started != 2 {
+					t.Fatalf("adapters started = %d, want 2", started)
+				}
+				second := f.adapter(1)
+				if got := fmt.Sprint(second.sent()); got != "[start send]" {
+					t.Fatalf("second adapter requests = %s", got)
+				}
+				if second.fields[0]["resume"] != "native-1" {
+					t.Fatalf("second start fields = %v", second.fields[0])
+				}
+			})
+		}
+	}
+}
+
+func TestClaudeRunnerIgnoresEndOfARetiredAdapter(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	send(t, f, "t1")
+	first := f.adapter(0)
+	first.emit(t, `{"type":"result","subtype":"success","is_error":false,"result":""}`)
+	f.turnEvents(t, "t1")
+	ended := claude.Output{Type: "error", Error: &claude.AdapterError{Code: "query_ended", Message: "ended"}}
+	first.handler(ended)
+	// A late frame also arrives while the next send starts its adapter.
+	f.intercept = func(_ context.Context, typ string) {
+		if typ == "start" {
+			first.handler(ended)
+		}
+	}
+	send(t, f, "t2")
+
+	first.handler(ended)
+	if !f.runner.Running() {
+		t.Fatal("a late frame from the retired adapter ended the new turn")
+	}
+	select {
+	case <-f.adapter(1).Done():
+		t.Fatal("a late frame from the retired adapter closed its successor")
+	default:
+	}
+}
+
+// A malformed-frame error from the host says nothing about the Query.
+func TestClaudeRunnerKeepsTheAdapterOnOtherUnsolicitedErrors(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	send(t, f, "t1")
+	first := f.adapter(0)
+	first.emit(t, `{"type":"result","subtype":"success","is_error":false,"result":""}`)
+	f.turnEvents(t, "t1")
+	first.handler(claude.Output{Type: "error", Error: &claude.AdapterError{Code: "invalid_json", Message: "daemon frame is not JSON"}})
+	send(t, f, "t2")
+	if got := fmt.Sprint(first.sent()); got != "[start send send]" {
+		t.Fatalf("requests = %s", got)
 	}
 }

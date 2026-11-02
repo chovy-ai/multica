@@ -447,6 +447,12 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 			}
 		}
 	case "error":
+		r.mu.Lock()
+		current := r.adapter != nil && r.norm == norm
+		r.mu.Unlock()
+		if !current {
+			return // a retired adapter must not touch its successor's turn
+		}
 		if turn != nil {
 			status := "failed"
 			if cancelRequested {
@@ -454,7 +460,32 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 			}
 			r.finish(turn, status, &turnError{kind: "provider_exited", message: out.Error.Message})
 		}
+		if out.Error.Code == "query_ended" || out.Error.Code == "sdk_error" {
+			r.retireAdapter(norm)
+		}
 	}
+}
+
+// retireAdapter drops an adapter whose Query ended: its process lives on but
+// can no longer serve a turn, so the next send has to start a new one. It
+// runs on the adapter's reader, so closing happens in the background.
+func (r *ClaudeRunner) retireAdapter(norm *claude.Normalizer) {
+	r.mu.Lock()
+	if r.adapter == nil || r.norm != norm {
+		r.mu.Unlock()
+		return
+	}
+	adapter, release := r.adapter, r.releaseContext
+	r.adapter, r.releaseContext = nil, nil
+	r.mu.Unlock()
+	go func() {
+		if release != nil {
+			release()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+		defer cancel()
+		_ = adapter.Close(ctx)
+	}()
 }
 
 func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
