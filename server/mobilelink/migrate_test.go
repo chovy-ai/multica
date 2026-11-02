@@ -173,6 +173,7 @@ func startMigrationFixture(t *testing.T) *migrationFixture {
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			relayed, _ := r.Context().Value(relayedKey{}).(string)
 			w.Header().Set("X-Stream-Relayed", relayed)
+			w.Header().Set("X-Seen-Client-Kind", r.Header.Get(headerClientKind))
 			switch r.URL.Path {
 			case "/local/v2/ws":
 				ws, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, http.Header{"X-Stream-Relayed": {relayed}})

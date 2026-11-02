@@ -71,7 +71,8 @@ public final class MulticaDeviceLinkModule: Module {
       guard self.client != nil else { return }
       self.endBackgroundGrace()
       let close = DispatchWorkItem { [weak self] in
-        self?.closeClient()
+        self?.client?.closeInBackground()
+        self?.client = nil
         self?.endBackgroundGrace()
       }
       self.backgroundClose = close

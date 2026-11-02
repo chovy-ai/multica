@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multica-ai/multica/server/internal/daemon/p2p"
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 )
 
 func TestMobileClientUsesAuthenticatedDeviceStreamAndClosesWebSockets(t *testing.T) {
@@ -311,4 +313,92 @@ func TestNetworkChangedIsSafeAfterClose(t *testing.T) {
 	client.NetworkChanged()
 	client.Close()
 	client.NetworkChanged()
+}
+
+func diagnostics(t *testing.T, client *Client, query string) (records []timing.Record, next, dropped int64) {
+	t.Helper()
+	var endpoint struct{ URL, Token string }
+	if err := json.Unmarshal([]byte(client.Endpoint()), &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest("GET", endpoint.URL+"/diagnostics"+query, nil)
+	req.Header.Set("Authorization", "Bearer "+endpoint.Token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var body struct {
+		Records []timing.Record `json:"records"`
+		Next    int64           `json:"next"`
+		Dropped int64           `json:"dropped"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	return body.Records, body.Next, body.Dropped
+}
+
+func TestDiagnosticsNeedTheLoopbackCredentialAndDrainWithACursor(t *testing.T) {
+	registry, _ := fakeRegistry(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "{}") }, func(string) bool { return true })
+	client := startTestClient(t, registry.URL)
+	var endpoint struct{ URL string }
+	_ = json.Unmarshal([]byte(client.Endpoint()), &endpoint)
+	res, err := http.Get(endpoint.URL + "/diagnostics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("without the credential = %d", res.StatusCode)
+	}
+	records, next, _ := diagnostics(t, client, "")
+	if len(records) == 0 || records[0].Stage != timing.StageLinkStart || records[0].Source != timing.SourceMobile {
+		t.Fatalf("records = %+v", records)
+	}
+	after, cursor, _ := diagnostics(t, client, "?after="+strconv.FormatInt(next, 10))
+	for _, r := range after {
+		if r.Stage == timing.StageLinkStart {
+			t.Fatalf("drained twice: %+v", r)
+		}
+	}
+	if cursor < next {
+		t.Fatalf("cursor went back: %d after %d", cursor, next)
+	}
+}
+
+func TestDiagnosticsSurviveAStoppedLinkAndSayWhyItStopped(t *testing.T) {
+	registry, _ := fakeRegistry(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "{}") }, func(string) bool { return true })
+	storage := t.TempDir()
+	start := func() *Client {
+		config, _ := json.Marshal(map[string]string{"registryUrl": registry.URL, "apiUrl": "https://api.multica.test", "token": "login", "userId": "user-1", "storagePath": storage, "deviceName": "Phone"})
+		client, err := Start(string(config))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return client
+	}
+	first := start()
+	first.CloseInBackground()
+	second := start()
+	t.Cleanup(second.Close)
+	records, _, _ := diagnostics(t, second, "")
+	stopped := false
+	for _, r := range records {
+		if r.Stage == timing.StageLinkStop && r.Reason == timing.ReasonBackground {
+			stopped = true
+		}
+	}
+	if !stopped {
+		t.Fatalf("no background stop in %+v", records)
+	}
+}
+
+func TestPhoneRequestsCarryTheirClientKind(t *testing.T) {
+	f := startMigrationFixture(t)
+	res := f.get(t, "/kind")
+	defer res.Body.Close()
+	if got := res.Header.Get("X-Seen-Client-Kind"); got != timing.ClientMobile {
+		t.Fatalf("client kind = %q", got)
+	}
 }

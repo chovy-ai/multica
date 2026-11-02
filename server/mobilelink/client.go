@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,9 +27,18 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multica-ai/multica/server/internal/daemon/p2p"
+	"github.com/multica-ai/multica/server/internal/localconversation/timing"
 )
 
 const deviceProtocol = "/multica/local-api/1"
+
+// headerClientKind labels this client's requests on the computer's timing records.
+const headerClientKind = "X-Multica-Client-Kind"
+
+const (
+	diagnosticsPage = 500
+	diagnosticsFile = ".timing.json"
+)
 
 type configuration struct {
 	RegistryURL string `json:"registryUrl"`
@@ -59,6 +69,10 @@ type Client struct {
 	mu       sync.Mutex
 	tunnels  map[peer.ID]*p2p.Tunnel
 	once     sync.Once
+	// ring holds this client's marks until the app drains them. It outlives a
+	// stopped link through its file, since iOS stops the link while the app sleeps.
+	ring  *timing.Ring
+	marks *timing.Marks
 
 	// peersRead closes after the first device list attempt, so requests made
 	// right after Start do not report an empty account while it is in flight.
@@ -106,12 +120,14 @@ func Start(configJSON string) (*Client, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	// Partitioned by account like the key: another user must not report these.
+	ring := timing.OpenRing(filepath.Join(cfg.StoragePath, hex.EncodeToString([]byte(cfg.UserID))+diagnosticsFile), 0)
 	c := &Client{cfg: cfg, ctx: ctx, cancel: cancel, token: hex.EncodeToString(secret), endpoint: "http://" + ln.Addr().String(),
-		tunnels: map[peer.ID]*p2p.Tunnel{}, peersRead: make(chan struct{})}
+		tunnels: map[peer.ID]*p2p.Tunnel{}, peersRead: make(chan struct{}), ring: ring, marks: timing.NewMarks(ring, timing.SourceMobile)}
 	c.registry = &registry{url: strings.TrimRight(cfg.RegistryURL, "/"), login: cfg.Token, http: &http.Client{Timeout: 30 * time.Second}}
 	changed := make(chan struct{}, 1)
 	c.svc, err = p2p.Start(ctx, p2p.Config{Key: key, Fetch: c.fetchPeers, Relay: c.registry.relay,
-		RefreshInterval: 15 * time.Second, OnAddrsChanged: func() {
+		RefreshInterval: 15 * time.Second, Marks: c.marks, OnAddrsChanged: func() {
 			select {
 			case changed <- struct{}{}:
 			default:
@@ -167,6 +183,7 @@ func (c *Client) keepRegistered(publicKey []byte, changed <-chan struct{}) {
 		}
 		if !registered {
 			registered = true
+			c.marks.Write(timing.Record{Stage: timing.StageLinkRegistered})
 			// Devices that rejected this phone as unknown may list it now.
 			_ = c.svc.PeersChanged(c.ctx)
 		}
@@ -218,7 +235,13 @@ func (c *Client) Endpoint() string {
 }
 
 // Close also closes hijacked WebSockets, which http.Server.Close does not own.
-func (c *Client) Close() {
+func (c *Client) Close() { c.close(timing.ReasonStopped) }
+
+// CloseInBackground is Close when iOS ends the app's background grace, so the link's
+// record says why it stopped.
+func (c *Client) CloseInBackground() { c.close(timing.ReasonBackground) }
+
+func (c *Client) close(reason string) {
 	c.once.Do(func() {
 		c.cancel()
 		_ = c.server.Close()
@@ -231,7 +254,8 @@ func (c *Client) Close() {
 		for _, tunnel := range tunnels {
 			tunnel.Close()
 		}
-		_ = c.svc.Close()
+		_ = c.svc.CloseBecause(reason)
+		c.ring.Save()
 	})
 }
 
@@ -261,6 +285,10 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"devices": devices})
 		return
 	}
+	if r.Method == "GET" && r.URL.Path == "/diagnostics" {
+		c.serveDiagnostics(w, r)
+		return
+	}
 	id, inner, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/devices/"), "/")
 	peerID, err := peer.Decode(id)
 	if !strings.HasPrefix(r.URL.Path, "/devices/") || !ok || err != nil || !strings.HasPrefix(inner, "local/v2/") || strings.Contains(inner, "..") {
@@ -280,6 +308,7 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request) {
 	// replace it using a scope header or arbitrary proxy target.
 	r.Header.Set("X-Multica-User-ID", c.cfg.UserID)
 	r.Header.Set("X-Multica-API-Origin", c.cfg.APIURL)
+	r.Header.Set(headerClientKind, timing.ClientMobile)
 	r.Header.Del("Authorization")
 	r.URL.Path, r.URL.RawPath = "/"+inner, ""
 	c.mu.Lock()
@@ -311,6 +340,19 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request) {
 			writeError(w, "device_unreachable", http.StatusBadGateway)
 		}}
 	proxy.ServeHTTP(w, r)
+}
+
+// serveDiagnostics gives the app this client's marks after its cursor. It sits
+// behind the loopback credential like every other route; nothing here leaves the
+// phone except by the app reporting it.
+func (c *Client) serveDiagnostics(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	records, next, dropped := c.ring.After(after, diagnosticsPage)
+	if records == nil {
+		records = []timing.Record{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"records": records, "next": next, "dropped": dropped})
 }
 
 func writeError(w http.ResponseWriter, kind string, status int) {
