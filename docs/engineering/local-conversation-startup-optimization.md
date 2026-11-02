@@ -44,7 +44,7 @@
 - `server/internal/localconversation/service/service.go`：`runners`、`keepRunner`
 - `apps/desktop/src/claude-host/adapter.ts`：`start`、`supportedModels`
 
-阶段名仍保留在 `packages/tutti-agent-gui-host/src/local-timing.ts`，但守护进程没有写入分阶段数据，目前只有 GUI 的提交和首个输出标记。
+第 1 步第一期完成后，守护进程写入分阶段数据，契约在 `packages/core/local-conversation/timing.ts`，用法见 `apps/desktop/docs/local-turn-timing.md`。
 
 ### 基线
 
@@ -105,8 +105,8 @@
 
 **第一期：**
 
-- **记录 v2：** 增加设备级记录（不需要 `conversationId`），维度和原因使用封闭枚举，不写自由文本。schema 由 Go、TypeScript 和手机共用，并用样本测试。旧阶段名保留可读，并提供新旧映射。
-- **守护进程存储：** 写入独立文件 `<ProfileDir>/local-conversations/diagnostics/daemon-timing.jsonl`，自带轮转和有界的非阻塞队列。不与 Electron 共写 `turn-timing.jsonl`。队列丢弃时要标记数据不完整。
+- **记录 v2：** 增加设备级记录（不需要 `conversationId`），维度和原因使用封闭枚举，不写自由文本。schema 由 Go、TypeScript 和手机共用，并用样本测试。字段沿用现有记录的 camelCase（如 `clientKind`、`turnKind`）。旧阶段名保留可读，并提供新旧映射。
+- **守护进程存储：** 写入独立文件 `<ProfileDir>/local-conversations/diagnostics/daemon-timing.jsonl`，自带轮转和有界的非阻塞队列。不与 Electron 共写 `turn-timing.jsonl`。队列丢弃时要标记数据不完整。桌面运行时的 `<ProfileDir>` 是 `~/.multica/profiles/desktop-runtime`，与 `daemon.log` 不在同一目录，所以 manifest 单独带这个路径。
 - **导出：** 桌面端导出和独立 MCP 都合并这个文件。`developer_logs.export` 只路由给执行端的本地客户端，没有时返回明确错误。发起端和执行端的数据按 `request_id` 合并。
 - **单轮瀑布图：** 导出里提供单轮瀑布，只有分阶段百分位满足不了“任意一条慢消息都能分清”。
 - **发送主路径 mark：** 约 20 个，覆盖发起、落库、等待准备、进程、线程、提交、首个模型输出和回传。
