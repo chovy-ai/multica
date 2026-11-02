@@ -161,7 +161,8 @@ describe("DirectLocalV2Transport", () => {
     const connection = vi.fn(); transport.onConnection(connection);
     await expect(transport.send(scope, { version: 2, type: "subscribe_scope", after_scope_seq: 0 })).rejects.toThrow();
     unavailable = false;
-    await until(() => daemon.sockets.length === 1);
+    // The daemon sees the socket before this client hears it opened.
+    await until(() => daemon.sockets.length === 1 && connection.mock.lastCall?.[1] === true);
     expect(connection).toHaveBeenLastCalledWith(scope, true);
     expect(daemon.requests.filter((request) => request.url?.endsWith("/ws-ticket")).length).toBeGreaterThan(1);
     expect(daemon.received).toEqual([]);
