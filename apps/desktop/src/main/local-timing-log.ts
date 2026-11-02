@@ -86,7 +86,7 @@ export class LocalTimingLog {
     this.dropped = 0;
     const record = parseLocalTiming({ version: 2, source: "main", at: new Date().toISOString(), stage: "timing.dropped", event: "mark", elapsedMs: 0, count });
     try { await this.append(JSON.stringify(record) + "\n"); }
-    catch (error) { this.dropped += count; throw error; }
+    catch { this.dropped += count; this.size = undefined; }
   }
   write = (value: unknown): void => {
     const record = parseLocalTiming(value);

@@ -756,6 +756,9 @@ func (r *ClaudeRunner) TakeBackgroundResults() []BackgroundResult {
 // Multica. It answers any background results waiting for delivery.
 func (r *ClaudeRunner) startNativeTurn() *claudeTurn {
 	turn := &claudeTurn{id: "turn-native-" + newID()}
+	if r.nativeTrace != nil {
+		turn.trace = r.nativeTrace(turn.id)
+	}
 	turn.unlimited = r.limiter.TryAcquire() != nil
 	r.mu.Lock()
 	if r.turn != nil {
@@ -769,9 +772,6 @@ func (r *ClaudeRunner) startNativeTurn() *claudeTurn {
 	r.turn = turn
 	r.ended = nil
 	r.mu.Unlock()
-	if r.nativeTrace != nil {
-		turn.trace = r.nativeTrace(turn.id)
-	}
 	_ = r.batcher.Append(r.rec.startBatch(SendRequest{TurnID: turn.id, RequestID: turn.id, Hidden: true}), true)
 	return turn
 }
