@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -889,5 +890,39 @@ func TestCodexQueuedSettingsChangeRestartsTheProcess(t *testing.T) {
 	}
 	if !stopped(serverAt(0)) {
 		t.Fatal("the old process is still running")
+	}
+}
+
+func TestCodexRunnerRecordsStreamedReasoning(t *testing.T) {
+	t.Parallel()
+
+	f, r, server := newCodexFixture(t, CodexSession{}, nil)
+	codexSend(t, r, "t1")
+	server.notify(t, "item/started", `{"threadId":"th-1","turnId":"tu-1","item":{"id":"r1","type":"reasoning"}}`)
+	server.notify(t, "item/reasoning/summaryTextDelta", `{"threadId":"th-1","turnId":"tu-1","itemId":"r1","delta":"half","summaryIndex":0}`)
+	if err := r.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := f.turnEvents(t, "t1")
+	want := []string{"user.message  <nil>", "turn.started  <nil>", "item.started r1 <nil>", "item.delta r1 <nil>", "item.completed r1 failed", "turn.completed  failed"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("events:\n%v\nwant:\n%v", got, want)
+	}
+}
+
+// A daemon that died mid-turn leaves only the stored events to close from.
+func TestFinalsForOpenItemsKeepsStreamedReasoning(t *testing.T) {
+	t.Parallel()
+
+	item := func(typ, payload string) sqlitedb.Event {
+		return sqlitedb.Event{ItemID: sql.NullString{String: "r1", Valid: true}, Type: typ, Payload: payload}
+	}
+	finals := finalsForOpenItems([]sqlitedb.Event{
+		item("item.started", `{"kind":"reasoning"}`),
+		item("item.delta", `{"kind":"reasoning","field":"text","text":"plan"}`),
+		item("item.delta", `{"kind":"reasoning","field":"text","text":"\ncheck"}`),
+	})
+	if len(finals) != 1 || finals[0].payload["kind"] != "reasoning" || finals[0].payload["status"] != "failed" || finals[0].payload["text"] != "plan\ncheck" {
+		t.Fatalf("finals = %+v", finals)
 	}
 }
