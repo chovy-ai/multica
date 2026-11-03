@@ -74,8 +74,8 @@ type Client struct {
 	ring  *timing.Ring
 	marks *timing.Marks
 
-	// peersRead closes after the first device list attempt, so requests made
-	// right after Start do not report an empty account while it is in flight.
+	// peersRead closes after the first device list attempt has settled, so requests
+	// made right after Start do not report an empty account while it is in flight.
 	peersRead     chan struct{}
 	peersReadOnce sync.Once
 	peersKnown    atomic.Bool
@@ -127,7 +127,7 @@ func Start(configJSON string) (*Client, error) {
 	c.registry = &registry{url: strings.TrimRight(cfg.RegistryURL, "/"), login: cfg.Token, http: &http.Client{Timeout: 30 * time.Second}}
 	changed := make(chan struct{}, 1)
 	c.svc, err = p2p.Start(ctx, p2p.Config{Key: key, Fetch: c.fetchPeers, Relay: c.registry.relay,
-		RefreshInterval: 15 * time.Second, Marks: c.marks, OnAddrsChanged: func() {
+		RefreshInterval: 15 * time.Second, Marks: c.marks, OnPeersRead: c.peersSettled, OnAddrsChanged: func() {
 			select {
 			case changed <- struct{}{}:
 			default:
@@ -150,13 +150,20 @@ func Start(configJSON string) (*Client, error) {
 func (c *Client) fetchPeers(ctx context.Context) ([]p2p.Peer, error) {
 	peers, err := c.registry.peers(ctx)
 	if err == nil {
-		c.peersKnown.Store(true)
 		peers = slices.DeleteFunc(peers, func(p p2p.Peer) bool { return p.Profile == "mobile" && strings.HasPrefix(p.DaemonID, "ios-") })
 	}
-	if ctx.Err() == nil {
+	return peers, err
+}
+
+// peersSettled runs once a read's list is installed, so a request woken here finds
+// the devices it asks about. A read cut short by Close says nothing.
+func (c *Client) peersSettled(err error) {
+	if err == nil {
+		c.peersKnown.Store(true)
+	}
+	if c.ctx.Err() == nil {
 		c.peersReadOnce.Do(func() { close(c.peersRead) })
 	}
-	return peers, err
 }
 
 // awaitPeers reports whether a device list has been read.

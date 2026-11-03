@@ -85,7 +85,10 @@ type Config struct {
 	// OnAddrsChanged is called, debounced, when AdvertisedAddrs changes, so
 	// the new addresses can be registered.
 	OnAddrsChanged func()
-	Logger         *slog.Logger
+	// OnPeersRead is called after each device list read, with the read's error;
+	// on success the list is already in place.
+	OnPeersRead func(err error)
+	Logger      *slog.Logger
 	// Marks records connection state changes; nil records nothing.
 	Marks *timing.Marks
 }
@@ -124,6 +127,7 @@ type Service struct {
 
 	relayFetch RelayFunc
 	onAddrs    func()
+	onPeers    func(error)
 	relayLost  chan struct{}
 	probePeers chan struct{}
 
@@ -175,6 +179,7 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		discovered: map[peer.ID]peer.AddrInfo{},
 		relayFetch: cfg.Relay,
 		onAddrs:    cfg.OnAddrsChanged,
+		onPeers:    cfg.OnPeersRead,
 		relayLost:  make(chan struct{}, 1),
 		probePeers: make(chan struct{}, 1),
 	}
@@ -610,6 +615,9 @@ func (s *Service) Refresh(ctx context.Context) error {
 	peers, err := s.fetch(ctx)
 	s.noteFetch(fetching, err)
 	if err != nil {
+		if s.onPeers != nil {
+			s.onPeers(err)
+		}
 		return err
 	}
 	var changed []peer.ID
@@ -622,6 +630,9 @@ func (s *Service) Refresh(ctx context.Context) error {
 		}
 	}
 	added, removed := s.allow.replace(peers)
+	if s.onPeers != nil {
+		s.onPeers(nil)
+	}
 	for _, id := range added {
 		s.marks.Write(timing.Record{Stage: timing.StagePeerKnown, Peer: id.String()})
 	}
