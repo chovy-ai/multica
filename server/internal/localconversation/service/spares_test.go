@@ -255,6 +255,30 @@ func TestClaudeNewConversationClaimsTheSpare(t *testing.T) {
 	}
 }
 
+func TestClaudeSpareWhoseQueryEndsDuringBindFallsBack(t *testing.T) {
+	t.Parallel()
+
+	w := newSpareWorld(t, "claude")
+	w.claudeReply = func(a *spareAdapter, typ string) (json.RawMessage, error) {
+		if typ == "set_mcp_servers" {
+			queryEnded(a.fakeAdapter)
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	w.fill(t, "claude")
+	w.newConversation(t, "new", "claude")
+	w.send(t, "new", "r1")
+	if slices.Contains(w.claudeSpare(0).sent(), "send") {
+		t.Fatal("the prompt went to a process whose Query ended")
+	}
+	if !isDone(w.claudeSpare(0).Done()) {
+		t.Fatal("the spare was left running")
+	}
+	if w.adapterCount() != 1 || !slices.Contains(w.adapters[0].sent(), "send") {
+		t.Fatalf("%d cold adapters", w.adapterCount())
+	}
+}
+
 func TestClaudeSpareFallsBackBeforeAnyMessageRuns(t *testing.T) {
 	t.Parallel()
 

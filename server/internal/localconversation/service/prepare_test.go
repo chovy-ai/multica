@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/timing"
@@ -659,6 +661,63 @@ func TestClaudeSettingsThatCannotBeAppliedFailThePrepare(t *testing.T) {
 	}
 	if _, ok := f.runner.IdleProcess(); ok {
 		t.Fatal("the adapter stayed installed")
+	}
+}
+
+func queryEnded(a *fakeAdapter) {
+	a.handler(claude.Output{Type: "error", Error: &claude.AdapterError{Code: "query_ended", Message: "Claude Code ended the session"}})
+}
+
+// A Query can end after the start result is written but before the runner holds
+// the adapter, so its error frame has no installed adapter to act on.
+func TestClaudeQueryEndingBeforeInstallDoesNotInstallADeadAdapter(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	entered, open := claudeGate(f)
+	prepared := make(chan error, 1)
+	go func() { prepared <- f.runner.Prepare(context.Background(), nil) }()
+	<-entered
+	queryEnded(f.adapter(0))
+	close(open)
+	if err := <-prepared; err == nil {
+		t.Fatal("prepare kept an adapter whose Query had ended")
+	}
+	if !isDone(f.adapter(0).Done()) {
+		t.Fatal("the adapter was left running")
+	}
+	if _, ok := f.runner.IdleProcess(); ok {
+		t.Fatal("a dead adapter was installed")
+	}
+	f.intercept = nil
+	send(t, f, "t1")
+	if len(f.adapters) != 2 || fmt.Sprint(f.adapter(1).sent()) != "[start send]" {
+		t.Fatalf("%d adapters, second sent %v", len(f.adapters), f.adapter(1).sent())
+	}
+}
+
+func TestClaudeNotStartedRetiresTheAdapter(t *testing.T) {
+	t.Parallel()
+
+	var refused atomic.Bool
+	refused.Store(true)
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), func(typ string) (json.RawMessage, error) {
+		if typ == "send" && refused.Swap(false) {
+			return nil, &claude.AdapterError{Code: "not_started", Dispatch: "not_dispatched", Message: "start the conversation before sending"}
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	err := f.runner.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "go"})
+	if err == nil {
+		t.Fatal("Send succeeded")
+	}
+	if got := f.turnEvents(t, "t1"); got[len(got)-1] != "turn.completed  failed" {
+		t.Fatalf("events = %v", got)
+	}
+	eventually(t, "adapter retired", func() bool { return isDone(f.adapter(0).Done()) })
+	send(t, f, "t2")
+	if len(f.adapters) != 2 {
+		t.Fatalf("%d adapters: the dead one kept refusing sends", len(f.adapters))
 	}
 }
 

@@ -21,6 +21,8 @@ var (
 	// ErrOutcomeUnknown means the prompt may or may not have reached Claude;
 	// the command must not be replayed automatically (plan §8.1).
 	ErrOutcomeUnknown = errors.New("local conversation: provider outcome unknown")
+
+	errQueryEnded = errors.New("Claude Code ended the session while it was starting")
 )
 
 // ClaudeAdapter is the running adapter process the runner talks to,
@@ -143,6 +145,9 @@ type ClaudeRunner struct {
 	// prompted is set once the running adapter has been given input. Before
 	// that, a Query's own output (such as from a preheat) is no reply to anyone.
 	prompted bool
+	// endedNorm is the normalizer of an adapter whose Query ended before install,
+	// when its error frame had no installed adapter to act on.
+	endedNorm *claude.Normalizer
 	// settingsVersion counts ApplySettings calls and settings is the latest, so
 	// a start that read older fields can apply them once its Query is live.
 	settingsVersion int64
@@ -284,7 +289,15 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 	if err != nil {
 		var adapterErr *claude.AdapterError
 		if errors.As(err, &adapterErr) && (adapterErr.Dispatch == "not_dispatched" || adapterErr.Dispatch == "rejected") {
+			r.mu.Lock()
+			norm := r.norm
+			current := r.adapter == adapter
+			r.mu.Unlock()
 			r.finish(turn, "failed", &turnError{kind: "provider_error", message: err.Error()})
+			// The process lives on with no Query, and would refuse every send.
+			if current && adapterErr.Code == "not_started" {
+				r.retireAdapter(norm)
+			}
 			return err
 		}
 		// Anything else may have reached Claude: transport errors included.
@@ -668,6 +681,13 @@ func (r *ClaudeRunner) install(ctx context.Context, adapter ClaudeAdapter, norm 
 		_ = adapter.Close(context.Background())
 		return ErrClosing
 	}
+	if r.endedNorm == norm {
+		r.endedNorm = nil
+		r.mu.Unlock()
+		release()
+		_ = adapter.Close(context.Background())
+		return errQueryEnded
+	}
 	r.adapter, r.norm, r.releaseContext = adapter, norm, release
 	r.prompted = false
 	stale, latest := r.settingsVersion != version, r.settings
@@ -792,8 +812,12 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 			}
 		}
 	case "error":
+		ended := out.Error.Code == "query_ended" || out.Error.Code == "sdk_error"
 		r.mu.Lock()
 		current := r.adapter != nil && r.norm == norm
+		if !current && ended {
+			r.endedNorm = norm
+		}
 		r.mu.Unlock()
 		if !current {
 			return // a retired adapter must not touch its successor's turn
@@ -805,7 +829,7 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 			}
 			r.finish(turn, status, &turnError{kind: "provider_exited", message: out.Error.Message})
 		}
-		if out.Error.Code == "query_ended" || out.Error.Code == "sdk_error" {
+		if ended {
 			r.retireAdapter(norm)
 		}
 	}
