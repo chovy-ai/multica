@@ -349,13 +349,31 @@ describe("restoring the selected conversation after a tab switch", () => {
     expect(within(list).queryByRole("button", { name: "重试" })).not.toBeInTheDocument();
   });
 
-  it("leaves image markers out of local session previews without changing saved history", async () => {
+  it.each(["codex", "claude"] as const)("shows the %s message preview without a provider prefix or image markers", async (provider) => {
+    source.provider = provider;
     source.messages = [{ id: "image-message", role: "user", content: "Can you see it?\n\n[Image attachment: screen.png]", attachmentIds: ["image"], turnId: "turn", createdAt: source.createdAt }];
     render(page());
     const entry = await screen.findByRole("link", { name: /Original/ });
-    expect(entry).toHaveTextContent("Codex · Can you see it?");
+    expect(within(entry).getByText("Can you see it?", { exact: true }).textContent).toBe("Can you see it?");
     expect(entry).not.toHaveTextContent("Image attachment");
     expect(source.messages[0]?.content).toContain("[Image attachment:");
+  });
+  it.each(["codex", "claude"] as const)("shows the %s empty-session hint without a prefix in the list, search and archive", async (provider) => {
+    source.provider = provider;
+    source.messages = [];
+    source.turns = [{ id: "empty-turn", status: "completed", createdAt: source.createdAt, events: [] }];
+    render(page());
+    const expectHint = async () => {
+      const entry = await screen.findByRole("link", { name: /Original/ });
+      expect(within(entry).getByText("历史保存在本机", { exact: true }).textContent).toBe("历史保存在本机");
+    };
+    await expectHint();
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), { target: { value: "Original" } });
+    await expectHint();
+    source.archived = true;
+    await act(async () => publishList());
+    fireEvent.click(screen.getByRole("button", { name: "归档" }));
+    await expectHint();
   });
   it("does not clear selection against a stale list while the restored tab refreshes", async () => {
     qc.setQueryDefaults(["test-local-sessions"], { staleTime: Infinity });
@@ -421,7 +439,7 @@ describe("local conversation execution indicators", () => {
     await updateQuestions(["answered", "answered"]);
     expect(await screen.findByRole("status", { name: "会话运行中：Original" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "等待你的回答：Original" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Original/ })).toHaveTextContent(`${provider === "codex" ? "Codex" : "Claude Code"} · Result`);
+    expect(within(screen.getByRole("link", { name: /Original/ })).getByText("Result", { exact: true })).toBeVisible();
     await updateQuestions(["answered", "pending"]);
     expect(screen.getByRole("button", { name: "等待你的回答：Original" })).toBeVisible();
     await updateQuestions(["answered", "cancelled"]);
@@ -438,7 +456,7 @@ describe("local conversation execution indicators", () => {
     render(page());
     expect(await screen.findByRole("status", { name: "后台运行中：Original（1）" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "等待你的回答：Original" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Original/ })).toHaveTextContent("Codex · Result");
+    expect(within(screen.getByRole("link", { name: /Original/ })).getByText("Result", { exact: true })).toBeVisible();
   });
 
   it("distinguishes background monitoring from a foreground reply and can stop it from the session menu", async () => {
