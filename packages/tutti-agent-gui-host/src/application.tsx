@@ -13,6 +13,7 @@ import { createMulticaContextMentions } from "./context-mentions";
 import { SideEntryProvider } from "./side-entry";
 import { ResourceLinkProvider } from "./resource-link";
 import { ComposerDraftProvider } from "./composer-drafts";
+import { ConversationRetryContext } from "./conversation-retry";
 import { InvokedAgentsProvider } from "./invoked-agent-reply";
 import { dispatchAgentGuiWorkbenchCommand } from "../../../vendor/tutti/packages/agent/gui/workbench/commands";
 
@@ -180,9 +181,14 @@ export function AgentGuiApplication({
     return { ...agentDirectory, agents: [...agents.values()] };
   }, [agentDirectory, workspace.agents]);
   const activeSessionId = node.lastActiveAgentSessionId;
-  // The empty composer's send button continues a stopped or interrupted local turn.
+  // Recovery uses the existing send path without touching the composer draft.
   const continuable = useSyncExternalStore(handle.subscribeTurns,
     () => snapshot.local && activeSessionId ? handle.continuable(activeSessionId) : false);
+  const retryableTurnId = useSyncExternalStore(handle.subscribeTurns,
+    () => snapshot.local && activeSessionId ? handle.retryableTurnId(activeSessionId) : null);
+  const retryAction = useMemo(() => retryableTurnId && activeSessionId
+    ? { turnId: retryableTurnId, label: snapshot.locale === "zh-CN" ? "重试" : "Retry", onRetry: () => handle.continueSession(activeSessionId) }
+    : null, [retryableTurnId, activeSessionId, handle, snapshot.locale]);
   const composerEmptySubmit = useMemo(() => continuable && activeSessionId
     ? { label: snapshot.locale === "zh-CN" ? "继续" : "Continue", onSubmit: () => handle.continueSession(activeSessionId) }
     : null, [continuable, activeSessionId, handle, snapshot.locale]);
@@ -208,7 +214,7 @@ export function AgentGuiApplication({
     }
   })), [client, handle]);
 
-  return <ComposerDraftProvider initial={initial}><InvokedAgentsProvider value={workspace.agents}><ResourceLinkProvider client={client} scope={{ workspaceId: initial.workspaceId, workspaceSlug: initial.workspaceSlug, appOrigin: snapshot.appOrigin }} agents={workspace.agents}><SideEntryProvider enabled={snapshot.sideWorkspace === true} sidePane={snapshot.sidePane} client={client} handle={handle} sessionId={node.lastActiveAgentSessionId ? handle.toServerSessionId(node.lastActiveAgentSessionId) : null} chinese={snapshot.locale === "zh-CN"}><AgentGUI
+  return <ConversationRetryContext.Provider value={retryAction}><ComposerDraftProvider initial={initial}><InvokedAgentsProvider value={workspace.agents}><ResourceLinkProvider client={client} scope={{ workspaceId: initial.workspaceId, workspaceSlug: initial.workspaceSlug, appOrigin: snapshot.appOrigin }} agents={workspace.agents}><SideEntryProvider enabled={snapshot.sideWorkspace === true} sidePane={snapshot.sidePane} client={client} handle={handle} sessionId={node.lastActiveAgentSessionId ? handle.toServerSessionId(node.lastActiveAgentSessionId) : null} chinese={snapshot.locale === "zh-CN"}><AgentGUI
     identity={{ nodeId: `multica-agent-gui:${snapshot.workspaceId}`, workspaceId: snapshot.workspaceId, currentUserId: snapshot.userId, title: "Agent GUI" }}
     workspace={{ path: "", agentSettings: { avoidGroupingEdits: false }, prepareExternalPromptFiles: prepareFiles }}
     frame={{ position: { x: 0, y: 0 }, ...size, desktopSize: size, isActive: snapshot.hostActive ?? true, isVisible: snapshot.hostVisible ?? true, embedded: true }}
@@ -247,5 +253,5 @@ export function AgentGuiApplication({
       pendingTarget={pendingTarget} onCancelTargetSwitch={() => setPendingTarget(null)}
       onLeaveSession={(target, fromSession, draft, projectPath) => { setPendingTarget({ target, fromSession, draft, projectPath }); setNode((current) => ({ ...current, lastActiveAgentSessionId: null })); }}
       onSelectAgent={(target) => { setPendingTarget(null); setNode((current) => current.agentTargetId === target.id ? current : { ...current, provider: target.provider, agentTargetId: target.id, lastActiveAgentSessionId: null }); }} /> }}
-  /></SideEntryProvider></ResourceLinkProvider></InvokedAgentsProvider></ComposerDraftProvider>;
+  /></SideEntryProvider></ResourceLinkProvider></InvokedAgentsProvider></ComposerDraftProvider></ConversationRetryContext.Provider>;
 }

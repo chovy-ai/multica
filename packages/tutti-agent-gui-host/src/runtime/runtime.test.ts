@@ -1396,6 +1396,45 @@ describe("local conversations over protocol v2", () => {
     await vi.waitFor(() => expect(data.request.mock.calls.some(([method, params]) => ["session.send", "queue.enqueue"].includes(method) && JSON.stringify(params).includes("Continue"))).toBe(true));
   });
 
+  it("retries the latest provider failure once through Continue and preserves the selected settings", async () => {
+    const { data, handle } = await localRuntime();
+    data.emit({ type: "local.events", sessionId: session.id, message: batch([
+      event(1, "turn.started", { request_id: "failed-request" }),
+      event(2, "turn.completed", { status: "failed", error: { kind: "provider_error", message: "Selected model is at capacity. Please try a different model." } }),
+    ]) });
+    await vi.waitFor(() => expect(handle.retryableTurnId(session.id)).toBe("turn-1"));
+    await handle.setModelSelection(agent.id, session.id, "replacement-model");
+    await handle.setPermissionSelection(agent.id, session.id, "full-access");
+    handle.continueSession(session.id);
+    handle.continueSession(session.id);
+    expect(handle.retryableTurnId(session.id)).toBeNull();
+    await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "session.send")).toHaveLength(1));
+    const request = data.request.mock.calls.find(([method]) => method === "session.send")![1];
+    expect(request).toMatchObject({ sessionId: session.id, content: "Continue", model: "replacement-model", permissionMode: "full-access" });
+    expect(request.requestId).not.toBe("failed-request");
+  });
+
+  it("does not continue an archived failure or a historical failure after a newer turn", async () => {
+    const { data, handle } = await localRuntime();
+    data.emit({ type: "local.events", sessionId: session.id, message: batch([
+      event(1, "turn.started", { request_id: "failed-request" }),
+      event(2, "turn.completed", { status: "failed", error: { kind: "provider_error", message: "At capacity" } }),
+    ]) });
+    await vi.waitFor(() => expect(handle.retryableTurnId(session.id)).toBe("turn-1"));
+    data.emit({ type: "init", snapshot: { ...init, local: true, sessions: [{ ...session, status: "archived" }] } });
+    expect(handle.retryableTurnId(session.id)).toBeNull();
+    handle.continueSession(session.id);
+    expect(data.request.mock.calls.filter(([method]) => method === "session.send")).toHaveLength(0);
+    data.emit({ type: "init", snapshot: { ...init, local: true, sessions: [session] } });
+    data.emit({ type: "local.events", sessionId: session.id, message: batch([
+      event(3, "turn.started", { request_id: "next" }, { turn_id: "turn-2", created_at: "2026-10-24T02:00:00Z" }),
+      event(4, "turn.completed", { status: "completed" }, { turn_id: "turn-2", created_at: "2026-10-24T02:00:01Z" }),
+    ]) });
+    await vi.waitFor(() => expect(handle.retryableTurnId(session.id)).toBeNull());
+    handle.continueSession(session.id);
+    expect(data.request.mock.calls.filter(([method]) => method === "session.send")).toHaveLength(0);
+  });
+
   it("reloads the snapshot after a gap or an ended subscription", async () => {
     const { data } = await localRuntime();
     data.emit({ type: "local.events", sessionId: session.id, message: batch([event(5, "turn.started", { request_id: "r1" })]) });

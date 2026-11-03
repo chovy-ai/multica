@@ -261,7 +261,7 @@ describe("V2Conversation", () => {
     ["a stopped turn", "cancelled", null, true],
     ["a turn cut off by a restart", "failed", "daemon_restarted", true],
     ["a turn whose provider exited", "failed", "provider_exited", true],
-    ["a failed turn", "failed", "provider_error", false],
+    ["a failed turn", "failed", "provider_error", true],
     ["a completed turn", "completed", null, false],
     ["a running turn", "running", null, false],
   ])("continues %s: %s", (_name, status, kind, expected) => {
