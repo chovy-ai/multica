@@ -26,6 +26,9 @@ interface Socket {
   reconnected?: boolean;
   /** When each conversation last asked to subscribe. */
   subscribing?: Map<string, number>;
+  retryDelay?: number;
+  /** What each turn's events cost so far, summed for one record at its end. */
+  traffic?: Map<string, { batches: number; bytes: number; last: number; maxGap: number }>;
 }
 
 export interface DirectLocalV2Options {
@@ -312,7 +315,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     const key = this.key(scope);
     let socket = this.sockets.get(key);
     if (!socket) {
-      socket = { scope, backoff: RECONNECT_MIN_MS, subscribing: new Map() }; this.sockets.set(key, socket);
+      socket = { scope, backoff: RECONNECT_MIN_MS, subscribing: new Map(), traffic: new Map() }; this.sockets.set(key, socket);
       if (this.deviceId !== "local") this.watchLink(socket);
     }
     if (socket.ws?.readyState === this.WS.OPEN) return Promise.resolve(socket.ws);
@@ -353,6 +356,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
         if (this.sockets.get(key) !== current || ws.readyState !== this.WS.OPEN) {
           ws.close(); throw failure("scope_released", "The conversation connection was released");
         }
+        current.retryDelay = undefined;
         this.mark("ws.open", { event: "end", durationMs: Date.now() - opening, outcome: "completed" });
         this.attach(current, ws);
         return ws;
@@ -382,6 +386,7 @@ export class DirectLocalV2Transport implements LocalV2Transport {
       try { message = JSON.parse(event.data); } catch { return; }
       const value = message as { type?: unknown; request_id?: unknown; kind?: unknown; payload?: unknown; status?: unknown; conversation_id?: unknown };
       if (value?.type === "subscription.status") this.markSubscription(socket, value.status, value.conversation_id);
+      if (value?.type === "conversation.events") this.markEvents(socket, message, event.data.length);
       if (value?.type === "host.request" && typeof value.request_id === "string" && typeof value.kind === "string") {
         void this.answer(socket.scope, ws, value.request_id, value.kind, (value.payload ?? {}) as Record<string, unknown>);
         return;
@@ -481,11 +486,37 @@ export class DirectLocalV2Transport implements LocalV2Transport {
   private reconnect(socket: Socket) {
     if (socket.timer || this.sockets.get(this.key(socket.scope)) !== socket) return;
     const delay = socket.backoff; socket.backoff = Math.min(socket.backoff * 2, RECONNECT_MAX_MS);
-    this.mark("ws.retry", { durationMs: delay });
+    // Only a new backoff is news; retrying at the cap would tick while offline.
+    if (delay !== socket.retryDelay) { socket.retryDelay = delay; this.mark("ws.retry", { durationMs: delay }); }
     socket.timer = setTimeout(() => {
       socket.timer = undefined;
       void this.connect(socket.scope).catch(() => this.reconnect(socket));
     }, delay);
+  }
+
+  private markEvents(socket: Socket, message: unknown, size: number) {
+    if (this.deviceId === "local" || !socket.traffic) return;
+    const { conversation_id: conversationId, events } = message as { conversation_id?: unknown; events?: unknown };
+    if (typeof conversationId !== "string" || !Array.isArray(events)) return;
+    const now = Date.now();
+    let bytes = size;
+    const seen = new Set<string>();
+    for (const event of events as { turn_id?: unknown; type?: unknown }[]) {
+      if (typeof event?.turn_id !== "string") continue;
+      const turn = socket.traffic.get(event.turn_id) ?? { batches: 0, bytes: 0, last: now, maxGap: 0 };
+      if (!seen.has(event.turn_id)) {
+        seen.add(event.turn_id);
+        turn.maxGap = Math.max(turn.maxGap, now - turn.last);
+        turn.last = now; turn.batches++; turn.bytes += bytes;
+        // A batch nearly always holds one turn; otherwise its size stays with the first.
+        bytes = 0;
+      }
+      socket.traffic.set(event.turn_id, turn);
+      if (event.type === "turn.completed") {
+        socket.traffic.delete(event.turn_id);
+        this.mark("link.event_received", { conversationId, turnId: event.turn_id, count: turn.batches, bytes: turn.bytes, maxGapMs: turn.maxGap });
+      }
+    }
   }
 
   private markSubscription(socket: Socket, status: unknown, conversation: unknown) {

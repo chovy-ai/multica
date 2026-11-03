@@ -354,13 +354,19 @@ describe("DirectLocalV2Transport", () => {
   });
 
   it("records another device's link and leaves this device's silent", async () => {
-    const records: { stage: string; peer?: string; reason?: string; bytes?: number; conversationId?: string }[] = [];
+    const records: { stage: string; peer?: string; reason?: string; bytes?: number; conversationId?: string; turnId?: string; count?: number }[] = [];
     const remote = await setup(undefined, { deviceId: "peer-a", timing: (record) => records.push(record) });
     await remote.transport.send(scope, { version: 2, type: "subscribe", conversation_id: "c1", after_seq: 0, store_generation: "g" });
     await vi.waitFor(() => expect(remote.daemon.sockets).toHaveLength(1));
     remote.daemon.sockets[0]!.send(JSON.stringify({ version: 2, type: "subscription.status", conversation_id: "c1", status: "subscribed", high_water: 0 }));
     remote.daemon.sockets[0]!.send(JSON.stringify({ version: 2, type: "subscription.status", conversation_id: "c1", status: "live", high_water: 0 }));
     await vi.waitFor(() => expect(records.map((record) => record.stage)).toContain("ws.catch_up"));
+    const batch = (turnType: string) => JSON.stringify({ version: 2, type: "conversation.events", conversation_id: "c1", events: [{ turn_id: "t1", type: turnType }] });
+    remote.daemon.sockets[0]!.send(batch("item.delta"));
+    remote.daemon.sockets[0]!.send(batch("turn.completed"));
+    await vi.waitFor(() => expect(records.map((record) => record.stage)).toContain("link.event_received"));
+    expect(records.filter((record) => record.stage === "link.event_received")).toHaveLength(1);
+    expect(records.find((record) => record.stage === "link.event_received")).toMatchObject({ turnId: "t1", count: 2, bytes: batch("item.delta").length + batch("turn.completed").length });
     remote.daemon.sockets[0]!.close(1001);
     await vi.waitFor(() => expect(records.map((record) => record.stage)).toContain("ws.closed"));
     expect(records.find((record) => record.stage === "ws.closed")?.reason).toBe("ws_going_away");

@@ -407,8 +407,8 @@ func (s *Service) connect(info peer.AddrInfo) {
 			}
 			if attempts == 1 {
 				s.marks.Since(timing.Record{Stage: timing.StagePeerConnect, Peer: info.ID.String(), Count: timing.N(attempts)}, began, err)
+				s.noteCircuitRefused(err)
 			}
-			s.noteCircuitRefused(err)
 			s.logger.Debug("p2p: connect failed; retrying", "peer_id", info.ID.String(), "error", err, "retry_in", delay)
 			s.requestRefresh()
 			timer := time.NewTimer(delay)

@@ -69,6 +69,7 @@ export class AISessionClient {
   private renderPending = new Set<string>();
   private subscribing = new Map<string, number>();
   private reconnected = false;
+  private retryDelay?: number;
   private sendAttempts = new Map<string, number>();
   /** Stays true through the short reconnect window, so a brief drop shows nothing. */
   connected = false;
@@ -217,6 +218,7 @@ export class AISessionClient {
         clearTimeout(this.handshake);
         if (this.stopped) return;
         openedAt = Date.now();
+        this.retryDelay = undefined;
         this.mark("ws.open", { event: "end", durationMs: openedAt - opening, outcome: "completed" });
         void this.reportTiming();
         this.rejected.clear();
@@ -255,7 +257,8 @@ export class AISessionClient {
   private retry() {
     if (this.stopped || this.timer) return;
     const delay = this.retryImmediately ? 0 : this.backoff;
-    this.mark("ws.retry", { durationMs: delay });
+    // Only a new backoff is news; retrying at the cap would tick while offline.
+    if (delay !== this.retryDelay) { this.retryDelay = delay; this.mark("ws.retry", { durationMs: delay }); }
     if (this.retryImmediately) this.retryImmediately = false;
     else this.backoff = Math.min(this.backoff * 2, 10_000);
     this.timer = setTimeout(() => { this.timer = undefined; void this.connect(); }, delay);

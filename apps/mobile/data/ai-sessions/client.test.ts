@@ -541,6 +541,17 @@ describe("mobile AI session timing", () => {
     client.close();
   });
 
+  it("records a retry only when its backoff changes", async () => {
+    vi.useFakeTimers();
+    const { client, fetcher, timing } = timedClient(false);
+    fetcher.mockImplementation(async () => { throw new TypeError("offline"); });
+    void client.connect();
+    await vi.advanceTimersByTimeAsync(120_000);
+    const delays = (timing as unknown as { entries: { record: { stage: string; durationMs?: number } }[] }).entries.filter((entry) => entry.record.stage === "ws.retry").map((entry) => entry.record.durationMs);
+    expect(delays).toEqual([0, 500, 1000, 2000, 4000, 8000, 10000]);
+    client.close();
+  });
+
   it("reports with an acknowledgement, retries the same batch after a reconnect", async () => {
     vi.useFakeTimers();
     let fail = true;
