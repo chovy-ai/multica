@@ -1297,6 +1297,33 @@ describe("local thinking settings", () => {
     expect(restarted.getReasoningSelection(agent.id, session.id)).toBeNull();
     await expect(restarted.setReasoningSelection(agent.id, session.id, "high")).rejects.toMatchObject({ code: "invalid_reasoning_effort" });
   });
+  it("reads a saved Claude default as following the default, keeping thinking settings available", async () => {
+    const storage = new Map([
+      ["model-preferences-v1", JSON.stringify([[`draft:${agent.id}`, "default"]])],
+      ["reasoning-preferences-v1", JSON.stringify([[`draft:${agent.id}`, { model: "default", effort: "low" }]])],
+    ]);
+    const data = backend(storage);
+    const original = data.request.getMockImplementation()!;
+    const claude = [{ ...init.agents[0]!, provider: "claude", agent: { ...agent, name: "Claude Code", model: "" } }];
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "models.list") return { supported: true, models: [{ id: "sonnet", label: "Sonnet", isDefault: true, thinking: { supported_levels: [{ value: "low", label: "Low" }, { value: "high", label: "High" }] } }] };
+      if (method === "workspace.load") return { ...(await original(method, params)), local: true, agents: claude };
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true, agents: claude }); handles.push(handle);
+    await handle.initialize();
+    const options = await handle.runtime.getComposerOptions({ workspaceId: init.workspaceId, agentTargetId: agent.id });
+    expect(options).toMatchObject({ reasoningConfigurable: true, effectiveSettings: { reasoningEffort: "low" } });
+    await handle.setReasoningSelection(agent.id, null, "high");
+    expect(handle.getReasoningSelection(agent.id)).toBe("high");
+    expect(handle.getModelSelection(agent.id)).toBeNull();
+  });
+  it("leaves a model called default alone for other providers", async () => {
+    const data = backend(new Map([["model-preferences-v1", JSON.stringify([[`draft:${agent.id}`, "default"]])]]));
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true }); handles.push(handle);
+    await handle.initialize();
+    expect(handle.getModelSelection(agent.id)).toBe("default");
+  });
   it("rejects thinking changes on managed agent connections", async () => {
     const data = backend();
     const { handle } = await setup(data);

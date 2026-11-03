@@ -306,12 +306,16 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     }
     return agent;
   }
+  /** Claude's default used to be a catalog row. A saved one now means what no selection means, so it reaches the catalog's default model. */
+  function followingClaudeDefault(agentId: string, model: string | null) {
+    return init.local && model === "default" && executionTargets(workspace).find((entry) => entry.id === agentId)?.provider === "claude";
+  }
   function selectedModel(agentId: string, sessionId?: string | null) {
     const session = sessionId ? details.get(sessionId)?.session ?? workspace.sessions.find((entry) => entry.id === ledger.serverId(sessionId)) : undefined;
     if (session && session.agent_id !== agentId) return null;
     const serverId = sessionId ? ledger.serverId(sessionId) : null;
-    if (modelPreferences.has(agentId, serverId)) return modelPreferences.get(agentId, serverId);
-    return sessionId ? details.get(sessionId)?.model ?? null : null;
+    const model = modelPreferences.has(agentId, serverId) ? modelPreferences.get(agentId, serverId) : sessionId ? details.get(sessionId)?.model ?? null : null;
+    return followingClaudeDefault(agentId, model) ? null : model;
   }
   async function loadReasoningCatalog(agentId: string, options?: { force?: boolean; signal?: AbortSignal }) {
     const catalog = await client.request("models.list", { agentId, ...(options?.force ? { force: true } : {}) }, { signal: options?.signal });
@@ -324,7 +328,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     if (detail && detail.session.agent_id !== agentId) return null;
     const model = selectedModel(agentId, sessionId);
     const selection = reasoningPreferences.get(agentId, sessionId ? ledger.serverId(sessionId) : null);
-    const effort = selection ? (selection.model === model ? selection.effort : null)
+    const effort = selection ? ((followingClaudeDefault(agentId, selection.model) ? null : selection.model) === model ? selection.effort : null)
       : model === (detail?.model ?? null) ? detail?.reasoningEffort ?? null : null;
     const catalog = reasoningCatalogs.get(agentId);
     return effort && (!catalog || localReasoningLevels(catalog.models, model ?? descriptor(agentId).model).some((level) => level.value === effort)) ? effort : null;
