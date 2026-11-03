@@ -1,7 +1,7 @@
 # iOS AI 会话：@ 引用与交互优化
 
 原生实现已完成，改动范围限于 AI 会话及其必要依赖。
-[ios-mentions-ui-v5.png](ios-mentions-ui-v5.png) 记录引用交互设计；图片和 HTML 保留为设计过程记录。
+[ios-mentions-ui-v5.webp](ios-mentions-ui-v5.webp) 记录引用交互设计；图片和 HTML 保留为设计过程记录。
 当前视觉以[移动端风格对齐记录](style-alignment.md)中的既有控件规范为准。
 原生验证范围和待验证项见 [UI 审查记录](ui-review.md)。
 
