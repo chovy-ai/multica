@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { localV2SummarySchema, localV2UploadSchema } from "@multica/core/local-conversation/v2";
+import { localV2SummarySchema } from "@multica/core/local-conversation/v2";
 import * as DocumentPicker from "expo-document-picker";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
@@ -17,10 +17,13 @@ import { useT } from "@/lib/i18n";
 import { createRequestId } from "@/lib/request-id";
 import { THEME } from "@/lib/theme";
 import { useColorScheme } from "@/lib/use-color-scheme";
+import { cn } from "@/lib/utils";
 import { continuousCorners } from "@/lib/radius";
 import { aiKeys } from "@/data/ai-sessions/client";
 import { useAIConnection, useAISessionScope, useAISubscriptionRejected } from "@/data/ai-sessions/hooks";
-import { useAIDrafts, aiDraftKey, EMPTY_DRAFT_ATTACHMENTS, type AIDraftAttachment, type PendingSend } from "@/data/ai-sessions/drafts";
+import { draftUploads } from "@/data/ai-sessions/uploads";
+import { useStoredSnapshot } from "@/data/ai-sessions/snapshot-store";
+import { useAIDrafts, aiDraftKey, EMPTY_DRAFT_ATTACHMENTS, type DraftAttachment, type PendingSend } from "@/data/ai-sessions/drafts";
 import { EMPTY_REFERENCES, ReferenceUnavailableError, referenceKey } from "@/data/ai-sessions/references";
 import { resolveAIMessage } from "@/data/ai-sessions/reference-queries";
 import { aiSubmission } from "@/data/ai-sessions/submission";
@@ -28,7 +31,7 @@ import { ReferenceChips, AIMessageContent } from "@/components/ai-sessions/refer
 import { tokenAtCursor } from "@/lib/mention-serialize";
 import { useAuthStore } from "@/data/auth-store";
 import { useWorkspaceStore } from "@/data/workspace-store";
-import { commandResultSchema, historySchema, providersSchema, queueSchema, readResponse } from "@/data/ai-sessions/schemas";
+import { commandResultSchema, historySchema, providersSchema, queueSchema } from "@/data/ai-sessions/schemas";
 import { groupTranscriptActivities, transcript, type ConversationRow } from "@/data/ai-sessions/projection";
 import { AIActivityGroup } from "@/components/ai-sessions/activity-group";
 import { ConnectionNotice } from "@/components/ai-sessions/connection-notice";
@@ -47,7 +50,9 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
   const subscriptionRejected = useAISubscriptionRejected(session);
   const qc = useQueryClient();
   const key = aiKeys.snapshot(scope, session);
-  const query = useQuery({ queryKey: key, enabled: !!client, retry: false, staleTime: Infinity, queryFn: ({ signal }) => client!.snapshot(session, signal) });
+  // The conversation as last read shows at once; the daemon sends what changed since.
+  const restored = useStoredSnapshot(scope, session, key);
+  const query = useQuery({ queryKey: key, enabled: !!client && restored, retry: false, staleTime: Infinity, queryFn: ({ signal }) => client!.snapshot(session, signal) });
   const snapshot = query.data;
   const { colorScheme } = useColorScheme();
   const theme = THEME[colorScheme];
@@ -66,9 +71,9 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
   const submitting = useRef(false);
   const attachments = useAIDrafts((state) => state.attachments[draftKey] ?? EMPTY_DRAFT_ATTACHMENTS);
   const updateAttachments = useAIDrafts((state) => state.setAttachments);
-  const setAttachments = (value: AIDraftAttachment[] | ((files: AIDraftAttachment[]) => AIDraftAttachment[])) => updateAttachments(draftKey, value);
+  const setAttachments = (value: DraftAttachment[] | ((files: DraftAttachment[]) => DraftAttachment[])) => updateAttachments(draftKey, value);
+  const uploading = attachments.some((file) => file.status === "uploading");
   const [busy, setBusy] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [sendFailed, setSendFailed] = useState(false);
   const [referenceError, setReferenceError] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -86,8 +91,8 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
   const [readingHistory, setReadingHistory] = useState(false);
   const running = snapshot?.turns.some((turn) => turn.status === "running") ?? false;
   const hasMessage = !!(draft.trim() || attachments.length || references.length || pending);
-  const showStop = running && (!hasMessage || uploading);
-  useEffect(() => { if (connected && focused && active) client?.select(session); }, [client, connected, session, focused, active]);
+  const showStop = running && !hasMessage;
+  useEffect(() => { if (restored && connected && focused && active) client?.select(session); }, [restored, client, connected, session, focused, active]);
   useEffect(() => (client && focused && active ? client.focus(session) : undefined), [client, session, focused, active]);
   useFocusEffect(useCallback(() => {
     const restore = returningFromPicker.current;
@@ -107,6 +112,7 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
   useEffect(() => { if (pendingRequest) client?.pendingShown(session, pendingRequest); }, [client, session, pendingRequest]);
   useEffect(() => {
     if (!pending || !(snapshot?.queue.items.some((item) => item.requestId === pending.requestId) || snapshot?.turns.some((turn) => turn.request_id === pending.requestId))) return;
+    draftUploads.forget(pending.attachments);
     complete(draftKey, pending);
   }, [snapshot, pending, draftKey, complete]);
   const openReferences = (token?: { start: number; query: string }, cursor = selection.current.start) => {
@@ -154,7 +160,7 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
     });
   };
   const send = async () => {
-    if (!client || !connected || !snapshot || busy || submitting.current || uploading || snapshot.conversation.archived || !(draft.trim() || attachments.length || references.length || pending)) return;
+    if (!client || !connected || !snapshot || busy || submitting.current || snapshot.conversation.archived || !(draft.trim() || attachments.length || references.length || pending)) return;
     if (pending && pending.text !== draft) { Alert.alert(t("error_title"), t("send_failed")); return; }
     submitting.current = true;
     setBusy(true); setSendFailed(false); setReferenceError("");
@@ -166,6 +172,12 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
         request = { requestId: createRequestId(), text: draft, attachments: attachments.map((file) => file.id), prepared, queued: running || snapshot.queue.items.length > 0 || snapshot.queue.paused, queuePaused: snapshot.queue.paused, createdAt: Date.now() };
         setPending(draftKey, request);
       }
+      const stored = await draftUploads.ensure(request.attachments);
+      draftUploads.forget(request.attachments);
+      if (stored.some((id, index) => id !== request!.attachments[index])) {
+        request = { ...request, attachments: stored };
+        setPending(draftKey, request);
+      }
       if (request.queued) await client.submit(session, aiSubmission(request), queueSchema, request.createdAt);
       else await client.submit(session, aiSubmission(request), commandResultSchema, request.createdAt);
       complete(draftKey, request);
@@ -175,27 +187,21 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
         setReferenceError(error instanceof ReferenceUnavailableError ? t("references.unavailable", { name: error.reference.name }) : t("references.prepare_failed"));
         return;
       }
-      const rejected = error instanceof Error && ["invalid_request", "turn_running", "archived", "unknown_provider", "invalid_settings"].includes(error.message);
+      const rejected = error instanceof Error && ["invalid_request", "not_found", "turn_running", "archived", "unknown_provider", "invalid_settings"].includes(error.message);
       if (rejected) { setPending(draftKey, null); showError(); }
       else setSendFailed(true);
     }
     finally { submitting.current = false; setBusy(false); }
   };
   const upload = async () => {
-    if (!client || !connected || uploading || busy || pending) return;
+    if (!client || !connected || busy || pending) return;
     const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
     if (result.canceled) return;
-    setUploading(true);
-    try {
-      for (const asset of result.assets) {
-        const local = await fetch(asset.uri);
-        const blob = await local.blob();
-        const response = await fetch(client.url("/attachments"), { method: "POST", headers: { ...client.headers(), "Content-Type": asset.mimeType ?? "application/octet-stream", "X-File-Name": encodeURIComponent(asset.name) }, body: blob });
-        if (!response.ok) throw new Error("upload_failed");
-        const file = readResponse(await response.json(), localV2UploadSchema, "ai.attachments");
-        setAttachments((old) => [...old, file]);
-      }
-    } catch { showError(); } finally { setUploading(false); }
+    for (const asset of result.assets) draftUploads.start(client, draftKey, { uri: asset.uri, name: asset.name, mimeType: asset.mimeType });
+  };
+  const removeAttachment = (id: string) => {
+    setAttachments((files) => files.filter((file) => file.id !== id));
+    if (client) draftUploads.remove(client, id);
   };
   const metadata = (body: Record<string, unknown>) => client!.command(session, { type: "update", ...body }, localV2SummarySchema).then(() => { void query.refetch(); void invalidateAISessionLists(qc, scope); });
   const actions = () => {
@@ -286,26 +292,27 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
       <View className="rounded-2xl border border-border bg-secondary" style={continuousCorners}>
         {(references.length > 0 || attachments.length > 0) && <View className="px-2 pt-2 pb-1 gap-2">
           <ReferenceChips references={references} disabled={busy || !!pending} onRemove={(reference) => { setReferences(draftKey, references.filter((entry) => referenceKey(entry) !== referenceKey(reference))); setReferenceError(""); }} />
-          {!!attachments.length && <ScrollView horizontal keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 6, paddingVertical: 8 }}>{attachments.map((file) => <View key={file.id} className="max-w-64 min-h-7 flex-row items-center rounded-full bg-primary/10"><Pressable hitSlop={{ top: 8, bottom: 8 }} accessibilityRole="button" accessibilityLabel={file.name} disabled={!connected} className="shrink min-h-7 justify-center pl-2 py-1" onPress={() => { if (client) void openDeviceFile(client, `/attachments/${encodeURIComponent(file.id)}`, file.name).catch(showError); }}><Text style={{ lineHeight: undefined }} numberOfLines={1} className="text-xs">{file.name}</Text></Pressable><IconButton name="close" iconSize={12} hitSlop={8} accessibilityLabel={t("remove_file", { name: file.name })} disabled={busy || !!pending} className="h-7 w-7 rounded-full" onPress={() => setAttachments((old) => old.filter((f) => f.id !== file.id))} /></View>)}</ScrollView>}
+          {!!attachments.length && <ScrollView horizontal keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 6, paddingVertical: 8 }}>{attachments.map((file) => <View key={file.id} className="max-w-64 min-h-7 flex-row items-center rounded-full bg-primary/10"><Pressable hitSlop={{ top: 8, bottom: 8 }} accessibilityRole="button" accessibilityLabel={file.name} disabled={!connected || file.status !== "uploaded"} className="shrink min-h-7 justify-center pl-2 py-1" onPress={() => { if (client) void openDeviceFile(client, `/attachments/${encodeURIComponent(file.id)}`, file.name).catch(showError); }}><View className="flex-row items-center gap-1">{file.status === "uploading" && <ActivityIndicator size="small" />}<Text style={{ lineHeight: undefined }} numberOfLines={1} className={cn("text-xs", file.status === "failed" && "text-destructive")}>{file.name}</Text></View></Pressable><IconButton name="close" iconSize={12} hitSlop={8} accessibilityLabel={t("remove_file", { name: file.name })} disabled={busy || !!pending} className="h-7 w-7 rounded-full" onPress={() => removeAttachment(file.id)} /></View>)}</ScrollView>}
         </View>}
+        {attachments.some((file) => file.status === "failed") && <Text accessibilityRole="alert" className="px-4 text-sm text-destructive">{t("attachment_failed")}</Text>}
         <TextInput ref={input} multiline value={draft} onChangeText={changeDraft} onSelectionChange={(event) => { selection.current = event.nativeEvent.selection; }} editable={!busy && !pending && !snapshot?.conversation.archived} placeholder={t(rows.length ? "continue" : "message")} placeholderTextColor={theme.mutedForeground} accessibilityLabel={t("message")} className="px-4 pt-3 pb-1 text-foreground" style={{ fontSize: 16, minHeight: 28, maxHeight: 140, textAlignVertical: "top" }} />
         {!!agents.length && <Text style={{ lineHeight: undefined }} className="px-4 py-1 text-xs text-muted-foreground">{t("references.invoke_hint", { names: agents.map((entry) => entry.name).join(", ") })}</Text>}
         <View className="flex-row items-center px-2 pb-2 pt-1">
           <IconButton name="at" className="h-8 w-8" hitSlop={6} color={references.length ? theme.primary : undefined} accessibilityLabel={t("references.title")} disabled={!connected || busy || !!pending || !snapshot || snapshot.conversation.archived} onPress={() => openReferences()} />
-          <IconButton name="attach-outline" className="h-8 w-8" hitSlop={6} accessibilityLabel={t("attachment")} disabled={!connected || busy || uploading || !!pending || snapshot?.conversation.archived} onPress={() => void upload().catch(showError)} />
+          <IconButton name="attach-outline" className="h-8 w-8" hitSlop={6} accessibilityLabel={t("attachment")} disabled={!connected || busy || !!pending || snapshot?.conversation.archived} onPress={() => void upload().catch(showError)} />
           <Button style={{ height: "auto", minHeight: 36 }} variant="ghost" size="sm" hitSlop={{ top: 4, bottom: 4 }} className="flex-1 min-w-0 shrink px-2" disabled={!connected || running || busy || !!pending || !!agents.length} accessibilityLabel={t("settings")} onPress={() => router.push({ pathname: "/[workspace]/ai-sessions/[device]/models", params: { ...params, provider: snapshot?.conversation.provider } })}><Text style={{ lineHeight: undefined }} className="shrink text-xs text-muted-foreground" numberOfLines={1}>{agents.length ? t("agent_settings") : `${snapshot?.conversation.provider === "claude" ? "Claude Code" : "Codex"} · ${snapshot?.settings.model || t("default_model")}`}</Text><Ionicons name="chevron-down" size={12} color={theme.mutedForeground} /></Button>
           <Button
             variant="default"
             size="icon"
             className="h-8 w-8 rounded-full"
             hitSlop={6}
-            disabled={busy || !connected || !snapshot || (!showStop && (uploading || !hasMessage || snapshot.conversation.archived))}
+            disabled={busy || !connected || !snapshot || (!showStop && (!hasMessage || snapshot.conversation.archived))}
             accessibilityLabel={t(showStop ? "stop" : sendFailed ? "retry" : running ? "enqueue" : "send")}
             accessibilityHint={running ? t("working") : undefined}
-            accessibilityState={{ busy: busy || (uploading && !showStop) }}
+            accessibilityState={{ busy }}
             onPress={() => void (showStop ? stop() : send())}
           >
-            {busy || (uploading && !showStop)
+            {busy
               ? <ActivityIndicator size="small" color={theme.primaryForeground} />
               : <Ionicons name={showStop ? "stop" : sendFailed ? "refresh" : "arrow-up"} size={18} color={theme.primaryForeground} />}
           </Button>

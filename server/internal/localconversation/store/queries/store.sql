@@ -55,8 +55,8 @@ ORDER BY summary_seq
 LIMIT sqlc.arg(row_limit);
 
 -- name: InsertTurn :exec
-INSERT INTO turn (id, conversation_id, turn_index, request_id, remote, status, started_at)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO turn (id, conversation_id, turn_index, request_id, remote, origin_peer_id, origin_client_kind, status, started_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetTurn :one
 SELECT * FROM turn WHERE id = ?;
@@ -127,14 +127,26 @@ WHERE conversation_id = ? AND status = 'pending'
 ORDER BY created_at, id;
 
 -- name: InsertAttachment :exec
-INSERT INTO attachment (id, scope_id, conversation_id, path, file_name, size, media_type, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO attachment (id, scope_id, conversation_id, path, file_name, size, media_type, sha256, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetAttachment :one
 SELECT * FROM attachment WHERE id = ?;
 
 -- name: CountAttachmentsAtPath :one
 SELECT COUNT(*) FROM attachment WHERE path = ?;
+
+-- name: FindUploadByHash :one
+SELECT * FROM attachment
+WHERE scope_id = ? AND sha256 = ? AND sha256 != '' AND conversation_id = ''
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: DeleteAttachment :exec
+DELETE FROM attachment WHERE id = ?;
+
+-- name: ListUploadsCreatedBefore :many
+SELECT * FROM attachment WHERE conversation_id = '' AND created_at < ?;
 
 -- name: InsertCommandReceipt :exec
 INSERT INTO command_receipt (scope_id, request_id, fingerprint, result, uncertain, created_at)
@@ -225,7 +237,7 @@ ON CONFLICT (conversation_id) DO UPDATE SET revision = excluded.revision, paused
 SELECT * FROM prompt_queue_item WHERE conversation_id = ? ORDER BY position, request_id;
 
 -- name: InsertPromptQueueItem :exec
-INSERT INTO prompt_queue_item (conversation_id, request_id, position, item) VALUES (?, ?, ?, ?);
+INSERT INTO prompt_queue_item (conversation_id, request_id, position, item, origin_peer_id, origin_client_kind) VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: DeletePromptQueueItem :exec
 DELETE FROM prompt_queue_item WHERE conversation_id = ? AND request_id = ?;

@@ -7,19 +7,29 @@ import { EMPTY_REFERENCES, type AIReference, type PreparedAIMessage } from "./re
 export function aiDraftKey(scope: SessionScope, id: string) { return JSON.stringify([scope.userId, scope.workspaceId, scope.deviceId, id]); }
 
 export interface PendingSend { requestId: string; text: string; attachments: string[]; queued?: boolean; queuePaused?: boolean; queueContent?: string; createdAt?: number; prepared?: PreparedAIMessage; }
-export interface AIDraftAttachment { id: string; name: string }
-export const EMPTY_DRAFT_ATTACHMENTS: AIDraftAttachment[] = [];
+export interface DraftAttachment { id: string; name: string; status: "uploading" | "uploaded" | "failed" }
+export const EMPTY_DRAFT_ATTACHMENTS: DraftAttachment[] = [];
 
-export const useAIDrafts = create(persist<{
+interface AIDrafts {
   drafts: Record<string, string>; setDraft(key: string, text: string): void;
   references: Record<string, AIReference[]>;
   setReferences(key: string, references: AIReference[]): void;
-  attachments: Record<string, AIDraftAttachment[]>;
-  setAttachments(key: string, value: AIDraftAttachment[] | ((files: AIDraftAttachment[]) => AIDraftAttachment[])): void;
+  attachments: Record<string, DraftAttachment[]>;
+  setAttachments(key: string, value: DraftAttachment[] | ((files: DraftAttachment[]) => DraftAttachment[])): void;
   complete(key: string, request: PendingSend): void;
   pending: Record<string, PendingSend>;
   setPending(key: string, value: PendingSend | null): void;
-}>((set) => ({
+}
+
+/** A transfer does not survive the app; only attachments the device has stored do. */
+export function persistedAttachments(attachments: Record<string, DraftAttachment[]>) {
+  return Object.fromEntries(Object.entries(attachments).flatMap(([key, files]) => {
+    const stored = files.filter((file) => file.status === "uploaded");
+    return stored.length ? [[key, stored]] : [];
+  }));
+}
+
+export const useAIDrafts = create(persist<AIDrafts, [], [], Pick<AIDrafts, "drafts" | "pending" | "attachments" | "references">>((set) => ({
   attachments: {}, setAttachments: (key, value) => set((state) => {
     const attachments = { ...state.attachments };
     const files = typeof value === "function" ? value(attachments[key] ?? EMPTY_DRAFT_ATTACHMENTS) : value;
@@ -53,7 +63,7 @@ export const useAIDrafts = create(persist<{
     if (text) drafts[key] = text; else delete drafts[key];
     return { drafts };
   }),
-}), { name: "mobile.ai-session-drafts", storage: createJSONStorage(() => ({
+}), { name: "mobile.ai-session-drafts", partialize: ({ drafts, pending, attachments, references }) => ({ drafts, pending, references, attachments: persistedAttachments(attachments) }), storage: createJSONStorage(() => ({
   getItem: SecureStore.getItemAsync,
   setItem: (key, value) => SecureStore.setItemAsync(key, value),
   removeItem: SecureStore.deleteItemAsync,

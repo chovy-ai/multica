@@ -256,6 +256,15 @@ func (q *Queries) CountSessionBrowseGroups(ctx context.Context, arg CountSession
 	return items, nil
 }
 
+const deleteAttachment = `-- name: DeleteAttachment :exec
+DELETE FROM attachment WHERE id = ?
+`
+
+func (q *Queries) DeleteAttachment(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteAttachment, id)
+	return err
+}
+
 const deletePromptQueueItem = `-- name: DeletePromptQueueItem :exec
 DELETE FROM prompt_queue_item WHERE conversation_id = ? AND request_id = ?
 `
@@ -365,8 +374,37 @@ func (q *Queries) FindImportedConversation(ctx context.Context, arg FindImported
 	return i, err
 }
 
+const findUploadByHash = `-- name: FindUploadByHash :one
+SELECT id, scope_id, conversation_id, path, file_name, size, media_type, created_at, sha256 FROM attachment
+WHERE scope_id = ? AND sha256 = ? AND sha256 != '' AND conversation_id = ''
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type FindUploadByHashParams struct {
+	ScopeID int64
+	Sha256  string
+}
+
+func (q *Queries) FindUploadByHash(ctx context.Context, arg FindUploadByHashParams) (Attachment, error) {
+	row := q.db.QueryRowContext(ctx, findUploadByHash, arg.ScopeID, arg.Sha256)
+	var i Attachment
+	err := row.Scan(
+		&i.ID,
+		&i.ScopeID,
+		&i.ConversationID,
+		&i.Path,
+		&i.FileName,
+		&i.Size,
+		&i.MediaType,
+		&i.CreatedAt,
+		&i.Sha256,
+	)
+	return i, err
+}
+
 const getAttachment = `-- name: GetAttachment :one
-SELECT id, scope_id, conversation_id, path, file_name, size, media_type, created_at FROM attachment WHERE id = ?
+SELECT id, scope_id, conversation_id, path, file_name, size, media_type, created_at, sha256 FROM attachment WHERE id = ?
 `
 
 func (q *Queries) GetAttachment(ctx context.Context, id string) (Attachment, error) {
@@ -381,6 +419,7 @@ func (q *Queries) GetAttachment(ctx context.Context, id string) (Attachment, err
 		&i.Size,
 		&i.MediaType,
 		&i.CreatedAt,
+		&i.Sha256,
 	)
 	return i, err
 }
@@ -589,7 +628,7 @@ func (q *Queries) GetScopeSeq(ctx context.Context, id int64) (int64, error) {
 }
 
 const getTurn = `-- name: GetTurn :one
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn WHERE id = ?
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at, origin_peer_id, origin_client_kind FROM turn WHERE id = ?
 `
 
 func (q *Queries) GetTurn(ctx context.Context, id string) (Turn, error) {
@@ -609,13 +648,15 @@ func (q *Queries) GetTurn(ctx context.Context, id string) (Turn, error) {
 		&i.LastTurnSeq,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.OriginPeerID,
+		&i.OriginClientKind,
 	)
 	return i, err
 }
 
 const insertAttachment = `-- name: InsertAttachment :exec
-INSERT INTO attachment (id, scope_id, conversation_id, path, file_name, size, media_type, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO attachment (id, scope_id, conversation_id, path, file_name, size, media_type, sha256, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertAttachmentParams struct {
@@ -626,6 +667,7 @@ type InsertAttachmentParams struct {
 	FileName       string
 	Size           int64
 	MediaType      string
+	Sha256         string
 	CreatedAt      string
 }
 
@@ -638,6 +680,7 @@ func (q *Queries) InsertAttachment(ctx context.Context, arg InsertAttachmentPara
 		arg.FileName,
 		arg.Size,
 		arg.MediaType,
+		arg.Sha256,
 		arg.CreatedAt,
 	)
 	return err
@@ -856,14 +899,16 @@ func (q *Queries) InsertPreviewRoot(ctx context.Context, arg InsertPreviewRootPa
 }
 
 const insertPromptQueueItem = `-- name: InsertPromptQueueItem :exec
-INSERT INTO prompt_queue_item (conversation_id, request_id, position, item) VALUES (?, ?, ?, ?)
+INSERT INTO prompt_queue_item (conversation_id, request_id, position, item, origin_peer_id, origin_client_kind) VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type InsertPromptQueueItemParams struct {
-	ConversationID string
-	RequestID      string
-	Position       int64
-	Item           string
+	ConversationID   string
+	RequestID        string
+	Position         int64
+	Item             string
+	OriginPeerID     string
+	OriginClientKind string
 }
 
 func (q *Queries) InsertPromptQueueItem(ctx context.Context, arg InsertPromptQueueItemParams) error {
@@ -872,6 +917,8 @@ func (q *Queries) InsertPromptQueueItem(ctx context.Context, arg InsertPromptQue
 		arg.RequestID,
 		arg.Position,
 		arg.Item,
+		arg.OriginPeerID,
+		arg.OriginClientKind,
 	)
 	return err
 }
@@ -894,18 +941,20 @@ func (q *Queries) InsertScope(ctx context.Context, arg InsertScopeParams) (int64
 }
 
 const insertTurn = `-- name: InsertTurn :exec
-INSERT INTO turn (id, conversation_id, turn_index, request_id, remote, status, started_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO turn (id, conversation_id, turn_index, request_id, remote, origin_peer_id, origin_client_kind, status, started_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertTurnParams struct {
-	ID             string
-	ConversationID string
-	TurnIndex      int64
-	RequestID      string
-	Remote         string
-	Status         string
-	StartedAt      string
+	ID               string
+	ConversationID   string
+	TurnIndex        int64
+	RequestID        string
+	Remote           string
+	OriginPeerID     string
+	OriginClientKind string
+	Status           string
+	StartedAt        string
 }
 
 func (q *Queries) InsertTurn(ctx context.Context, arg InsertTurnParams) error {
@@ -915,6 +964,8 @@ func (q *Queries) InsertTurn(ctx context.Context, arg InsertTurnParams) error {
 		arg.TurnIndex,
 		arg.RequestID,
 		arg.Remote,
+		arg.OriginPeerID,
+		arg.OriginClientKind,
 		arg.Status,
 		arg.StartedAt,
 	)
@@ -998,7 +1049,7 @@ func (q *Queries) ListConversationMessages(ctx context.Context, conversationID s
 }
 
 const listConversationTurns = `-- name: ListConversationTurns :many
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn WHERE conversation_id = ? ORDER BY turn_index
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at, origin_peer_id, origin_client_kind FROM turn WHERE conversation_id = ? ORDER BY turn_index
 `
 
 func (q *Queries) ListConversationTurns(ctx context.Context, conversationID string) ([]Turn, error) {
@@ -1024,6 +1075,8 @@ func (q *Queries) ListConversationTurns(ctx context.Context, conversationID stri
 			&i.LastTurnSeq,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.OriginPeerID,
+			&i.OriginClientKind,
 		); err != nil {
 			return nil, err
 		}
@@ -1309,7 +1362,7 @@ func (q *Queries) ListPreviewRoots(ctx context.Context, scopeID int64) ([]string
 }
 
 const listPromptQueueItems = `-- name: ListPromptQueueItems :many
-SELECT conversation_id, request_id, position, item FROM prompt_queue_item WHERE conversation_id = ? ORDER BY position, request_id
+SELECT conversation_id, request_id, position, item, origin_peer_id, origin_client_kind FROM prompt_queue_item WHERE conversation_id = ? ORDER BY position, request_id
 `
 
 func (q *Queries) ListPromptQueueItems(ctx context.Context, conversationID string) ([]PromptQueueItem, error) {
@@ -1326,6 +1379,8 @@ func (q *Queries) ListPromptQueueItems(ctx context.Context, conversationID strin
 			&i.RequestID,
 			&i.Position,
 			&i.Item,
+			&i.OriginPeerID,
+			&i.OriginClientKind,
 		); err != nil {
 			return nil, err
 		}
@@ -1368,7 +1423,7 @@ func (q *Queries) ListQueuedConversations(ctx context.Context) ([]string, error)
 }
 
 const listRecentTurns = `-- name: ListRecentTurns :many
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at, origin_peer_id, origin_client_kind FROM turn
 WHERE conversation_id = ?1
 ORDER BY turn_index DESC
 LIMIT ?2
@@ -1402,6 +1457,8 @@ func (q *Queries) ListRecentTurns(ctx context.Context, arg ListRecentTurnsParams
 			&i.LastTurnSeq,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.OriginPeerID,
+			&i.OriginClientKind,
 		); err != nil {
 			return nil, err
 		}
@@ -1417,7 +1474,7 @@ func (q *Queries) ListRecentTurns(ctx context.Context, arg ListRecentTurnsParams
 }
 
 const listRunningTurns = `-- name: ListRunningTurns :many
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn WHERE status = 'running' ORDER BY conversation_id, turn_index
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at, origin_peer_id, origin_client_kind FROM turn WHERE status = 'running' ORDER BY conversation_id, turn_index
 `
 
 func (q *Queries) ListRunningTurns(ctx context.Context) ([]Turn, error) {
@@ -1443,6 +1500,8 @@ func (q *Queries) ListRunningTurns(ctx context.Context) ([]Turn, error) {
 			&i.LastTurnSeq,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.OriginPeerID,
+			&i.OriginClientKind,
 		); err != nil {
 			return nil, err
 		}
@@ -1713,7 +1772,7 @@ func (q *Queries) ListTurnMessages(ctx context.Context, arg ListTurnMessagesPara
 }
 
 const listTurnsBefore = `-- name: ListTurnsBefore :many
-SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at FROM turn
+SELECT id, conversation_id, turn_index, request_id, provider_turn_id, remote, status, error_kind, error, reconciled, last_turn_seq, started_at, completed_at, origin_peer_id, origin_client_kind FROM turn
 WHERE conversation_id = ?1 AND turn_index < ?2
 ORDER BY turn_index DESC
 LIMIT ?3
@@ -1748,6 +1807,45 @@ func (q *Queries) ListTurnsBefore(ctx context.Context, arg ListTurnsBeforeParams
 			&i.LastTurnSeq,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.OriginPeerID,
+			&i.OriginClientKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUploadsCreatedBefore = `-- name: ListUploadsCreatedBefore :many
+SELECT id, scope_id, conversation_id, path, file_name, size, media_type, created_at, sha256 FROM attachment WHERE conversation_id = '' AND created_at < ?
+`
+
+func (q *Queries) ListUploadsCreatedBefore(ctx context.Context, createdAt string) ([]Attachment, error) {
+	rows, err := q.db.QueryContext(ctx, listUploadsCreatedBefore, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Attachment{}
+	for rows.Next() {
+		var i Attachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ScopeID,
+			&i.ConversationID,
+			&i.Path,
+			&i.FileName,
+			&i.Size,
+			&i.MediaType,
+			&i.CreatedAt,
+			&i.Sha256,
 		); err != nil {
 			return nil, err
 		}
