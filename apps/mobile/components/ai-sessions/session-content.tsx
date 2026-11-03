@@ -93,13 +93,13 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
     });
   };
   const send = async () => {
-    if (!client || !connected || busy || uploading || snapshot?.conversation.archived || !(draft.trim() || attachments.length || pending)) return;
+    if (!client || !connected || !snapshot || busy || uploading || snapshot.conversation.archived || !(draft.trim() || attachments.length || pending)) return;
     if (pending && pending.text !== draft) { Alert.alert(t("error_title"), t("send_failed")); return; }
-    const request = pending ?? { requestId: createRequestId(), text: draft, attachments: attachments.map((file) => file.id), queued: running || snapshot!.queue.items.length > 0 || snapshot!.queue.paused, queueContent: draft || t("attached_files"), createdAt: Date.now() };
+    const request = pending ?? { requestId: createRequestId(), text: draft, attachments: attachments.map((file) => file.id), queued: running || snapshot.queue.items.length > 0 || snapshot.queue.paused, queueContent: draft || t("attached_files"), createdAt: Date.now() };
     setPending(draftKey, request); setBusy(true); setSendFailed(false);
     try {
       if (request.queued) {
-        await client.submit(session, { type: "queue_enqueue", paused: snapshot!.queue.paused, item: { requestId: request.requestId, content: request.queueContent ?? request.text, attachmentIds: request.attachments, display: { id: request.requestId, clientSubmitId: request.requestId, createdAtUnixMs: request.createdAt, content: [{ type: "text", text: request.text }] } } }, queueSchema, request.createdAt);
+        await client.submit(session, { type: "queue_enqueue", paused: snapshot.queue.paused, item: { requestId: request.requestId, content: request.queueContent ?? request.text, attachmentIds: request.attachments, display: { id: request.requestId, clientSubmitId: request.requestId, createdAtUnixMs: request.createdAt, content: [{ type: "text", text: request.text }] } } }, queueSchema, request.createdAt);
       } else await client.submit(session, { type: "send", request_id: request.requestId, text: request.text, attachment_ids: request.attachments }, commandResultSchema, request.createdAt);
       setDraft(draftKey, ""); setPending(draftKey, null); setAttachments([]);
       void query.refetch();
@@ -206,7 +206,7 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
           <Button variant="ghost" size="sm" disabled={!connected || running || busy} onPress={() => router.push({ pathname: "/[workspace]/ai-sessions/[device]/models", params: { ...params, provider: snapshot?.conversation.provider } })}><Text className="max-w-24" numberOfLines={1}>{snapshot?.settings.model || t("default_model")}⌄</Text></Button>
           <Button variant="ghost" size="sm" disabled={!connected || running || busy || uploading || !!pending} accessibilityLabel={t("provider")} onPress={() => void chooseProvider().catch(showError)}><Text className="text-xs" numberOfLines={1}>{snapshot?.conversation.provider === "claude" ? "Claude Code" : "Codex"}⌄</Text></Button>
           <View className="flex-1" />
-          {uploading || busy ? <ActivityIndicator /> : <Button size={running ? "sm" : "icon"} disabled={!connected || !(draft.trim() || attachments.length || pending) || !!snapshot?.conversation.archived} accessibilityLabel={t(sendFailed ? "retry" : "send")} onPress={() => void send()}><Text>{running ? t("enqueue") : "↑"}</Text></Button>}
+          {uploading || busy ? <ActivityIndicator /> : <Button size={running ? "sm" : "icon"} disabled={!connected || !snapshot || !(draft.trim() || attachments.length || pending) || snapshot.conversation.archived} accessibilityLabel={t(sendFailed ? "retry" : "send")} onPress={() => void send()}><Text>{running ? t("enqueue") : "↑"}</Text></Button>}
         </View>
       </View>
     </KeyboardAvoidingView>
