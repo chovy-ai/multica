@@ -86,13 +86,20 @@ describe("isolated Agent GUI document lifetime", () => {
     await act(async () => { rendered(frame.contentWindow); });
     expect(screen.queryByRole("status", { hidden: true })).not.toBeInTheDocument();
   });
-  it("offers retry if restoring the view stalls after a successful handshake", async () => {
+  it("returns to loading on retry and removes the overlay after the replacement view renders", async () => {
     vi.useFakeTimers();
     render(<TuttiAgentGuiPanel {...props} />, { wrapper: TestProvider });
     await ready(window.location.origin, undefined, false);
     await act(async () => { await vi.advanceTimersByTimeAsync(25_000); });
     expect(screen.getByRole("status", { hidden: true })).toHaveTextContent("Failed");
     expect(screen.getByRole("button", { name: "Retry", hidden: true })).toBeInTheDocument();
+    const previousFrame = screen.getByTitle("Agent GUI");
+    fireEvent.click(screen.getByRole("button", { name: "Retry", hidden: true }));
+    expect(screen.getByRole("status", { hidden: true })).toHaveTextContent("Loading");
+    expect(screen.queryByRole("button", { name: "Retry", hidden: true })).not.toBeInTheDocument();
+    expect(screen.getByTitle("Agent GUI")).not.toBe(previousFrame);
+    await ready();
+    expect(screen.queryByRole("status", { hidden: true })).not.toBeInTheDocument();
   });
   it.each([false, true])("routes resource mentions through the %s desktop navigation adapter", async (desktop) => {
     const push = vi.fn(); const openInNewTab = vi.fn();

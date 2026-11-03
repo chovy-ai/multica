@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "@multica/ui/components/common/theme-provider";
+import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { Button } from "@multica/ui/components/ui/button";
 import { useAuthStore } from "@multica/core/auth";
 import { getCurrentSlug, getCurrentWsId } from "@multica/core/platform";
@@ -220,8 +221,9 @@ export function TuttiAgentGuiPanel(props: Props) {
   return <div className="relative flex min-h-0 flex-1 flex-col" data-testid="tutti-agent-gui-host">
     <AgentGuiPreviewHost iframe={iframe} enabled={props.active} isCurrent={() => getCurrentSlug() === workspaceSlug && getCurrentWsId() === workspaceId && useAuthStore.getState().user?.id === userId}>
     {src && <iframe key={attempt} ref={iframe} src={src} title={t(($) => $.workbench.title)} className="h-full min-h-0 w-full flex-1 border-0" />}
-    {status !== "ready" && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background" role="status">
-      <span>{t(($) => status === "error" ? $.workbench.load_error : $.workbench.loading)}</span>
+    {status !== "ready" && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background p-4 text-center" role="status">
+      {status === "loading" && <MulticaIcon noSpin className="size-8 shrink-0 text-foreground motion-safe:animate-pulse" />}
+      <span className="text-body text-muted-foreground">{t(($) => status === "error" ? $.workbench.load_error : $.workbench.loading)}</span>
       {status === "error" && <Button variant="outline" onClick={() => setAttempt((value) => value + 1)}>{t(($) => $.workbench.retry)}</Button>}
     </div>}
     </AgentGuiPreviewHost>
