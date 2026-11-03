@@ -80,6 +80,42 @@ func TestRingSurvivesAStoppedLink(t *testing.T) {
 	}
 }
 
+func TestRingForgetsWhatTheAppAcknowledgedAcrossAColdStart(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "ring.json")
+	r := OpenRing(path, 3)
+	for _, stage := range []string{StageLinkStart, StageLinkReady, StageLinkStop, StagePeerKnown} {
+		r.Write(Record{Stage: stage, Event: EventMark})
+	}
+	if _, next, dropped := r.After(0, 0); next != 4 || dropped != 1 {
+		t.Fatalf("next = %d, dropped = %d", next, dropped)
+	}
+	r.Acknowledge(3, 1)
+
+	// A new process's app starts its cursor at 0, without a Close having saved.
+	reopened := OpenRing(path, 3)
+	records, next, dropped := reopened.After(0, 0)
+	if stagesOf(records) != StagePeerKnown || next != 4 || dropped != 0 {
+		t.Fatalf("after a cold start = %v, %d, %d", stagesOf(records), next, dropped)
+	}
+	reopened.Write(Record{Stage: StageLinkReady, Event: EventMark})
+	if records, next, _ := reopened.After(4, 0); stagesOf(records) != StageLinkReady || next != 5 {
+		t.Fatalf("numbering moved: %v, %d", stagesOf(records), next)
+	}
+
+	// An acknowledgement from a lost file's numbering forgets nothing.
+	reopened.Acknowledge(99, 0)
+	if records, _, _ := reopened.After(0, 0); len(records) != 2 {
+		t.Fatalf("records = %v", stagesOf(records))
+	}
+	// Records acknowledged earlier cannot come back, and dropped cannot go negative.
+	reopened.Acknowledge(1, 5)
+	if records, _, dropped := reopened.After(0, 0); len(records) != 2 || dropped != 0 {
+		t.Fatalf("records = %v, dropped = %d", stagesOf(records), dropped)
+	}
+}
+
 func TestRingStartsEmptyFromAnUnreadableFile(t *testing.T) {
 	t.Parallel()
 

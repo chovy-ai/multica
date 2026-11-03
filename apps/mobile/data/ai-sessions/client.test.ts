@@ -473,6 +473,26 @@ describe("mobile AI session timing", () => {
   }
   const reports = (fetcher: ReturnType<typeof timedClient>["fetcher"]) => fetcher.mock.calls.filter(([url]) => String(url).endsWith("/timing-reports"));
 
+  it("tells the link what the executor stored so a cold start does not report it again", async () => {
+    vi.useFakeTimers();
+    const { client, sockets, fetcher, timing, flush } = timedClient();
+    const go = { version: 2, source: "mobile", at: "2026-11-02T10:00:00.000Z", stage: "connection.direct", event: "mark", elapsedMs: 0 };
+    fetcher.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/hello")) return reportingHello();
+      if (url.endsWith("/diagnostics/ack")) return new Response(null, { status: 204 });
+      if (url.includes("after=0")) return Response.json({ records: [go], next: 1 });
+      if (url.includes("/diagnostics")) return Response.json({ records: [], next: 1 });
+      return Response.json({ accepted: 1 });
+    });
+    await client.connect(); await flush();
+    sockets[0].open(); await flush();
+    expect(timing.count).toBe(0);
+    const ack = fetcher.mock.calls.find(([url]) => String(url).endsWith("/diagnostics/ack"))!;
+    expect(JSON.parse(String(ack[1]!.body))).toEqual({ next: 1, dropped: 0 });
+    client.close();
+  });
+
   it("records a send and its request, tied together for the executor", async () => {
     const { client, fetcher, timing } = timedClient();
     await client.submit("session-a", { type: "send", request_id: "req-1", text: "SECRET" }, commandResultSchema, Date.UTC(2026, 10, 2));

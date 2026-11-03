@@ -78,6 +78,72 @@ describe("mobile timing buffer", () => {
     await new MobileTimingBuffer().drain(endpoint, vi.fn<typeof fetch>(async () => new Response("not found", { status: 404 })));
   });
 
+  describe("acknowledging Go's marks", () => {
+    const go = (stage: string) => ({ version: 2, source: "mobile", at: "2026-11-02T10:00:00.000Z", stage, event: "mark", elapsedMs: 0 });
+    const acks = (fetcher: ReturnType<typeof vi.fn<typeof fetch>>) => fetcher.mock.calls.filter(([url]) => String(url).endsWith("/diagnostics/ack")).map(([, init]) => JSON.parse(String(init!.body)));
+    function link(pages: { records: unknown[]; next: number; dropped?: number }[]) {
+      let last = pages[0]!;
+      return vi.fn<typeof fetch>(async (url) => {
+        if (String(url).endsWith("/diagnostics/ack")) return new Response(null, { status: 204 });
+        last = pages.shift() ?? { ...last, records: [] };
+        return Response.json(last);
+      });
+    }
+
+    it("only acknowledges what the executor stored, so a cold start repeats nothing else", async () => {
+      const buffer = new MobileTimingBuffer();
+      const fetcher = link([{ records: [go("connection.relayed"), go("connection.direct")], next: 2, dropped: 3 }]);
+      await buffer.drain(endpoint, fetcher);
+
+      // Drained but unreported: losing the JS buffer must not lose these.
+      await buffer.settle(endpoint, fetcher);
+      expect(acks(fetcher)).toEqual([]);
+
+      const batch = buffer.batch(scope)!;
+      buffer.acknowledge(batch.batch_id);
+      await buffer.settle(endpoint, fetcher);
+      expect(acks(fetcher).at(-1)).toEqual({ next: 2, dropped: 3 });
+
+      // Nothing new since: no needless write on the phone.
+      const before = fetcher.mock.calls.length;
+      await buffer.settle(endpoint, fetcher);
+      expect(fetcher.mock.calls).toHaveLength(before);
+    });
+
+    it("stops at the oldest mark still unreported", async () => {
+      const buffer = new MobileTimingBuffer();
+      const other = { ...go("connection.relayed"), peer: "other-device" };
+      const fetcher = link([{ records: [go("connection.direct"), other, go("connection.lost")], next: 3 }]);
+      await buffer.drain(endpoint, fetcher);
+      buffer.acknowledge(buffer.batch(scope)!.batch_id);
+      await buffer.settle(endpoint, fetcher);
+      // The first went out; the second is for another device and holds the position.
+      expect(acks(fetcher).at(-1)).toEqual({ next: 1, dropped: 0 });
+    });
+
+    it("counts Go's losses from what it still holds after an acknowledgement", async () => {
+      const buffer = new MobileTimingBuffer();
+      const fetcher = link([{ records: [go("connection.direct")], next: 1, dropped: 3 }]);
+      await buffer.drain(endpoint, fetcher);
+      buffer.acknowledge(buffer.batch(scope)!.batch_id);
+      await buffer.settle(endpoint, fetcher);
+      const next = link([{ records: [go("connection.lost")], next: 2, dropped: 1 }]);
+      await buffer.drain(endpoint, next);
+      expect(buffer.batch(scope)!.records.at(-1)).toMatchObject({ stage: "timing.dropped", count: 1 });
+    });
+
+    it("keeps its place when an older link has no such route", async () => {
+      const buffer = new MobileTimingBuffer();
+      const fetcher = vi.fn<typeof fetch>(async (url) => String(url).endsWith("/diagnostics/ack") ? new Response("not found", { status: 404 }) : Response.json({ records: [go("connection.direct")], next: 1, dropped: 2 }));
+      await buffer.drain(endpoint, fetcher);
+      buffer.acknowledge(buffer.batch(scope)!.batch_id);
+      await buffer.settle(endpoint, fetcher);
+      const calls = fetcher.mock.calls.length;
+      await buffer.settle(endpoint, fetcher);
+      expect(fetcher.mock.calls.length).toBe(calls + 1);
+    });
+  });
+
   it("refuses a malformed loopback answer and leaves the cursor where it was", async () => {
     const buffer = new MobileTimingBuffer();
     for (const bad of [{ records: [] }, { records: "x", next: 1 }, { next: -1 }]) {

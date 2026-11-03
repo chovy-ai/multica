@@ -13,7 +13,9 @@ const defaultRingSize = 2000
 // Ring keeps the newest records in memory for a device with no log file to read
 // them from: a phone, whose app drains it with a cursor. Saving carries the
 // records and the cursor's numbering across a stopped link, since iOS closes the
-// link in the background while the app cannot drain it.
+// link in the background while the app cannot drain it. The app's cursor does not
+// survive a new process, so what it has reported is acknowledged and forgotten here;
+// a cursor of 0 then starts after it.
 type Ring struct {
 	path string
 	size int
@@ -108,6 +110,22 @@ func (r *Ring) After(cursor int64, limit int) (records []Record, next, dropped i
 	}
 	records = append([]Record(nil), records...)
 	return records, cursor + int64(len(records)), r.dropped
+}
+
+// Acknowledge forgets the records before cursor and dropped of the recorded losses,
+// which the app has reported, and saves at once since the app may be killed before
+// the next Close. A cursor from ahead of this ring forgets no record.
+func (r *Ring) Acknowledge(cursor, dropped int64) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if first := r.next - int64(len(r.records)); cursor > first && cursor <= r.next {
+		r.records = append(r.records[:0:0], r.records[cursor-first:]...)
+	}
+	r.dropped -= min(max(dropped, 0), r.dropped)
+	r.mu.Unlock()
+	r.Save()
 }
 
 // Save writes the ring where OpenRing finds it. Diagnostics never fail a caller,

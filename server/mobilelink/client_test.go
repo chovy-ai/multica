@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -391,6 +393,54 @@ func TestDiagnosticsSurviveAStoppedLinkAndSayWhyItStopped(t *testing.T) {
 	}
 	if !stopped {
 		t.Fatalf("no background stop in %+v", records)
+	}
+}
+
+func TestAcknowledgedDiagnosticsAreNotReadAgainAfterAColdStart(t *testing.T) {
+	registry, _ := fakeRegistry(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "{}") }, func(string) bool { return true })
+	storage := t.TempDir()
+	start := func() *Client {
+		config, _ := json.Marshal(map[string]string{"registryUrl": registry.URL, "apiUrl": "https://api.multica.test", "token": "login", "userId": "user-1", "storagePath": storage, "deviceName": "Phone"})
+		client, err := Start(string(config))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return client
+	}
+	post := func(client *Client, body string, token string) int {
+		t.Helper()
+		req, _ := http.NewRequest("POST", client.endpoint+"/diagnostics/ack", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+	first := start()
+	_, next, _ := diagnostics(t, first, "")
+	if got := post(first, `{"next":1}`, "wrong"); got != http.StatusForbidden {
+		t.Fatalf("without the credential = %d", got)
+	}
+	if got := post(first, `{"next":-1}`, first.token); got != http.StatusBadRequest {
+		t.Fatalf("a negative position = %d", got)
+	}
+	if got := post(first, fmt.Sprintf(`{"next":%d}`, next), first.token); got != http.StatusNoContent {
+		t.Fatalf("acknowledge = %d", got)
+	}
+	first.Close()
+	second := start()
+	t.Cleanup(second.Close)
+	records, _, _ := diagnostics(t, second, "?after=0")
+	starts := 0
+	for _, r := range records {
+		if r.Stage == timing.StageLinkStart {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("read %d link starts after a cold start: %+v", starts, records)
 	}
 }
 

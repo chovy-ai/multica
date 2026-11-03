@@ -287,10 +287,11 @@ export class AISessionClient {
       await this.timing.drain(this.endpoint, this.fetcher);
       for (let sent = 0; sent < REPORT_BATCHES && !this.stopped; sent++) {
         const batch = this.timing.batch(this.scope);
-        if (!batch) return;
+        if (!batch) break;
         await this.request("POST", "/timing-reports", reportAckSchema, batch);
         this.timing.acknowledge(batch.batch_id);
       }
+      await this.timing.settle(this.endpoint, this.fetcher);
     } catch { /* The next socket open retries, with the same batch id. */ }
     finally { this.reporting = false; }
   }

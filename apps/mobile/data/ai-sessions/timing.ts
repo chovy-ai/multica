@@ -7,7 +7,8 @@ const BUFFER_SIZE = 2000;
 const BATCH_SIZE = 200;
 const DRAIN_PAGES = 3;
 
-interface Entry { record: LocalTimingRecord; workspaceId?: string }
+/** native is the position in Go's ring just after a record that came from there. */
+interface Entry { record: LocalTimingRecord; workspaceId?: string; native?: number }
 export interface TimingScope { deviceId: string; workspaceId: string }
 export interface TimingBatch { batch_id: string; records: LocalTimingRecord[] }
 
@@ -20,7 +21,8 @@ export const reportAckSchema = z.object({ accepted: z.number().int().nonnegative
  * The phone's bounded record of its own marks until an executor acknowledges them.
  * It lives in JS memory, which iOS keeps while the app sleeps, so it survives
  * backgrounding and link restarts; a process kill loses what was not yet reported.
- * Go's marks survive that too, through mobilelink's own saved ring.
+ * Go's marks survive that too, through mobilelink's own saved ring, which holds them
+ * until settle says the executor has them: this cursor starts over with the process.
  */
 export class MobileTimingBuffer {
   private entries: Entry[] = [];
@@ -28,6 +30,7 @@ export class MobileTimingBuffer {
   private reportedDropped = 0;
   private cursor = 0;
   private nativeDropped = 0;
+  private settled = 0;
   private userId?: string;
   private pending?: { batch: TimingBatch; entries: Set<Entry>; deviceId: string; dropped: number };
 
@@ -36,16 +39,16 @@ export class MobileTimingBuffer {
   /** A buffer holds one account's marks; another account must not report them. */
   forUser(userId: string) {
     if (this.userId !== undefined && this.userId !== userId) {
-      this.entries = []; this.dropped = 0; this.reportedDropped = 0; this.cursor = 0; this.nativeDropped = 0; this.pending = undefined;
+      this.entries = []; this.dropped = 0; this.reportedDropped = 0; this.cursor = 0; this.nativeDropped = 0; this.settled = 0; this.pending = undefined;
     }
     this.userId = userId;
   }
 
-  write(value: Partial<LocalTimingRecord> & Pick<LocalTimingRecord, "stage">, workspaceId?: string) {
+  write(value: Partial<LocalTimingRecord> & Pick<LocalTimingRecord, "stage">, workspaceId?: string, native?: number) {
     try {
       const record = parseLocalTiming({ version: 2, source: "mobile", clientKind: "mobile", origin: "p2p", at: new Date().toISOString(), event: "mark", elapsedMs: 0, ...value });
       if (!record) return;
-      this.entries.push({ record, ...(record.conversationId && workspaceId ? { workspaceId } : {}) });
+      this.entries.push({ record, ...(record.conversationId && workspaceId ? { workspaceId } : {}), ...(native === undefined ? {} : { native }) });
       if (this.entries.length > this.size) { this.entries.shift(); this.dropped++; }
     } catch { /* Diagnostics must not change delivery. */ }
   }
@@ -57,16 +60,28 @@ export class MobileTimingBuffer {
       // An older embedded link has no such route.
       if (!response.ok) return;
       const body = readResponse(await response.json(), diagnosticsSchema, "mobile.diagnostics");
-      for (const raw of body.records) {
+      const first = body.next - body.records.length;
+      body.records.forEach((raw, index) => {
         const record = parseLocalTiming(raw);
-        if (record) this.write(record); else this.dropped++;
-      }
+        if (record) this.write(record, undefined, first + index + 1); else this.dropped++;
+      });
       this.dropped += Math.max(0, body.dropped - this.nativeDropped);
       this.nativeDropped = body.dropped;
       const finished = body.records.length === 0 || body.next === this.cursor;
       this.cursor = body.next;
       if (finished) return;
     }
+  }
+
+  /** Tells Go how far its marks have reached an executor, stopping at the oldest still waiting here. An older link has no such route. */
+  async settle(endpoint: { url: string; token: string }, fetcher: typeof fetch) {
+    const next = this.entries.reduce((lowest, entry) => entry.native === undefined ? lowest : Math.min(lowest, entry.native - 1), this.cursor);
+    const dropped = this.reportedDropped >= this.dropped ? this.nativeDropped : 0;
+    if (next <= this.settled && !dropped) return;
+    const response = await fetcher(`${endpoint.url}/diagnostics/ack`, { method: "POST", headers: { Authorization: `Bearer ${endpoint.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ next, dropped }) });
+    if (!response.ok) return;
+    this.settled = Math.max(this.settled, next);
+    this.nativeDropped -= dropped;
   }
 
   /** The next batch for this executor. A batch not yet acknowledged keeps its id, so a retry after a lost answer stores nothing twice. */

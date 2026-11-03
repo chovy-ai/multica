@@ -160,6 +160,8 @@
 
 **读取：** `GET /diagnostics?after=<游标>` 走现有的回环凭据。游标不删除数据，读取可以重复；游标超前时从头读。旧的 `mobilelink` 返回 404，JS 跳过。
 
+**确认：** JS 的游标随进程重置，所以冷启动后要靠确认避免重复上报。上报成功后 `POST /diagnostics/ack`，`{next, dropped}`：`next` 是最早一条尚未上报的 Go 记录之前的位置，Go 层删掉它之前的记录并立即存盘，`after=0` 就从这里读起；`dropped` 从 Go 的丢失计数里减去，只在 JS 已上报全部丢失数时才带。确认失败时下次再发，冷启动后可能重报这一小段。
+
 **上报：** `POST /local/v2/timing-reports`，`{batch_id, records}`，返回 `{accepted, rejected, duplicate}`。
 
 - 时机：socket 打开时和每轮结束 2 秒后。失败保留同一个 `batch_id`，下次 socket 打开时重试。

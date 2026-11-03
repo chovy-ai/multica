@@ -296,6 +296,10 @@ func (c *Client) serve(w http.ResponseWriter, r *http.Request) {
 		c.serveDiagnostics(w, r)
 		return
 	}
+	if r.Method == "POST" && r.URL.Path == "/diagnostics/ack" {
+		c.acknowledgeDiagnostics(w, r)
+		return
+	}
 	id, inner, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/devices/"), "/")
 	peerID, err := peer.Decode(id)
 	if !strings.HasPrefix(r.URL.Path, "/devices/") || !ok || err != nil || !strings.HasPrefix(inner, "local/v2/") || strings.Contains(inner, "..") {
@@ -360,6 +364,21 @@ func (c *Client) serveDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"records": records, "next": next, "dropped": dropped})
+}
+
+// acknowledgeDiagnostics hears how far the app has reported, so a new process's app
+// does not report it all again.
+func (c *Client) acknowledgeDiagnostics(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Next    int64 `json:"next"`
+		Dropped int64 `json:"dropped"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil || body.Next < 0 || body.Dropped < 0 {
+		writeError(w, "invalid_request", http.StatusBadRequest)
+		return
+	}
+	c.ring.Acknowledge(body.Next, body.Dropped)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeError(w http.ResponseWriter, kind string, status int) {
