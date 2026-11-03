@@ -13,7 +13,10 @@ type prepareTask struct {
 	id string
 	// preheat marks a task nobody's turn is waiting on yet.
 	preheat bool
-	done    chan struct{}
+	// joined is set when a send waits on this task, whose process then serves a
+	// turn. Guarded by the runner's mutex.
+	joined bool
+	done   chan struct{}
 	// The fields below are set before done closes.
 	err error
 	// failKind is the turn error kind a send reports for err.
@@ -58,7 +61,7 @@ func (g *prepareGate) finish(task *prepareTask, now time.Time) {
 	g.task = nil
 	if task.err == nil {
 		g.idleSince = now
-		if task.preheat {
+		if task.preheat && !task.joined {
 			g.preheated, g.lastID = true, task.id
 		}
 	}
@@ -69,6 +72,7 @@ func (g *prepareGate) finish(task *prepareTask, now time.Time) {
 func (g *prepareGate) sendReady(trace *timing.Trace, ready bool) {
 	switch {
 	case g.task != nil && g.task.preheat:
+		g.task.joined = true
 		trace.SetPrepare(timing.PreparePreheated, g.task.id)
 	case ready && g.preheated:
 		trace.SetPrepare(timing.PreparePreheated, g.lastID)

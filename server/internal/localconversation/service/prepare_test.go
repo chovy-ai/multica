@@ -537,6 +537,34 @@ func TestClaudeSendJoinsARunningPrepare(t *testing.T) {
 	}
 }
 
+func TestClaudeProcessThatServedAJoinedSendIsNotPreheated(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	entered, open := claudeGate(f)
+	prepared := make(chan error, 1)
+	go func() { prepared <- f.runner.Prepare(context.Background(), nil) }()
+	<-entered
+	sent := make(chan error, 1)
+	go func() {
+		sent <- f.runner.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "go"})
+	}()
+	eventually(t, "condition", func() bool { return f.runner.Running() })
+	close(open)
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-prepared; err != nil {
+		t.Fatal(err)
+	}
+	f.adapter(0).emit(t, `{"type":"result","subtype":"success","is_error":false,"result":""}`)
+	f.turnEvents(t, "t1")
+	idle, ok := f.runner.IdleProcess()
+	if !ok || idle.preheated {
+		t.Fatalf("idle = %+v, %v", idle, ok)
+	}
+}
+
 func TestClaudeCloseDuringPrepareStopsTheAdapter(t *testing.T) {
 	t.Parallel()
 
