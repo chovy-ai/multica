@@ -262,6 +262,29 @@ func TestCodexRunnerFailsTheTurnWhenAppServerExits(t *testing.T) {
 	}
 }
 
+func TestCodexRunnerRetriesInterruptUntilTheTurnIsActive(t *testing.T) {
+	t.Parallel()
+
+	var rejected atomic.Bool
+	_, r, server := newCodexFixture(t, CodexSession{}, func(f *fakeCodex) {
+		f.intercept = func(_ context.Context, method string) error {
+			if method == "turn/interrupt" && rejected.CompareAndSwap(false, true) {
+				return errors.New("turn/interrupt: no active turn to interrupt (code=-32600)")
+			}
+			return nil
+		}
+	})
+	codexSend(t, r, "t1")
+	server.notify(t, "turn/started", `{"threadId":"th-1","turn":{"id":"tu-1"}}`)
+	if err := r.Interrupt(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !rejected.Load() {
+		t.Fatal("the first interrupt was not attempted")
+	}
+	server.notify(t, "turn/completed", `{"threadId":"th-1","turn":{"id":"tu-1","status":"interrupted"}}`)
+}
+
 func TestCodexRunnerInterruptsTheRunningTurn(t *testing.T) {
 	t.Parallel()
 

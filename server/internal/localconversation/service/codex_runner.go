@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,9 +50,11 @@ type CodexSession struct {
 var ErrNoRunningTurn = errors.New("local conversation: no running turn")
 
 const (
-	threadSetupTimeout   = 60 * time.Second
-	codexInterruptWait   = 15 * time.Second
-	maxBufferedTurnFrame = 1000
+	codexInterruptRetries    = 20
+	codexInterruptRetryDelay = 100 * time.Millisecond
+	threadSetupTimeout       = 60 * time.Second
+	codexInterruptWait       = 15 * time.Second
+	maxBufferedTurnFrame     = 1000
 )
 
 // CodexRunner runs one Codex conversation on its own app-server process:
@@ -520,8 +523,24 @@ func (r *CodexRunner) interruptNative(ctx context.Context, turn *codexTurn, serv
 	r.mu.Lock()
 	threadID, nativeTurnID := turn.threadID, turn.nativeTurnID
 	r.mu.Unlock()
-	_, err := server.Request(ctx, "turn/interrupt", map[string]any{"threadId": threadID, "turnId": nativeTurnID})
-	return err
+	// Codex announces turn/started slightly before the turn can be interrupted.
+	for attempt := 0; ; attempt++ {
+		_, err := server.Request(ctx, "turn/interrupt", map[string]any{"threadId": threadID, "turnId": nativeTurnID})
+		if err == nil || !strings.Contains(err.Error(), "no active turn") || attempt == codexInterruptRetries {
+			return err
+		}
+		select {
+		case <-time.After(codexInterruptRetryDelay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		r.mu.Lock()
+		ended := r.turn != turn
+		r.mu.Unlock()
+		if ended {
+			return nil
+		}
+	}
 }
 
 // confirmInterrupt stops the app-server when an interrupted turn is still
