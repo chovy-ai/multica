@@ -127,7 +127,6 @@ type Service struct {
 	marks      *timing.Marks
 	connState  connectionStates
 	fetchState fetchState
-	stopReason atomic.Value
 
 	host     host.Host
 	allow    *allowlist
@@ -289,20 +288,9 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 	return s, nil
 }
 
-// CloseBecause is Close with a closed-enum reason on its record, such as a phone
-// that stopped the link because the app went to the background.
-func (s *Service) CloseBecause(reason string) error {
-	s.stopReason.Store(reason)
-	return s.Close()
-}
-
 // Close stops discovery and the host, closing every connection.
 func (s *Service) Close() error {
-	reason, _ := s.stopReason.Load().(string)
-	if reason == "" {
-		reason = timing.ReasonStopped
-	}
-	s.marks.Write(timing.Record{Stage: timing.StageLinkStop, Reason: reason})
+	s.marks.Write(timing.Record{Stage: timing.StageLinkStop, Reason: timing.ReasonStopped})
 	s.dialMu.Lock()
 	s.cancel()
 	s.dialMu.Unlock()
