@@ -159,6 +159,8 @@ type spareSlot struct {
 	checkedAt   time.Time
 	failures    int
 	nextAttempt time.Time
+	// staleStreak counts spares in a row that went stale soon after starting.
+	staleStreak int
 	// unsupported are executables that will not be started again.
 	unsupported map[string]bool
 }
@@ -289,7 +291,7 @@ func (p *sparePool) checkSlot(slot *spareSlot) {
 	defer slot.mu.Unlock()
 	if slot.spare != nil {
 		if reason := spareStale(slot.spare, slot.checked, now); reason != "" {
-			p.discardLocked(slot, slot.spare, reason)
+			p.discardStaleLocked(slot, slot.spare, reason, now)
 		}
 	}
 	if slot.spare != nil || slot.starting || !slot.checked.Ready || slot.unsupported[slot.checked.Binary] || now.Before(slot.nextAttempt) || p.s.acceptTurn() != nil {
@@ -307,6 +309,28 @@ func (p *sparePool) discardLocked(slot *spareSlot, spare *parkedSpare, reason st
 	if !p.s.goBackground(spare.stop) {
 		go spare.stop()
 	}
+}
+
+// discardStaleLocked discards a spare and, when spares keep going stale soon after
+// starting, delays the next one: a large process must not be replaced every time
+// something rewrites a file it depends on. slot.mu is held.
+func (p *sparePool) discardStaleLocked(slot *spareSlot, spare *parkedSpare, reason string, now time.Time) {
+	if now.Sub(spare.created) >= spareStaleSteadyAfter {
+		slot.staleStreak = 0
+	} else {
+		slot.staleStreak++
+	}
+	// One change is news rather than churn, so its replacement starts straight away.
+	if slot.staleStreak > 1 {
+		wait := spareMaxAge
+		if shift := slot.staleStreak - 2; shift < 16 {
+			wait = min(spareStaleBackoffBase<<shift, spareMaxAge)
+		}
+		if next := now.Add(wait); next.After(slot.nextAttempt) {
+			slot.nextAttempt = next
+		}
+	}
+	p.discardLocked(slot, spare, reason)
 }
 
 func (p *sparePool) startLocked(slot *spareSlot, conditions SpareConditions) {
@@ -429,7 +453,7 @@ func (p *sparePool) claim(ctx context.Context, provider string) *parkedSpare {
 		return nil
 	}
 	if reason := spareStale(spare, conditions, now); reason != "" {
-		p.discardLocked(slot, spare, reason)
+		p.discardStaleLocked(slot, spare, reason, now)
 		p.s.kickMaintenance()
 		return nil
 	}

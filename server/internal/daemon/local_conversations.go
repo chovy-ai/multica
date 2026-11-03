@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -129,13 +130,19 @@ func (d *Daemon) spareConditions(ctx context.Context, provider string) service.S
 	}
 	environ := slices.Sorted(slices.Values(os.Environ()))
 	sum := sha256.Sum256([]byte(strings.Join(environ, "\x00")))
+	identity := user + "\x00" + hex.EncodeToString(sum[:])
+	if provider == "claude" {
+		identity += "\x00" + claudeAccountStamp(claudeAccountFile(os.Getenv, os.UserHomeDir))
+	}
 	return service.SpareConditions{
 		Ready: true, Executable: resolved.Path, Binary: resolved.Path + "\x00" + version,
-		Identity: user + "\x00" + hex.EncodeToString(sum[:]), ConfigFiles: providerConfigFiles(provider, os.Getenv, os.UserHomeDir),
+		Identity: identity, ConfigFiles: providerConfigFiles(provider, os.Getenv, os.UserHomeDir),
 	}
 }
 
-// providerConfigFiles are the user configuration a parked process has read.
+// providerConfigFiles are the user configuration a parked process has read; any
+// change to them discards it. Claude's .claude.json is not among them: it also
+// holds bookkeeping rewritten constantly, see claudeAccountStamp.
 func providerConfigFiles(provider string, getenv func(string) string, home func() (string, error)) []string {
 	userHome, err := home()
 	if err != nil {
@@ -149,15 +156,47 @@ func providerConfigFiles(provider string, getenv func(string) string, home func(
 		}
 		return []string{filepath.Join(dir, "config.toml"), filepath.Join(dir, "auth.json")}
 	case "claude":
-		dir, account := getenv("CLAUDE_CONFIG_DIR"), filepath.Join(userHome, ".claude.json")
+		dir := getenv("CLAUDE_CONFIG_DIR")
 		if dir == "" {
 			dir = filepath.Join(userHome, ".claude")
-		} else {
-			account = filepath.Join(dir, ".claude.json")
 		}
-		return []string{account, filepath.Join(dir, "settings.json"), filepath.Join(dir, ".credentials.json")}
+		return []string{filepath.Join(dir, "settings.json"), filepath.Join(dir, ".credentials.json")}
 	}
 	return nil
+}
+
+func claudeAccountFile(getenv func(string) string, home func() (string, error)) string {
+	if dir := getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, ".claude.json")
+	}
+	userHome, err := home()
+	if err != nil {
+		userHome = ""
+	}
+	return filepath.Join(userHome, ".claude.json")
+}
+
+// claudeAccountStamp identifies the Claude login recorded in .claude.json, the only
+// file that shows a new login where credentials live in the system keychain. It is
+// a hash so the key is not kept, and empty for a file that is missing or unreadable,
+// which reads as a change of account and costs one spare at most.
+func claudeAccountStamp(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var file struct {
+		OAuthAccount struct {
+			AccountUUID      string `json:"accountUuid"`
+			OrganizationUUID string `json:"organizationUuid"`
+		} `json:"oauthAccount"`
+		PrimaryAPIKey string `json:"primaryApiKey"`
+	}
+	if json.Unmarshal(data, &file) != nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(file.OAuthAccount.AccountUUID + "\x00" + file.OAuthAccount.OrganizationUUID + "\x00" + file.PrimaryAPIKey))
+	return hex.EncodeToString(sum[:])
 }
 
 // codexSpareLauncher keeps an app-server ready outside any project: the thread

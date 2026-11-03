@@ -40,6 +40,12 @@ const (
 	spareHealthyAfter = time.Minute
 	// spareBackoffBase doubles with each consecutive failed start.
 	spareBackoffBase = 5 * time.Second
+	// spareStaleSteadyAfter is how long a spare must stay valid for its discard
+	// to count as an isolated change rather than churn.
+	spareStaleSteadyAfter = 10 * time.Minute
+	// spareStaleBackoffBase doubles with each replacement in a row that went stale
+	// sooner than spareStaleSteadyAfter, up to spareMaxAge.
+	spareStaleBackoffBase = time.Minute
 	// spareMaxFailures consecutive failed starts disable a provider's spares
 	// until its executable changes.
 	spareMaxFailures = 5

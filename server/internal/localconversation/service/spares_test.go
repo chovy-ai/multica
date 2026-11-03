@@ -586,6 +586,52 @@ func TestSparesAreDiscardedWhenWhatTheyFrozeChanged(t *testing.T) {
 	}
 }
 
+func TestSpareReplacementBacksOffWhenConfigurationKeepsChanging(t *testing.T) {
+	t.Parallel()
+
+	config := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(config, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	touched := time.Now()
+	churn := func() {
+		touched = touched.Add(time.Minute)
+		if err := os.Chtimes(config, touched, touched); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := newSpareWorld(t, "codex")
+	w.setConditions(func(c *SpareConditions) { c.ConfigFiles = []string{config} })
+	w.fill(t, "codex")
+
+	// The first change replaces the spare straight away.
+	churn()
+	w.clock.advance(spareCheckInterval)
+	w.svc.spares.check()
+	eventually(t, "first replacement", func() bool { return w.parked("codex") && w.codexCount() == 2 })
+
+	// A replacement that went stale soon after starting waits before the next.
+	churn()
+	w.clock.advance(spareCheckInterval)
+	w.svc.spares.check()
+	eventually(t, "second discard", func() bool { return !w.parked("codex") })
+	w.clock.advance(spareStaleBackoffBase - time.Second)
+	w.svc.spares.check()
+	time.Sleep(10 * time.Millisecond)
+	if w.codexCount() != 2 {
+		t.Fatalf("%d spares started within the backoff", w.codexCount())
+	}
+	w.clock.advance(time.Second)
+	w.svc.spares.check()
+	eventually(t, "replacement after the backoff", func() bool { return w.parked("codex") && w.codexCount() == 3 })
+
+	// A spare that stayed valid for a while clears the backoff.
+	w.clock.advance(spareStaleSteadyAfter)
+	churn()
+	w.svc.spares.check()
+	eventually(t, "replacement after a steady spare", func() bool { return w.parked("codex") && w.codexCount() == 4 })
+}
+
 func TestClaimRefusesASpareThatWentStaleSinceTheLastCheck(t *testing.T) {
 	t.Parallel()
 

@@ -372,9 +372,10 @@ SDK 中 `prewarm()` 标记为 `@alpha`。项目已锁定 SDK 精确版本，升�
 
 **备用进程：**
 
-- 条件由 daemon 提供：CLI 路径和版本、登录用户、环境变量哈希，以及 provider 的用户配置文件（Codex：`config.toml`、`auth.json`；Claude：`.claude.json`、`settings.json`、`.credentials.json`）。认领时重新读取一次，其余时候最多 30 秒读一次。
+- 条件由 daemon 提供：CLI 路径和版本、登录用户、环境变量哈希，以及 provider 的用户配置文件（Codex：`config.toml`、`auth.json`；Claude：`settings.json`、`.credentials.json`）。Claude 运行时约每分钟重写一次 `.claude.json`，所以这个文件只比较账号字段（`oauthAccount` 的账号和组织、`primaryApiKey`）。认领时重新读取一次，其余时候最多 30 秒读一次。
 - 补充失败按 5 秒起指数退避，连续 5 次后停用这个“路径 + 版本”，换版本后重试。备用进程存活不到 1 分钟就退出也算一次失败。旧 sidecar（`ready` 没有 `prewarm` 和 `claim`）和 `prewarm()` 报 `--await-claim` 的 CLI 直接记为不支持。
 - 最长存活 30 分钟，没有客户端 30 秒后丢弃。
+- 配置变化后立即替换一次。之后如果备用进程存活不到 10 分钟又失效，下一次替换等 1 分钟，连续发生时翻倍，最长 30 分钟。
 - Codex 备用进程在 `<ProfileDir>/local-conversations/spare` 启动。`thread/start` 失败也丢弃备用进程走普通启动，因为此时同样没有提交消息。
 - Claude 的 `claim` 在 `permission_mode` 为 `default` 时不传 `permissionMode`，这样项目设置了 `permissions.defaultMode` 时 claim 被拒绝并回退，和普通启动的行为一致。
 - 认领期间 Claude 的输出先缓存，绑定成功后才交给 runner，所以绑定成功前不会保存 `session_id`。`claim` 结果里的 `session_id` 只给 adapter 自己用；runner 仍从消息中获得，这样发送前被停止时不会留下没有记录的 `resume`。
