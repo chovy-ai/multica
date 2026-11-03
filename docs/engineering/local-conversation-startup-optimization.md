@@ -1,6 +1,6 @@
 # 本机会话启动优化方案
 
-状态：第 1 步第一期、第 2 步、第 3 步、第 5 步和第 6 步的一部分已实现；第 3 步的真实 CLI 联调待做，见“第 3 步的实现说明”。
+状态：第 1 步（两期和手机回传）、第 2 步、第 3 步、第 4 步、第 5 步和第 6 步的一部分已实现。待做：第 3 步的真实 CLI 联调；桌面作为发起端的回传，见“手机回传的实现说明”；真机验证，见文末。
 
 依据版本（2026-11-02）：代码 `6ed08c306`、Codex CLI 0.164.0、Claude Agent SDK 0.3.310、Claude Code 2.1.316。
 
@@ -25,6 +25,8 @@
 | 局域网发现 | mDNS + 登记地址 | 只有登记地址 |
 
 本方案的“手机”目前指 iOS，原生模块只支持 Apple 平台。
+
+上表是方案起草时的现状。第 6 步之后手机的请求超时、后台行为、迁移直连和网络切换都已改变，以第 6 步为准。
 
 可以优化的是应用自身的启动、恢复和重复准备，以及 P2P 的连接和传输。`turn/start` 之后的模型排队和生成不会变快，但思考过程要实时显示，让用户更早看到内容。
 
@@ -121,6 +123,55 @@
 - 执行端按设备限流并校验 scope，记录收到时间，上报数据单独存放，避免挤掉本机数据。
 
 完成标准：任意一条慢消息都能分清时间花在哪一段，并能区分路径、连接方式和冷热启动。
+
+#### 第二期的实现说明
+
+**存放：** 连接和隧道记录写入 `<ProfileDir>/local-conversations/diagnostics/device-timing.jsonl`（2 MiB，保留一个旧文件），手机上报写入同目录的 `timing-reports.jsonl`（5 MiB，保留一个旧文件），都不与 `daemon-timing.jsonl` 共用轮转。
+
+**只记状态变化：**
+
+- `peer.connect`：一次连接任务只记开始、第一次失败和最终成功（`count` 是尝试次数），设备一直连不上时不会反复写。开始时的 `addrType` 是可用地址里最直接的一种，结束时是实际连接的类型；开始是 `lan`、结束是 `relay`，就是本地网络权限被拒的样子。
+- `registry.fetch`：只记转为失败、恢复和超过 5 秒的读取。
+- `relay.refused`：预约被拒取 libp2p 的状态码；线路被拒 libp2p 只给文本，匹配状态名后丢弃文本，并只在一次连接任务的第一次失败时记录。
+- `relay.connected`：连上中继节点本身。设备经中继连通记为 `connection.relayed`。
+- `ws.retry`：只在退避时长变化时记录。
+- 手机的上报请求不产生 `proxy.*` 记录，否则每次上报都会给下一次制造数据。
+
+**按流记录：** `tunnel.*` 和发起端的 `proxy.*` 从实际的流读取连接类型；执行端由 device-link 服务的 `ConnContext` 取得。`daemon.request_received` 和 `ws.first_output_write` 的 `connection` 因此不再是 `unknown`。`connection.*` 本身就是设备级状态。
+
+**关联：** 客户端发送时带 `X-Multica-Request-ID`，代理记录靠它进入这一轮的瀑布图，旧守护进程会忽略。只有带这个头的请求才写 `link.request_*` 和 `link.response_*`。
+
+**迁移：** `migrate.start`、`migrate.stream_closed`、`migrate.reconnected` 由发起端的隧道记录。`migrate.resubscribed` 由执行端记录：同一客户端的中继 WebSocket 关闭后 2 分钟内，在直连流上订阅成功。发起端的隧道看不到 WebSocket 里的订阅，客户端也不区分迁移和普通断线。
+
+**与清单的差异：**
+
+- `holepunch.start` 不带角色。libp2p 的事件追踪器不区分双方，角色只在结束时通过指标追踪器给出，所以 `holepunch.success` 和 `holepunch.failed` 带角色。这两个结束记录的设备和耗时取自最近一次事件，多台设备同时打洞时可能对错设备。
+- `provider.first_thinking` 没有写入：Claude 的思考和 Codex 一样记为 `provider.first_reasoning`，瀑布图把两者都算作首个输出。
+- `snapshot.rendered` 和 `client.first_commit` 只有手机写入。桌面的快照记录从 `snapshot.request` 到 `snapshot.parsed`。桌面的 `client.pending_shown` 用下一帧近似。
+- 字段沿用记录的 camelCase，“收到时间”的字段名是 `receivedAt`。
+- 新增 mark `turn.output_summary`（`count`、`bytes`、`maxGapMs`），在这一轮最后一批事件提交时写一条。
+
+#### 手机回传的实现说明
+
+**环形缓冲有两层：**
+
+- Go 层在 `timing.Ring`（2000 条），`Close` 时存到 `<StoragePath>/<账号>.timing.json`，下次启动时恢复，因为 iOS 会在后台关闭连接，而此时 JS 读不了。
+- JS 层在 `apps/mobile/data/ai-sessions/timing.ts`（2000 条），保存在内存中，切后台和重建连接后都保留。手机没有现成的文件存储依赖，所以进程被杀时 JS 层未上报的记录会丢失，Go 层的不会。超出容量的部分以 `timing.dropped` 上报。
+
+**读取：** `GET /diagnostics?after=<游标>` 走现有的回环凭据。游标不删除数据，读取可以重复；游标超前时从头读。旧的 `mobilelink` 返回 404，JS 跳过。
+
+**上报：** `POST /local/v2/timing-reports`，`{batch_id, records}`，返回 `{accepted, rejected, duplicate}`。
+
+- 时机：socket 打开时和每轮结束 2 秒后。失败保留同一个 `batch_id`，下次 socket 打开时重试。
+- 能力：`/hello` 的 `timing-report-v1` 只对远端调用方声明。没有这个能力就不上报，记录留在有界缓冲里。
+- 策略：`caller.go` 只允许 `callerRemote`，并要求 `X-Multica-Client-Kind: mobile`。
+- 限流：每台设备突发 12 批，之后每分钟 6 批，超出返回 429。单批最多 500 条、1 MiB。最近 64 个 `batch_id` 去重。
+- 只能报自己的：来源必须是 `mobile`；阶段限定在 `timing.Reportable` 的白名单内，模型和轮次的 mark 不能上报；`conversationId` 必须属于请求的 scope。`reporter`、`receivedAt`、`origin`、`clientKind` 由执行端覆盖。
+- 时钟：导出按 `receivedAt` 过滤和排序，错误的手机时钟不会丢记录。瀑布图的起点取本机记录，上报记录的偏移可以是负数。`totals` 不受影响。
+
+**导出：** 带会话、请求或轮次的记录进入 `records` 和瀑布图。什么都不带的连接记录进入 `deviceTimeline`（最多 2000 条）。`peer` 和 `reporter` 在导出时哈希，文件里是原值。传输总耗时只配对发送方自己的 `client.first_event_received` 和 `ws.first_output_write`，否则同时打开的另一台设备会算错。
+
+**桌面作为发起端的缺口：** 桌面发起的 P2P 轮次不会回传给执行端。桌面的 GUI 记录在 Electron 的 `turn-timing.jsonl`，代理记录在发起端的 `device-timing.jsonl`，上报需要一个新的主进程上传器，还要判断哪些记录属于远端会话，复用并不自然，所以这一版不做，`Admit` 也拒绝转发上报。这种轮次要在两台设备上分别导出，再按 `requestId` 对照；执行端单独一份导出没有 `client.*`，也就没有 `transportMs`。
 
 ### 第 2 步：Codex 设置切换改为重启进程
 
@@ -345,6 +396,15 @@ SDK 中 `prewarm()` 标记为 `@alpha`。项目已锁定 SDK 精确版本，升�
 
 这一步主要解决语义统一，提速有限：只有恢复已有线程，且会话设置和运行时配置都没有模型时，现在才会调用 `model/list`。
 
+#### 第 4 步的实现说明
+
+- **共用：** 分页读取默认模型的逻辑移到 `server/pkg/codexappserver/model.go` 的 `CatalogDefaultModel`，任务执行和本机会话共用。两边原有的依赖都已包含这个包。任务执行只换了这一个函数，生命周期不变。
+- **每个进程一次：** `CodexRunner` 按进程缓存 `model/list` 的成功结果。失败不缓存，下一轮再问。进程换了就重新问。
+- **Claude：** `catalog` 直接引用 `pkg/agent` 导出的 `ClaudeModelID` 和 `ClaudeDefaultModelValue`。`default` 行不再作为可选项，只给解析到同一模型的行标 `isDefault`；没有这样的行时才单独生成一行。和 `pkg/agent` 不同，可选行的 ID 仍是选择器的值（如 `sonnet`），因为已保存的设置用的就是它。
+- **旧设置：** 以前可以选 `default` 行，已保存的 `model = "default"` 在快照里读作跟随默认，不改存储的数据。
+- **Codex 的 `isDefault`：** `models_cache.json` 没有默认标记，所以它来自运行中进程的 `model/list` 回答，保存在内存里。守护进程启动后没有进程问过时，目录里没有默认行，客户端要能容忍。
+- **状态的表达：** 没有增加专门的状态对象，只用 `model.resolve` 记录。`reason` 是来源（`explicit`、`config`、`catalog`、`catalog_cached`、`native_default`）；只有开始没有结束是解析中；`outcome: failed` 是失败；`native_default` 是暂不能提前确定。失效条件就是进程退出。这与上文“结果记录来源和失效条件”的写法不同，是为了保持改动小。
+
 ### 第 5 步：Codex 思考过程实时显示
 
 本机和 P2P 都要支持，与第 1 步同时开始。
@@ -557,4 +617,4 @@ P2P 迁移拆成两层测试：Go 层用真实中继加后到的直连地址，�
 | 思考摘要的到达时机 | 本次测试只有 1 个增量，且紧贴正文之前到达，`item/started` 早约 2.7s。所以开始事件也要显示 |
 | `model_reasoning_summary = "none"` | 没有摘要，`turn/start` 的 `summary` 参数也无法开启，这时只显示“思考中”状态 |
 
-**未验证：** iOS 的 `beginBackgroundTask` 宽限、本地网络权限、真实设备的打洞和迁移，都需要真机，按 `apps/mobile/AGENTS.md` 手工验证。
+**未验证：** iOS 的 `beginBackgroundTask` 宽限、本地网络权限、真实设备的打洞和迁移、`holepunch.*` 在真实打洞中的记录，都需要真机，按 `apps/mobile/AGENTS.md` 手工验证。Swift 模块调用了新增的 `closeInBackground`，要重新构建 `MulticaLink` 才能编译，默认测试不覆盖 Swift。

@@ -36,6 +36,14 @@ and `coverage.droppedTimingWrites`. Desktop's own log records its gaps the same 
 so the standalone MCP can see them. Exports do not coordinate with the daemon's
 rotation, so a read that exactly straddles one can miss that generation.
 
+Two more files sit beside it, so link traffic and other devices' reports can never
+rotate turn records away:
+
+```text
+<ProfileDir>/local-conversations/diagnostics/device-timing.jsonl   (2 MiB + .1)
+<ProfileDir>/local-conversations/diagnostics/timing-reports.jsonl  (5 MiB + .1)
+```
+
 Only allowlisted stages, opaque conversation/request/turn IDs, provider, source,
 timestamps, durations, counts, outcomes, closed-enum dimensions and coarse error
 categories are accepted. Unknown dimension values are dropped, not stored.
@@ -79,9 +87,9 @@ MCP exports live in `<userData>/local-conversations/diagnostics/exports/`, with
 directory mode 0700 and file mode 0600. Each export prunes generated bundles
 older than seven days and keeps at most 20. Files saved through the native dialog
 are user-managed. Export bundles include allowlisted runtime versions, filters,
-coverage, summary, validated timing records, `waterfalls` and separate
-`sources.web` / `sources.daemon` / `sources.daemonTiming` sections (schema version
-3). `summary.recordCount` totals timing records, Web records and daemon lines;
+coverage, summary, validated timing records, `waterfalls`, `deviceTimeline` and
+separate `sources.web` / `sources.daemon` / `sources.daemonTiming` / `sources.linkTiming`
+sections (schema version 3). `summary.recordCount` totals timing records, Web records and daemon lines;
 separate counts identify each source.
 The MCP response includes source availability and truncation without injecting
 all log text into the agent’s context.
@@ -173,7 +181,13 @@ current names in a waterfall (`recordedAs` keeps the name written).
 | Codex | `provider.spawn`, `provider.handshake`, `provider.config`, `context.bind`, `model.resolve`, `thread.prepare` (`reason` is `start` or `resume`), `provider.turn_start` |
 | Claude | `adapter.spawn`, `adapter.ready`, `context.bind`, `sdk.load` and `query.init` (from the adapter's start result; absent from an older adapter), `provider.input_queued`, `provider.first_message` |
 | Output | `provider.first_reasoning`, `provider.first_text`, `provider.first_tool`, `batcher.first_output_commit`, `hub.first_output_publish`, `ws.first_output_write` (per subscriber, with `reason` `live` or `catch_up` and that subscriber's identity) |
-| End | `turn.finished` |
+| End | `turn.finished`, `turn.output_summary` (`count` events, `bytes`, `maxGapMs`, once per turn) |
+| Provider process | `provider.first_frame` (Codex), `provider.session_ready` (Claude), `provider.exit` (`reason` is `exited` or `stopped`), `thread.prepare` with `bytes` on a Claude resume (its transcript's size) |
+| Client | `client.pending_shown`; on mobile `client.first_commit`, which is a React commit because React Native has no paint callback |
+| Link service, in `device-timing.jsonl` | `link.start`, `link.ready`, `link.registered`, `link.stop`, `peer.known`, `peer.mdns_found`, `peer.connect`, `relay.reserve`, `relay.connected`, `relay.refused`, `holepunch.start`, `holepunch.success`, `holepunch.failed`, `connection.direct`, `connection.relayed`, `connection.lost`, `network.changed`, and `registry.fetch` only when it fails, recovers or is slow. State changes only; never a tick |
+| Tunnel and proxy, in `device-timing.jsonl` | `tunnel.conn` (`reused`), `tunnel.stream_open`, `proxy.request`, `proxy.first_byte` (`role` is `initiator` or `executor`), `migrate.start`, `migrate.stream_closed`, `migrate.reconnected`, `migrate.resubscribed`, and for a client's own commands `link.request_sent`, `link.request_received`, `link.response_sent`, `link.response_received` |
+| Traffic per turn and snapshots | `link.event_sent`, `link.event_received` (`count`, `bytes`, `maxGapMs`); `snapshot.server_read`, and on the client `snapshot.request`, `snapshot.first_byte`, `snapshot.received`, `snapshot.parsed`, on mobile `snapshot.rendered` |
+| Client socket, another device only | `ws.ticket` (Desktop), `ws.hello`, `ws.open`, `ws.subscribe`, `ws.subscribed`, `ws.catch_up`, `ws.closed` (closed `reason`), `ws.retry` (`durationMs` is the backoff, recorded when it changes), `ws.resubscribed` |
 
 "First" means the turn's first model output. Every turn first commits the user's
 message and `turn.started`, which would make a slow turn look fast.
@@ -181,9 +195,26 @@ message and `turn.started`, which would make a slow turn look fast.
 `origin` and `clientKind` come from the daemon's caller, kept in memory by request
 ID so a queued turn retains them; after a restart they read as `unknown`. A remote
 caller's `clientKind` comes from `X-Multica-Client-Kind`, which Desktop's forwarding
-entry sets; a client that does not send it is `unknown`. `turnKind` is `queued` only
+entry and `mobilelink` set; a client that does not send it is `unknown`. A remote
+caller's `connection` is read from the stream the request arrived on, not from device
+state, which says direct as soon as any connection to that device is direct. `turnKind` is `queued` only
 for an item that had to wait: Desktop routes ordinary sends through the queue too.
 Background and native turns carry `background: true`, so percentiles leave them out.
+
+## Reports from a phone
+
+A phone keeps its marks in a bounded buffer and reports them to an executor that
+offers `timing-report-v1` in `/hello`: `POST /local/v2/timing-reports` with
+`{batch_id, records}`, answered `{accepted, rejected, duplicate}`. A batch keeps its
+id until acknowledged and is retried when the socket next opens. The executor allows
+only a remote phone, about 6 batches a minute per device, conversations in the
+request's scope and stages in `timing.Reportable`, and stamps `reporter`, `receivedAt`,
+`origin` and `clientKind` itself.
+
+Exports filter and sort reports by `receivedAt`, so a wrong phone clock loses nothing,
+and hash `peer` and `reporter`. A record naming a conversation, request or turn joins
+that turn's waterfall; one naming none goes on `deviceTimeline`. A turn Desktop started
+on another device is not reported: export on both devices and compare by `requestId`.
 
 ## Reading one slow turn
 
@@ -193,7 +224,10 @@ and `endMs` relative to the turn's first record; a segment with `unfinished: tru
 started and never ended. Offsets between a client and a daemon on different devices
 include clock skew. `totals` stay on one clock each: `clientToFirstEventMs`,
 `daemonToFirstOutputMs`, and `transportMs`, which is
-`(client.first_event_received − client.send) − (ws.first_output_write − daemon.request_received)`.
+`(client.first_event_received − client.send) − (ws.first_output_write − daemon.request_received)`,
+pairing the sending client with its own delivery when several clients watch a turn.
+A report's own clock does not anchor a turn that has local records, so its offsets can
+be negative.
 `summary.firstOutput` gives p50/p90 of `daemonToFirstOutputMs` by provider, prepare
 kind, origin and client kind.
 
