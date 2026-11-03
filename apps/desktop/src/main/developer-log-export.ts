@@ -9,7 +9,7 @@ import type { WorkspaceMcpTool } from "./mcp-tool";
 import { developerLogTool } from "./developer-log-tool";
 import { buildTurnWaterfalls, summarizeFirstOutput } from "./developer-log-waterfall";
 import { snapshotDaemonTiming, snapshotLinkTiming, type DaemonTimingSource, type LinkTimingSource, type LocalTimingLog, type LocalTimingSnapshot } from "./local-timing-log";
-import type { DaemonLogSource, RuntimeLogSource } from "./developer-runtime-logs";
+import { hashPeerIds, type DaemonLogSource, type RuntimeLogSource } from "./developer-runtime-logs";
 
 const querySchema = z.object({
   sinceMinutes: z.number().int().min(1).max(10080),
@@ -121,8 +121,10 @@ export function buildDeveloperLogBundle(input: {
   const incomplete = input.timing.incomplete || daemonTiming.incomplete || linkTiming.incomplete;
   const timingSummary = summarize(records);
   const waterfalls = buildTurnWaterfalls(records);
-  const webRecordCount = input.sources.web.records.length;
-  const daemonLineCount = input.sources.daemon.text.split("\n").filter(Boolean).length;
+  const web = { ...input.sources.web, records: input.sources.web.records.map((record) => ({ ...record, message: hashPeerIds(record.message, hash), ...(record.source ? { source: hashPeerIds(record.source, hash) } : {}) })) };
+  const daemon = { ...input.sources.daemon, text: hashPeerIds(input.sources.daemon.text, hash) };
+  const webRecordCount = web.records.length;
+  const daemonLineCount = daemon.text.split("\n").filter(Boolean).length;
   return {
     schemaVersion: 3,
     exportedAt: new Date(input.until).toISOString(),
@@ -134,7 +136,7 @@ export function buildDeveloperLogBundle(input: {
     records,
     waterfalls,
     deviceTimeline: deviceTimeline.slice(-DEVICE_TIMELINE_LIMIT),
-    sources: { web: { ...input.sources.web, scope: "account", timeFilterApplied: true }, daemon: input.sources.daemon, daemonTiming: { status: daemonTiming.status, incomplete: daemonTiming.incomplete, droppedWrites: daemonTiming.droppedWrites }, linkTiming: { status: linkTiming.status, incomplete: linkTiming.incomplete, droppedWrites: linkTiming.droppedWrites } },
+    sources: { web: { ...web, scope: "account", timeFilterApplied: true }, daemon, daemonTiming: { status: daemonTiming.status, incomplete: daemonTiming.incomplete, droppedWrites: daemonTiming.droppedWrites }, linkTiming: { status: linkTiming.status, incomplete: linkTiming.incomplete, droppedWrites: linkTiming.droppedWrites } },
   };
 }
 type DeveloperLogBundle = ReturnType<typeof buildDeveloperLogBundle>;

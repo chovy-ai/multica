@@ -270,6 +270,13 @@ describe("developer log export", () => {
       expect(second.peer).not.toBe(first.peer);
       expect(first.peer).not.toBe(createHash("sha256").update(peer).digest("hex").slice(0, 16));
     });
+    it("in log text read as the same hash as the records", () => {
+      const bundle = build(`dial ${peer} failed\n`, `lost ${peer}`);
+      const hash = bundle.records[0]!.peer!;
+      expect(JSON.stringify(bundle)).not.toContain(peer);
+      expect(bundle.sources.daemon.text).toBe(`dial peer:${hash} failed\n`);
+      expect(bundle.sources.web.records[0]!.message).toBe(`lost peer:${hash}`);
+    });
   });
 
   it("keeps a report out of a time window by when it arrived, not by its own clock", async () => {

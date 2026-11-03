@@ -171,7 +171,7 @@
 - 只能报自己的：来源必须是 `mobile`；阶段限定在 `timing.Reportable` 的白名单内，模型和轮次的 mark 不能上报；`conversationId` 必须属于请求的 scope。`reporter`、`receivedAt`、`origin`、`clientKind` 由执行端覆盖。
 - 时钟：导出按 `receivedAt` 过滤和排序，错误的手机时钟不会丢记录。瀑布图的起点取本机记录，上报记录的偏移可以是负数。`totals` 不受影响。
 
-**导出：** 带会话、请求或轮次的记录进入 `records` 和瀑布图。什么都不带的连接记录进入 `deviceTimeline`（最多 2000 条）。`peer` 和 `reporter` 在导出时哈希，文件里是原值。传输总耗时只配对发送方自己的 `client.first_event_received` 和 `ws.first_output_write`，否则同时打开的另一台设备会算错。
+**导出：** 带会话、请求或轮次的记录进入 `records` 和瀑布图。什么都不带的连接记录进入 `deviceTimeline`（最多 2000 条）。`peer` 和 `reporter` 在导出时用每次导出随机生成的密钥做 HMAC，文件里是原值，所以同一设备只在一份导出内可辨认。导出的日志文本里，multiaddr 整段去掉，peer ID 换成同一个哈希（`peer:<哈希>`）。传输总耗时只配对发送方自己的 `client.first_event_received` 和 `ws.first_output_write`，否则同时打开的另一台设备会算错。
 
 **桌面作为发起端的缺口：** 桌面发起的 P2P 轮次不会回传给执行端。桌面的 GUI 记录在 Electron 的 `turn-timing.jsonl`，代理记录在发起端的 `device-timing.jsonl`，上报需要一个新的主进程上传器，还要判断哪些记录属于远端会话，复用并不自然，所以这一版不做，`Admit` 也拒绝转发上报。这种轮次要在两台设备上分别导出，再按 `requestId` 对照；执行端单独一份导出没有 `client.*`，也就没有 `transportMs`。
 
