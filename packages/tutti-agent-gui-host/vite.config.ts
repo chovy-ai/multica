@@ -8,6 +8,16 @@ import tailwindcss from "@tailwindcss/vite";
 
 const hostPresentationAdaptations = [
   {
+    path: "/agentConversation/components/AgentVisibleErrorMessage.tsx",
+    original: 'import type { JSX } from "react";',
+    replacement: 'import type { JSX } from "react";\nimport { ConversationRetryButton } from "@multica-conversation-retry";',
+  },
+  {
+    path: "/agentConversation/components/AgentVisibleErrorMessage.tsx",
+    original: '        {(externalAction?.url && onExternalLink) ||',
+    replacement: '        <ConversationRetryButton turnId={message.turnId} />\n        {(externalAction?.url && onExternalLink) ||',
+  },
+  {
     path: "/agentConversation/components/AgentSystemNoticeMessage.tsx",
     original: 'import type { JSX } from "react";',
     replacement: 'import type { JSX } from "react";\nimport { SubagentTranscript } from "@multica-subagent-transcript";',
@@ -588,6 +598,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      "@multica-conversation-retry": fileURLToPath(new URL("./src/conversation-retry.tsx", import.meta.url)),
       "@multica-subagent-transcript": fileURLToPath(new URL("./src/subagent-transcript.tsx", import.meta.url)),
       "@multica-timeline-end-position": fileURLToPath(new URL("./src/timeline-end-position.ts", import.meta.url)),
       "@multica-prompt-submission-policy": fileURLToPath(new URL("./src/runtime/prompt-submission-policy.ts", import.meta.url)),

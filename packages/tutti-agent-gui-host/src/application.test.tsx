@@ -62,6 +62,7 @@ async function mount(local = true, options: { activeSessionId?: string; continua
     subscribeWorkspace: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     subscribeTurns: () => () => {},
     continuable: () => options.continuable ?? false,
+    retryableTurnId: () => null,
     continueSession: vi.fn(),
     toGuiSessionId: (id: string) => id,
     toServerSessionId: (id: string) => id,

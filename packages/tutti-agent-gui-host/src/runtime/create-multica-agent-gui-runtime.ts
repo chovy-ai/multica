@@ -951,6 +951,15 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     }
   }
 
+  function continuableTurn(agentSessionId: string) {
+    if (!init.local || disposed) return null;
+    const session = details.get(agentSessionId)?.session;
+    if (!session || session.status === "archived") return null;
+    const queue = engine.getSnapshot().promptQueue.recordsBySessionId[agentSessionId];
+    if (queue?.prompts.length || queue?.inFlight || queue?.uncertainDelivery) return null;
+    return v2.get(agentSessionId)?.continuableTurn() ?? null;
+  }
+
   function registerAttachments(values: Attachment[]) {
     for (const attachment of values) attachments.set(attachment.id, attachment);
   }
@@ -1129,15 +1138,19 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     getWorkspaceState: () => workspace,
     /**
      * Whether a local conversation can be continued from the empty composer:
-     * its latest turn was stopped by the user or cut off by a restart, and
+     * its latest turn stopped or failed, and
      * nothing is running or queued.
      */
     continuable(agentSessionId: string) {
-      if (engine.getSnapshot().promptQueue.recordsBySessionId[agentSessionId]?.prompts.length) return false;
-      return v2.get(agentSessionId)?.continuable() ?? false;
+      return continuableTurn(agentSessionId) !== null;
+    },
+    retryableTurnId(agentSessionId: string) {
+      const turn = continuableTurn(agentSessionId);
+      return turn?.status === "failed" ? turn.id : null;
     },
     /** Asks the conversation's provider to continue where its turn stopped. */
     continueSession(agentSessionId: string) {
+      if (!continuableTurn(agentSessionId)) return;
       engine.submitPrompt({ agentSessionId, clientSubmitId: crypto.randomUUID(), content: [{ type: "text", text: init.locale === "zh-CN" ? "继续" : "Continue" }] });
     },
     subscribeTurns: (listener: () => void) => engine.subscribe(() => listener()),
