@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"io"
 	"log/slog"
+	"net"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -366,7 +367,9 @@ func TestUnresponsiveRelayConnectionRenewsReservation(t *testing.T) {
 	}
 	conns := a.host.Network().ConnsToPeer(relay.Host().ID())
 	relay.Host().SetStreamHandler(ping.ID, func(st network.Stream) { defer st.Close(); _, _ = io.Copy(io.Discard, st) })
-	a.checkPeer(relay.Host().ID())
+	for range peerProbeMisses {
+		a.checkPeerWithin(relay.Host().ID(), 200*time.Millisecond)
+	}
 	for _, c := range conns {
 		if !c.IsClosed() {
 			t.Fatal("unresponsive relay connection remained cached")
@@ -376,6 +379,39 @@ func TestUnresponsiveRelayConnectionRenewsReservation(t *testing.T) {
 		return reserved() && relay.Host().Network().Connectedness(id) == network.Connected
 	}) {
 		t.Fatal("relay reservation was not restored after the failed probe")
+	}
+}
+
+func TestNetworkChangeKeepsAHealthyReservation(t *testing.T) {
+	key, id := newKey(t)
+	relay, _ := startRelay(t, id)
+	a, err := Start(context.Background(), Config{
+		Key: key, Fetch: (&relayAccount{}).fetch, ListenAddrs: []string{"/ip4/127.0.0.1/tcp/0"},
+		RefreshInterval: time.Hour, Relay: relayFunc(relay), Logger: testLogger,
+		route:    func(net.IP) (pathRoute, error) { return pathRoute{Interface: "en0"}, nil },
+		localIPs: func() (map[string]bool, error) { return map[string]bool{"127.0.0.1": true}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Close() })
+	if !waitFor(t, 15*time.Second, func() bool { st := a.Status().Relay; return st != nil && st.Reserved }) {
+		t.Fatal("no reservation")
+	}
+	conns := a.host.Network().ConnsToPeer(relay.Host().ID())
+	expires := a.Status().Relay.ExpiresAt
+
+	a.NetworkChanged()
+	time.Sleep(300 * time.Millisecond)
+
+	for _, c := range conns {
+		if c.IsClosed() {
+			t.Fatal("healthy relay connection closed")
+		}
+	}
+	st := a.Status().Relay
+	if !st.Reserved || !st.ExpiresAt.Equal(*expires) {
+		t.Fatalf("reservation disturbed: %+v", st)
 	}
 }
 
