@@ -1,11 +1,13 @@
 // @vitest-environment node
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
-import { LocalTimingLog } from "./local-timing-log";
+import type { LocalTimingRecord } from "@multica/tutti-agent-gui-host/local-timing";
+import { LocalTimingLog, type LocalTimingSnapshot } from "./local-timing-log";
 import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
-import { DeveloperLogExporter, createDeveloperLogTool } from "./developer-log-export";
+import { DeveloperLogExporter, buildDeveloperLogBundle, createDeveloperLogTool } from "./developer-log-export";
 
 const scope = { userId: "user", workspaceId: "workspace" };
 const signal = () => new AbortController().signal;
@@ -247,6 +249,29 @@ describe("developer log export", () => {
       expect(exported).toMatchObject({ sources: { linkTiming: { status: "available" } } });
     } finally { await f.cleanup(); }
   });
+  describe("peer identities", () => {
+    const peer = "12D3KooWLnZUpcaBwbz9uD1XsyyHnbXUrJRmxnsMiRnuCmvPix67";
+    const at = new Date().toISOString();
+    const record = { version: 2, source: "daemon", event: "mark", elapsedMs: 0, stage: "connection.direct", at, peer, reporter: peer } as LocalTimingRecord;
+    const build = (daemonText = "", webMessage = "") => buildDeveloperLogBundle({
+      runtime, workspaceId: null, since: 0, until: Date.now(), conversationId: null,
+      timing: { records: [record], incomplete: false, droppedWrites: 0 } as unknown as LocalTimingSnapshot,
+      sources: {
+        web: { status: "available", truncated: false, incomplete: false, maxBytes: 1, records: [{ at, level: "info", message: webMessage }] },
+        daemon: { status: "available", scope: "desktop-profile", timeFilterApplied: false, truncated: false, incomplete: false, maxBytes: 1, text: daemonText },
+      },
+    });
+
+    it("are recognizable within one export and not across exports", () => {
+      const first = build().records[0]!;
+      const second = build().records[0]!;
+      expect(first.peer).toMatch(/^[0-9a-f]{16}$/);
+      expect(first.reporter).toBe(first.peer);
+      expect(second.peer).not.toBe(first.peer);
+      expect(first.peer).not.toBe(createHash("sha256").update(peer).digest("hex").slice(0, 16));
+    });
+  });
+
   it("keeps a report out of a time window by when it arrived, not by its own clock", async () => {
     const f = await fixture();
     try {

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
@@ -70,12 +70,17 @@ function summarize(records: LocalTimingRecord[]) {
 
 const DEVICE_TIMELINE_LIMIT = 2000;
 
-/** Exports can be shared, so a device is only recognizable within one. */
-function hashPeers(record: LocalTimingRecord): LocalTimingRecord {
+/** Exports can be shared, so a device is only recognizable within one: each gets its own key, kept nowhere. */
+function peerHasher() {
+  const key = randomBytes(32);
+  return (id: string) => createHmac("sha256", key).update(id).digest("hex").slice(0, 16);
+}
+
+function hashPeers(record: LocalTimingRecord, hash: (id: string) => string): LocalTimingRecord {
   if (!record.peer && !record.reporter) return record;
   const hashed = { ...record };
-  if (record.peer) hashed.peer = createHash("sha256").update(record.peer).digest("hex").slice(0, 16);
-  if (record.reporter) hashed.reporter = createHash("sha256").update(record.reporter).digest("hex").slice(0, 16);
+  if (record.peer) hashed.peer = hash(record.peer);
+  if (record.reporter) hashed.reporter = hash(record.reporter);
   return hashed;
 }
 
@@ -110,8 +115,9 @@ export function buildDeveloperLogBundle(input: {
   const byTime = (a: LocalTimingRecord, b: LocalTimingRecord) => localTimingTime(a).localeCompare(localTimingTime(b));
   const primary = [...input.timing.records, ...daemonTiming.records];
   const { correlated, timeline } = mergeLinkTiming(primary, linkTiming, input.conversationIds ?? null);
-  const records = [...primary, ...correlated].map(hashPeers).sort(byTime);
-  const deviceTimeline = [...timeline, ...(input.timing.deviceRecords ?? []), ...(daemonTiming.deviceRecords ?? [])].map(hashPeers).sort(byTime);
+  const hash = peerHasher();
+  const records = [...primary, ...correlated].map((record) => hashPeers(record, hash)).sort(byTime);
+  const deviceTimeline = [...timeline, ...(input.timing.deviceRecords ?? []), ...(daemonTiming.deviceRecords ?? [])].map((record) => hashPeers(record, hash)).sort(byTime);
   const incomplete = input.timing.incomplete || daemonTiming.incomplete || linkTiming.incomplete;
   const timingSummary = summarize(records);
   const waterfalls = buildTurnWaterfalls(records);
