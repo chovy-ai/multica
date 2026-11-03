@@ -873,6 +873,42 @@ func TestCodexRunnerRecoversWhenTheRestartFailsToStart(t *testing.T) {
 	}
 }
 
+// A failed restart keeps the binding for the retry, but the sweep must still be
+// able to let go of it when no retry comes.
+func TestCodexEvictReleasesTheBindingAFailedRestartLeftBehind(t *testing.T) {
+	t.Parallel()
+
+	f := newCodexRestartFixture(t, CodexSession{PermissionMode: "full-access"})
+	codexSend(t, f.runner, "t1")
+	f.finishTurn(t, 0, "t1")
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.startErr = errors.New("spawn failed")
+	f.mu.Unlock()
+	if err := f.runner.Send(context.Background(), SendRequest{TurnID: "t2", RequestID: "req-t2", MessageID: "msg-t2", Text: "x"}); err == nil {
+		t.Fatal("Send succeeded")
+	}
+	f.turnEvents(t, "t2")
+	idle, ok := f.runner.IdleProcess()
+	if !ok || !idle.evictable {
+		t.Fatalf("the held binding is invisible to the sweep: %+v, %v", idle, ok)
+	}
+	if !f.runner.Evict(context.Background()) {
+		t.Fatal("the binding was not evicted")
+	}
+	if f.releases.Load() != 1 {
+		t.Fatalf("releases = %d", f.releases.Load())
+	}
+	if _, ok := f.runner.IdleProcess(); ok {
+		t.Fatal("an evicted runner still reports something held")
+	}
+	if f.runner.Evict(context.Background()) {
+		t.Fatal("evicted twice")
+	}
+}
+
 // A queued message that changes settings while a turn runs waits for that
 // turn, then runs on a process that has the new settings.
 func TestCodexQueuedSettingsChangeRestartsTheProcess(t *testing.T) {

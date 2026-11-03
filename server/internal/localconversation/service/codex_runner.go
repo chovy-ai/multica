@@ -441,10 +441,11 @@ func (r *CodexRunner) Prepare(ctx context.Context, trace *timing.Trace) error {
 
 // Evict stops an idle process to free its resources. The runner and thread stay;
 // the next send resumes on a new process. The process leaves the runner under
-// the lock, so a send can never pick up one that is exiting.
+// the lock, so a send can never pick up one that is exiting. A settings restart
+// that failed left its context binding with no process; that is evicted the same way.
 func (r *CodexRunner) Evict(context.Context) bool {
 	r.mu.Lock()
-	if r.turn != nil || r.gate.task != nil || r.server == nil {
+	if r.turn != nil || r.gate.task != nil || !r.holdsResourcesLocked() {
 		r.mu.Unlock()
 		return false
 	}
@@ -455,15 +456,21 @@ func (r *CodexRunner) Evict(context.Context) bool {
 	if release != nil {
 		release()
 	}
-	server.Stop()
+	if server != nil {
+		server.Stop()
+	}
 	return true
+}
+
+func (r *CodexRunner) holdsResourcesLocked() bool {
+	return r.server != nil || r.releaseContext != nil
 }
 
 // IdleProcess reports the runner's process when it is doing nothing.
 func (r *CodexRunner) IdleProcess() (idleProcess, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.server == nil || r.turn != nil || r.gate.task != nil {
+	if !r.holdsResourcesLocked() || r.turn != nil || r.gate.task != nil {
 		return idleProcess{}, false
 	}
 	return idleProcess{provider: "codex", scopeID: r.rec.scopeID, since: r.gate.idleSince, preheated: r.gate.preheated, evictable: true}, true
