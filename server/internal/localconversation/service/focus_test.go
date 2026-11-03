@@ -163,6 +163,52 @@ func TestFocusDoesNotPreheatWithoutANativeSession(t *testing.T) {
 	}
 }
 
+// gateLaunch holds runner creation inside the launcher until the returned open
+// runs, as resolving a CLI does.
+func (f *focusFixture) gateLaunch() (entered <-chan struct{}, open func()) {
+	in, gate := make(chan struct{}, 1), make(chan struct{})
+	f.mu.Lock()
+	f.beforeLaunch = func() {
+		select {
+		case in <- struct{}{}:
+		default:
+		}
+		<-gate
+	}
+	f.mu.Unlock()
+	return in, func() { close(gate) }
+}
+
+func TestStopProvidersDuringAPreheatStartsNoProcess(t *testing.T) {
+	t.Parallel()
+
+	f := newFocusFixture(t, Options{})
+	f.old(t, "conv-1")
+	entered, open := f.gateLaunch()
+	f.focus(t, "conv-1", "phone", true)
+	<-entered
+	if err := f.svc.StopProviders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	open()
+	eventually(t, "the preheat to end", func() bool {
+		f.svc.focus.mu.Lock()
+		defer f.svc.focus.mu.Unlock()
+		return !f.svc.focus.working
+	})
+	f.svc.mu.Lock()
+	registered := len(f.svc.runners)
+	f.svc.mu.Unlock()
+	if registered != 0 || f.adapterCount() != 0 {
+		t.Fatalf("%d runners, %d processes during an update", registered, f.adapterCount())
+	}
+	// The refused preheat is not lost if the update is called off.
+	if err := f.svc.Undrain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "preheat after undrain", func() bool { return f.idle("conv-1") })
+}
+
 func TestFocusDoesNotPreheatAnArchivedConversation(t *testing.T) {
 	t.Parallel()
 

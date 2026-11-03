@@ -27,6 +27,8 @@ type serviceFixture struct {
 	adapters []*fakeAdapter
 	// reply, when set, answers requests of adapters started after it.
 	reply func(a *fakeAdapter, typ string) (json.RawMessage, error)
+	// beforeLaunch, when set, runs while the provider CLI is being resolved.
+	beforeLaunch func()
 }
 
 func newServiceFixture(t *testing.T, path string) *serviceFixture {
@@ -54,6 +56,12 @@ func newServiceFixtureWith(t *testing.T, path string, opts Options) *serviceFixt
 }
 
 func (f *serviceFixture) launch(_ context.Context, conv sqlitedb.Conversation) (ClaudeSession, StartClaudeAdapter, error) {
+	f.mu.Lock()
+	before := f.beforeLaunch
+	f.mu.Unlock()
+	if before != nil {
+		before()
+	}
 	return ClaudeSession{Fields: map[string]any{"executable": "/bin/claude", "cwd": conv.Cwd}}, func(_ context.Context, h claude.Handler) (ClaudeAdapter, error) {
 		a := &fakeAdapter{handler: h, done: make(chan struct{})}
 		f.mu.Lock()

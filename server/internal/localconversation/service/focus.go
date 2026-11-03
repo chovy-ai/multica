@@ -270,6 +270,15 @@ func (s *Service) preheatWorker() {
 	}
 }
 
+// allowPreheat lets a conversation whose preheat could not run ask again.
+func (f *focusTracker) allowPreheat(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if entry := f.conversations[id]; entry != nil {
+		entry.requested = false
+	}
+}
+
 func (s *Service) preheat(item preheatItem) {
 	ctx, cancel := context.WithTimeout(context.Background(), prepareDeadline+time.Minute)
 	defer cancel()
@@ -280,12 +289,7 @@ func (s *Service) preheat(item preheatItem) {
 	trace := s.traces.conversation(conv, item.caller)
 	if reason := s.preheatRefusal(conv); reason != "" {
 		trace.MarkReason(timing.StagePreheatCancelled, reason)
-		f := s.focus
-		f.mu.Lock()
-		if entry := f.conversations[item.id]; entry != nil {
-			entry.requested = false
-		}
-		f.mu.Unlock()
+		s.focus.allowPreheat(item.id)
 		return
 	}
 	finished := trace.Begin(timing.StagePreheatStarted)
@@ -294,6 +298,11 @@ func (s *Service) preheat(item preheatItem) {
 		err = r.Prepare(ctx, trace)
 	}
 	finished(err)
+	if err != nil && s.acceptTurn() != nil {
+		trace.MarkReason(timing.StagePreheatCancelled, timing.ReasonDraining)
+		s.focus.allowPreheat(item.id)
+		return
+	}
 	if err != nil {
 		trace.MarkFailed(timing.StagePreheatFailed, "provider_error")
 		s.opts.Logger.Info("local conversations: preheat failed", "conversation_id", conv.ID, "error", err)

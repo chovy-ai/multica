@@ -337,6 +337,10 @@ func (s *Service) Busy(ctx context.Context) (int64, error) {
 func (s *Service) acceptTurn() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.acceptTurnLocked()
+}
+
+func (s *Service) acceptTurnLocked() error {
 	switch {
 	case s.closing:
 		return ErrClosing
@@ -643,15 +647,15 @@ func (s *Service) noteCodexDefault(model string) {
 	}
 }
 
-// keepRunner registers r unless a concurrent call registered one first.
 // keepRunner registers a new runner, or returns the one another caller
-// registered first. A runner that arrives after Close began is closed.
+// registered first. A runner that arrives after Close or a drain began is closed:
+// its process would run the executable an update is about to replace.
 func (s *Service) keepRunner(id string, r runner) (runner, error) {
 	s.mu.Lock()
-	if s.closing {
+	if err := s.acceptTurnLocked(); err != nil {
 		s.mu.Unlock()
 		_ = r.Close(context.Background())
-		return nil, ErrClosing
+		return nil, err
 	}
 	defer s.mu.Unlock()
 	if existing := s.runners[id]; existing != nil {
