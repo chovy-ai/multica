@@ -149,6 +149,8 @@ type Service struct {
 	maintenanceKick chan struct{}
 	// uploadsSwept is only touched by the maintenance goroutine.
 	uploadsSwept time.Time
+	// attachmentUploads serializes the same file across concurrent recipients.
+	attachmentUploads sync.Map
 	// background is the goroutines Close waits for before closing the store.
 	background sync.WaitGroup
 }
@@ -825,10 +827,24 @@ func (s *Service) contextBinder(conv sqlitedb.Conversation) ContextBinder {
 			tools = append(tools, s.avatarTool(conv, agents))
 		}
 		requester, _ := cloud.(workspace.Requester)
-		tools = append(tools, workspace.Tools(workspace.Options{
+		var upload func(context.Context, []string) ([]string, error)
+		if agents, ok := cloud.(cloudAgents); ok && agents != nil {
+			upload = func(ctx context.Context, ids []string) ([]string, error) {
+				return s.uploadAttachments(ctx, conv.ScopeID, agents, ids)
+			}
+		}
+		workspaceTools := workspace.Tools(workspace.Options{
 			WorkspaceID: scope.WorkspaceID, UserID: scope.UserID, ConversationID: conv.ID,
 			Request: requester, Local: localActions{s: s, scopeID: conv.ScopeID},
-		})...)
+			UploadAttachments: upload,
+		})
+		for _, tool := range workspaceTools {
+			switch tool.Name {
+			case "create_task", "update_task", "comment_task", "invoke_agent":
+				tool = s.attachmentWriteTool(conv.ScopeID, conv.ID, tool)
+			}
+			tools = append(tools, tool)
+		}
 		settingsOpts := settings.Options{
 			Scope:    settings.Scope{WorkspaceID: scope.WorkspaceID, UserID: scope.UserID},
 			Receipts: settingsReceipts{store: s.store, scopeID: conv.ScopeID, now: s.opts.Now},
