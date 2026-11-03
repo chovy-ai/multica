@@ -69,10 +69,10 @@ func startRelay(t *testing.T, devices ...peer.ID) (*p2pserver.Relay, *p2pserver.
 			t.Fatal(err)
 		}
 		raw, _ := crypto.MarshalPublicKey(pub)
-		if _, err := store.Upsert(context.Background(), p2pserver.Device{
+		if _, _, err := store.Upsert(context.Background(), p2pserver.Device{
 			UserID: "user-1", DaemonID: "d" + string(rune('a'+i)), PeerID: id.String(),
 			PublicKey: base64.StdEncoding.EncodeToString(raw),
-		}, time.Now()); err != nil {
+		}, time.Now(), time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}
