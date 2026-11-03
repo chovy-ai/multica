@@ -32,7 +32,7 @@ export class MobileTimingBuffer {
   private nativeDropped = 0;
   private settled = 0;
   private userId?: string;
-  private pending?: { batch: TimingBatch; entries: Set<Entry>; deviceId: string; dropped: number };
+  private pending?: { batch: TimingBatch; entries: Set<Entry>; deviceId: string; workspaceId: string; dropped: number };
 
   constructor(private size = BUFFER_SIZE) {}
 
@@ -86,7 +86,7 @@ export class MobileTimingBuffer {
 
   /** The next batch for this executor. A batch not yet acknowledged keeps its id, so a retry after a lost answer stores nothing twice. */
   batch(scope: TimingScope): TimingBatch | null {
-    if (this.pending?.deviceId === scope.deviceId) return this.pending.batch;
+    if (this.pending?.deviceId === scope.deviceId && this.pending.workspaceId === scope.workspaceId) return this.pending.batch;
     const entries = this.entries.filter(({ record, workspaceId }) => (!record.peer || record.peer === scope.deviceId) && (!workspaceId || workspaceId === scope.workspaceId)).slice(0, BATCH_SIZE);
     const dropped = this.dropped - this.reportedDropped;
     const records = entries.map((entry) => entry.record);
@@ -96,7 +96,7 @@ export class MobileTimingBuffer {
     }
     if (!records.length) return null;
     const batch = { batch_id: createRequestId(), records };
-    this.pending = { batch, entries: new Set(entries), deviceId: scope.deviceId, dropped };
+    this.pending = { batch, entries: new Set(entries), deviceId: scope.deviceId, workspaceId: scope.workspaceId, dropped };
     return batch;
   }
 

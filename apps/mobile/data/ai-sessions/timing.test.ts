@@ -40,6 +40,20 @@ describe("mobile timing buffer", () => {
     expect(buffer.batch(scope)!.records.map((record) => [record.stage, record.peer])).toEqual([["ws.open", "peer-a"], ["network.changed", undefined]]);
   });
 
+  it("does not send one workspace's pending batch to another", () => {
+    const buffer = new MobileTimingBuffer();
+    buffer.write({ stage: "client.send", conversationId: "in-a" }, "workspace-a");
+    const first = buffer.batch({ deviceId: "peer-a", workspaceId: "workspace-a" })!;
+    buffer.write({ stage: "client.send", conversationId: "in-b" }, "workspace-b");
+    const other = buffer.batch({ deviceId: "peer-a", workspaceId: "workspace-b" })!;
+    expect(other.records.map((record) => record.conversationId)).toEqual(["in-b"]);
+    buffer.acknowledge(other.batch_id);
+    // The first workspace's marks wait for it instead of being rejected and cleared.
+    const again = buffer.batch({ deviceId: "peer-a", workspaceId: "workspace-a" })!;
+    expect(again.records.map((record) => record.conversationId)).toEqual(["in-a"]);
+    expect(again.batch_id).not.toBe(first.batch_id);
+  });
+
   it("drops another account's marks", () => {
     const buffer = new MobileTimingBuffer();
     buffer.forUser("a");

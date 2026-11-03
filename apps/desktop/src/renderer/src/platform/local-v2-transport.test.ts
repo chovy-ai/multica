@@ -353,6 +353,20 @@ describe("DirectLocalV2Transport", () => {
     expect(hostRequest).toHaveBeenCalledWith("peer-1", scope, "settings.confirm", {});
   });
 
+  it("keeps traffic for a bounded number of turns that never report an end", async () => {
+    const records: { stage: string; turnId?: string; count?: number }[] = [];
+    const remote = await setup(undefined, { deviceId: "peer-a", timing: (record) => records.push(record) });
+    await remote.transport.send(scope, { version: 2, type: "subscribe", conversation_id: "c1", after_seq: 0, store_generation: "g" });
+    await vi.waitFor(() => expect(remote.daemon.sockets).toHaveLength(1));
+    const event = (turn: string, type: string) => remote.daemon.sockets[0]!.send(JSON.stringify({ version: 2, type: "conversation.events", conversation_id: "c1", events: [{ turn_id: turn, type }] }));
+    event("oldest", "item.delta");
+    for (let turn = 0; turn < 64; turn++) event(`t${turn}`, "item.delta");
+    event("oldest", "turn.completed");
+    await vi.waitFor(() => expect(records.map((record) => record.stage)).toContain("link.event_received"));
+    // Its first batch fell out of the cap, so only the last one is counted.
+    expect(records.find((record) => record.stage === "link.event_received")).toMatchObject({ turnId: "oldest", count: 1 });
+  });
+
   it("records another device's link and leaves this device's silent", async () => {
     const records: { stage: string; peer?: string; reason?: string; bytes?: number; conversationId?: string; turnId?: string; count?: number }[] = [];
     const remote = await setup(undefined, { deviceId: "peer-a", timing: (record) => records.push(record) });

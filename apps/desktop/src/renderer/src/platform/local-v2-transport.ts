@@ -10,6 +10,7 @@ const RECONNECT_MAX_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 120_000;
 const PROBE_INTERVAL_MS = 15_000;
 const HANDSHAKE_TIMEOUT_MS = 20_000;
+const TRACKED_TURNS = 64;
 
 /** A failed request, carried as "kind: message" like every local v2 error. */
 const failure = (kind: string, message: string) => new Error(`${kind}: ${message}`);
@@ -512,6 +513,8 @@ export class DirectLocalV2Transport implements LocalV2Transport {
         bytes = 0;
       }
       socket.traffic.set(event.turn_id, turn);
+      // A turn whose end this socket never sees would otherwise stay for its lifetime.
+      if (socket.traffic.size > TRACKED_TURNS) socket.traffic.delete(socket.traffic.keys().next().value!);
       if (event.type === "turn.completed") {
         socket.traffic.delete(event.turn_id);
         this.mark("link.event_received", { conversationId, turnId: event.turn_id, count: turn.batches, bytes: turn.bytes, maxGapMs: turn.maxGap });
