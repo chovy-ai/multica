@@ -397,7 +397,14 @@ func TestClaudeSpareOutputWaitsForTheBind(t *testing.T) {
 	w.fill(t, "claude")
 	w.newConversation(t, "new", "claude")
 	w.send(t, "new", "r1")
-	eventually(t, "session from the replayed output", func() bool {
+	// What the process said before the prompt is no turn's and names no session
+	// with a transcript yet; the prompt's own output does.
+	conv, _ := w.svc.Store().Conversation(context.Background(), "new")
+	if conv.ProviderSessionID != "" {
+		t.Fatalf("session before any prompt output = %q", conv.ProviderSessionID)
+	}
+	w.claudeSpare(0).emit(t, `{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"bound"}`)
+	eventually(t, "session from the turn's output", func() bool {
 		conv, _ := w.svc.Store().Conversation(context.Background(), "new")
 		return conv.ProviderSessionID == "bound"
 	})

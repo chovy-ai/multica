@@ -664,6 +664,102 @@ func TestClaudeSettingsThatCannotBeAppliedFailThePrepare(t *testing.T) {
 	}
 }
 
+// A SessionStart hook can make Claude answer before the first prompt. While a send
+// waits on that start, the answer is still nobody's reply.
+func TestClaudeOutputBeforeThePromptIsNotTheWaitingTurnsReply(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	entered, open := claudeGate(f)
+	sent := make(chan error, 1)
+	go func() {
+		sent <- f.runner.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "go"})
+	}()
+	<-entered
+	f.adapter(0).emit(t,
+		`{"type":"system","subtype":"init","session_id":"from-hook"}`,
+		`{"type":"assistant","message":{"id":"m0","content":[{"type":"text","text":"hook"}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"hook"}`,
+	)
+	if !f.runner.Running() {
+		t.Fatal("the hook's result finished the user's turn")
+	}
+	if got := f.runner.session.ProviderSessionID; got != "native-0" {
+		t.Fatalf("session = %q", got)
+	}
+	close(open)
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(f.adapter(0).sent()); got != "[start send]" {
+		t.Fatalf("requests = %s: the prompt never reached Claude", got)
+	}
+	f.adapter(0).emit(t, `{"type":"system","subtype":"init","session_id":"native-1"}`, `{"type":"result","subtype":"success","is_error":false,"result":"ok"}`)
+	got := f.turnEvents(t, "t1")
+	if got[len(got)-1] != "turn.completed  completed" {
+		t.Fatalf("events = %v", got)
+	}
+	snap, err := f.store.Snapshot(context.Background(), "conv-1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Conversation.ProviderSessionID != "native-1" {
+		t.Fatalf("stored session = %q", snap.Conversation.ProviderSessionID)
+	}
+}
+
+// Stopping before the prompt must not leave a resume with no transcript behind.
+func TestClaudeStopBeforeThePromptSavesNoSession(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	f.runner.session.ProviderSessionID = ""
+	entered, open := claudeGate(f)
+	sent := make(chan error, 1)
+	go func() {
+		sent <- f.runner.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "go"})
+	}()
+	<-entered
+	f.adapter(0).emit(t, `{"type":"system","subtype":"init","session_id":"unrecorded"}`)
+	if err := f.runner.Interrupt(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	close(open)
+	f.turnEvents(t, "t1")
+	eventually(t, "process", func() bool { _, ok := f.runner.IdleProcess(); return ok })
+	snap, err := f.store.Snapshot(context.Background(), "conv-1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Conversation.ProviderSessionID != "" {
+		t.Fatalf("stored session = %q", snap.Conversation.ProviderSessionID)
+	}
+}
+
+// A result arriving for an adapter that already served a turn, in the moment
+// between a send taking the turn and its prompt going out, must not end that turn.
+func TestClaudeResultDuringASendDoesNotSwallowItsPrompt(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	send(t, f, "t1")
+	a := f.adapter(0)
+	a.emit(t, `{"type":"result","subtype":"success","is_error":false,"result":""}`)
+	f.turnEvents(t, "t1")
+
+	turn := &claudeTurn{id: "t2"}
+	f.runner.mu.Lock()
+	f.runner.turn = turn
+	f.runner.mu.Unlock()
+	a.emit(t, `{"type":"result","subtype":"success","is_error":false,"result":"late"}`)
+	if !f.runner.Running() {
+		t.Fatal("a result ended a turn whose prompt had not gone out")
+	}
+}
+
 func queryEnded(a *fakeAdapter) {
 	a.handler(claude.Output{Type: "error", Error: &claude.AdapterError{Code: "query_ended", Message: "Claude Code ended the session"}})
 }

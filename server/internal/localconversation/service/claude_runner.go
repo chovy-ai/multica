@@ -173,8 +173,9 @@ type claudeTurn struct {
 	unlimited bool
 	trace     *timing.Trace
 	stop      *stopSignal
-	// inputSent is set once the prompt went to the adapter; earlier messages
-	// are the Query starting up, not a reply. Guarded by ClaudeRunner.mu.
+	// inputSent is set once the prompt went to the adapter, or from the start for
+	// a turn Claude began itself; earlier messages are no reply. Guarded by
+	// ClaudeRunner.mu.
 	inputSent bool
 }
 
@@ -740,7 +741,13 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 	turn := r.turn
 	cancelRequested := turn != nil && turn.cancelRequested
 	inputSent := turn != nil && turn.inputSent
-	unprompted := turn == nil && !r.prompted
+	// awaitingPrompt is a send's turn before its prompt goes out, whose completion
+	// cannot come from anything Claude says now.
+	awaitingPrompt := turn != nil && !inputSent
+	// Until a Query has had input its output is no reply to anyone, including a
+	// send already waiting on it: a SessionStart hook can make Claude answer, and
+	// its session id has no transcript to resume yet.
+	unprompted := !inputSent && !r.prompted
 	r.mu.Unlock()
 	if unprompted && out.Type == "sdk_message" {
 		return
@@ -790,7 +797,7 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 			}
 			r.appendOutput(turn, events)
 		}
-		if result != nil && turn != nil {
+		if result != nil && turn != nil && !awaitingPrompt {
 			switch {
 			case turn.storageFailed:
 				r.finish(turn, "failed", &turnError{kind: "storage_limit", message: ErrStorageBacklog.Error()})
@@ -1080,7 +1087,7 @@ func (r *ClaudeRunner) TakeBackgroundResults() []BackgroundResult {
 // startNativeTurn records a turn Claude started without a prompt from
 // Multica. It answers any background results waiting for delivery.
 func (r *ClaudeRunner) startNativeTurn() *claudeTurn {
-	turn := &claudeTurn{id: "turn-native-" + newID()}
+	turn := &claudeTurn{id: "turn-native-" + newID(), inputSent: true}
 	if r.nativeTrace != nil {
 		turn.trace = r.nativeTrace(turn.id)
 	}
