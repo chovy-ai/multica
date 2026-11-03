@@ -179,6 +179,44 @@ func (f *focusFixture) gateLaunch() (entered <-chan struct{}, open func()) {
 	return in, func() { close(gate) }
 }
 
+// A permission downgrade committed while a runner is being created finds no runner
+// to apply to, so the runner itself has to pick it up.
+func TestSettingsChangedWhileARunnerIsCreatedReachItsProcess(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	full, normal := "full-access", "default"
+	for name, begin := range map[string]func(t *testing.T, f *focusFixture){
+		"preheat": func(t *testing.T, f *focusFixture) { f.focus(t, "conv-1", "phone", true) },
+		"send": func(t *testing.T, f *focusFixture) {
+			go func() {
+				_, _ = f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "r1", Text: "go"})
+			}()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFocusFixture(t, Options{})
+			f.old(t, "conv-1")
+			if err := f.svc.UpdateSettings(ctx, f.scopeID, "conv-1", SettingsUpdate{PermissionMode: &full}); err != nil {
+				t.Fatal(err)
+			}
+			entered, open := f.gateLaunch()
+			begin(t, f)
+			<-entered
+			if err := f.svc.UpdateSettings(ctx, f.scopeID, "conv-1", SettingsUpdate{PermissionMode: &normal}); err != nil {
+				t.Fatal(err)
+			}
+			open()
+			eventually(t, "the process", func() bool { return f.adapterCount() == 1 && fieldsOf(f.adapters[0], "start") != nil })
+			if got := fieldsOf(f.adapters[0], "start")["permission_mode"]; got != normal {
+				t.Fatalf("the process started with %v", got)
+			}
+		})
+	}
+}
+
 func TestStopProvidersDuringAPreheatStartsNoProcess(t *testing.T) {
 	t.Parallel()
 

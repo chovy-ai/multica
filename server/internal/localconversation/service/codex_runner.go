@@ -596,6 +596,7 @@ func (r *CodexRunner) ApplySettings(_ context.Context, st store.ConversationSett
 	return nil
 }
 
+// sameModel compares two optional settings values.
 func sameModel(a, b *string) bool {
 	if a == nil || b == nil {
 		return a == b

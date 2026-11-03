@@ -572,7 +572,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 		if err != nil {
 			return nil, err
 		}
-		return s.keepRunner(conv.ID, r)
+		return s.keepRunner(ctx, conv, r)
 	case conv.Provider != "claude" || s.opts.Claude == nil:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedProvider, conv.Provider)
 	}
@@ -599,7 +599,7 @@ func (s *Service) runner(ctx context.Context, conv sqlitedb.Conversation) (runne
 		fields["permission_mode"] = conv.PermissionMode
 	}
 	session.Fields = fields
-	return s.keepRunner(conv.ID, NewClaudeRunner(ClaudeRunnerOptions{
+	return s.keepRunner(ctx, conv, NewClaudeRunner(ClaudeRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
 		Batcher: s.batcher, Limiter: s.limiter, ContextMCPName: contextmcp.Name, Now: s.opts.Now, Context: s.contextBinder(conv), OnTurnEnd: func(turnID string) { s.turnEnded(conv.ID, turnID) },
 		OnBackgroundEnded: func([]BackgroundResult) { s.scheduleDelivery(conv.ID) },
@@ -650,19 +650,66 @@ func (s *Service) noteCodexDefault(model string) {
 // keepRunner registers a new runner, or returns the one another caller
 // registered first. A runner that arrives after Close or a drain began is closed:
 // its process would run the executable an update is about to replace.
-func (s *Service) keepRunner(id string, r runner) (runner, error) {
+func (s *Service) keepRunner(ctx context.Context, conv sqlitedb.Conversation, r runner) (runner, error) {
 	s.mu.Lock()
 	if err := s.acceptTurnLocked(); err != nil {
 		s.mu.Unlock()
 		_ = r.Close(context.Background())
 		return nil, err
 	}
-	defer s.mu.Unlock()
-	if existing := s.runners[id]; existing != nil {
+	if existing := s.runners[conv.ID]; existing != nil {
+		s.mu.Unlock()
 		return existing, nil
 	}
-	s.runners[id] = r
+	s.runners[conv.ID] = r
+	s.mu.Unlock()
+	if err := s.catchUpSettings(context.WithoutCancel(ctx), conv, r); err != nil {
+		s.mu.Lock()
+		if s.runners[conv.ID] == r {
+			delete(s.runners, conv.ID)
+		}
+		s.mu.Unlock()
+		_ = r.Close(context.Background())
+		return nil, err
+	}
 	return r, nil
+}
+
+// catchUpSettings applies settings committed after conv was read: UpdateSettings
+// found no runner then, and the new runner was built from conv. Reading after
+// registering leaves no gap, since a later commit does find the runner. Reading
+// again after applying keeps this apply from overwriting that later one.
+func (s *Service) catchUpSettings(ctx context.Context, conv sqlitedb.Conversation, r runner) error {
+	applied := conversationSettings(conv)
+	for {
+		latest, err := s.store.Conversation(ctx, conv.ID)
+		if err != nil {
+			return err
+		}
+		settings := conversationSettings(latest)
+		if sameSettings(applied, settings) {
+			return nil
+		}
+		if err := r.ApplySettings(ctx, settings); err != nil {
+			s.opts.Logger.Warn("local conversations: settings not applied to a new runner", "conversation_id", conv.ID, "error", err)
+		}
+		applied = settings
+	}
+}
+
+func conversationSettings(conv sqlitedb.Conversation) store.ConversationSettings {
+	st := store.ConversationSettings{PermissionMode: conv.PermissionMode}
+	if conv.Model.Valid {
+		st.Model = &conv.Model.String
+	}
+	if conv.ReasoningEffort.Valid {
+		st.ReasoningEffort = &conv.ReasoningEffort.String
+	}
+	return st
+}
+
+func sameSettings(a, b store.ConversationSettings) bool {
+	return a.PermissionMode == b.PermissionMode && sameModel(a.Model, b.Model) && sameModel(a.ReasoningEffort, b.ReasoningEffort)
 }
 
 func sendFingerprint(cmd SendCommand) string {
@@ -695,13 +742,7 @@ func (s *Service) UpdateSettings(ctx context.Context, scopeID int64, conversatio
 	if err != nil {
 		return err
 	}
-	st := store.ConversationSettings{PermissionMode: conv.PermissionMode}
-	if conv.Model.Valid {
-		st.Model = &conv.Model.String
-	}
-	if conv.ReasoningEffort.Valid {
-		st.ReasoningEffort = &conv.ReasoningEffort.String
-	}
+	st := conversationSettings(conv)
 	switch {
 	case u.ClearModel:
 		st.Model = nil
