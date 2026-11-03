@@ -16,6 +16,7 @@ export interface LocalSessionEntry {
   preview: string;
   turnCount: number;
   updatedAt: string;
+  lastTurnSentAt: string;
   side?: { sourceId: string; turnId?: string; quote?: string };
 }
 
@@ -25,8 +26,16 @@ export function sessionEntry(summary: LocalV2Summary): LocalSessionEntry {
     pinned: summary.pinned, archived: summary.archived, projectId: summary.project_id, running: summary.status === "running",
     waitingForAnswer: summary.status === "running" && summary.pending_interactions > 0, backgroundTasks: summary.background_tasks, preview: summary.last_message_preview,
     turnCount: summary.turn_count, updatedAt: summary.updated_at,
+    // Older daemons only expose activity time. New daemons explicitly return null before a user turn.
+    lastTurnSentAt: summary.last_turn_sent_at === undefined ? summary.updated_at : summary.last_turn_sent_at ?? summary.created_at ?? summary.updated_at,
     ...(summary.side_source_id ? { side: { sourceId: summary.side_source_id, ...(summary.side_source_turn_id ? { turnId: summary.side_source_turn_id } : {}), ...(summary.side_quote ? { quote: summary.side_quote } : {}) } } : {}),
   };
+}
+
+export function compareLocalConversations(a: LocalSessionEntry, b: LocalSessionEntry): number {
+  return Number(b.pinned) - Number(a.pinned)
+    || Date.parse(b.lastTurnSentAt) - Date.parse(a.lastTurnSentAt)
+    || a.id.localeCompare(b.id);
 }
 
 export interface LocalConversationProjectGroup {

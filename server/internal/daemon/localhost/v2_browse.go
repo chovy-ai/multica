@@ -85,7 +85,7 @@ func (v *V2) browseSessions(w http.ResponseWriter, r *http.Request, scopeID int6
 		}
 		data, err := base64.RawURLEncoding.DecodeString(raw)
 		var cursor sessionBrowseCursor
-		if err != nil || json.Unmarshal(data, &cursor) != nil || cursor.Version != 1 || cursor.Generation != v.svc.Generation() || cursor.ScopeID != scopeID || !sameSessionFilter(cursor.Filter, filter) || cursor.Position.ID == "" || (cursor.Position.Pinned != 0 && cursor.Position.Pinned != 1) || cursor.Position.UpdatedAt == "" {
+		if err != nil || json.Unmarshal(data, &cursor) != nil || cursor.Version != 2 || cursor.Generation != v.svc.Generation() || cursor.ScopeID != scopeID || !sameSessionFilter(cursor.Filter, filter) || cursor.Position.ID == "" || (cursor.Position.Pinned != 0 && cursor.Position.Pinned != 1) || cursor.Position.SortAt == "" {
 			writeV2Error(w, AppError("invalid_request", "Invalid session cursor"))
 			return
 		}
@@ -99,7 +99,11 @@ func (v *V2) browseSessions(w http.ResponseWriter, r *http.Request, scopeID int6
 	var next *string
 	if hasMore {
 		last := rows[len(rows)-1]
-		data, err := json.Marshal(sessionBrowseCursor{Version: 1, Generation: v.svc.Generation(), ScopeID: scopeID, Filter: filter, Position: store.SessionBrowsePosition{ID: last.ID, Pinned: last.Pinned, UpdatedAt: last.UpdatedAt}})
+		sortAt := last.LastTurnSentAt
+		if sortAt == "" {
+			sortAt = last.CreatedAt
+		}
+		data, err := json.Marshal(sessionBrowseCursor{Version: 2, Generation: v.svc.Generation(), ScopeID: scopeID, Filter: filter, Position: store.SessionBrowsePosition{ID: last.ID, Pinned: last.Pinned, SortAt: sortAt}})
 		if err != nil {
 			writeV2Error(w, err)
 			return

@@ -19,9 +19,9 @@ type SessionBrowseFilter struct {
 }
 
 type SessionBrowsePosition struct {
-	ID        string `json:"id"`
-	Pinned    int64  `json:"pinned"`
-	UpdatedAt string `json:"updated_at"`
+	ID     string `json:"id"`
+	Pinned int64  `json:"pinned"`
+	SortAt string `json:"sort_at"`
 }
 
 type SessionBrowseGroup struct {
@@ -73,7 +73,7 @@ func (s *Store) SessionGroups(ctx context.Context, scopeID int64, filter Session
 
 // SessionPage uses a seek position so tied timestamps and changing counts do
 // not turn the page number into a different offset. Read one lookahead row.
-func (s *Store) SessionPage(ctx context.Context, scopeID int64, filter SessionBrowseFilter, after SessionBrowsePosition, limit int) ([]sqlitedb.Conversation, int64, bool, error) {
+func (s *Store) SessionPage(ctx context.Context, scopeID int64, filter SessionBrowseFilter, after SessionBrowsePosition, limit int) ([]ConversationSummary, int64, bool, error) {
 	if limit < 1 || limit > 100 {
 		return nil, 0, false, errors.New("invalid session page size")
 	}
@@ -94,7 +94,7 @@ func (s *Store) SessionPage(ctx context.Context, scopeID int64, filter SessionBr
 	if filter.GroupID != nil {
 		groupID = *filter.GroupID
 	}
-	rows, err := q.BrowseSessionPage(ctx, sqlitedb.BrowseSessionPageParams{ScopeID: scopeID, Archived: boolInt(filter.Archived), FilterGroup: boolInt(filter.GroupID != nil), GroupID: groupID, ExcludeID: filter.ExcludeID, SourceID: filter.SourceID, Search: filter.Search, CursorID: after.ID, CursorPinned: after.Pinned, CursorUpdatedAt: after.UpdatedAt, RowLimit: int64(limit + 1)})
+	rows, err := q.BrowseSessionPage(ctx, sqlitedb.BrowseSessionPageParams{ScopeID: scopeID, Archived: boolInt(filter.Archived), FilterGroup: boolInt(filter.GroupID != nil), GroupID: groupID, ExcludeID: filter.ExcludeID, SourceID: filter.SourceID, Search: filter.Search, CursorID: after.ID, CursorPinned: after.Pinned, CursorSortAt: after.SortAt, RowLimit: int64(limit + 1)})
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -102,5 +102,9 @@ func (s *Store) SessionPage(ctx context.Context, scopeID int64, filter SessionBr
 	if hasMore {
 		rows = rows[:limit]
 	}
-	return rows, seq, hasMore, tx.Commit()
+	summaries := make([]ConversationSummary, len(rows))
+	for i, row := range rows {
+		summaries[i] = ConversationSummary{Conversation: row.Conversation, LastTurnSentAt: row.LastTurnSentAt}
+	}
+	return summaries, seq, hasMore, tx.Commit()
 }
