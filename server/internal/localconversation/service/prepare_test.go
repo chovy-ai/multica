@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -634,7 +636,7 @@ func TestClaudeSettingsChangedDuringPrepareAreAppliedOnceReady(t *testing.T) {
 	if err := <-prepared; err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprint(f.adapter(0).sent()); got != "[start set_model apply_flag_settings set_permission_mode]" {
+	if got := fmt.Sprint(f.adapter(0).sent()); got != "[start set_permission_mode set_model apply_flag_settings]" {
 		t.Fatalf("requests = %s", got)
 	}
 }
@@ -757,6 +759,156 @@ func TestClaudeResultDuringASendDoesNotSwallowItsPrompt(t *testing.T) {
 	a.emit(t, `{"type":"result","subtype":"success","is_error":false,"result":"late"}`)
 	if !f.runner.Running() {
 		t.Fatal("a result ended a turn whose prompt had not gone out")
+	}
+}
+
+func settingsPushes(a *fakeAdapter) []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var modes []string
+	for i, typ := range a.requests {
+		if typ == "set_permission_mode" {
+			modes = append(modes, fmt.Sprint(a.fields[i]["mode"]))
+		}
+	}
+	return modes
+}
+
+func TestClaudeSettingsPushOutlivesItsRequestAndStartsWithPermission(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	var cancelled atomic.Bool
+	f.intercept = func(ctx context.Context, typ string) {
+		if ctx.Err() != nil && strings.HasPrefix(typ, "set_") {
+			cancelled.Store(true)
+		}
+	}
+	send(t, f, "t1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	model := "claude-opus-5-5"
+	if err := f.runner.ApplySettings(ctx, store.ConversationSettings{Model: &model, PermissionMode: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Load() {
+		t.Fatal("the push used the caller's cancelled context")
+	}
+	if got := fmt.Sprint(f.adapter(0).sent()); got != "[start send set_permission_mode set_model apply_flag_settings]" {
+		t.Fatalf("requests = %s", got)
+	}
+}
+
+func TestClaudeFailedPushRetiresAnIdleAdapter(t *testing.T) {
+	t.Parallel()
+
+	var failing atomic.Bool
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), func(typ string) (json.RawMessage, error) {
+		if typ == "set_model" && failing.Load() {
+			return nil, errors.New("refused")
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	if err := f.runner.Prepare(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	failing.Store(true)
+	// The stored settings hold and the next process starts with them.
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "adapter retired", func() bool { return isDone(f.adapter(0).Done()) })
+	if _, ok := f.runner.IdleProcess(); ok {
+		t.Fatal("an adapter on unknown settings stayed")
+	}
+	failing.Store(false)
+	send(t, f, "t1")
+	if len(f.adapters) != 2 || f.adapter(1).fields[0]["permission_mode"] != "default" {
+		t.Fatalf("%d adapters", len(f.adapters))
+	}
+}
+
+func TestClaudeFailedPushDuringATurnRestartsAtItsEnd(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), func(typ string) (json.RawMessage, error) {
+		if typ == "set_permission_mode" {
+			return nil, errors.New("refused")
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	send(t, f, "t1")
+	a := f.adapter(0)
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if isDone(a.Done()) || !f.runner.Running() {
+		t.Fatal("the running turn was disturbed")
+	}
+	a.emit(t, `{"type":"result","subtype":"success","is_error":false,"result":""}`)
+	f.turnEvents(t, "t1")
+	eventually(t, "adapter retired at turn end", func() bool { return isDone(a.Done()) })
+	send(t, f, "t2")
+	if len(f.adapters) != 2 || f.adapter(1).fields[0]["permission_mode"] != "default" {
+		t.Fatalf("%d adapters", len(f.adapters))
+	}
+}
+
+// Pushes are serialized and the newest settings land last, whatever order the
+// callers came in, and a prompt never overtakes a push under way.
+func TestClaudeSettingsPushesLandInOrderBeforeThePrompt(t *testing.T) {
+	t.Parallel()
+
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	entered, open := make(chan struct{}, 1), make(chan struct{})
+	var first atomic.Bool
+	first.Store(true)
+	f.intercept = func(_ context.Context, typ string) {
+		if typ == "set_permission_mode" && first.Swap(false) {
+			entered <- struct{}{}
+			<-open
+		}
+	}
+	if err := f.runner.Prepare(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	applied := make(chan error, 2)
+	go func() {
+		applied <- f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "auto"})
+	}()
+	<-entered
+	go func() {
+		applied <- f.runner.ApplySettings(context.Background(), store.ConversationSettings{PermissionMode: "default"})
+	}()
+	eventually(t, "second settings version", func() bool {
+		f.runner.mu.Lock()
+		defer f.runner.mu.Unlock()
+		return f.runner.settingsVersion == 2
+	})
+	sent := make(chan error, 1)
+	go func() {
+		sent <- f.runner.Send(context.Background(), SendRequest{TurnID: "t1", RequestID: "req-t1", MessageID: "msg-t1", Text: "go"})
+	}()
+	eventually(t, "the send to wait", func() bool { return f.runner.Running() })
+	time.Sleep(10 * time.Millisecond)
+	if slices.Contains(f.adapter(0).sent(), "send") {
+		t.Fatal("the prompt overtook a settings push")
+	}
+	close(open)
+	for range 2 {
+		if err := <-applied; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(settingsPushes(f.adapter(0))); got != "[auto default]" {
+		t.Fatalf("pushes = %s", got)
+	}
+	requests := f.adapter(0).sent()
+	if requests[len(requests)-1] != "send" {
+		t.Fatalf("requests = %v", requests)
 	}
 }
 

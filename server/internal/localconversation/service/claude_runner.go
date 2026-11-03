@@ -84,7 +84,9 @@ func (r SendRequest) prompt() string {
 
 const (
 	interruptDeadline = 10 * time.Second
-	previewRunes      = 200
+	// settingsPushDeadline bounds one push of settings to the adapter.
+	settingsPushDeadline = 10 * time.Second
+	previewRunes         = 200
 	// sendDeadline bounds a send's preparation and dispatch. It is generous
 	// because a Claude start includes the project's SessionStart hooks.
 	sendDeadline = 5 * time.Minute
@@ -152,6 +154,14 @@ type ClaudeRunner struct {
 	// a start that read older fields can apply them once its Query is live.
 	settingsVersion int64
 	settings        *store.ConversationSettings
+	// adapterVersion is the settingsVersion the running adapter has applied.
+	adapterVersion int64
+	// restartAfterTurn is set when settings could not reach the adapter while a
+	// turn ran on it: the turn keeps what it has, nothing after it does.
+	restartAfterTurn bool
+	// pushMu keeps settings pushes to one at a time, so an older one cannot land
+	// after a newer one. Never taken while holding mu.
+	pushMu sync.Mutex
 }
 
 type claudeTurn struct {
@@ -270,20 +280,16 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 	}
 
 	prepared := trace.Begin(timing.StagePrepareWait)
-	adapter, err := r.awaitReady(ctx, turn, trace)
+	adapter, err := r.awaitDispatch(ctx, turn, trace)
 	prepared(err)
 	if err != nil {
 		r.finish(turn, "failed", &turnError{kind: "provider_unavailable", message: err.Error()})
 		return err
 	}
-	if r.stoppedBeforeDispatch(turn) || adapter == nil {
+	if adapter == nil {
 		return nil
 	}
 	content := []map[string]any{{"type": "text", "text": req.prompt()}}
-	r.mu.Lock()
-	turn.inputSent = true
-	r.prompted = true
-	r.mu.Unlock()
 	queued := trace.Begin(timing.StageProviderInputQueued)
 	_, err = adapter.Request(ctx, "send", map[string]any{"request_id": req.RequestID, "content": content})
 	queued(err)
@@ -306,6 +312,31 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 		return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
 	}
 	return nil
+}
+
+// awaitDispatch returns the adapter the prompt goes to, with the turn marked as
+// sent; nil when the turn was stopped or ended. A prompt must not run under settings
+// the user already replaced, so any push waits to finish first, and one that failed
+// has retired the adapter, which the next round replaces.
+func (r *ClaudeRunner) awaitDispatch(ctx context.Context, turn *claudeTurn, trace *timing.Trace) (ClaudeAdapter, error) {
+	for {
+		adapter, err := r.awaitReady(ctx, turn, trace)
+		if err != nil {
+			return nil, err
+		}
+		if r.stoppedBeforeDispatch(turn) || adapter == nil {
+			return nil, nil
+		}
+		_ = r.syncSettings(adapter)
+		r.mu.Lock()
+		if r.turn == turn && !turn.cancelRequested && r.adapter == adapter && r.adapterVersion == r.settingsVersion {
+			turn.inputSent = true
+			r.prompted = true
+			r.mu.Unlock()
+			return adapter, nil
+		}
+		r.mu.Unlock()
+	}
 }
 
 // awaitReady returns the adapter once it is usable, starting or joining the one
@@ -590,7 +621,7 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context, trace *timing.Trace) e
 		return err
 	}
 	markAdapterStart(trace, starting, started)
-	return r.install(ctx, adapter, norm, release, version)
+	return r.install(adapter, norm, release, version)
 }
 
 // adoptSpare binds a parked process to this conversation: claim, then MCP, and
@@ -653,7 +684,7 @@ func (r *ClaudeRunner) adoptSpare(ctx context.Context, spare *parkedSpare, trace
 	}
 	norm := claude.NewNormalizer(r.contextName)
 	spare.claudeFrames.adopt(func(out claude.Output) { r.handle(norm, out) })
-	if err := r.install(ctx, spare.adapter, norm, release, version); err != nil {
+	if err := r.install(spare.adapter, norm, release, version); err != nil {
 		return err
 	}
 	trace.SetPrepare(timing.PrepareSpare, "")
@@ -674,7 +705,7 @@ func claimRejection(err error) string {
 
 // install makes a started adapter the runner's, unless Close came first, and
 // brings it up to date with settings that changed while it was starting.
-func (r *ClaudeRunner) install(ctx context.Context, adapter ClaudeAdapter, norm *claude.Normalizer, release func(), version int64) error {
+func (r *ClaudeRunner) install(adapter ClaudeAdapter, norm *claude.Normalizer, release func(), version int64) error {
 	r.mu.Lock()
 	if r.gate.closed {
 		r.mu.Unlock()
@@ -690,19 +721,12 @@ func (r *ClaudeRunner) install(ctx context.Context, adapter ClaudeAdapter, norm 
 		return errQueryEnded
 	}
 	r.adapter, r.norm, r.releaseContext = adapter, norm, release
-	r.prompted = false
-	stale, latest := r.settingsVersion != version, r.settings
+	r.prompted, r.restartAfterTurn, r.adapterVersion = false, false, version
 	r.mu.Unlock()
 	go r.watch(adapter)
-	if stale && latest != nil {
-		// A prompt must not run under settings the user already replaced, such
-		// as a permission downgrade, so failing here fails the start.
-		if err := r.pushSettings(ctx, adapter, *latest); err != nil {
-			r.retireAdapter(norm)
-			return err
-		}
-	}
-	return nil
+	// A prompt must not run under settings the user already replaced, such as a
+	// permission downgrade, so failing here fails the start.
+	return r.syncSettings(adapter)
 }
 
 // watch fails the running turn when the adapter process goes away.
@@ -847,21 +871,31 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 // runs on the adapter's reader, so closing happens in the background.
 func (r *ClaudeRunner) retireAdapter(norm *claude.Normalizer) {
 	r.mu.Lock()
+	closeRetired := r.detachAdapterLocked(norm)
+	r.mu.Unlock()
+	if closeRetired != nil {
+		closeRetired()
+	}
+}
+
+// detachAdapterLocked takes norm's adapter off the runner and returns what closes
+// it in the background, or nil if it is no longer the runner's; r.mu is held.
+func (r *ClaudeRunner) detachAdapterLocked(norm *claude.Normalizer) func() {
 	if r.adapter == nil || r.norm != norm {
-		r.mu.Unlock()
-		return
+		return nil
 	}
 	adapter, release := r.adapter, r.releaseContext
 	r.adapter, r.releaseContext = nil, nil
-	r.mu.Unlock()
-	go func() {
-		if release != nil {
-			release()
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
-		defer cancel()
-		_ = adapter.Close(ctx)
-	}()
+	return func() {
+		go func() {
+			if release != nil {
+				release()
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+			defer cancel()
+			_ = adapter.Close(ctx)
+		}()
+	}
 }
 
 func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
@@ -900,7 +934,16 @@ func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnErro
 	r.turn = nil
 	r.gate.idleSince = r.now()
 	norm := r.norm
+	// Off the runner before anyone can see the turn ended, so the next send cannot
+	// pick up an adapter on old settings.
+	var closeRetired func()
+	if r.restartAfterTurn {
+		closeRetired = r.detachAdapterLocked(norm)
+	}
 	r.mu.Unlock()
+	if closeRetired != nil {
+		closeRetired()
+	}
 	if !turn.unlimited {
 		defer r.limiter.Release()
 	}
@@ -940,9 +983,11 @@ func (r *ClaudeRunner) rememberSession(id string) {
 	}
 }
 
-// ApplySettings changes the provider settings. A live adapter is updated in
-// place; later adapter starts use the new values.
-func (r *ClaudeRunner) ApplySettings(ctx context.Context, st store.ConversationSettings) error {
+// ApplySettings changes the provider settings. A live adapter is updated in place;
+// later adapter starts use the new values. The settings are stored by now, so a push
+// that fails is no error for the caller: the adapter goes away instead of staying on
+// the old ones, and the next start uses them.
+func (r *ClaudeRunner) ApplySettings(_ context.Context, st store.ConversationSettings) error {
 	r.mu.Lock()
 	fields := map[string]any{}
 	for k, v := range r.session.Fields {
@@ -962,13 +1007,66 @@ func (r *ClaudeRunner) ApplySettings(ctx context.Context, st store.ConversationS
 	r.settings = &st
 	adapter := r.adapter
 	r.mu.Unlock()
-	if adapter == nil {
-		return nil
+	if adapter != nil {
+		_ = r.syncSettings(adapter)
 	}
-	return r.pushSettings(ctx, adapter, st)
+	return nil
 }
 
+// syncSettings brings adapter up to the newest settings. A push does not depend on
+// the context of whoever asked, since stopping half way would leave the adapter on
+// settings nobody chose. A failure leaves it on unknown ones, so it is retired.
+func (r *ClaudeRunner) syncSettings(adapter ClaudeAdapter) error {
+	r.pushMu.Lock()
+	defer r.pushMu.Unlock()
+	for {
+		r.mu.Lock()
+		if r.adapter != adapter || r.adapterVersion == r.settingsVersion {
+			r.mu.Unlock()
+			return nil
+		}
+		version, st := r.settingsVersion, *r.settings
+		r.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), settingsPushDeadline)
+		err := r.pushSettings(ctx, adapter, st)
+		cancel()
+		if err != nil {
+			r.settingsNotApplied(adapter)
+			return err
+		}
+		r.mu.Lock()
+		if r.adapter == adapter {
+			r.adapterVersion = version
+		}
+		r.mu.Unlock()
+	}
+}
+
+// settingsNotApplied retires an adapter that could not take new settings, or marks
+// it for restart when a turn is running on it. A turn whose prompt has not gone out
+// is not running on it yet: that send starts a new adapter.
+func (r *ClaudeRunner) settingsNotApplied(adapter ClaudeAdapter) {
+	r.mu.Lock()
+	if r.adapter != adapter {
+		r.mu.Unlock()
+		return
+	}
+	if r.turn != nil && r.turn.inputSent {
+		r.restartAfterTurn = true
+		r.mu.Unlock()
+		return
+	}
+	norm := r.norm
+	r.mu.Unlock()
+	r.retireAdapter(norm)
+}
+
+// pushSettings sends permission first: it is the setting that must not stay behind
+// if a later request fails.
 func (r *ClaudeRunner) pushSettings(ctx context.Context, adapter ClaudeAdapter, st store.ConversationSettings) error {
+	if _, err := adapter.Request(ctx, "set_permission_mode", map[string]any{"mode": st.PermissionMode}); err != nil {
+		return err
+	}
 	var model any
 	if st.Model != nil {
 		model = *st.Model
@@ -980,10 +1078,7 @@ func (r *ClaudeRunner) pushSettings(ctx context.Context, adapter ClaudeAdapter, 
 	if st.ReasoningEffort != nil {
 		effort = *st.ReasoningEffort
 	}
-	if _, err := adapter.Request(ctx, "apply_flag_settings", map[string]any{"settings": map[string]any{"effortLevel": effort}}); err != nil {
-		return err
-	}
-	_, err := adapter.Request(ctx, "set_permission_mode", map[string]any{"mode": st.PermissionMode})
+	_, err := adapter.Request(ctx, "apply_flag_settings", map[string]any{"settings": map[string]any{"effortLevel": effort}})
 	return err
 }
 

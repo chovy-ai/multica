@@ -263,11 +263,11 @@ func TestServiceUpdateSettingsPersistsAndAppliesToTheLiveAdapter(t *testing.T) {
 	if err := f.svc.UpdateSettings(ctx, f.scopeID, "conv-1", SettingsUpdate{ClearModel: true, PermissionMode: &auto}); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.sent(); fmt.Sprint(got) != "[start send set_model apply_flag_settings set_permission_mode]" {
+	if got := a.sent(); fmt.Sprint(got) != "[start send set_permission_mode set_model apply_flag_settings]" {
 		t.Fatalf("adapter requests = %v", got)
 	}
-	if a.fields[2]["model"] != nil || a.fields[4]["mode"] != "auto" {
-		t.Fatalf("applied fields = %v / %v", a.fields[2], a.fields[4])
+	if a.fields[3]["model"] != nil || a.fields[2]["mode"] != "auto" {
+		t.Fatalf("applied fields = %v / %v", a.fields[3], a.fields[2])
 	}
 	conv, _ := f.svc.Store().Conversation(ctx, "conv-1")
 	if conv.Model.Valid || conv.PermissionMode != "auto" {
