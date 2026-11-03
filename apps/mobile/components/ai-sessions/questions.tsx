@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "expo-router";
 import type { LocalV2Snapshot } from "@multica/core/local-conversation/v2";
 import { Text } from "@/components/ui/text";
 import { TextField } from "@/components/ui/text-field";
@@ -12,6 +14,7 @@ export function SessionQuestions({ interaction, disabled, onAnswer }: {
   onAnswer(answer: Record<string, string | string[]>): Promise<void>;
 }) {
   const { t } = useT("aiSessions");
+  const { colors } = useTheme();
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
@@ -24,11 +27,11 @@ export function SessionQuestions({ interaction, disabled, onAnswer }: {
       <Text style={{ lineHeight: undefined }}>{q.question}</Text>
       {q.options.map((option) => {
         const selected = Array.isArray(answers[q.id]) ? answers[q.id].includes(option.label) : answers[q.id] === option.label;
-        return <Button style={{ height: "auto", minHeight: 40 }} hitSlop={2} key={option.label} variant={selected ? "default" : "outline"} disabled={disabled || saving} onPress={() => setAnswers((old) => {
+        return <Pressable key={option.label} accessibilityRole={q.multi_select ? "checkbox" : "radio"} accessibilityState={{ checked: selected, disabled: disabled || saving }} className="flex-row items-center gap-3 rounded-lg px-3 py-3 active:bg-secondary" disabled={disabled || saving} onPress={() => setAnswers((old) => {
           const answer = old[q.id];
           const values = Array.isArray(answer) ? answer : [];
           return { ...old, [q.id]: q.multi_select ? selected ? values.filter((v) => v !== option.label) : [...values, option.label] : option.label };
-        })}><Text style={{ lineHeight: undefined }}>{option.label}</Text></Button>;
+        })}><Text style={{ lineHeight: undefined }} className="flex-1">{option.label}</Text>{selected && <Ionicons name="checkmark" size={20} color={colors.text} />}</Pressable>;
       })}
       {q.allow_free_text && <TextField className="h-auto min-h-10 py-2" accessibilityLabel={q.question} editable={!disabled && !saving} value={typeof answers[q.id] === "string" ? String(answers[q.id]) : ""} onChangeText={(value) => setAnswers((old) => ({ ...old, [q.id]: value }))} />}
     </View>)}

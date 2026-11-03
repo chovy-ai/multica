@@ -23,6 +23,7 @@ import type {
 } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
+import { ScopeButtons } from "@/components/ui/scope-buttons";
 import { Header } from "@/components/ui/header";
 import { HeaderActions } from "@/components/ui/app-header-actions";
 import { StatusIcon } from "@/components/ui/status-icon";
@@ -251,28 +252,7 @@ function ScopeToolbar<S extends string>({
 }) {
   return (
     <View className="flex-row items-center justify-between px-4 pt-2 pb-2">
-      <View className="flex-row items-center gap-1 flex-shrink min-w-0">
-        {scopes.map((s) => {
-          const active = scope === s.value;
-          return (
-            <Button
-              key={s.value}
-              variant="outline"
-              size="sm"
-              onPress={() => onChange(s.value)}
-              className={active ? "bg-accent" : ""}
-              accessibilityState={{ selected: active }}
-            >
-              <Text
-                numberOfLines={1}
-                className={active ? "text-accent-foreground" : "text-muted-foreground"}
-              >
-                {s.label}
-              </Text>
-            </Button>
-          );
-        })}
-      </View>
+      <ScopeButtons options={scopes} value={scope} onChange={onChange} />
       <FilterButton
         onPress={onOpenFilter}
         hasActiveFilters={hasActiveFilters}

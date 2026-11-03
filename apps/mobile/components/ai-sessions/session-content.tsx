@@ -8,6 +8,7 @@ import { Stack, router, useFocusEffect, useLocalSearchParams } from "expo-router
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { localV2SummarySchema } from "@multica/core/local-conversation/v2";
 import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
@@ -41,6 +42,7 @@ import { SessionQuestions } from "@/components/ai-sessions/questions";
 
 export function AISessionContent({ sessionId, embedded = false, active = true, onOpenSource }: { sessionId?: string; embedded?: boolean; active?: boolean; onOpenSource?: () => void }) {
   const { t } = useT("aiSessions");
+  const { t: tIssues } = useT("issues");
   const { workspace, device, session: routeSession, name, turn } = useLocalSearchParams<{ workspace: string; device: string; session: string; name?: string; turn?: string }>();
   const session = sessionId ?? routeSession;
   const [focused, setFocused] = useState(false);
@@ -193,11 +195,20 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
     }
     finally { submitting.current = false; setBusy(false); }
   };
-  const upload = async () => {
+  const upload = async (source: "image" | "file") => {
     if (!client || !connected || busy || pending) return;
-    const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
-    if (result.canceled) return;
-    for (const asset of result.assets) draftUploads.start(client, draftKey, { uri: asset.uri, name: asset.name, mimeType: asset.mimeType });
+    let assets: { uri: string; name: string; mimeType?: string }[];
+    if (source === "image") {
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1 });
+      if (result.canceled) return;
+      assets = result.assets.map((asset) => ({ uri: asset.uri, name: asset.fileName ?? `image-${Date.now()}.jpg`, mimeType: asset.mimeType ?? "image/jpeg" }));
+    } else {
+      const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
+      if (result.canceled) return;
+      assets = result.assets;
+    }
+    requestAnimationFrame(() => input.current?.focus());
+    for (const asset of assets) draftUploads.start(client, draftKey, asset);
   };
   const removeAttachment = (id: string) => {
     setAttachments((files) => files.filter((file) => file.id !== id));
@@ -299,7 +310,8 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
         {!!agents.length && <Text style={{ lineHeight: undefined }} className="px-4 py-1 text-xs text-muted-foreground">{t("references.invoke_hint", { names: agents.map((entry) => entry.name).join(", ") })}</Text>}
         <View className="flex-row items-center px-2 pb-2 pt-1">
           <IconButton name="at" className="h-8 w-8" hitSlop={6} color={references.length ? theme.primary : undefined} accessibilityLabel={t("references.title")} disabled={!connected || busy || !!pending || !snapshot || snapshot.conversation.archived} onPress={() => openReferences()} />
-          <IconButton name="attach-outline" className="h-8 w-8" hitSlop={6} accessibilityLabel={t("attachment")} disabled={!connected || busy || !!pending || snapshot?.conversation.archived} onPress={() => void upload().catch(showError)} />
+          <IconButton name="image-outline" className="h-8 w-8" hitSlop={6} accessibilityLabel={tIssues("composer.upload_image")} disabled={!connected || busy || !!pending || snapshot?.conversation.archived} onPress={() => void upload("image").catch(showError)} />
+          <IconButton name="attach-outline" className="h-8 w-8" hitSlop={6} accessibilityLabel={tIssues("composer.upload_file")} disabled={!connected || busy || !!pending || snapshot?.conversation.archived} onPress={() => void upload("file").catch(showError)} />
           <Button style={{ height: "auto", minHeight: 36 }} variant="ghost" size="sm" hitSlop={{ top: 4, bottom: 4 }} className="flex-1 min-w-0 shrink px-2" disabled={!connected || running || busy || !!pending || !!agents.length} accessibilityLabel={t("settings")} onPress={() => router.push({ pathname: "/[workspace]/ai-sessions/[device]/models", params: { ...params, provider: snapshot?.conversation.provider } })}><Text style={{ lineHeight: undefined }} className="shrink text-xs text-muted-foreground" numberOfLines={1}>{agents.length ? t("agent_settings") : `${snapshot?.conversation.provider === "claude" ? "Claude Code" : "Codex"} · ${snapshot?.settings.model || t("default_model")}`}</Text><Ionicons name="chevron-down" size={12} color={theme.mutedForeground} /></Button>
           <Button
             variant="default"
