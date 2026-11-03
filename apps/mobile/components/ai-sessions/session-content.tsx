@@ -64,7 +64,7 @@ export function AISessionContent({ sessionId, embedded = false, active = true, o
   const hasOlder = history.data ? history.hasNextPage : snapshot?.has_older_turns;
   const [readingHistory, setReadingHistory] = useState(false);
   const running = snapshot?.turns.some((turn) => turn.status === "running") ?? false;
-  useEffect(() => { if (snapshot && connected && focused && active) client?.select(session); }, [client, connected, session, snapshot, focused, active]);
+  useEffect(() => { if (connected && focused && active) client?.select(session); }, [client, connected, session, focused, active]);
   useEffect(() => (client && focused && active ? client.focus(session) : undefined), [client, session, focused, active]);
   useEffect(() => { if (nearBottom.current && rows.length) list.current?.scrollToEnd({ animated: false }); }, [rows]);
   useEffect(() => { if (snapshot) client?.committed(session); }, [client, session, snapshot]);

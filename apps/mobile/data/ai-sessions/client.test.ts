@@ -304,6 +304,32 @@ describe("mobile AI session transport and caches", () => {
       client.close();
     });
 
+    it("reads and subscribes when selected on an open socket with no snapshot yet", async () => {
+      vi.useFakeTimers();
+      const read = vi.fn<typeof fetch>(async () => Response.json({ ...snapshot(), snapshot_seq: 3 }));
+      const { client, qc, sockets, flush } = linkedClient(read);
+      await client.connect(); sockets[0].open();
+      await flush();
+      client.select("session-a");
+      await flush();
+      expect(read).toHaveBeenCalledOnce();
+      expect(sockets[0].subscriptions()).toEqual([{ version: 2, type: "subscribe", conversation_id: "session-a", after_seq: 3, store_generation: "generation-a" }]);
+      expect(qc.getQueryData(aiKeys.snapshot(scope, "session-a"))).toMatchObject({ snapshot_seq: 3 });
+      client.close();
+    });
+
+    it("subscribes a session selected before the socket opens, whatever became of the screen's own read", async () => {
+      vi.useFakeTimers();
+      const read = vi.fn<typeof fetch>(async () => Response.json(snapshot()));
+      const { client, sockets, flush } = linkedClient(read);
+      client.select("session-a");
+      expect(read).not.toHaveBeenCalled();
+      await client.connect(); sockets[0].open();
+      await flush();
+      expect(sockets[0].subscriptions()).toHaveLength(1);
+      client.close();
+    });
+
     it("rereads only when the daemon reports the cached position is unusable", async () => {
       vi.useFakeTimers();
       const read = vi.fn<typeof fetch>(async () => Response.json({ ...snapshot(), store_generation: "generation-b", snapshot_seq: 9 }));

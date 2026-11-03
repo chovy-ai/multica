@@ -269,8 +269,10 @@ export class AISessionClient {
     if (this.selected === id) return;
     if (this.selected && this.selected !== id) { this.rejected.delete(this.selected); this.send({ version: 2, type: "unsubscribe", conversation_id: this.selected }); }
     this.selected = id;
+    if (!this.connected) return;
+    // The screen's own read may have failed, and its query does not retry.
     const snapshot = this.qc.getQueryData<LocalV2Snapshot>(aiKeys.snapshot(this.scope, id));
-    if (snapshot && this.connected) this.subscribe(snapshot);
+    if (snapshot) this.subscribe(snapshot); else void this.resync(id);
   }
   private send(value: unknown) { if (this.socket?.readyState === 1) this.socket.send(JSON.stringify(value)); }
   private subscribe(snapshot: LocalV2Snapshot) {
