@@ -184,7 +184,8 @@ describe("developer log export", () => {
   it("merges the daemon's timing file into one per-turn waterfall in both exports", async () => {
     const f = await fixture();
     try {
-      const at = (ms: number) => new Date(Date.now() - 1000 + ms).toISOString();
+      const base = Date.now() - 1000;
+      const at = (ms: number) => new Date(base + ms).toISOString();
       const daemon = (ms: number, stage: string, extra: object = {}) => JSON.stringify({ version: 2, source: "daemon", at: at(ms), event: "mark", elapsedMs: ms, conversationId: "conversation", requestId: "r", turnId: "turn-r", provider: "claude", origin: "local", clientKind: "desktop", turnKind: "user", stage, ...extra });
       await writeFile(f.daemonTimingPath, [daemon(10, "daemon.request_received"), daemon(90, "provider.first_text"), daemon(95, "ws.first_output_write"), daemon(200, "turn.finished", { outcome: "completed" }), daemon(15, "turn.persist", { conversationId: "foreign", turnId: "foreign", requestId: "foreign" })].join("\n") + "\n");
       f.log.write({ version: 2, source: "gui", at: at(0), stage: "client.send", event: "mark", elapsedMs: 0, conversationId: "conversation", requestId: "r" });
