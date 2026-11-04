@@ -15,7 +15,6 @@ export function projectPublicAgentSessionEngineState(
     editRetry: state.editRetry,
     engineRuntime: state.engineRuntime,
     pendingIntents: state.pendingIntents,
-    planDecisions: state.planDecisions,
     promptQueue: state.promptQueue,
     sessionCommands: state.sessionCommands,
     sessionLifecycle: state.sessionLifecycle,

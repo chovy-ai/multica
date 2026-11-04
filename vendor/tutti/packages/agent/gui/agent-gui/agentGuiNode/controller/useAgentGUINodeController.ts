@@ -301,13 +301,6 @@ export function useAgentGUINodeController({
   const updateComposerSettingsRef = useRef<
     (nextSettings: Partial<AgentSessionComposerSettings>) => void
   >(() => {});
-  // Bridges submitInteractivePrompt (defined earlier) to the client-side plan
-  // decision handlers (defined later); assigned after those callbacks.
-  const planActionsRef = useRef<{
-    implement: () => boolean;
-    feedback: (text: string) => boolean;
-    skip: () => boolean;
-  }>({ implement: () => false, feedback: () => false, skip: () => false });
   const composerCapabilities = useAgentGUIComposerCapabilities({
     activeConversationId,
     activeEngineSession,
@@ -324,7 +317,6 @@ export function useAgentGUINodeController({
     defaultReasoningEffort,
     providerComposerOptions
   } = composerCapabilities;
-  const planImplementationTurnIdRef = useRef<string | null>(null);
   const accountProfilesByUserId = useAccountStore(
     (state) => state.profilesByUserId
   );
@@ -677,8 +669,6 @@ export function useAgentGUINodeController({
     reloadComposerOptionsForTarget,
     normalizedExplicitProviderTargets,
     normalizedProviderTargets,
-    planActionsRef,
-    planImplementationTurnIdRef,
     interactionReadinessSource,
     prefillPromptRequest,
     reportActiveConversationCleared: reportAgentGUIActiveConversationCleared,
@@ -746,7 +736,6 @@ export function useAgentGUINodeController({
     nodeId,
     operationActions,
     persistActiveConversation,
-    planImplementationTurnIdRef,
     providerRailMode,
     providerReadinessGates,
     targetConnectionSource,

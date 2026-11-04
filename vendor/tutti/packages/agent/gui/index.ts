@@ -191,11 +191,6 @@ export type { AgentGUIActivityHostProviderProps } from "./agentActivityHost";
 export { useEngineSelector } from "./shared/engine/useEngineSelector";
 export type { EngineStateStore } from "./shared/engine/useEngineSelector";
 export {
-  dispatchAgentPlanPromptAction,
-  selectAgentPlanPromptTurn
-} from "./shared/agentConversation/agentPlanPromptDispatch";
-export type { AgentPlanPromptAction } from "./shared/agentConversation/agentPlanPromptDispatch";
-export {
   AgentGUIRuntimeProvider,
   resetAgentGUIRuntimeForTests,
   setAgentGUIRuntimeForTests,

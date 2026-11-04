@@ -8,9 +8,6 @@ import type {
 import { normalizeAgentApprovalPurpose } from "../shared/agentConversation/agentApprovalPurpose";
 import {
   selectEngineInteractionResponse,
-  selectPendingPlanFeedbackSubmit,
-  selectPlanDecisionForTurn,
-  selectPlanTurnDismissed,
   selectWorkspaceAgentRootConversationSessions
 } from "@tutti-os/agent-activity-core";
 import type { AgentConversationPromptVM } from "../shared/agentConversation/contracts/agentConversationVM";
@@ -115,7 +112,6 @@ export interface WorkspaceAgentMessageCenterPresentation {
   awaitingPlanImplementationTurnIdBySessionId?: Readonly<
     Record<string, string>
   >;
-  dismissedPlanTurnKeys: Readonly<Record<string, true>>;
   promptStatusByKey: Readonly<
     Record<string, WorkspaceAgentMessageCenterPromptStatus>
   >;
@@ -129,7 +125,6 @@ export function selectWorkspaceAgentMessageCenterPresentation(
     string,
     WorkspaceAgentMessageCenterPromptStatus
   > = {};
-  const dismissedPlanTurnKeys: Record<string, true> = {};
   const awaitingPlanImplementationTurnIdBySessionId: Record<string, string> =
     {};
   const awaitingPlanImplementationSessionIds = new Set(
@@ -161,36 +156,10 @@ export function selectWorkspaceAgentMessageCenterPresentation(
         ] = response.status;
       }
     }
-    const turnId = consumer.latestTurn?.turnId ?? "";
-    if (!turnId) continue;
-    if (selectPlanTurnDismissed(state, sessionId, turnId)) {
-      dismissedPlanTurnKeys[promptStatusKey(sessionId, turnId, turnId)] = true;
-    }
-    const decision = selectPlanDecisionForTurn(state, sessionId, turnId);
-    if (decision) {
-      promptStatusByKey[promptStatusKey(sessionId, turnId, turnId)] =
-        decision.status === "requested" ? "responding" : decision.status;
-      continue;
-    }
-    const submit = selectPendingPlanFeedbackSubmit(
-      state,
-      sessionId,
-      turnId,
-      turnId
-    );
-    if (submit) {
-      promptStatusByKey[promptStatusKey(sessionId, turnId, turnId)] =
-        submit.status === "failed"
-          ? "failed"
-          : submit.status === "uncertain"
-            ? "unknown"
-            : "responding";
-    }
   }
   return {
     consumers,
     awaitingPlanImplementationTurnIdBySessionId,
-    dismissedPlanTurnKeys,
     promptStatusByKey
   };
 }
@@ -204,7 +173,6 @@ export function workspaceAgentMessageCenterPresentationEqual(
       left.awaitingPlanImplementationTurnIdBySessionId ?? {},
       right.awaitingPlanImplementationTurnIdBySessionId ?? {}
     ) &&
-    booleanMapsEqual(left.dismissedPlanTurnKeys, right.dismissedPlanTurnKeys) &&
     promptStatusMapsEqual(left.promptStatusByKey, right.promptStatusByKey) &&
     left.consumers.length === right.consumers.length &&
     left.consumers.every((item, index) => {
@@ -322,7 +290,6 @@ export function selectWorkspaceAgentAttentionItems(
       !presentationAwaitsPlan &&
       !consumerAwaitingPlanImplementation({
         capabilities: consumer.session.capabilities,
-        dismissed: presentation.dismissedPlanTurnKeys[statusKey] === true,
         latestTurn,
         messages
       })

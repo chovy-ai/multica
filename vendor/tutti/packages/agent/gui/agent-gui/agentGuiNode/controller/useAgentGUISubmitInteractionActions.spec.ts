@@ -96,9 +96,6 @@ function createSubmitInput() {
     isRespondingToInteraction: false,
     isSessionMarkedNonResumable: () => false,
     persistActiveConversation: vi.fn(),
-    planActionsRef: {
-      current: { implement: vi.fn(), feedback: vi.fn(), skip: vi.fn() }
-    },
     promptImagesSupported: true,
     sessionEngine,
     setActiveConversationId: vi.fn(),
@@ -181,33 +178,6 @@ describe("conversation stop", () => {
 });
 
 describe("interaction submissions", () => {
-  it.each([
-    ["implement", "implement"],
-    ["feedback", "feedback"],
-    ["skip", "skip"]
-  ] as const)(
-    "returns the plan %s handler admission result",
-    (action, handler) => {
-      const { input } = createSubmitInput();
-      input.planActionsRef.current[handler] = vi.fn(() => false);
-      const { result } = renderHook(() =>
-        useAgentGUISubmitInteractionActions(input)
-      );
-
-      let admitted = true;
-      act(() => {
-        admitted = result.current.submitInteractivePrompt({
-          action,
-          payload: action === "feedback" ? { text: "revise" } : undefined,
-          requestId: "turn-1"
-        });
-      });
-
-      expect(admitted).toBe(false);
-      expect(input.planActionsRef.current[handler]).toHaveBeenCalledOnce();
-    }
-  );
-
   it("routes the explicit answer through the Engine semantic operation", () => {
     const { input, sessionEngine, setDetailError } = createSubmitInput();
     const submitInteractionResponse = vi

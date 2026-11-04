@@ -46,10 +46,6 @@ import {
   validateSendInputResult
 } from "./commandResult.validation.ts";
 import {
-  createInitialPlanDecisionState,
-  planDecisionReducer
-} from "./planDecision.reducer.ts";
-import {
   createInitialSessionCommandsState,
   sessionCommandsReducer
 } from "./sessionCommands.reducer.ts";
@@ -79,7 +75,6 @@ export function createInitialAgentSessionEngineState(): RootAgentSessionEngineSt
     editRetry: createInitialEditRetryState(),
     engineRuntime: createInitialEngineRuntimeState(),
     pendingIntents: createInitialPendingIntentsState(),
-    planDecisions: createInitialPlanDecisionState(),
     promptExecutions: createInitialPromptExecutionState(),
     promptQueue: createInitialPromptQueueState(),
     sessionReconcile: createInitialSessionReconcileState(),
@@ -208,32 +203,7 @@ export function rootEngineReducer(
         )
       : null;
   const engineRuntime = engineRuntimeReducer(state.engineRuntime, intent);
-  const planIntent =
-    intent.type === "plan/decisionRequested" ||
-    intent.type === "plan/feedbackRequested" ||
-    intent.type === "plan/skipped"
-      ? intent
-      : null;
-  const planTurnValid = Boolean(
-    planIntent &&
-    !state.sessionLifecycle.deletedSessionIds[planIntent.agentSessionId] &&
-    state.sessionLifecycle.sessionsById[planIntent.agentSessionId]
-      ?.workspaceId === planIntent.workspaceId &&
-    state.sessionLifecycle.turnsById[
-      canonicalTurnKey(planIntent.agentSessionId, planIntent.turnId)
-    ]?.phase === "settled" &&
-    state.sessionLifecycle.turnsById[
-      canonicalTurnKey(planIntent.agentSessionId, planIntent.turnId)
-    ]?.outcome === "completed" &&
-    state.sessionLifecycle.operationBySessionId[
-      planIntent.agentSessionId.trim()
-    ]?.runtimeAvailability.state !== "blocked"
-  );
-  const submitIntent =
-    intent.type === "submit/requested" ||
-    intent.type === "plan/feedbackRequested"
-      ? intent
-      : null;
+  const submitIntent = intent.type === "submit/requested" ? intent : null;
   const submitId = submitIntent?.clientSubmitId.trim() ?? "";
   const submitSessionId = submitIntent?.agentSessionId.trim() ?? "";
   const submitWorkspaceId = submitIntent?.workspaceId.trim() ?? "";
@@ -241,8 +211,7 @@ export function rootEngineReducer(
     ? state.sessionLifecycle.sessionsById[submitSessionId]
     : undefined;
   const submitSendNowStrategy =
-    submitIntent?.type === "submit/requested" &&
-    submitIntent.routing === "send_now"
+    submitIntent?.routing === "send_now"
       ? resolvePromptSendNowStrategy(
           deriveCanonicalSubmitAvailability(
             state.sessionLifecycle,
@@ -261,8 +230,7 @@ export function rootEngineReducer(
   const submitSessionScopeValid =
     submitSession !== undefined
       ? submitSession.workspaceId === submitWorkspaceId
-      : submitIntent?.type === "submit/requested" &&
-        submitIntent.routing !== "immediate";
+      : submitIntent !== null && submitIntent.routing !== "immediate";
   const submitRequestAccepted = Boolean(
     submitIntent &&
     submitId &&
@@ -270,9 +238,7 @@ export function rootEngineReducer(
     submitWorkspaceId &&
     submitSessionScopeValid &&
     submitIntent.content.length > 0 &&
-    (submitIntent.type !== "submit/requested" ||
-      submitIntent.routing !== "send_now" ||
-      submitSendNowStrategy !== null) &&
+    (submitIntent.routing !== "send_now" || submitSendNowStrategy !== null) &&
     !state.sessionLifecycle.deletedSessionIds[submitSessionId] &&
     !state.pendingIntents.submitsByClientSubmitId[submitId] &&
     !queueRecord?.prompts.some(
@@ -280,11 +246,6 @@ export function rootEngineReducer(
     ) &&
     queueRecord?.inFlight?.promptId !== submitId &&
     queueRecord?.uncertainDelivery?.promptId !== submitId
-  );
-  const feedbackAccepted = Boolean(
-    intent.type === "plan/feedbackRequested" &&
-    planTurnValid &&
-    submitRequestAccepted
   );
   const queuedSendNowTargetTurnId =
     intent.type === "queue/sendNowRequested"
@@ -323,10 +284,6 @@ export function rootEngineReducer(
       : "";
   const expiringSubmit =
     state.pendingIntents.submitsByClientSubmitId[expiringSubmitId];
-  const planDecisions = planDecisionReducer(state.planDecisions, intent, {
-    feedbackAccepted,
-    planTurnValid
-  });
   const sessionCommands = sessionCommandsReducer(
     state.sessionCommands,
     intent,
@@ -369,7 +326,6 @@ export function rootEngineReducer(
     deletedSessionIds: sessionLifecycle.state.deletedSessionIds,
     interactionResultValidation,
     lifecycle: sessionLifecycle.state,
-    planFeedbackAccepted: feedbackAccepted,
     sendResultValidation,
     submitRequestAccepted,
     sendNowStrategy,
@@ -398,7 +354,6 @@ export function rootEngineReducer(
         intent.agentSessionId,
         intent.clientSubmitId
       ),
-    planFeedbackAccepted: feedbackAccepted,
     submitRequestAccepted,
     submitDeliveryIsQueuePending: Boolean(
       expiringSubmit &&
@@ -445,7 +400,6 @@ export function rootEngineReducer(
     editRetry.state === state.editRetry &&
     engineRuntime.state === state.engineRuntime &&
     pendingIntents.state === state.pendingIntents &&
-    planDecisions.state === state.planDecisions &&
     promptExecutions.state === state.promptExecutions &&
     promptQueue.state === state.promptQueue &&
     sessionReconcile.state === state.sessionReconcile &&
@@ -460,7 +414,6 @@ export function rootEngineReducer(
         editRetry: editRetry.state,
         engineRuntime: engineRuntime.state,
         pendingIntents: pendingIntents.state,
-        planDecisions: planDecisions.state,
         promptExecutions: promptExecutions.state,
         promptQueue: promptQueue.state,
         sessionReconcile: sessionReconcile.state,
@@ -484,7 +437,6 @@ export function rootEngineReducer(
       ...editRetry.commands,
       ...engineRuntime.commands,
       ...pendingIntents.commands,
-      ...planDecisions.commands,
       ...promptExecutions.commands,
       ...sessionReconcile.commands,
       ...sessionMutations.commands,

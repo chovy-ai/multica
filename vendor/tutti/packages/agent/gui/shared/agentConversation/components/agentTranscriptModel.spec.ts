@@ -138,7 +138,7 @@ function row(
 }
 
 function turnlessRow(): AgentTranscriptRowVM {
-  return { ...row("turnless"), turnId: null };
+  return { ...row("turnless"), turnId: null } as AgentTranscriptRowVM;
 }
 
 function userRow(turnId: string): AgentTranscriptRowVM {

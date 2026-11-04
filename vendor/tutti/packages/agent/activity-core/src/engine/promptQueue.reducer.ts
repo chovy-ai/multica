@@ -68,7 +68,6 @@ export { createInitialPromptQueueState } from "./promptQueue.initialState.ts";
 export interface PromptQueueReducerContext {
   lifecycle: CanonicalSessionLifecycleView;
   deletedSessionIds: Readonly<Record<string, true>>;
-  planFeedbackAccepted?: boolean;
   submitRequestAccepted?: boolean;
   cancelResultValidation?: CancelResultValidation | null;
   interactionResultValidation?: ScopedSessionResultValidation | null;
@@ -136,14 +135,6 @@ function reduceQueueOwnedState(
         );
       }
       return enqueueSubmit(state, intent, context.lifecycle);
-    case "plan/feedbackRequested":
-      return context.planFeedbackAccepted === true
-        ? enqueueSubmit(
-            state,
-            { ...intent, type: "submit/requested" },
-            context.lifecycle
-          )
-        : unchanged(state);
     case "submit/canceled":
       return removePrompt(
         state,

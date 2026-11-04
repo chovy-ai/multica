@@ -75,7 +75,6 @@ export function pendingIntentsReducer(
     submitCancellationAccepted?: boolean;
     sendResultValidation?: SendInputResultValidation | null;
     settingsResultValidation?: ScopedSessionResultValidation | null;
-    planFeedbackAccepted?: boolean;
     submitRequestAccepted?: boolean;
     submitDeliveryIsQueuePending?: boolean;
   } = {
@@ -107,21 +106,6 @@ export function pendingIntentsReducer(
         return unchanged(state);
       }
       return requestSubmit(state, intent);
-    case "plan/feedbackRequested":
-      return context.planFeedbackAccepted === true
-        ? requestSubmit(
-            state,
-            {
-              ...intent,
-              type: "submit/requested"
-            },
-            {
-              kind: "plan-feedback",
-              requestId: intent.requestId,
-              turnId: intent.turnId
-            }
-          )
-        : unchanged(state);
     case "submit/dismissed":
       return removeSubmit(state, intent.clientSubmitId);
     case "submit/canceled":

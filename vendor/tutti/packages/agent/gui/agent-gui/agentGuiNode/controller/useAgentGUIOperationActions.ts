@@ -14,7 +14,6 @@ import { useAgentGUIConversationDeletion } from "./useAgentGUIConversationDeleti
 import { useAgentGUIConversationHome } from "./useAgentGUIConversationHome";
 import { useAgentGUIConversationMetadataActions } from "./useAgentGUIConversationMetadataActions";
 import { useAgentGUINewConversationActivation } from "./useAgentGUINewConversationActivation";
-import { useAgentGUIPlanActions } from "./useAgentGUIPlanActions";
 import { useAgentGUIQueueActions } from "./useAgentGUIQueueActions";
 import { useAgentGUISubmitInteractionActions } from "./useAgentGUISubmitInteractionActions";
 
@@ -35,7 +34,6 @@ type UseAgentGUIOperationActionsInput = Omit<
     "createConversation"
   > &
   Parameters<typeof useAgentGUIComposerSettingsActions>[0] &
-  Parameters<typeof useAgentGUIPlanActions>[0] &
   Parameters<typeof useAgentGUIConversationDeletion>[0] &
   Parameters<typeof useAgentGUIQueueActions>[0] &
   Parameters<typeof useAgentGUIConversationMetadataActions>[0] &
@@ -129,8 +127,6 @@ export function useAgentGUIOperationActions(
     startConversation
   });
   const settingsActions = useAgentGUIComposerSettingsActions(input);
-
-  useAgentGUIPlanActions(input);
 
   const deletionActions = useAgentGUIConversationDeletion(input);
   const queueActions = useAgentGUIQueueActions(input);

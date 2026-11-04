@@ -303,54 +303,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
   );
 });
 
-test("projects plan decisions with exact Engine provenance", async () => {
-  let receivedOptions: unknown;
-  let receivedSignal: AbortSignal | undefined;
-  const result = await executeAndWait(
-    {
-      ...createTestEngineCommandPort(async () => {
-        throw new Error("unexpected generic execute");
-      }),
-      async executePlanDecision(_command, options) {
-        assert.ok(options);
-        receivedOptions = options;
-        receivedSignal = options.signal;
-        return {
-          operation: {
-            agentSessionId: "session-1",
-            idempotencyKey: "decision-1",
-            operationId: "operation-1",
-            requestId: "request-1",
-            status: "completed",
-            turnId: "turn-1",
-            workspaceId: "workspace-1"
-          }
-        };
-      }
-    },
-    {
-      action: "implement",
-      agentSessionId: "session-1",
-      commandId: "plan-1",
-      correlationId: "plan-1",
-      idempotencyKey: "decision-1",
-      promptKind: "plan-implementation",
-      requestId: "request-1",
-      turnId: "turn-1",
-      type: "plan/submitDecision",
-      workspaceId: "workspace-1"
-    }
-  );
-
-  assert.equal(result.outcome, "succeeded");
-  assert.deepEqual(receivedOptions, {
-    commandId: "plan-1",
-    origin: "engine",
-    signal: receivedSignal
-  });
-  assert.ok(receivedSignal instanceof AbortSignal);
-});
-
 test("rejects prompt settings preconditions that bypass the Engine state machine", async () => {
   let executed = false;
   const result = await executeAndWait(

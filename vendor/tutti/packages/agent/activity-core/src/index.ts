@@ -252,19 +252,6 @@ export type {
   SessionLifecycleState,
   TurnCancelCommand
 } from "./engine/sessionLifecycle.types.ts";
-export type {
-  PlanDecisionOperation,
-  PlanDecisionIntent,
-  PlanDecisionRecord,
-  PlanDecisionState,
-  PlanDecisionStatus,
-  PlanSubmitDecisionCommand,
-  PlanSubmitDecisionResult
-} from "./engine/planDecision.types.ts";
-export {
-  selectPlanDecisionForTurn,
-  selectPlanTurnDismissed
-} from "./engine/planDecision.selectors.ts";
 export { selectEngineAvailableCommands } from "./engine/sessionCommands.selectors.ts";
 export type {
   AgentSessionAvailableCommand,
@@ -298,7 +285,6 @@ export type {
   PendingIntentsIntent,
   PendingIntentsState,
   PendingSubmitIntentRecord,
-  PendingSubmitSource,
   PendingSubmitStatus,
   SessionActivateCommand,
   SessionActivationDismissedIntent,
@@ -317,7 +303,6 @@ export {
   pendingSubmitRecordListsEqual,
   selectPendingActivationByRequestId,
   selectPendingActivations,
-  selectPendingPlanFeedbackSubmit,
   sessionActivationPresentationMapsEqual,
   selectLatestActivationForSession,
   selectLatestPendingSubmitForSession,

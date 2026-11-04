@@ -115,7 +115,6 @@ export type EngineIntent =
   | EngineProbeRequestedIntent
   | WorkspaceReconcileRequestedIntent
   | PendingIntentsIntent
-  | PlanDecisionIntent
   | PromptQueueIntent
   | SessionReconcileIntent
   | SessionMutationsIntent
@@ -186,7 +185,6 @@ export type EngineExternalCommand =
   | EngineProbeCommand
   | EngineReconcileWorkspaceCommand
   | InteractionRespondCommand
-  | PlanSubmitDecisionCommand
   | PromptQueueSendCommand
   | SessionActivateCommand
   | SessionUpdateSettingsCommand
@@ -209,7 +207,7 @@ type AgentSessionEffectCommand =
 
 export type EngineExtensionCommand = Exclude<
   EngineExternalCommand,
-  AgentSessionEffectCommand | PlanSubmitDecisionCommand
+  AgentSessionEffectCommand
 >;
 
 export type EngineCommand = EngineExternalCommand | EngineInternalCommand;
@@ -255,7 +253,6 @@ export interface AgentSessionEngineStateBase {
   editRetry: EditRetryState;
   engineRuntime: EngineRuntimeState;
   pendingIntents: PendingIntentsState;
-  planDecisions: PlanDecisionState;
   promptQueue: PromptQueueState;
   sessionReconcile: SessionReconcileState;
   sessionMutations: SessionMutationsState;
@@ -407,10 +404,6 @@ export interface EngineTypedCommandPort {
     options?: EngineEffectOptions
   ): Promise<unknown>;
   observe?(command: EngineExternalCommand): void;
-  executePlanDecision?(
-    command: PlanSubmitDecisionCommand,
-    options?: EngineEffectOptions
-  ): Promise<PlanSubmitDecisionResult>;
   kind: "typed";
 }
 
@@ -570,12 +563,6 @@ import type {
   AttentionReadIntent,
   AttentionReadState
 } from "./attentionReadState.types.ts";
-import type {
-  PlanDecisionIntent,
-  PlanDecisionState,
-  PlanSubmitDecisionCommand,
-  PlanSubmitDecisionResult
-} from "./planDecision.types.ts";
 import type {
   SessionCommandsIntent,
   SessionCommandsState

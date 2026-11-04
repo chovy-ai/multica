@@ -29,11 +29,6 @@ import { resolveAgentComposerDraftScopeKey } from "../model/agentComposerDraftSc
 import type { AgentGUIConversationSummary } from "../model/agentGuiConversationModel";
 import type { AgentComposerSubmitOptions } from "../composer/AgentComposer.types";
 import {
-  PLAN_IMPLEMENTATION_ACTION_FEEDBACK,
-  PLAN_IMPLEMENTATION_ACTION_IMPLEMENT,
-  PLAN_IMPLEMENTATION_ACTION_SKIP
-} from "../../../shared/agentConversation/planImplementationPresentation";
-import {
   clearSubmittedDraftIfUnchanged,
   deleteUnacceptedSubmittedDraftSnapshot,
   toRuntimeSendContent
@@ -103,11 +98,6 @@ interface UseAgentGUISubmitInteractionActionsInput {
   interactionReadinessSource?: AgentGUIInteractionReadinessSource | null;
   isSessionMarkedNonResumable(agentSessionId: string): boolean;
   persistActiveConversation(agentSessionId: string | null): void;
-  planActionsRef: RefObject<{
-    implement(): boolean;
-    feedback(value: string): boolean;
-    skip(): boolean;
-  }>;
   promptImagesSupported: boolean;
   sessionEngine: AgentSessionEngine;
   setActiveConversationId: Dispatch<SetStateAction<string | null>>;
@@ -154,7 +144,6 @@ export function useAgentGUISubmitInteractionActions(
     interactionReadinessSource,
     isSessionMarkedNonResumable,
     persistActiveConversation,
-    planActionsRef,
     promptImagesSupported,
     sessionEngine,
     setActiveConversationId,
@@ -415,19 +404,6 @@ export function useAgentGUISubmitInteractionActions(
 
   const submitInteractivePrompt = useCallback(
     (input: AgentInteractionResponseInput): boolean => {
-      // Plan-implementation actions are client-orchestrated; route them to the
-      // plan decision handlers instead of submitInteractive.
-      if (input.action === PLAN_IMPLEMENTATION_ACTION_IMPLEMENT) {
-        return planActionsRef.current.implement();
-      }
-      if (input.action === PLAN_IMPLEMENTATION_ACTION_FEEDBACK) {
-        return planActionsRef.current.feedback(
-          typeof input.payload?.text === "string" ? input.payload.text : ""
-        );
-      }
-      if (input.action === PLAN_IMPLEMENTATION_ACTION_SKIP) {
-        return planActionsRef.current.skip();
-      }
       const normalizedOptionId = input.optionId?.trim() ?? "";
       const target = resolveAgentGUIInteractionReadinessIdentity({
         agentSessionId: input.agentSessionId,

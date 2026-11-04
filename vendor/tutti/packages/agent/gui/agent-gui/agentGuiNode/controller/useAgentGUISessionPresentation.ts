@@ -1,7 +1,5 @@
 import {
   isPendingActivationViable,
-  selectPlanDecisionForTurn,
-  selectPlanTurnDismissed,
   type AgentActivityDisplayStatus,
   type AgentActivityMessage,
   type AgentActivityTurn,
@@ -165,7 +163,6 @@ interface UseAgentGUISessionPresentationInput {
   isSubmitting: boolean;
   lastRenderStateDiagnosticKeyRef: CurrentValue<string | null>;
   pendingApproval: AgentApprovalItemVM | null;
-  planImplementationTurnIdRef: CurrentValue<string | null>;
   providerReadinessGate:
     | import("../../../types").AgentGUIProviderReadinessGate
     | null;
@@ -186,50 +183,9 @@ interface UseAgentGUISessionPresentationInput {
 export function useAgentGUISessionPresentation(
   input: UseAgentGUISessionPresentationInput
 ) {
-  const latestTimelinePlanTurnId = latestPlanTurnId(input.activeTimelineItems);
-  const planImplementationTurnId =
-    input.activeConversationId !== null &&
-    input.composerSupport.planImplementation &&
-    input.composerSupport.plan &&
-    input.activeEngineLatestTurn?.phase === "settled" &&
-    input.activeEngineLatestTurn.outcome === "completed" &&
-    input.activeEngineLatestTurn.turnId === latestTimelinePlanTurnId
-      ? latestTimelinePlanTurnId
-      : null;
-  const activePlanDecision = useEngineSelector(input.sessionEngine, (state) =>
-    selectPlanDecisionForTurn(
-      state,
-      input.activeConversationId,
-      planImplementationTurnId
-    )
-  );
-  const activePlanTurnDismissed = useEngineSelector(
-    input.sessionEngine,
-    (state) =>
-      selectPlanTurnDismissed(
-        state,
-        input.activeConversationId,
-        planImplementationTurnId
-      )
-  );
-  input.planImplementationTurnIdRef.current = planImplementationTurnId;
-  const planImplementationPrompt =
-    planImplementationTurnId !== null &&
-    input.activeConversationId !== null &&
-    !activePlanTurnDismissed
-      ? planImplementationPromptFromPlanTurn(
-          planImplementationTurnId,
-          input.activeConversation?.title ?? ""
-        )
-      : null;
-  const unresolvedInteractivePrompt =
-    input.serverInteractivePrompt ?? planImplementationPrompt;
-  const interactiveReadinessPrompt =
-    unresolvedInteractivePrompt?.kind === "plan-implementation"
-      ? null
-      : unresolvedInteractivePrompt;
+  const unresolvedInteractivePrompt = input.serverInteractivePrompt;
   const interactiveReadiness = useExactInteractionReadiness({
-    prompt: interactiveReadinessPrompt,
+    prompt: unresolvedInteractivePrompt,
     source: input.interactionReadinessSource,
     workspaceId: input.workspaceId
   });
@@ -259,9 +215,7 @@ export function useAgentGUISessionPresentation(
     activeInteractionReadiness.ownsInteraction;
   const interactivePromptResponsePending =
     input.isRespondingToInteraction ||
-    interactiveReadiness.block !== null ||
-    activePlanDecision?.status === "requested" ||
-    activePlanDecision?.status === "unknown";
+    interactiveReadiness.block !== null;
   const approvalResponsePending =
     input.isRespondingToInteraction || approvalReadiness.block !== null;
 

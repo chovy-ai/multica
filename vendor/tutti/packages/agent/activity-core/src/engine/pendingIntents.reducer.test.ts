@@ -9,7 +9,6 @@ import {
   validateScopedSessionResult,
   validateSendInputResult
 } from "./commandResult.validation.ts";
-import { selectPendingPlanFeedbackSubmit } from "./pendingIntents.selectors.ts";
 
 test("submit intent declares its confirmation deadline", () => {
   const result = reduce(createInitialPendingIntentsState(), submit());
@@ -24,56 +23,6 @@ test("submit intent declares its confirmation deadline", () => {
       type: "engine/scheduleExpiry"
     }
   ]);
-});
-
-test("plan feedback records exact source identity independently from its submit id", () => {
-  const result = pendingIntentsReducer(
-    createInitialPendingIntentsState(),
-    {
-      type: "plan/feedbackRequested",
-      agentSessionId: "session-1",
-      clientSubmitId: "550e8400-e29b-41d4-a716-446655440000",
-      content: [{ type: "text", text: "Revise the plan" }],
-      expiresAtUnixMs: 60_000,
-      requestedAtUnixMs: 1,
-      requestId: "request-plan-1",
-      turnId: "turn-plan-1",
-      workspaceId: "workspace-1"
-    },
-    {
-      deletedSessionIds: {},
-      turnsById: {},
-      planFeedbackAccepted: true
-    }
-  );
-  const record =
-    result.state.submitsByClientSubmitId[
-      "550e8400-e29b-41d4-a716-446655440000"
-    ];
-
-  assert.deepEqual(record?.source, {
-    kind: "plan-feedback",
-    requestId: "request-plan-1",
-    turnId: "turn-plan-1"
-  });
-  assert.equal(
-    selectPendingPlanFeedbackSubmit(
-      { pendingIntents: result.state },
-      "session-1",
-      "turn-plan-1",
-      "request-plan-1"
-    ),
-    record
-  );
-  assert.equal(
-    selectPendingPlanFeedbackSubmit(
-      { pendingIntents: result.state },
-      "session-1",
-      "turn-plan-1",
-      "request-other"
-    ),
-    null
-  );
 });
 
 test("command timeout is uncertain until the same client submit id is durable", () => {

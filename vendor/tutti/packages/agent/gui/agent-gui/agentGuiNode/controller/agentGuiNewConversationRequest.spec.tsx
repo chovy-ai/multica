@@ -444,13 +444,6 @@ function renderNewConversationScenario(input: {
       isRespondingToInteraction: false,
       isSessionMarkedNonResumable: () => false,
       persistActiveConversation: vi.fn(),
-      planActionsRef: {
-        current: {
-          feedback: vi.fn(),
-          implement: vi.fn(),
-          skip: vi.fn()
-        }
-      },
       promptImagesSupported: true,
       sessionEngine,
       setActiveConversationId: vi.fn(),

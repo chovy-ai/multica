@@ -6,8 +6,6 @@ import {
   type EngineEffectOptions,
   type EngineExternalCommand,
   type EngineTypedCommandPort,
-  type PlanSubmitDecisionCommand,
-  type PlanSubmitDecisionResult
 } from "@tutti-os/agent-activity-core";
 
 export interface TestEngineCommandHandler {
@@ -15,10 +13,6 @@ export interface TestEngineCommandHandler {
     command: EngineExternalCommand,
     options?: EngineEffectOptions
   ): Promise<unknown>;
-  executePlanDecision?(
-    command: PlanSubmitDecisionCommand,
-    options?: EngineEffectOptions
-  ): Promise<PlanSubmitDecisionResult>;
 }
 
 export function createTestAgentSessionEngine(
@@ -89,14 +83,6 @@ export function createTestEngineCommandPort(
     effects,
     execute(command, options) {
       return commandHandler.execute(command, options);
-    },
-    executePlanDecision(command, options) {
-      return commandHandler.executePlanDecision
-        ? commandHandler.executePlanDecision(command, options)
-        : (commandHandler.execute(
-            command,
-            options
-          ) as Promise<PlanSubmitDecisionResult>);
     },
     kind: "typed",
     observe(command) {

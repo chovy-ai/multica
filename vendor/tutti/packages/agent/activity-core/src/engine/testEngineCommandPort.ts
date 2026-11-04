@@ -4,7 +4,6 @@ import type {
   EngineExternalCommand,
   EngineTypedCommandPort
 } from "./types.ts";
-import type { PlanSubmitDecisionResult } from "./planDecision.types.ts";
 
 export type TestEngineCommandExecutor = (
   command: EngineExternalCommand,
@@ -61,9 +60,6 @@ export function createTestEngineCommandPort(
     effects,
     execute(command, options) {
       return execute(command, options);
-    },
-    executePlanDecision(command, options) {
-      return execute(command, options) as Promise<PlanSubmitDecisionResult>;
     },
     kind: "typed",
     observe(command) {

@@ -187,19 +187,6 @@ function executeCommand(
       )
     );
   }
-  if (command.type === "plan/submitDecision") {
-    return commandPort.executePlanDecision
-      ? commandPort.executePlanDecision(command, {
-          commandId: command.commandId,
-          origin: "engine",
-          signal
-        })
-      : Promise.reject(
-          new Error(
-            "EngineTypedCommandPort.executePlanDecision is not configured"
-          )
-        );
-  }
   const effects = commandPort.effects;
   switch (command.type) {
     case "session/activate":
