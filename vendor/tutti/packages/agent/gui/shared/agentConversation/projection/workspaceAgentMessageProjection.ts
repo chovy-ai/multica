@@ -104,6 +104,43 @@ export function projectWorkspaceAgentMessagesToTimelineItems(
   const mergedToolPayloadByKey = new Map<string, Record<string, unknown>>();
 
   return sortedMessages.map((message, index) => {
+    const reused = reusableTimelineItem(message, index, mergedToolPayloadByKey);
+    if (reused) return reused;
+    const item = projectMessageToTimelineItem(message, index, mergedToolPayloadByKey);
+    timelineItemByMessage.set(message, { index, item });
+    return item;
+  });
+}
+
+/**
+ * A message's timeline item, kept while the message object lives: a commit keeps
+ * the objects of messages that did not change. Its position is part of the item.
+ */
+const timelineItemByMessage = new WeakMap<
+  AgentActivityMessage,
+  { index: number; item: WorkspaceAgentActivityTimelineItem }
+>();
+
+function reusableTimelineItem(
+  message: AgentActivityMessage,
+  index: number,
+  mergedToolPayloadByKey: Map<string, Record<string, unknown>>
+): WorkspaceAgentActivityTimelineItem | null {
+  const cached = timelineItemByMessage.get(message);
+  if (!cached || cached.index !== index) return null;
+  if (normalizeToken(message.kind) !== "tool_call") return cached.item;
+  // Another message of the same call merges with this one, so build it again.
+  const toolKey = cached.item.callId || cached.item.eventId || "";
+  if (mergedToolPayloadByKey.has(toolKey)) return null;
+  mergedToolPayloadByKey.set(toolKey, cached.item.payload as Record<string, unknown>);
+  return cached.item;
+}
+
+function projectMessageToTimelineItem(
+  message: AgentActivityMessage,
+  index: number,
+  mergedToolPayloadByKey: Map<string, Record<string, unknown>>
+): WorkspaceAgentActivityTimelineItem {
     const kind = normalizeToken(message.kind);
     const role = normalizeToken(message.role);
     const payload = normalizedPayload(message.payload);
@@ -309,7 +346,6 @@ export function projectWorkspaceAgentMessagesToTimelineItems(
       content: statusMessageText(statusMessage),
       occurredAtUnixMs
     });
-  });
 }
 
 function isGoalControlAudit(message: AgentActivityMessage): boolean {
@@ -379,7 +415,9 @@ function latestMessageSnapshots(
       continue;
     }
     const previous = latestByKey.get(key);
-    if (!previous || (message.version ?? 0) >= (previous.version ?? 0)) {
+    if (!previous) {
+      latestByKey.set(key, soleMessageSnapshot(message));
+    } else if ((message.version ?? 0) >= (previous.version ?? 0)) {
       latestByKey.set(key, mergeMessageSnapshot(previous, message));
     } else {
       latestByKey.set(key, mergeMessageSnapshot(message, previous));
@@ -387,6 +425,18 @@ function latestMessageSnapshots(
   }
 
   return [...unkeyedMessages, ...latestByKey.values()];
+}
+
+const soleSnapshotByMessage = new WeakMap<AgentActivityMessage, AgentActivityMessage>();
+
+/** The same object for the same message, so what is built from it can be kept. */
+function soleMessageSnapshot(message: AgentActivityMessage): AgentActivityMessage {
+  let snapshot = soleSnapshotByMessage.get(message);
+  if (!snapshot) {
+    snapshot = mergeMessageSnapshot(undefined, message);
+    soleSnapshotByMessage.set(message, snapshot);
+  }
+  return snapshot;
 }
 
 function mergeMessageSnapshot(
