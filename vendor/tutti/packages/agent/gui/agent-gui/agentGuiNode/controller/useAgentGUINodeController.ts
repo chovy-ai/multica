@@ -258,6 +258,7 @@ export function useAgentGUINodeController({
   const isLoadingConversations = conversationListState?.isLoading ?? false;
   const sessionEngineState = useAgentGUISessionEngineState({
     activeConversationId,
+    composer: agentActivityRuntime.composer,
     sessionEngine
   });
   const {

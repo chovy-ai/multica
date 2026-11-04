@@ -6,7 +6,10 @@ import {
   type JSX,
   type PropsWithChildren
 } from "react";
-import type { AgentGUIComposerOptionsReader } from "./agent-gui/agentGuiNode/controller/agentGuiController.providerHelpers";
+import type {
+  AgentGUIComposerOptionsReader,
+  AgentGUIComposerSettingsLane
+} from "./agent-gui/agentGuiNode/controller/agentGuiController.providerHelpers";
 import type {
   AgentActivityCollaborationRun,
   AgentActivityComposerOptions,
@@ -17,7 +20,6 @@ import type {
   AgentActivityMessageOrder,
   AgentActivityMessagePage,
   AgentActivityRailPlacement,
-  AgentActivityRenameSessionInput,
   AgentActivitySendInput,
   AgentActivitySession,
   AgentActivitySessionSettings,
@@ -113,12 +115,6 @@ export interface AgentActivityRuntimeEnsureSessionSynchronizedInput {
   afterVersion?: number;
   agentSessionId: string;
   onError?: (error: unknown) => void;
-  workspaceId: string;
-}
-
-export interface AgentActivityRuntimeSetSessionPinnedInput {
-  agentSessionId: string;
-  pinned: boolean;
   workspaceId: string;
 }
 
@@ -315,9 +311,30 @@ export interface AgentActivityRuntimePromptAsset {
  * only the reads, metadata actions, uploads, diagnostics, and subscriptions
  * that remain host-owned.
  */
+export interface AgentGUIConversationMutations {
+  rename(input: {
+    agentSessionId: string;
+    title: string;
+  }): Promise<AgentActivitySession>;
+  setPinned(input: {
+    agentSessionId: string;
+    pinned: boolean;
+  }): Promise<AgentActivitySession>;
+  forkThroughTurn(input: {
+    sourceAgentSessionId: string;
+    turnId: string;
+  }): Promise<{ targetAgentSessionId: string }>;
+  /** The turns of a conversation being forked right now. */
+  pendingForkTurnIds(
+    agentSessionId: string | null | undefined
+  ): readonly string[];
+}
+
 export interface AgentGUIRuntime {
-  /** Each target's composer choices, for reading; getComposerOptions asks for them. */
-  composer: AgentGUIComposerOptionsReader;
+  /** Renames, pins and forks; each waits for the server. */
+  mutations: AgentGUIConversationMutations;
+  /** Each target's composer choices, for reading; getComposerOptions asks for them. Also writes a conversation's settings. */
+  composer: AgentGUIComposerOptionsReader & AgentGUIComposerSettingsLane;
   /** Each conversation's committed messages, for reading. */
   transcript: AgentGUITranscriptReader;
   /**
@@ -419,9 +436,6 @@ export interface AgentGUIRuntime {
   readPromptAsset?(
     input: AgentActivityRuntimeReadPromptAssetInput
   ): Promise<AgentActivityRuntimePromptAsset>;
-  renameSession(
-    input: AgentActivityRenameSessionInput
-  ): Promise<AgentActivitySession>;
   /**
    * Record whether a collaboration outcome was adopted.
    * Optional; hosts without support omit it and adoption controls stay hidden.
@@ -429,9 +443,6 @@ export interface AgentGUIRuntime {
   setCollaborationAdoption?(
     input: AgentActivitySetCollaborationAdoptionInput
   ): Promise<AgentActivityCollaborationRun>;
-  setSessionPinned(
-    input: AgentActivityRuntimeSetSessionPinnedInput
-  ): Promise<AgentActivitySession>;
   trackSettingsProjectChange?(
     input: AgentActivityRuntimeTrackSettingsProjectChangeInput
   ): Promise<void>;

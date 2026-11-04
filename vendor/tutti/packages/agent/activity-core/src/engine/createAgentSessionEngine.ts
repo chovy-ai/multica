@@ -1,6 +1,5 @@
 import type { EngineDiagnosticSink } from "./diagnostics.ts";
 import type { AgentActivityComposerOptions } from "../types.ts";
-import { projectAgentActivitySession } from "./agentActivitySnapshot.projector.ts";
 import { projectPublicAgentSessionEngineState } from "./engineState.publicProjection.ts";
 import { createEngineEffectExecutor } from "./effectExecutor.ts";
 import { createEngineExpiryClock } from "./expiryClock.ts";
@@ -10,12 +9,7 @@ import {
 } from "./engineIntent.normalization.ts";
 import {
   selectEngineActiveTurn,
-  selectEngineInteractionResponse,
-  selectEngineInteractionsForSession,
-  selectEngineLatestTurn,
-  selectEnginePendingInteractions,
-  selectEngineSession,
-  selectEngineSessionSettingsUpdate
+  selectEngineInteractionResponse
 } from "./sessionLifecycle.selectors.ts";
 import {
   selectLatestStopTargetSubmitForSession,
@@ -25,10 +19,6 @@ import {
   selectEngineHasVisibleQueuedSubmit,
   selectEngineSubmitWouldBeVisibleInQueue
 } from "./promptQueue.selectors.ts";
-import {
-  dispatchSessionMutationWithCancellation,
-  type SessionMutationCancellation
-} from "./sessionMutationDispatch.ts";
 import { requestSessionActivation } from "./sessionActivation.operation.ts";
 import {
   createInitialAgentSessionEngineState,
@@ -45,7 +35,6 @@ import {
   type AgentSessionSubmitInteractionResponseInput,
   type AgentSessionSubmitPromptInput,
   type AgentSessionSubmitPromptResult,
-  type AgentSessionUpdateSettingsInput,
   type EngineClock,
   type EngineDispatchOptions,
   type EngineIntent,
@@ -73,9 +62,7 @@ import type {
  * the engine owns this timing once event wiring moves over in later slices.
  */
 export const ENGINE_INTENT_BATCH_DELAY_MS = 33;
-const SESSION_MUTATION_TIMEOUT_MS = 30_000;
 const SESSION_GOAL_CONTROL_TIMEOUT_MS = 30_000;
-const SESSION_SETTINGS_UPDATE_TIMEOUT_MS = 30_000;
 const SESSION_STOP_TIMEOUT_MS = 30_000;
 const INTERACTION_RESPONSE_TIMEOUT_MS = 30_000;
 const SESSION_PROMPT_CONFIRMATION_TIMEOUT_MS = 120_000;
@@ -121,8 +108,6 @@ export function createAgentSessionEngine({
   let disposed = false;
   let interactionResponseCommandSequence = 1;
   let sessionGoalControlCommandSequence = 1;
-  let sessionMutationSequence = 1;
-  let sessionSettingsUpdateSequence = 1;
   let sessionStopCommandSequence = 1;
 
   const expiryClock = createEngineExpiryClock({
@@ -271,16 +256,6 @@ export function createAgentSessionEngine({
     flushBatchedIntents();
     intentQueue.push(scopedIntent);
     drainQueue();
-  }
-
-  function nextSessionMutationId(kind: "delete" | "pin" | "rename"): string {
-    const sequence = sessionMutationSequence++;
-    return `${kind}:${clock.nowUnixMs()}:${sequence}`;
-  }
-
-  function nextSessionSettingsUpdateCommandId(): string {
-    const sequence = sessionSettingsUpdateSequence++;
-    return `settings:${clock.nowUnixMs()}:${sequence}`;
   }
 
   function nextInteractionResponseCommandId(): string {
@@ -483,78 +458,10 @@ export function createAgentSessionEngine({
     };
   }
 
-  function updateSessionSettings(input: AgentSessionUpdateSettingsInput): void {
-    const agentSessionId = input.agentSessionId.trim();
-    const settings = { ...input.settings };
-    if (!agentSessionId || Object.keys(settings).length === 0) {
-      return;
-    }
-    const current = selectEngineSessionSettingsUpdate(
-      publicSnapshot,
-      agentSessionId
-    );
-    dispatch({
-      agentSessionId,
-      commandId: nextSessionSettingsUpdateCommandId(),
-      retry: current?.status === "unknown",
-      settings,
-      timeoutMs: SESSION_SETTINGS_UPDATE_TIMEOUT_MS,
-      type: "session/settingsUpdateRequested",
-      workspaceId: engineIdentity.workspaceId
-    });
-  }
-
-  function mutationSessionResult(agentSessionId: string) {
-    const session = selectEngineSession(publicSnapshot, agentSessionId);
-    if (!session) return null;
-    return projectAgentActivitySession(
-      session,
-      selectEngineActiveTurn(publicSnapshot, agentSessionId),
-      selectEngineLatestTurn(publicSnapshot, agentSessionId),
-      selectEngineInteractionsForSession(publicSnapshot, agentSessionId),
-      selectEnginePendingInteractions(publicSnapshot, agentSessionId)
-    );
-  }
-
-  function mutationCancellation(
-    signal?: AbortSignal
-  ): SessionMutationCancellation {
-    return {
-      abortCommand: (commandId, reason) => {
-        effectExecutor.abort(commandId, reason);
-      },
-      ...(signal ? { signal } : {})
-    };
-  }
-
   const engine: AgentSessionEngine = {
     activateSession,
     controlGoal,
     identity: engineIdentity,
-    async deleteSessions(input) {
-      const mutation = await dispatchSessionMutationWithCancellation(
-        engine,
-        {
-          agentSessionIds: input.agentSessionIds,
-          mutationId: nextSessionMutationId("delete"),
-          timeoutMs: SESSION_MUTATION_TIMEOUT_MS,
-          type: "sessions/deleteRequested",
-          workspaceId: engineIdentity.workspaceId
-        },
-        mutationCancellation(input.signal)
-      );
-      if (mutation.kind !== "delete" || !mutation.deleteResult) {
-        throw new Error("agent_session_delete_result_missing");
-      }
-      return {
-        cleanupFailedSessionIds: [
-          ...mutation.deleteResult.cleanupFailedSessionIds
-        ],
-        removedMessages: mutation.deleteResult.removedMessages,
-        removedSessionIds: [...mutation.deleteResult.removedSessionIds],
-        removedSessions: mutation.deleteResult.removedSessions
-      };
-    },
     dispatch,
     dispose() {
       if (disposed) {
@@ -574,52 +481,6 @@ export function createAgentSessionEngine({
     getSnapshot() {
       return publicSnapshot;
     },
-    async renameSession(input) {
-      const agentSessionId = input.agentSessionId.trim();
-      const mutation = await dispatchSessionMutationWithCancellation(
-        engine,
-        {
-          agentSessionId,
-          mutationId: nextSessionMutationId("rename"),
-          timeoutMs: SESSION_MUTATION_TIMEOUT_MS,
-          title: input.title,
-          type: "session/renameRequested",
-          workspaceId: engineIdentity.workspaceId
-        },
-        mutationCancellation(input.signal)
-      );
-      if (mutation.kind !== "rename") {
-        throw new Error("agent_session_rename_result_missing");
-      }
-      const session = mutationSessionResult(agentSessionId);
-      if (!session) {
-        throw new Error("agent_session_rename_result_missing");
-      }
-      return session;
-    },
-    async setSessionPinned(input) {
-      const agentSessionId = input.agentSessionId.trim();
-      const mutation = await dispatchSessionMutationWithCancellation(
-        engine,
-        {
-          agentSessionId,
-          mutationId: nextSessionMutationId("pin"),
-          pinned: input.pinned,
-          timeoutMs: SESSION_MUTATION_TIMEOUT_MS,
-          type: "session/pinRequested",
-          workspaceId: engineIdentity.workspaceId
-        },
-        mutationCancellation(input.signal)
-      );
-      if (mutation.kind !== "pin") {
-        throw new Error("agent_session_pin_result_missing");
-      }
-      const session = mutationSessionResult(agentSessionId);
-      if (!session) {
-        throw new Error("agent_session_pin_result_missing");
-      }
-      return session;
-    },
     submitInteractionResponse,
     submitPrompt,
     stopSession,
@@ -628,8 +489,7 @@ export function createAgentSessionEngine({
       return () => {
         listeners.delete(listener);
       };
-    },
-    updateSessionSettings
+    }
   };
   return engine;
 }

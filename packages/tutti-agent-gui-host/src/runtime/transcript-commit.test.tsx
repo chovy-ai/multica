@@ -126,6 +126,17 @@ describe("committing a conversation's transcript", () => {
     expect(result).toEqual({ accepted: true, queued: false });
   });
 
+  it("commits at once before deciding whether a run blocks changing the model", async () => {
+    const { emit, handle, phase } = await open();
+    emit(started);
+    await interval();
+    expect(handle.isModelSelectionBusy(session.id)).toBe(true);
+    emit(finished);
+    expect(phase()).toBe("running");
+    expect(handle.isModelSelectionBusy(session.id)).toBe(false);
+    expect(phase()).toBe("settled");
+  });
+
   it("commits at once for an intent the user caused", async () => {
     const { content, emit, engine } = await open();
     emit(started);

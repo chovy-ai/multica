@@ -6,7 +6,6 @@ import {
 } from "react";
 import {
   isPendingActivationViable,
-  dispatchSessionForkThroughTurn,
   selectLatestActivationForSession,
   selectEngineSession,
   type AgentSessionEngine
@@ -226,9 +225,8 @@ export function useAgentGUIConversationMetadataActions(
         return;
       }
       setDetailError(null);
-      void agentActivityRuntime
-        .setSessionPinned({
-          workspaceId,
+      void agentActivityRuntime.mutations
+        .setPinned({
           agentSessionId: normalizedAgentSessionId,
           pinned
         })
@@ -285,7 +283,7 @@ export function useAgentGUIConversationMetadataActions(
             }
           );
         }
-        await sessionEngine.renameSession({
+        await agentActivityRuntime.mutations.rename({
           agentSessionId: normalizedAgentSessionId,
           title: normalizedTitle
         });
@@ -323,10 +321,9 @@ export function useAgentGUIConversationMetadataActions(
       }
       setDetailError(null);
       try {
-        const result = await dispatchSessionForkThroughTurn(sessionEngine, {
+        const result = await agentActivityRuntime.mutations.forkThroughTurn({
           sourceAgentSessionId: normalizedSourceAgentSessionId,
-          turnId: normalizedTurnId,
-          workspaceId
+          turnId: normalizedTurnId
         });
         if (dataRef.current.lastActiveAgentSessionId === normalizedSourceAgentSessionId) input.selectConversation?.(result.targetAgentSessionId);
       } catch (error) {
@@ -348,7 +345,6 @@ export function useAgentGUIConversationMetadataActions(
       agentHostApi.toast,
       dataRef,
       input.selectConversation,
-      sessionEngine,
       setDetailError,
       workspaceId
     ]

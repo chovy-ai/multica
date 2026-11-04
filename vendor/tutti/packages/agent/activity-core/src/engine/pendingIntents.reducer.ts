@@ -227,10 +227,7 @@ function patchActivationSettings(
   if (record.status === "confirmed") {
     const attached = attachPendingActivationSettings(patchedRecord);
     return {
-      commands: NO_COMMANDS,
-      ...(attached.followUpIntents.length
-        ? { followUpIntents: attached.followUpIntents }
-        : {}),
+      commands: attached.commands,
       state: replaceActivation(state, attached.record)
     };
   }

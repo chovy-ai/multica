@@ -496,7 +496,7 @@ test("public snapshots omit private prompt execution bookkeeping", () => {
   );
 });
 
-test("activation settings enter the shared Session settings lane", async () => {
+test("activation settings reach the host and their result updates the session", async () => {
   const harness = createHarness({ workspaceId: "workspace-1" });
   harness.engine.dispatch({
     agentSessionId: "session-new",
@@ -537,20 +537,6 @@ test("activation settings enter the shared Session settings lane", async () => {
     workspaceId: "workspace-1"
   });
 
-  harness.engine.dispatch({
-    agentSessionId: "session-new",
-    commandId: "settings-after",
-    settings: { speed: "fast" },
-    type: "session/settingsUpdateRequested",
-    workspaceId: "workspace-1"
-  });
-  assert.equal(
-    harness.commandPort.executedCommands.filter(
-      (command) => command.type === "session/updateSettings"
-    ).length,
-    1
-  );
-
   harness.commandPort.succeed(activationSettings!.commandId, {
     agentSessionId: "session-new",
     session: activitySession("session-new", {
@@ -562,14 +548,11 @@ test("activation settings enter the shared Session settings lane", async () => {
   });
   await flushMicrotasks();
 
-  assert.deepEqual(harness.commandPort.executedCommands.at(-1), {
-    agentSessionId: "session-new",
-    commandId: "settings-after",
-    correlationId: "session-new",
-    settings: { speed: "fast" },
-    type: "session/updateSettings",
-    workspaceId: "workspace-1"
-  });
+  assert.equal(
+    harness.engine.getSnapshot().sessionLifecycle.sessionsById["session-new"]
+      ?.settings?.model,
+    "model-2"
+  );
 });
 
 test("a steer that loses the settle race is retried as a plain send", async () => {

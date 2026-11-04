@@ -1,5 +1,4 @@
 import type { AgentActivityMessage, AgentActivityTurn } from "../types.ts";
-import { reconcileSettingsUpdates } from "./sessionSettings.reducer.ts";
 import type { EngineCommand, EngineReducerResult } from "./types.ts";
 import type { SessionLifecycleState } from "./sessionLifecycle.types.ts";
 import { canonicalTurnKey } from "./sessionEntityKeys.ts";
@@ -16,9 +15,8 @@ export function reconcilePendingCancels(
   previous: SessionLifecycleState,
   next: SessionLifecycleState
 ): EngineReducerResult<SessionLifecycleState> {
-  const settings = reconcileSettingsUpdates(previous, next);
-  const commands: EngineCommand[] = [...settings.commands];
-  let state = settings.state;
+  const commands: EngineCommand[] = [];
+  let state = next;
   for (const [id, operation] of Object.entries(state.operationBySessionId)) {
     const session = state.sessionsById[id];
     const activeTurn = session?.activeTurnId

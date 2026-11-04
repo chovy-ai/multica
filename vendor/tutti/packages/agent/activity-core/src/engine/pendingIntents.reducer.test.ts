@@ -1073,13 +1073,14 @@ test("confirmed activation emits its request-scoped pending settings command onc
     sessions: [{ ...session("session-new"), createdAtUnixMs: 1 }],
     type: "session/snapshotReceived"
   });
-  assert.deepEqual(attached.commands, []);
-  assert.deepEqual(attached.followUpIntents, [
+  assert.equal(attached.followUpIntents, undefined);
+  assert.deepEqual(attached.commands, [
     {
       agentSessionId: "session-new",
       commandId: "activation-settings:activation-1",
+      correlationId: "session-new",
       settings: { model: "model-2" },
-      type: "session/settingsActivationRequested",
+      type: "session/updateSettings",
       workspaceId: "workspace-1"
     }
   ]);
@@ -1087,8 +1088,8 @@ test("confirmed activation emits its request-scoped pending settings command onc
     reduce(attached.state, {
       sessions: [{ ...session("session-new"), createdAtUnixMs: 1 }],
       type: "session/snapshotReceived"
-    }).followUpIntents,
-    undefined
+    }).commands,
+    []
   );
   const settingsSucceeded = reduce(attached.state, {
     commandId: "activation-settings:activation-1",
@@ -1130,10 +1131,7 @@ test("settings update failure remains request-scoped and retryable without doubl
     sessions: [{ ...session("session-new"), createdAtUnixMs: 1 }],
     type: "session/snapshotReceived"
   });
-  assert.equal(
-    attached.followUpIntents?.[0]?.type,
-    "session/settingsActivationRequested"
-  );
+  assert.equal(attached.commands[0]?.type, "session/updateSettings");
   const failed = reduce(attached.state, {
     commandId: "activation-settings:activation-1",
     commandType: "session/updateSettings",
@@ -1155,10 +1153,7 @@ test("settings update failure remains request-scoped and retryable without doubl
     settings: { model: "model-3" },
     type: "activation/settingsPatched"
   });
-  assert.equal(
-    retried.followUpIntents?.[0]?.type,
-    "session/settingsActivationRequested"
-  );
+  assert.equal(retried.commands[0]?.type, "session/updateSettings");
   const timedOut = reduce(retried.state, {
     commandId: "activation-settings:activation-1",
     commandType: "session/updateSettings",

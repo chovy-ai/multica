@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { selectPendingSessionForkThroughTurnIds } from "@tutti-os/agent-activity-core";
 import { useAgentGUIViewModel } from "../model/useAgentGUIViewModel";
 import type { AgentGUIProviderRailMode } from "../../../types";
 import type { AgentGUIDetailViewModel } from "../model/agentGuiNodeTypes";
@@ -18,7 +17,8 @@ import { resolveAgentGUIProviderReadinessGateForView } from "../model/agentGuiPr
 import type { useAgentGUITuttiModeActivation } from "./useAgentGUITuttiModeActivation";
 import { targetConnectionForAgentGUIView } from "./agentGuiController.providerHelpers";
 import { isAgentGUIAgentTargetComingSoon } from "../../../agentTargets";
-import { useEngineSelector } from "../../../shared/engine/useEngineSelector";
+import { useModelValue } from "../../../shared/engine/useEngineSelector";
+import type { AgentGUIRuntime } from "../../../agentActivityRuntime";
 
 type ConversationPresentationInput = Parameters<
   typeof useAgentGUIConversationPresentation
@@ -68,6 +68,7 @@ type UseAgentGUIViewAssemblyInput = ConversationPresentationInput &
   ComposerCapabilities &
   SessionDetailTransport &
   OperationActions & {
+    agentActivityRuntime: AgentGUIRuntime;
     nodeId?: string | null;
     operationActions: OperationActions;
     detailAvailability: AgentGUIDetailViewModel["availability"];
@@ -84,14 +85,10 @@ type UseAgentGUIViewAssemblyInput = ConversationPresentationInput &
 export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
   const { activeConversation, visibleConversations } =
     useAgentGUIConversationPresentation(input);
-  const forkThroughTurnPendingTurnIds = useEngineSelector(
-    input.sessionEngine,
-    (state) =>
-      selectPendingSessionForkThroughTurnIds(state, {
-        sourceAgentSessionId: input.activeConversationId,
-        workspaceId: input.workspaceId
-      }),
-    equalStringArrays
+  const { mutations } = input.agentActivityRuntime;
+  const forkThroughTurnPendingTurnIds = useModelValue(
+    () => mutations.pendingForkTurnIds(input.activeConversationId),
+    [mutations, input.activeConversationId]
   );
   const targetConnection = useMemo(
     () =>
@@ -343,15 +340,5 @@ export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
   return useMemo(
     () => ({ viewModel, actions: controllerActions }),
     [controllerActions, viewModel]
-  );
-}
-
-function equalStringArrays(
-  previous: readonly string[],
-  next: readonly string[]
-): boolean {
-  return (
-    previous.length === next.length &&
-    previous.every((value, index) => value === next[index])
   );
 }

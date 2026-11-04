@@ -17,7 +17,6 @@ import {
   selectEngineSessionRuntimeActivity,
   selectEngineSessionIsRespondingToInteraction,
   selectEngineSessionReconcile,
-  selectEngineSessionSettingsUpdate,
   selectEngineSubmitAvailability,
   selectLatestActivationForSession,
   selectLatestPendingSubmitForSession,
@@ -28,8 +27,7 @@ import {
   selectSessionIsSubmitting,
   sessionGoalControlPresentationsEqual,
   type AgentSessionEngine,
-  type EngineQueuedPrompt,
-  type SessionSettingsUpdateStatus
+  type EngineQueuedPrompt
 } from "@tutti-os/agent-activity-core";
 import { useMemo } from "react";
 import type {
@@ -38,7 +36,14 @@ import type {
   AgentSessionSpeed,
   AgentSessionState
 } from "../../../shared/agentSessionTypes";
-import { useEngineSelector } from "../../../shared/engine/useEngineSelector";
+import {
+  useEngineSelector,
+  useModelValue
+} from "../../../shared/engine/useEngineSelector";
+import type {
+  AgentGUIComposerSettingsLane,
+  AgentGUISessionSettingsUpdate
+} from "./agentGuiController.providerHelpers";
 import { EMPTY_QUEUED_PROMPTS } from "./agentGuiController.draftMessageHelpers";
 import { agentActivityInteractionListsEqual } from "./agentGuiController.providerHelpers";
 import { agentGUIQueueStatusFromPromptQueue } from "./agentGuiQueueStatus";
@@ -46,9 +51,10 @@ import { isPendingNewConversationActivation } from "./useAgentGUIActivation";
 
 export function useAgentGUISessionEngineState(input: {
   activeConversationId: string | null;
+  composer: AgentGUIComposerSettingsLane;
   sessionEngine: AgentSessionEngine;
 }) {
-  const { activeConversationId, sessionEngine } = input;
+  const { activeConversationId, composer, sessionEngine } = input;
   const activeQueuedPromptSnapshot = useEngineSelector(sessionEngine, (state) =>
     selectEnginePromptQueue(state, activeConversationId)
   );
@@ -118,8 +124,9 @@ export function useAgentGUISessionEngineState(input: {
   const activeEngineLatestTurn = useEngineSelector(sessionEngine, (state) =>
     selectEngineLatestTurn(state, activeConversationId)
   );
-  const activeEngineSettingsUpdate = useEngineSelector(sessionEngine, (state) =>
-    selectEngineSessionSettingsUpdate(state, activeConversationId)
+  const activeEngineSettingsUpdate = useModelValue(
+    () => composer.settingsUpdate(activeConversationId),
+    [composer, activeConversationId]
   );
   const activeCanonicalComposerSettings = useMemo<AgentSessionComposerSettings>(
     () =>
@@ -257,7 +264,7 @@ export function useAgentGUISessionEngineState(input: {
 
 function mergeOptimisticSessionSettings(
   canonical: AgentSessionComposerSettings,
-  update: ReturnType<typeof selectEngineSessionSettingsUpdate>
+  update: AgentGUISessionSettingsUpdate | null
 ): AgentSessionComposerSettings {
   if (
     !update ||
@@ -300,11 +307,9 @@ function mergeOptimisticSessionSettings(
 
 const SESSION_SETTINGS_STATUS_SHOWS_OPTIMISTIC_VALUE = {
   failed: false,
-  idle: false,
   inFlight: true,
   // Timed-out updates must not keep showing the optimistic value (e.g. High)
   // or the composer looks settled while the durable session is still medium.
   unknown: false,
-  waitingForPromptSend: true,
   waitingForRuntime: true
-} satisfies Record<SessionSettingsUpdateStatus, boolean>;
+} satisfies Record<AgentGUISessionSettingsUpdate["status"], boolean>;
