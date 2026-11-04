@@ -1,3 +1,4 @@
+export { ConversationListModel } from "./conversation-list-model";
 export { ConversationModel, type ConversationApplyResult } from "./conversation-model";
 export type { ConversationLocale, ConversationMessage } from "./conversation-message";
 export { InteractionModel } from "./interaction-model";

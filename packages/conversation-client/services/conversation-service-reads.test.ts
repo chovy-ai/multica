@@ -105,7 +105,7 @@ describe("a read from before the database was replaced", () => {
     expect(model).toMatchObject({ storeGeneration: "new", seq: 2 });
     // The stale answer starts no further round of invalidation.
     expect(reads).toHaveLength(3);
-    expect(service.summary("c")?.title).toBe("current");
+    expect(service.list.summary("c")?.title).toBe("current");
   });
 
   it("does not clear the current read's mark, so nothing starts a third read", async () => {

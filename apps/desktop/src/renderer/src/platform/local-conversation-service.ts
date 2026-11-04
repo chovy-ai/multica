@@ -1,3 +1,4 @@
+import { reaction } from "mobx";
 import { defaultStorage } from "@multica/core/platform";
 import { AGENT_MENTION_SELECTION_KEY, AGENT_MENTION_USAGE_KEY, parseAgentMentionUsage } from "@multica/tutti-agent-gui-host/agent-mention-usage";
 import { api } from "@multica/core/api";
@@ -71,7 +72,7 @@ export function localConversationSource(store: ConversationService, scope: Local
       const forked = conversation.forkedFromId && conversation.forkedFromTurnId
         ? { forkedFrom: { sessionId: conversation.forkedFromId, turnId: conversation.forkedFromTurnId, targetTurnId: branched?.id ?? "", operationId: id, createdAt: conversation.createdAt } } : {};
       return {
-        session: projectLocalSession(store.summary(id) ?? conversation.summary, scope), model: (settings.model ?? null) as string | null, reasoningEffort: (settings.reasoning_effort ?? null) as AgentGuiSessionDetail["reasoningEffort"],
+        session: projectLocalSession(store.list.summary(id) ?? conversation.summary, scope), model: (settings.model ?? null) as string | null, reasoningEffort: (settings.reasoning_effort ?? null) as AgentGuiSessionDetail["reasoningEffort"],
         permissionMode: settings.permission_mode as AgentGuiSessionDetail["permissionMode"], promptQueue: projectQueue(conversation.queue.toQueue()),
         messages: [], pending: {}, tasks: [], ...forked,
       };
@@ -156,11 +157,11 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     providersRead.catch(refreshFailed("providers"));
     const summariesRead = client.loadSummaries();
     summariesRead.catch(refreshFailed("conversations"));
-    await Promise.all([qc.getQueryData(providersQuery.queryKey) ? null : providersRead, client.hasSummaries() ? null : summariesRead]);
+    await Promise.all([qc.getQueryData(providersQuery.queryKey) ? null : providersRead, client.list.read ? null : summariesRead]);
     assertCurrent();
     const providers = qc.getQueryData<LocalProviderList>(providersQuery.queryKey)!;
     const folderProjects = qc.getQueryData<LocalFolderProjectList>(foldersQuery.queryKey);
-    const summaries = client.summaries();
+    const summaries = client.list.summaries;
     return { local: true, composerDraftScope: JSON.stringify([api.getBaseUrl(), options.storagePrefix ?? ""]), queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: lastAgents.get(client) ?? [],
       executionTargets: providers.providers.map((entry) => ({ id: localTargetId(entry.id), name: entry.name, provider: entry.id, iconUrl: "", canInvoke: entry.available, canFork: true, runtimeBound: entry.available, runtimeOnline: entry.available, unavailableReason: entry.available ? undefined : "未在本机安装" })),
       sessions: summaries.map((summary) => projectLocalSession(summary, scope)),
@@ -176,7 +177,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       if (reference.kind === "session") {
         // The provider reads what it needs through its context tools; the
         // conversation itself never has to cross the device link to be quoted.
-        const title = client.summary(reference.id)?.title;
+        const title = client.list.summary(reference.id)?.title;
         excerpts.push(`Multica local conversation ${title ? `${JSON.stringify(title)} ` : ""}(id: ${reference.id}; workspace: ${scope.workspaceId})\n[Not included here. Read it with read_context(kind="conversation", id=${JSON.stringify(reference.id)}, source="local") when it is relevant.]`);
       } else if (reference.kind === "issue") {
         const issue = await api.getIssue(reference.id); assertCurrent();
@@ -305,7 +306,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
       case "host.selectSession": {
         const sequence = ++selectionSequence;
         const intent = options.getSelectionIntent?.();
-        const summary = params.sessionId ? client.summary(params.sessionId) ?? (await client.snapshot(params.sessionId)).conversation : null;
+        const summary = params.sessionId ? client.list.summary(params.sessionId) ?? (await client.snapshot(params.sessionId)).conversation : null;
         assertCurrent();
         if (sequence !== selectionSequence || intent !== options.getSelectionIntent?.()) return undefined;
         if (summary) options.onLocalSelect(summary.conversation_id, summary.provider as LocalProviderId);
@@ -331,7 +332,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
   }
 
   // List changes arrive as summaries; coalesce them into one workspace reload.
-  const unsubscribeSummaries = client.onSummaries(() => {
+  const unsubscribeSummaries = reaction(() => client.list.summaries, () => {
     if (workspaceTimer) return;
     workspaceTimer = setTimeout(() => { workspaceTimer = undefined; publish({ type: "invalidate", scope: "workspace" }); }, 50);
   });

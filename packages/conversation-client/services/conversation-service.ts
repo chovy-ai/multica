@@ -2,10 +2,10 @@ import type { z } from "zod";
 import { parseWithFallback } from "@multica/core/api/schema";
 import {
   LOCAL_V2_VERSION, localV2HistorySchema, localV2QueueSchema, localV2ServerMessageSchema, localV2SessionListSchema, localV2SnapshotSchema, localV2UploadSchema,
-  type LocalV2Device, type LocalV2Event, type LocalV2Scope, type LocalV2Snapshot, type LocalV2Summary, type LocalV2Transport,
+  type LocalV2Event, type LocalV2Scope, type LocalV2Snapshot, type LocalV2Summary, type LocalV2Transport,
 } from "@multica/core/local-conversation/v2";
 import { LOCAL_V2_FOCUS_CAPABILITY, LocalV2FocusTracker } from "@multica/core/local-conversation/focus";
-import { ConversationModel } from "../models";
+import { ConversationListModel, ConversationModel } from "../models";
 
 /** Conversations of other devices as last read, shown while the current state travels. */
 export interface ConversationSnapshotStore {
@@ -76,22 +76,17 @@ export interface ConversationServiceOptions {
  * not a snapshot.
  */
 export class ConversationService {
-  private summaryMap = new Map<string, LocalV2Summary>();
-  /** The list as last read; replaced on each change so React sees a new value. */
-  private summaryList: LocalV2Summary[] = [];
+  /** The list, complete and current; views read it directly. */
+  readonly list = new ConversationListModel();
   private summaryLoad?: Promise<void>;
-  private summariesRead = false;
   private scopeSeq = 0;
   private listRetry = LIST_RETRY_MIN_MS;
   private listTimer?: ReturnType<typeof setTimeout>;
-  private summaryListeners = new Set<() => void>();
   private entries = new Map<string, ContentEntry>();
   private nextEpoch = 1;
   /** Counts database replacements: what was asked before one says nothing about the database now. */
   private invalidations = 0;
   private disposed = false;
-  private presenceMap = new Map<string, LocalV2Device[]>();
-  private presenceListeners = new Set<() => void>();
   private focused = new LocalV2FocusTracker(async (id, focused) => {
     try {
       const capabilities = await this.transport.capabilities?.();
@@ -146,13 +141,6 @@ export class ConversationService {
 
   // ---- List ----
 
-  /** Whether the list has been read; after that it stays current on its own. */
-  hasSummaries(): boolean { return this.summariesRead; }
-
-  /** Every conversation of the scope, loaded once and kept current. */
-  summaries(): LocalV2Summary[] { return this.summaryList; }
-  summary(id: string): LocalV2Summary | undefined { return this.summaryMap.get(id); }
-
   loadSummaries(): Promise<void> {
     return this.summaryLoad ??= (async () => {
       // A reload after a reconnect or a fallen-behind stream asks only for what changed.
@@ -160,40 +148,24 @@ export class ConversationService {
       for (let page = 0; page < SUMMARY_PAGES; page++) {
         const raw = await this.request("GET", `/sessions?after_scope_seq=${after}`);
         const list = parseWithFallback<z.infer<typeof localV2SessionListSchema>>(raw, localV2SessionListSchema, { scope_seq: after, summaries: [], has_more: false }, { endpoint: "local-v2.sessions" });
-        for (const summary of list.summaries) this.store(summary);
+        this.store(list.summaries);
         after = Math.max(after, list.scope_seq, ...list.summaries.map((summary) => summary.summary_seq));
         if (!list.has_more) break;
       }
       this.scopeSeq = after;
-      this.summariesRead = true;
+      this.list.markRead();
       this.listRetry = LIST_RETRY_MIN_MS;
-      this.notifySummaries();
       // The list is usable now; only its updates need the socket.
       void this.transport.send(this.scope, { version: LOCAL_V2_VERSION, type: "subscribe_scope", after_scope_seq: after }).catch(() => { this.summaryLoad = undefined; });
     })().catch((error: unknown) => { this.summaryLoad = undefined; throw error; });
   }
 
-  onSummaries(listener: () => void): () => void {
-    this.summaryListeners.add(listener);
-    return () => { this.summaryListeners.delete(listener); };
-  }
-
   /** Records a conversation the caller just created, changed or read. */
-  receiveSummary(summary: LocalV2Summary): void {
-    if (this.store(summary)) this.notifySummaries();
-  }
+  receiveSummary(summary: LocalV2Summary): void { this.store([summary]); }
 
-  private store(summary: LocalV2Summary): boolean {
-    const current = this.summaryMap.get(summary.conversation_id);
-    if (current && current.summary_seq >= summary.summary_seq) return false;
-    this.summaryMap.set(summary.conversation_id, summary);
-    this.summaryList = [...this.summaryMap.values()];
-    const entry = this.entries.get(summary.conversation_id);
-    entry?.conversation?.setSummary(summary);
-    return true;
+  private store(summaries: readonly LocalV2Summary[]) {
+    for (const summary of this.list.upsert(summaries)) this.entries.get(summary.conversation_id)?.conversation?.setSummary(summary);
   }
-
-  private notifySummaries() { for (const listener of this.summaryListeners) listener(); }
 
   /** Reads the list again until it works; nothing else would, with no view open. */
   private reloadSummaries() {
@@ -414,16 +386,13 @@ export class ConversationService {
     if (!parsed.success) return;
     const message = parsed.data;
     if (message.type === "scope.summaries") {
-      for (const summary of message.summaries) this.store(summary);
+      this.store(message.summaries);
       this.scopeSeq = Math.max(this.scopeSeq, message.scope_seq);
-      this.notifySummaries();
       return;
     }
     if (message.type === "host.request") return; // answered by the transport
     if (message.type === "scope.presence") {
-      if (message.devices.length) this.presenceMap.set(message.conversation_id, message.devices);
-      else this.presenceMap.delete(message.conversation_id);
-      for (const listener of this.presenceListeners) listener();
+      this.list.setPresence(message.conversation_id, message.devices);
       return;
     }
     if (message.type === "subscription.status" && !message.conversation_id) {
@@ -490,27 +459,19 @@ export class ConversationService {
     void this.refresh(id).catch(() => {});
   }
 
-  /** Other devices using a conversation now. */
-  presence(id: string): LocalV2Device[] { return this.presenceMap.get(id) ?? []; }
-
-  onPresence(listener: () => void): () => void {
-    this.presenceListeners.add(listener);
-    return () => { this.presenceListeners.delete(listener); };
-  }
-
   /** A disconnect loses every subscription; only what views still hold comes back. */
   connection(connected: boolean): void {
     if (this.disposed) return;
     if (!connected) {
       // The daemon sends presence again with the next scope subscription.
-      if (this.presenceMap.size) { this.presenceMap.clear(); for (const listener of this.presenceListeners) listener(); }
+      this.list.clearPresence();
       for (const entry of this.entries.values()) { entry.subscribed = false; entry.confirmed = false; }
       clearTimeout(this.listTimer);
       return;
     }
     this.focused.reconnected();
     void this.transport.storeGeneration?.().then((generation) => this.noteGeneration(generation)).catch(() => {});
-    if (this.summaryLoad || this.summariesRead) this.reloadSummaries();
+    if (this.summaryLoad || this.list.read) this.reloadSummaries();
     for (const [id, entry] of this.entries) {
       if (entry.users === 0) continue;
       entry.retries = 0;
@@ -525,10 +486,7 @@ export class ConversationService {
   invalidate(): void {
     this.invalidations++;
     this.scopeSeq = 0;
-    this.summariesRead = false;
-    this.summaryMap.clear();
-    this.summaryList = [];
-    this.notifySummaries();
+    this.list.clear();
     this.reloadSummaries();
     for (const [id, entry] of this.entries) {
       entry.epoch = this.nextEpoch++;
@@ -546,8 +504,6 @@ export class ConversationService {
     this.disposed = true;
     clearTimeout(this.listTimer);
     this.entries.clear();
-    this.summaryListeners.clear();
-    this.presenceListeners.clear();
     this.transport.release?.(this.scope);
   }
 }
