@@ -4,5 +4,6 @@ export type { ConversationLocale, ConversationMessage } from "./conversation-mes
 export { InteractionModel } from "./interaction-model";
 export { ItemModel } from "./item-model";
 export { PromptQueueModel } from "./prompt-queue-model";
+export { TranscriptModel } from "./transcript-model";
 export { TurnModel, type TurnError, type TurnStatus } from "./turn-model";
 export { UserMessageModel } from "./user-message-model";

@@ -1,3 +1,4 @@
+export { COMMIT_INTERVAL_MS, CommitCadence } from "./commit-cadence";
 export { ConversationService, LocalV2RequestError, localV2Error, type ConversationServiceOptions, type ConversationSnapshotStore } from "./conversation-service";
 export { ConversationServiceManager, type ConversationServiceManagerOptions } from "./conversation-service-manager";
 export { ComposerService, composerOptionsRequestSignature, mergeComposerOptionsSection, type ComposerOptionsLike, type ComposerOptionsRequest, type ComposerOptionsSection, type ComposerOptionsStatus, type ComposerSettingsLike } from "./composer-service";
