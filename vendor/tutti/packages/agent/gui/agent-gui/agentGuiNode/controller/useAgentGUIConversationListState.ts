@@ -1,6 +1,4 @@
 import {
-  selectAttentionReadState,
-  type AttentionReadRecord,
   type AgentSessionEngine
 } from "@tutti-os/agent-activity-core";
 import { useMemo, useRef, useState } from "react";
@@ -22,10 +20,6 @@ interface UseAgentGUIConversationListStateInput {
   normalizedProviderTargets: readonly AgentGUIAgentTarget[];
   sessionEngine: AgentSessionEngine;
   workspaceId: string;
-}
-
-interface AgentGUIAttentionReadState {
-  recordsBySessionId: Readonly<Record<string, AttentionReadRecord>>;
 }
 
 export function useAgentGUIConversationListState({
@@ -68,26 +62,9 @@ export function useAgentGUIConversationListState({
     conversationListQuery,
     normalizedProviderTargets
   );
-  const canonicalConversations = conversationListState?.conversations ?? [];
-  const attentionReadState: AgentGUIAttentionReadState = useEngineSelector(
-    sessionEngine,
-    (state) => selectAttentionReadState(state, currentUserId)
-  );
-  const conversations = useMemo(() => {
-    return canonicalConversations.map((conversation) => {
-      const attention = attentionReadState.recordsBySessionId[conversation.id];
-      return attention
-        ? {
-            ...conversation,
-            hasUnreadCompletion: attention.isUnread,
-            unreadCompletionKey: attention.completionKey
-          }
-        : conversation;
-    });
-  }, [attentionReadState.recordsBySessionId, canonicalConversations]);
+  const conversations = conversationListState?.conversations ?? [];
 
   return {
-    attentionReadState,
     conversationFilter,
     conversationFilterRef,
     conversationListQuery,

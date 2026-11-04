@@ -105,7 +105,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
   let saveQueue = Promise.resolve();
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let latestGeneration = init.generation ?? 0;
-  let attention = { completed: { readIds: [] as string[], unreadIds: [] as string[] }, failed: { readIds: [] as string[], unreadIds: [] as string[] } };
 
   const persist = () => {
     const value = ledger.serialize();
@@ -565,8 +564,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     const detail = details.get(guiId)!;
     desktopQueue.receive(guiId, detail.promptQueue);
     const result = costProfile.measure("projection", detail.session.id, () => project(guiId, changedTurns));
-    const unsettled = new Set(Object.values(engine.getSnapshot().sessionLifecycle.turnsById)
-      .filter((turn) => turn.agentSessionId === guiId && turn.phase !== "settled").map((turn) => turn.turnId));
     costProfile.measure("dispatch", detail.session.id, () => engine.dispatch({
       type: "session/historyAuthoritativeSnapshotReceived", workspaceId,
       agentSessionId: guiId, childSessions: [], historyRevision: ++historyRevision,
@@ -581,14 +578,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       if (turn.phase === "settled" && engine.getSnapshot().sessionLifecycle.sessionsById[guiId]?.activeTurnId === turn.turnId) engine.dispatch({
         type: "turn/projectionReceived", workspaceId, turn, activeTurnId: null,
         hostFencedSameTurnSettlement: true,
-      });
-    }
-    // History snapshots never raise attention. A run this runtime saw unsettled
-    // that history now settles is a real completion: replay it as an accepted
-    // live completion so the conversation list shows its unread mark.
-    for (const turn of Object.values(engine.getSnapshot().sessionLifecycle.turnsById)) {
-      if (turn.agentSessionId === guiId && turn.phase === "settled" && unsettled.has(turn.turnId)) engine.dispatch({
-        type: "turn/upserted", live: true, replayAcceptedLiveCompletion: true, turn,
       });
     }
     const conversation = localConversation(guiId);
@@ -830,24 +819,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       case "engine/reconcileWorkspace": return loadWorkspace();
       case "session/reconcile": await loadSession(command.agentSessionId); return { status: "applied" };
       case "session/unactivate": return undefined;
-      case "attention/readState/read": return attention;
-      case "attention/readState/write": {
-        const previousUnread = [...attention.completed.unreadIds, ...attention.failed.unreadIds];
-        attention = {
-          completed: { readIds: [...command.completed.readIds], unreadIds: [...command.completed.unreadIds] },
-          failed: { readIds: [...command.failed.readIds], unreadIds: [...command.failed.unreadIds] },
-        };
-        await client.request("storage.write", { key: "attention-read-state-v1", value: JSON.stringify(attention) });
-        const nextUnread = new Set([...attention.completed.unreadIds, ...attention.failed.unreadIds]);
-        const read = new Set([...command.completed.readIds, ...command.failed.readIds, ...previousUnread.filter((id) => !nextUnread.has(id))]);
-        const sessionsToMark = new Set<string>();
-        for (const completionId of read) {
-          const guiId = /^turn:([^:]+):[^:]+:(completed|failed)$/.exec(completionId)?.[1];
-          if (guiId) sessionsToMark.add(ledger.serverId(guiId));
-        }
-        await Promise.all([...sessionsToMark].map((sessionId) => client.request("session.markRead", { sessionId })));
-        return undefined;
-      }
       default: return unsupported(command.type);
     }
   }
@@ -1005,11 +976,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       await modelHydration;
       await permissionHydration;
       await reasoningHydration;
-      const readState = await client.request("storage.read", { key: "attention-read-state-v1" });
-      if (readState) {
-        const value = JSON.parse(readState);
-        if (value && typeof value === "object" && [value.completed, value.failed].every((entry) => entry && Array.isArray(entry.readIds) && Array.isArray(entry.unreadIds) && [...entry.readIds, ...entry.unreadIds].every((id) => typeof id === "string"))) attention = value;
-      }
       initialized = true;
       await loadWorkspace();
       const active = init.activeSessionId ? workspace.sessions.find((session) => session.id === init.activeSessionId) : undefined;

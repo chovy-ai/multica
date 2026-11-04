@@ -27,7 +27,7 @@ test("projects canonical engine state and preserves the snapshot reference", () 
   assert.equal(populated.sessions[0]?.pendingInteractions.length, 1);
 });
 
-test("root reducer marks a historical session unread from canonical turns", () => {
+test("root reducer projects a historical session from canonical turns", () => {
   const source = session();
   const settledTurn = {
     ...source.latestTurn!,
@@ -62,18 +62,6 @@ test("root reducer marks a historical session unread from canonical turns", () =
     "settled"
   );
 
-  state = rootEngineReducer(state, {
-    type: "attention/unreadRequested",
-    agentSessionId: "session-1",
-    userId: "user-1"
-  }).state;
-
-  assert.equal(
-    state.attentionReadState.partitionsByUserId["user-1"]?.recordsBySessionId[
-      "session-1"
-    ]?.completionKey,
-    "turn:session-1:turn-1:completed"
-  );
 });
 
 test("reuses expensive projections when unrelated engine slices change", () => {

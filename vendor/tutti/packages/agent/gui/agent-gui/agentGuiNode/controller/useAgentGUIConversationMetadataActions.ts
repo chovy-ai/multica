@@ -249,21 +249,6 @@ export function useAgentGUIConversationMetadataActions(
     [agentActivityRuntime, agentHostApi.toast, workspaceId]
   );
 
-  const markConversationUnread = useCallback(
-    (agentSessionId: string) => {
-      const normalizedAgentSessionId = agentSessionId.trim();
-      if (!normalizedAgentSessionId) {
-        return;
-      }
-      sessionEngine.dispatch({
-        type: "attention/unreadRequested",
-        agentSessionId: normalizedAgentSessionId,
-        userId: currentUserId?.trim() ?? ""
-      });
-    },
-    [currentUserId, sessionEngine]
-  );
-
   const renameConversation = useCallback(
     async (agentSessionId: string, title: string) => {
       const normalizedAgentSessionId = agentSessionId.trim();
@@ -409,7 +394,6 @@ export function useAgentGUIConversationMetadataActions(
     removeProject,
     toggleProjectPinned,
     toggleConversationPinned,
-    markConversationUnread,
     renameConversation
   };
 }

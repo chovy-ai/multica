@@ -37,10 +37,6 @@ import type {
   RootEngineReducerResult
 } from "./rootReducer.types.ts";
 import {
-  attentionReadStateReducer,
-  createInitialAttentionReadState
-} from "./attentionReadState.reducer.ts";
-import {
   validateScopedSessionResult,
   validateCancelResult,
   validateSendInputResult
@@ -71,7 +67,6 @@ import {
 
 export function createInitialAgentSessionEngineState(): RootAgentSessionEngineState {
   return {
-    attentionReadState: createInitialAttentionReadState(),
     editRetry: createInitialEditRetryState(),
     engineRuntime: createInitialEngineRuntimeState(),
     pendingIntents: createInitialPendingIntentsState(),
@@ -333,16 +328,6 @@ export function rootEngineReducer(
       promptSettingsExecution?.promptCommand.commandId ?? null,
     settingsResultValidation
   });
-  const attentionReadState = attentionReadStateReducer(
-    state.attentionReadState,
-    intent,
-    {
-      previousSessionsById: state.sessionLifecycle.sessionsById,
-      previousTurnsById: state.sessionLifecycle.turnsById,
-      sessionsById: sessionLifecycle.state.sessionsById,
-      turnsById: sessionLifecycle.state.turnsById
-    }
-  );
   const editRetry = editRetryReducer(state.editRetry, intent);
   const pendingIntents = pendingIntentsReducer(state.pendingIntents, intent, {
     deletedSessionIds: sessionLifecycle.state.deletedSessionIds,
@@ -396,7 +381,6 @@ export function rootEngineReducer(
     }
   );
   const unchanged =
-    attentionReadState.state === state.attentionReadState &&
     editRetry.state === state.editRetry &&
     engineRuntime.state === state.engineRuntime &&
     pendingIntents.state === state.pendingIntents &&
@@ -410,7 +394,6 @@ export function rootEngineReducer(
   const nextState = unchanged
     ? state
     : {
-        attentionReadState: attentionReadState.state,
         editRetry: editRetry.state,
         engineRuntime: engineRuntime.state,
         pendingIntents: pendingIntents.state,
@@ -433,7 +416,6 @@ export function rootEngineReducer(
   ];
   return {
     commands: [
-      ...attentionReadState.commands,
       ...editRetry.commands,
       ...engineRuntime.commands,
       ...pendingIntents.commands,

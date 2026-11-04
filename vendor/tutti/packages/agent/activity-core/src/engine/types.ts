@@ -106,7 +106,6 @@ export interface EngineIntentExpiredIntent {
  * continuations belong to the private root-reducer contract.
  */
 export type EngineIntent =
-  | AttentionReadIntent
   | EngineCommandResultIntent
   | EngineConnectionChangedIntent
   | EngineExpiryCancelRequestedIntent
@@ -181,7 +180,6 @@ export type EngineInternalCommand =
   | EngineExpiryCommand;
 
 export type EngineExternalCommand =
-  | AttentionReadCommand
   | EngineProbeCommand
   | EngineReconcileWorkspaceCommand
   | InteractionRespondCommand
@@ -249,7 +247,6 @@ export interface EngineRuntimeState {
 
 /** State shared by public snapshots and the private reducer root. */
 export interface AgentSessionEngineStateBase {
-  attentionReadState: AttentionReadState;
   editRetry: EditRetryState;
   engineRuntime: EngineRuntimeState;
   pendingIntents: PendingIntentsState;
@@ -558,11 +555,6 @@ import type {
   SessionReconcileIntent,
   SessionReconcileState
 } from "./sessionReconcile.types.ts";
-import type {
-  AttentionReadCommand,
-  AttentionReadIntent,
-  AttentionReadState
-} from "./attentionReadState.types.ts";
 import type {
   SessionCommandsIntent,
   SessionCommandsState

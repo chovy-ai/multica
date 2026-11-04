@@ -63,7 +63,6 @@ function backend(storage = new Map<string, string>()) {
         pending = {};
         messages.splice(0);
         return tasks[tasks.length - 1];
-      case "session.markRead": return;
       case "attachment.upload": return {
         id: "attachment-1", filename: params.file.name, content_type: params.file.type,
         markdown_url: "/api/attachments/attachment-1/download", url: "/api/attachments/attachment-1/download",
@@ -690,37 +689,6 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
     expect(data.request.mock.calls.filter(([method]) => method === "session.load").length).toBeLessThanOrEqual(2);
   });
 
-  it("marks a run that settles out of view as an unread completion", async () => {
-    const data = backend();
-    data.sessions.push(session);
-    let pendingTasks: PendingChatTaskItem[] = [{ task_id: "real-pending-task", chat_session_id: session.id, status: "running" }];
-    const original = data.request.getMockImplementation()!;
-    data.request.mockImplementation(async (method, params) => method === "workspace.load"
-      ? { agents: init.agents, sessions: data.sessions, pendingTasks }
-      : original(method, params));
-    const { handle } = await setup(data);
-    const engine = handle.runtime.getSessionEngine(init.workspaceId);
-    expect(engine.getSnapshot().attentionReadState.partitionsByUserId[init.userId]?.recordsBySessionId[session.id]).toBeUndefined();
-    data.complete("real-pending-task");
-    data.messages.push({ id: "reply", chat_session_id: session.id, role: "assistant", content: "Done", task_id: "real-pending-task", created_at: time } as ChatMessage);
-    pendingTasks = [];
-    data.emit({ type: "invalidate", scope: "workspace" });
-    await vi.waitFor(() => expect(engine.getSnapshot().attentionReadState.partitionsByUserId[init.userId]?.recordsBySessionId[session.id]).toMatchObject({
-      isUnread: true, kind: "completed", completionKey: `turn:${session.id}:real-pending-task:completed`,
-    }));
-  });
-
-  it("does not mark already settled history unread when it is opened", async () => {
-    const data = backend();
-    data.sessions.push(session);
-    data.complete("completed-task");
-    data.messages.push({ id: "completed-message", chat_session_id: session.id, role: "assistant", content: "Completed result", task_id: "completed-task", created_at: time } as ChatMessage);
-    const { handle } = await setup(data);
-    await handle.runtime.getSession(init.workspaceId, session.id);
-    const engine = handle.runtime.getSessionEngine(init.workspaceId);
-    expect(engine.getSnapshot().attentionReadState.partitionsByUserId[init.userId]?.recordsBySessionId[session.id]).toBeUndefined();
-  });
-
   it("refreshes previously loaded history when the aggregate reports a newly started real run", async () => {
     const data = backend();
     data.sessions.push(session);
@@ -806,22 +774,6 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
   });
 
 
-
-  it("maps the source engine's unread-removal write to one real server mark-read", async () => {
-    const data = backend();
-    data.sessions.push(session);
-    const key = "turn:server-session:server-task-1:completed";
-    data.storage.set("attention-read-state-v1", JSON.stringify({ completed: { readIds: [], unreadIds: [key] }, failed: { readIds: [], unreadIds: [] } }));
-    const { handle } = await setup(data);
-    const engine = handle.runtime.getSessionEngine(init.workspaceId);
-    engine.dispatch({ type: "attention/hydrateRequested", commandId: "hydrate-1", userId: init.userId, workspaceId: init.workspaceId });
-    await vi.waitFor(() => expect(engine.getSnapshot().attentionReadState.partitionsByUserId[init.userId]?.hydrated).toBeTruthy());
-    engine.dispatch({ type: "attention/read", userId: init.userId, agentSessionId: "server-session" });
-    await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "session.markRead")).toHaveLength(1));
-    expect(data.request.mock.calls.find(([method]) => method === "session.markRead")?.[1]).toEqual({ sessionId: "server-session" });
-    engine.dispatch({ type: "attention/read", userId: init.userId, agentSessionId: "server-session" });
-    expect(data.request.mock.calls.filter(([method]) => method === "session.markRead")).toHaveLength(1);
-  });
 
   it("uploads real image bytes and reuses the resulting attachment identity on send", async () => {
     const { handle, request } = await setup();

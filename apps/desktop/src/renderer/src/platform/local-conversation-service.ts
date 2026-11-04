@@ -206,7 +206,6 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     assertCurrent(); const params = raw as Record<string, any>;
     switch (method) {
       case "workspace.load": return load();
-      case "session.markRead": return undefined;
       case "queue.enqueue": {
         // Transfer ownership before any asynchronous view-bound preparation.
         const item = params.item as LocalQueuedPrompt;

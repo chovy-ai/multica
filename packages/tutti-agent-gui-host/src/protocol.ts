@@ -143,7 +143,6 @@ export interface AgentGuiRpcMethods {
   "session.fork": { params: { sessionId: string; turnId: string; requestId: string }; result: AgentGuiSession };
   "session.pin": { params: { sessionId: string; pinned: boolean }; result: AgentGuiSession };
   "session.delete": { params: { sessionId: string }; result: void };
-  "session.markRead": { params: { sessionId: string }; result: void };
   "session.cancel": { params: { sessionId: string; taskId: string }; result: CancelTaskResponse };
   "models.list": { params: { agentId: string; force?: boolean }; result: RuntimeModelsResult };
   "usage.read": { params: { agentId: string; sessionId?: string; force?: boolean }; result: LocalProviderUsage };

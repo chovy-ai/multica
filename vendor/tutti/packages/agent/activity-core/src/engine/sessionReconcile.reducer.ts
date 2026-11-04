@@ -153,13 +153,8 @@ function receiveDetailSnapshot(
     });
   }
   if (intent.live && intent.session.latestTurn) {
-    const replayAcceptedLiveCompletion =
-      !liveTurnId || intent.session.latestTurn.turnId === liveTurnId;
     followUpIntents.push({
       live: true,
-      ...(replayAcceptedLiveCompletion
-        ? { replayAcceptedLiveCompletion: true as const }
-        : {}),
       turn: intent.session.latestTurn,
       type: "turn/upserted"
     });

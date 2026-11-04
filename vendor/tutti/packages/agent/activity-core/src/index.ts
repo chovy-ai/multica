@@ -168,10 +168,6 @@ export type {
   SessionsDeleteRequestedIntent
 } from "./engine/sessionMutations.types.ts";
 export {
-  selectAttentionReadState,
-  selectSessionAttention
-} from "./engine/attentionReadState.selectors.ts";
-export {
   selectSessionMessageWindow,
   selectSessionMessages,
   selectSessionMessagesById
@@ -181,15 +177,6 @@ export {
   type AgentSessionFamilySnapshot
 } from "./engine/sessionFamily.selectors.ts";
 export type { SessionMessagesState } from "./engine/sessionMessages.types.ts";
-export type {
-  AttentionCompletionKind,
-  AttentionReadCommand,
-  AttentionReadIntent,
-  AttentionReadRecord,
-  AttentionObservationProvenance,
-  AttentionReadStateProvenance,
-  AttentionReadState
-} from "./engine/attentionReadState.types.ts";
 export {
   selectEngineActiveTurn,
   selectEngineCancelState,

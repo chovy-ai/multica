@@ -11,7 +11,6 @@ export function projectPublicAgentSessionEngineState(
   previous?: AgentSessionEngineState
 ): AgentSessionEngineState {
   const projected: AgentSessionEngineState = {
-    attentionReadState: state.attentionReadState,
     editRetry: state.editRetry,
     engineRuntime: state.engineRuntime,
     pendingIntents: state.pendingIntents,

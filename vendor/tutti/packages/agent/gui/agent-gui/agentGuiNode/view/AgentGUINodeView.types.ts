@@ -666,7 +666,6 @@ export interface AgentGUINodeViewProps extends AgentGUIComposerExternalPromptPro
     retryActivation: () => void;
     continueInNewConversation: () => void;
     toggleConversationPinned: (agentSessionId: string, pinned: boolean) => void;
-    markConversationUnread: (agentSessionId: string) => void;
     renameConversation: (
       agentSessionId: string,
       title: string

@@ -234,7 +234,6 @@ export function useAgentGUINodeController({
     workspaceId
   });
   const {
-    attentionReadState,
     conversationFilter,
     conversationListQuery,
     conversationListState,
@@ -498,7 +497,6 @@ export function useAgentGUINodeController({
     activeSessionReconcileErrorCode:
       sessionEngineState.activeSessionReconcileErrorCode,
     agentActivityRuntime,
-    attentionReadRecordsBySessionId: attentionReadState.recordsBySessionId,
     conversationIdsRef,
     conversationsRef,
     conversationListQuery,
@@ -509,13 +507,10 @@ export function useAgentGUINodeController({
     intent,
     isComposerHomeRef,
     isMountedRef,
-    isSurfaceActive,
-    isSurfaceVisible,
     loadDraftComposerOptions: () => loadDraftComposerOptionsRef.current(),
     loadSelectedConversationMessages,
     loadSessionState,
     markSelectedConversationDetailPending,
-    nodeId,
     onDataChangeRef,
     sessionEngine,
     requestRailReveal,

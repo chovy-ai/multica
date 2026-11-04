@@ -382,60 +382,6 @@ export function reportAgentGUIActiveConversationCleared(input: {
   }
 }
 
-export function reportAgentGUIAttentionReadDecision(input: {
-  agentSessionId: string;
-  completionKey: string;
-  decision: "preserve_unread" | "read";
-  isSurfaceActive: boolean;
-  isSurfaceDocumentExposed: boolean;
-  isSurfaceVisible: boolean;
-  markedUnreadByUser: boolean;
-  nodeId?: string;
-  previousActiveConversationId: string | null;
-  reason:
-    | "active_selection"
-    | "manual_unread_current_selection"
-    | "reselected"
-    | "surface_hidden"
-    | "surface_inactive"
-    | "document_not_exposed";
-  runtime: AgentGUIRuntime;
-  workspaceId: string;
-}): void {
-  const reportDiagnostic = input.runtime.reportDiagnostic;
-  if (!reportDiagnostic) {
-    return;
-  }
-  try {
-    void Promise.resolve(
-      reportDiagnostic.call(input.runtime, {
-        details: {
-          agentSessionId: input.agentSessionId,
-          completionKey: input.completionKey,
-          decision: input.decision,
-          isSurfaceActive: input.isSurfaceActive,
-          isSurfaceDocumentExposed: input.isSurfaceDocumentExposed,
-          isSurfaceVisible: input.isSurfaceVisible,
-          markedUnreadByUser: input.markedUnreadByUser,
-          nodeId: input.nodeId ?? null,
-          previousActiveConversationId: input.previousActiveConversationId,
-          reason: input.reason
-        },
-        event: "agent.gui.attention_read.decision",
-        level: "info",
-        source: "agent-gui",
-        workspaceId: input.workspaceId
-      })
-    ).catch(() => {});
-  } catch (reportError) {
-    // Diagnostic logging must never affect attention/read decisions.
-    console.error(
-      "[agent-gui] reportAgentGUIAttentionReadDecision failed",
-      reportError
-    );
-  }
-}
-
 export function reportAgentGUIConversationListProjectionSkipped(input: {
   activeConversationId: string | null;
   currentUserIdPresent: boolean;

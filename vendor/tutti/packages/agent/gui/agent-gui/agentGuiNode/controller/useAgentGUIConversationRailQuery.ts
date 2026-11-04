@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
-  selectAttentionReadState,
   selectRootAgentSessionIdsWithPendingInteractions,
   selectWorkspaceAgentConsumerSessions
 } from "@tutti-os/agent-activity-core";
@@ -306,16 +305,13 @@ function selectCanonicalActivityConversations(
     return EMPTY_AGENT_GUI_CONVERSATION_ACTIVITY_CONVERSATIONS;
   }
   const rootFacts = selectAgentGUIConversationActivityRootFacts(state);
-  const attention = selectAttentionReadState(state, input.currentUserId);
   const summaries = projectCanonicalAgentGUIConversationSummaries(
     selectWorkspaceAgentConsumerSessions(state),
     input.firstUserDisplayPromptsBySessionId
   ).map((conversation): AgentGUIConversationSummary => {
     const fact = rootFacts.get(conversation.id);
-    const attentionRecord = attention.recordsBySessionId[conversation.id];
     return {
       ...conversation,
-      hasUnreadCompletion: attentionRecord?.isUnread ?? false,
       needsUserAction: fact?.needsUserAction ?? conversation.needsUserAction,
       status: fact?.status ?? conversation.status
     };

@@ -445,6 +445,7 @@ export function AgentGUINodeView({
       isUserProjectMutationPending:
         viewModel.operations.isUserProjectMutationPending,
       labels: conversationRailLabels,
+      onMarkConversationUnread: () => undefined,
       workspaceUserProjectI18n,
       uiLanguage,
       createConversationDisabled,
@@ -457,7 +458,6 @@ export function AgentGUINodeView({
       onSelectConversationFilterTarget: actions.selectConversationFilterTarget,
       onSelectConversation: selectConversation,
       onToggleConversationPinned: toggleConversationPinned,
-      onMarkConversationUnread: actions.markConversationUnread,
       onRemoveProject: removeProject,
       onMoveProject: moveProject,
       onToggleProjectPinned: toggleProjectPinned,
@@ -481,7 +481,6 @@ export function AgentGUINodeView({
       conversationRailLabels,
       openConversationWindow,
       openProjectFiles,
-      actions.markConversationUnread,
       actions.updateConversationFilter,
       removeProject,
       moveProject,
