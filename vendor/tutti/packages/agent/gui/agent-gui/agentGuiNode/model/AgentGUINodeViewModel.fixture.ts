@@ -95,7 +95,6 @@ export function groupAgentGUINodeViewModelFixture(
     operations: {
       forkThroughTurnPendingTurnIds: flat.forkThroughTurnPendingTurnIds ?? [],
       isDeletingConversation: flat.isDeletingConversation,
-      isDeletingProjectConversations: flat.isDeletingProjectConversations,
       isUserProjectMutationPending: flat.isUserProjectMutationPending ?? false,
       pendingDeleteConversation: flat.pendingDeleteConversation,
       pendingDeleteProjectConversations: flat.pendingDeleteProjectConversations

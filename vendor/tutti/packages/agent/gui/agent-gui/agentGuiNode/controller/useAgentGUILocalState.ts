@@ -82,8 +82,6 @@ export function useAgentGUILocalState({
   >({});
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isDeletingConversation, setIsDeletingConversation] = useState(false);
-  const [isDeletingProjectConversations, setIsDeletingProjectConversations] =
-    useState(false);
   const [pendingDeleteConversation, setPendingDeleteConversation] =
     useState<AgentGUIConversationSummary | null>(null);
   const [
@@ -120,7 +118,6 @@ export function useAgentGUILocalState({
     intent,
     isComposerHome,
     isDeletingConversation,
-    isDeletingProjectConversations,
     isLoadingMessages,
     isUserProjectMutationPending,
     listError,
@@ -138,7 +135,6 @@ export function useAgentGUILocalState({
     setIntent,
     setIsComposerHome,
     setIsDeletingConversation,
-    setIsDeletingProjectConversations,
     setIsLoadingMessages,
     setIsUserProjectMutationPending,
     setListError,

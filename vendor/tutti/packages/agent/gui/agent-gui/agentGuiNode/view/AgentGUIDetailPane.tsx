@@ -21,7 +21,6 @@ import {
   AgentGUIEmptyHomePane,
   EMPTY_HOME_SUGGESTIONS
 } from "./AgentGUIEmptyState";
-import { AgentGUIContentToast } from "./AgentGUIContentToast";
 import { AgentGUIDetailTimeline } from "./AgentGUIDetailTimeline";
 import {
   useOptionalStableEventCallback,

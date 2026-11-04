@@ -147,7 +147,6 @@ export function useAgentGUIConversationSelectionController(
     transientConversation,
     workspaceId
   } = input;
-  const attentionReadDiagnosticKeyRef = useRef<string | null>(null);
   const rolledBackSelectionSessionIdRef = useRef<string | null>(null);
   const persistedConfirmedActivationRequestIdRef = useRef<string | null>(null);
 

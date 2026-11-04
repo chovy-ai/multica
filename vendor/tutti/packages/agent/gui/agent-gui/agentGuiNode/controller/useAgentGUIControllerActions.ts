@@ -75,12 +75,6 @@ export function useAgentGUIControllerActions(
   const toggleProjectPinned = useStableControllerEventCallback(
     actions.toggleProjectPinned
   );
-  const confirmDeleteProjectConversations = useStableControllerEventCallback(
-    actions.confirmDeleteProjectConversations
-  );
-  const confirmDeleteConversations = useStableControllerEventCallback(
-    actions.confirmDeleteConversations
-  );
   const toggleConversationPinned = useStableControllerEventCallback(
     actions.toggleConversationPinned
   );
@@ -134,8 +128,6 @@ export function useAgentGUIControllerActions(
       removeProject,
       moveProject,
       toggleProjectPinned,
-      confirmDeleteProjectConversations,
-      confirmDeleteConversations,
       toggleConversationPinned,
       renameConversation,
       forkConversationThroughTurn,
@@ -149,8 +141,6 @@ export function useAgentGUIControllerActions(
     [
       cancelDeleteConversation,
       confirmDeleteConversation,
-      confirmDeleteConversations,
-      confirmDeleteProjectConversations,
       continueInNewConversation,
       createConversation,
       editQueuedPrompt,

@@ -16,7 +16,6 @@ import type {
   ChromeLabels,
   InteractivePromptLabels
 } from "./AgentGUINodeView.types";
-import { numberValue, objectRecord, stringValue } from "./agentGUIViewUtils";
 
 interface AgentGUIBottomDockPaneProps {
   bottomDockRef: React.RefObject<HTMLDivElement | null>;

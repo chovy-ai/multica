@@ -566,7 +566,6 @@ export interface AgentGUIReadinessViewModel {
 export interface AgentGUIOperationsViewModel {
   forkThroughTurnPendingTurnIds: readonly string[];
   isDeletingConversation: boolean;
-  isDeletingProjectConversations: boolean;
   isUserProjectMutationPending: boolean;
   pendingDeleteConversation: AgentGUIConversationSummary | null;
   pendingDeleteProjectConversations: AgentGUIProjectConversationDeleteTarget | null;

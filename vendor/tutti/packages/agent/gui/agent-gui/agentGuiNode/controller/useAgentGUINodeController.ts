@@ -110,8 +110,6 @@ export type {
 
 export function useAgentGUINodeController({
   nodeId,
-  isSurfaceActive,
-  isSurfaceVisible,
   workspaceId,
   currentUserId,
   workspacePath,

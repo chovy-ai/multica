@@ -13,10 +13,6 @@ import type { AgentGUIRuntime } from "../../../agentActivityRuntime";
 import { translate } from "../../../i18n/index";
 import type { AgentConversationVM } from "../../../shared/agentConversation/contracts/agentConversationVM";
 import type { AgentApprovalItemVM } from "../../../shared/agentConversation/contracts/agentApprovalItemVM";
-import {
-  latestPlanTurnId,
-  planImplementationPromptFromPlanTurn
-} from "../../../shared/agentConversation/planImplementationPresentation";
 import type { AgentSessionState } from "../../../shared/agentSessionTypes";
 import type { AppErrorCode } from "../../../shared/contracts/dto";
 import type {
@@ -25,7 +21,6 @@ import type {
   AgentGUIInteractionReadinessSource,
   AgentGUITargetConnectionSource
 } from "../../../types";
-import { useEngineSelector } from "../../../shared/engine/useEngineSelector";
 import type {
   AgentGUIConversationSummary,
   AgentGUIInteractivePrompt

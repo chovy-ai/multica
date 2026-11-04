@@ -6,7 +6,6 @@ import {
   useAgentGuiConversationList,
   type AgentGUIConversationListQuery
 } from "../../../contexts/workspace/presentation/renderer/agentGuiConversationList/useAgentGuiConversationList";
-import { useEngineSelector } from "../../../shared/engine/useEngineSelector";
 import type { AgentGUINodeData, AgentGUIAgentTarget } from "../../../types";
 import {
   createAgentGUIConversationFilterState,

@@ -319,7 +319,6 @@ export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
     operations: {
       forkThroughTurnPendingTurnIds,
       isDeletingConversation: input.isDeletingConversation,
-      isDeletingProjectConversations: input.isDeletingProjectConversations,
       isUserProjectMutationPending: input.isUserProjectMutationPending,
       pendingDeleteConversation: input.pendingDeleteConversation,
       pendingDeleteProjectConversations: input.pendingDeleteProjectConversations

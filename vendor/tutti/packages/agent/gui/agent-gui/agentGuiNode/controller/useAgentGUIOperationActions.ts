@@ -9,7 +9,6 @@ import {
 import { resolveConversationSummaryById } from "./useAgentConversationSelection";
 import { useAgentGUIComposerSettingsActions } from "./useAgentGUIComposerSettingsActions";
 import { useAgentGUIContinueConversation } from "./useAgentGUIContinueConversation";
-import { useAgentGUIConversationBatchDeletion } from "./useAgentGUIConversationBatchDeletion";
 import { useAgentGUIConversationDeletion } from "./useAgentGUIConversationDeletion";
 import { useAgentGUIConversationHome } from "./useAgentGUIConversationHome";
 import { useAgentGUIConversationMetadataActions } from "./useAgentGUIConversationMetadataActions";
@@ -37,7 +36,7 @@ type UseAgentGUIOperationActionsInput = Omit<
   Parameters<typeof useAgentGUIConversationDeletion>[0] &
   Parameters<typeof useAgentGUIQueueActions>[0] &
   Parameters<typeof useAgentGUIConversationMetadataActions>[0] &
-  Parameters<typeof useAgentGUIConversationBatchDeletion>[0] & {
+  {
     providerComposerOptions: ReturnType<
       NewConversationInput["getCachedComposerOptions"]
     >;
@@ -131,7 +130,6 @@ export function useAgentGUIOperationActions(
   const deletionActions = useAgentGUIConversationDeletion(input);
   const queueActions = useAgentGUIQueueActions(input);
   const metadataActions = useAgentGUIConversationMetadataActions(input);
-  const batchDeletionActions = useAgentGUIConversationBatchDeletion(input);
 
   return {
     ...submitActions,
@@ -139,7 +137,6 @@ export function useAgentGUIOperationActions(
     ...deletionActions,
     ...queueActions,
     ...metadataActions,
-    ...batchDeletionActions,
     continueInNewConversation,
     createConversation
   };

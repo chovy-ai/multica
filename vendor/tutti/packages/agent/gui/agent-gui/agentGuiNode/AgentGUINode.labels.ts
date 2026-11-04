@@ -10,10 +10,7 @@ import type { AgentGUIHomeSuggestionId } from "../../types";
 import { resolveAgentGUIProviderDisplayLabel } from "./model/agentGuiProviderIdentity";
 import { buildAgentHomeSuggestions } from "./model/agentHomeSuggestions";
 import type { AgentGUIViewLabels } from "./AgentGUINodeView";
-import {
-  agentGUIConversationRailLabels,
-  type AgentGUIConversationRailLabels
-} from "./view/agentGUIConversationRailLabels";
+import { agentGUIConversationLabels } from "./view/agentGUIConversationLabels";
 import { agentGUIProviderManagerLabels } from "./view/agentGUIProviderManagerLabels";
 import { agentGUIUsageStatusLabels } from "./view/agentGUIUsageStatusLabels";
 import { agentQuickPromptLabels } from "./composer/quickPrompts/agentQuickPromptLabels";
@@ -23,11 +20,6 @@ import { agentGUIConnectorLabels } from "./composer/agentGUIConnectorLabels";
 
 export { buildAgentHomeSuggestions };
 
-export function useAgentGUIConversationRailLabels(
-  t: TranslateFn
-): AgentGUIConversationRailLabels {
-  return useMemo(() => agentGUIConversationRailLabels(t), [t]);
-}
 
 const workspaceFileReferenceLocaleKeyByPickerKey: Record<string, string> = {
   "actions.cancel": "common.cancel",
@@ -392,7 +384,7 @@ export function useAgentGUIViewLabels(input: {
       agentSettingsMenu: t("agentHost.agentGui.agentSettingsMenu"),
       agentEnvSetup: t("agentHost.agentGui.agentEnvSetup"),
       ...agentGUIProviderManagerLabels(t),
-      ...agentGUIConversationRailLabels(t),
+      ...agentGUIConversationLabels(t),
       conversationFilterAll: t("agentHost.agentGui.conversationFilterAll"),
       conversationFilterCodex: t("agentHost.agentGui.conversationFilterCodex"),
       conversationFilterClaudeCode: t(
@@ -569,9 +561,6 @@ export function useAgentGUIViewLabels(input: {
       deleteSessionTitle: t("agentHost.agentGui.deleteSessionTitle"),
       deleteSessionBody: t("agentHost.agentGui.deleteSessionBody"),
       deleteSessionConfirm: t("agentHost.agentGui.deleteSessionConfirm"),
-      conversationRailResizeAria: t(
-        "agentHost.agentGui.conversationRailResizeAria"
-      ),
       relativeTimeJustNow: t("agentHost.agentGui.relativeTimeJustNow"),
       relativeTimeMinutes: (count: number) =>
         t("agentHost.agentGui.relativeTimeMinutes", { count }),

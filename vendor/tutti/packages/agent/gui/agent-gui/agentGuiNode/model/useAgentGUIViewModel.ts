@@ -95,7 +95,6 @@ export function useAgentGUIViewModel(
     [
       candidate.operations.forkThroughTurnPendingTurnIds,
       candidate.operations.isDeletingConversation,
-      candidate.operations.isDeletingProjectConversations,
       candidate.operations.isUserProjectMutationPending,
       candidate.operations.pendingDeleteConversation,
       candidate.operations.pendingDeleteProjectConversations

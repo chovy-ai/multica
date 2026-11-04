@@ -146,7 +146,6 @@ export interface AgentGUIViewLabels extends AgentGUIProviderReadinessLabels {
   /** Accessible label for the button that dismisses an expanded suggestion category. */
   homeSuggestionsClose?: string;
   conversations: string;
-  newConversation: string;
   agentConfig: string;
   agentSettingsMenu: string;
   agentEnvSetup: string;
@@ -162,8 +161,6 @@ export interface AgentGUIViewLabels extends AgentGUIProviderReadinessLabels {
   removeAgentFromSidebar: (agent: string) => string;
   addAgentToSidebar: (agent: string) => string;
   dragAgentToReorder: (agent: string) => string;
-  noConversations: string;
-  emptyProjectConversations: string;
   conversationFilterAll: string;
   conversationFilterCodex: string;
   conversationFilterClaudeCode: string;
@@ -172,57 +169,16 @@ export interface AgentGUIViewLabels extends AgentGUIProviderReadinessLabels {
   sharedAgentOwnerSeparator: string;
   startConversation: string;
   selectConversation: string;
-  loadingConversations: string;
-  conversationsLoadFailed: string;
   loadingConversation: string;
   continuedFromTask: string;
   scrollToBottom: string;
-  searchNoConversations: string;
-  searchFailed: string;
-  retryConversations: string;
-  retrySearch: string;
-  activityPriority: string;
-  activityNothingNeedsAttention: string;
-  activityToday: string;
-  activityYesterday: string;
-  activityConversationSource: string;
-  activityStatusFailed: string;
-  activityStatusRecentlyActive: string;
-  activityStatusUnread: string;
-  activityStatusWaiting: string;
-  activityStatusWorking: string;
-  viewActivity: string;
-  viewActivityNeedsAttention: string;
-  turnOffActivityView: string;
   conversationUnavailable: string;
   fallbackAgentTitle: string;
   untitledConversationTitle: string;
   searchPlaceholder: string;
-  sectionConversations: string;
   sectionToday: string;
-  sectionPinned: string;
   sectionYesterday: string;
   sectionEarlier: string;
-  projectSectionEdit: string;
-  projectSectionMoreActions: string;
-  projectSectionViewFiles: string;
-  pinProject: string;
-  unpinProject: string;
-  pinnedProjectAccessibleName: (projectLabel: string) => string;
-  projectRailCreateProject: string;
-  projectRailLinkExistingProject: string;
-  removeProject: string;
-  removeProjectConfirmDescription: (projectLabel: string) => string;
-  removeProjectConfirmTitle: string;
-  batchDeleteProjectSessions: string;
-  batchDeleteProjectSessionsTitle: string;
-  batchDeleteProjectSessionsBody: (count: number, project: string) => string;
-  batchDeleteProjectSessionsConfirm: string;
-  conversationsSectionMoreActions: string;
-  batchDeleteConversations: string;
-  batchDeleteConversationsTitle: string;
-  batchDeleteConversationsBody: (count: number) => string;
-  batchDeleteConversationsConfirm: string;
   approvalRequired: string;
   fileChangeApprovalRequired: string;
   approvalUnavailable: string;
@@ -250,10 +206,6 @@ export interface AgentGUIViewLabels extends AgentGUIProviderReadinessLabels {
   thinkingLabel: string;
   toolCallsLabel: (count: number) => string;
   openConversationWindow: string;
-  showMoreConversations: string;
-  showLessConversations: string;
-  deleteSession: string;
-  pinSession: string;
   moreSessionActions: string;
   copyAsMarkdown: string;
   copyAsReference: string;
@@ -271,19 +223,10 @@ export interface AgentGUIViewLabels extends AgentGUIProviderReadinessLabels {
   renameSessionDescription: string;
   renameSessionPlaceholder: string;
   renameSessionSave: string;
-  unpinSession: string;
   markSessionUnread: string;
   deleteSessionTitle: string;
   deleteSessionBody: string;
-  deleteSessionConfirm: string;
   cancel: string;
-  conversationRailResizeAria: string;
-  relativeTimeJustNow: string;
-  relativeTimeMinutes: (count: number) => string;
-  relativeTimeHours: (count: number) => string;
-  relativeTimeDays: (count: number) => string;
-  relativeTimeMonths: (count: number) => string;
-  relativeTimeYears: (count: number) => string;
   slashCommandPalette: string;
   skillPickerPalette: string;
   slashPaletteCommandsGroup: string;
@@ -443,85 +386,6 @@ export type InteractivePromptLabels = {
   planImplementationSkip: string;
 };
 
-export type AgentGUIConversationRailLabels = Pick<
-  AgentGUIViewLabels,
-  | "batchDeleteConversations"
-  | "activityPriority"
-  | "activityNothingNeedsAttention"
-  | "activityToday"
-  | "activityYesterday"
-  | "activityConversationSource"
-  | "activityStatusFailed"
-  | "activityStatusRecentlyActive"
-  | "activityStatusUnread"
-  | "activityStatusWaiting"
-  | "activityStatusWorking"
-  | "batchDeleteConversationsBody"
-  | "batchDeleteConversationsConfirm"
-  | "batchDeleteConversationsTitle"
-  | "batchDeleteProjectSessions"
-  | "batchDeleteProjectSessionsBody"
-  | "batchDeleteProjectSessionsConfirm"
-  | "batchDeleteProjectSessionsTitle"
-  | "cancel"
-  | "conversationUnavailable"
-  | "conversationsSectionMoreActions"
-  | "copyAsMarkdown"
-  | "copyAsReference"
-  | "conversationCopyFile"
-  | "conversationCopyImage"
-  | "conversationCopyImagesOmitted"
-  | "conversationCopyInProgress"
-  | "conversationCopyMentionPrefix"
-  | "conversationCopyPreviousMessages"
-  | "copiedToClipboard"
-  | "copyFailed"
-  | "conversationsLoadFailed"
-  | "moreSessionActions"
-  | "deleteSession"
-  | "deleteSessionConfirm"
-  | "emptyProjectConversations"
-  | "loadingConversations"
-  | "markSessionUnread"
-  | "newConversation"
-  | "noConversations"
-  | "openConversationWindow"
-  | "pinProject"
-  | "pinSession"
-  | "pinnedProjectAccessibleName"
-  | "projectRailCreateProject"
-  | "projectRailLinkExistingProject"
-  | "projectSectionEdit"
-  | "projectSectionMoreActions"
-  | "projectSectionViewFiles"
-  | "relativeTimeDays"
-  | "relativeTimeHours"
-  | "relativeTimeJustNow"
-  | "relativeTimeMinutes"
-  | "relativeTimeMonths"
-  | "relativeTimeYears"
-  | "removeProject"
-  | "removeProjectConfirmDescription"
-  | "removeProjectConfirmTitle"
-  | "renameSession"
-  | "retryConversations"
-  | "retrySearch"
-  | "searchFailed"
-  | "searchNoConversations"
-  | "searchPlaceholder"
-  | "sectionConversations"
-  | "sectionPinned"
-  | "selectConversation"
-  | "showLessConversations"
-  | "showMoreConversations"
-  | "startConversation"
-  | "turnOffActivityView"
-  | "unpinProject"
-  | "unpinSession"
-  | "untitledConversationTitle"
-  | "viewActivity"
-  | "viewActivityNeedsAttention"
->;
 type AgentGUIComposerExternalPromptProps = Pick<
   AgentComposerProps,
   | "resolveExternalPromptEntries"
@@ -681,30 +545,17 @@ export interface AgentGUINodeViewProps extends AgentGUIComposerExternalPromptPro
       beforeProjectId: string | null
     ) => Promise<void>;
     toggleProjectPinned: (projectId: string, pinned: boolean) => Promise<void>;
-    confirmDeleteProjectConversations: (
-      sectionKey?: string,
-      agentTargetId?: string | null
-    ) => Promise<string[]>;
-    confirmDeleteConversations: (agentSessionIds: string[]) => Promise<boolean>;
     requestDeleteConversation: (agentSessionId: string) => void;
     cancelDeleteConversation: () => void;
     confirmDeleteConversation: () => void;
   };
   conversationRailCollapsed: boolean;
-  conversationRailWidthPx: number;
-  conversationRailMinWidthPx: number;
-  conversationRailMaxWidthPx: number;
   detailMinWidthPx: number;
   uiLanguage: UiLanguage;
   onWorkspaceFileReferencesAdded?: (
     references: readonly WorkspaceFileReference[]
   ) => void | Promise<void>;
-  onConversationRailWidthChanged: (widthPx: number) => void;
-  onConversationRailLayoutChange?: (
-    layout: AgentGUIConversationRailLayout
-  ) => void;
   labels: AgentGUIViewLabels;
-  conversationRailLabels: AgentGUIConversationRailLabels;
   workspaceUserProjectI18n: WorkspaceUserProjectI18nRuntime;
   workspaceFileManagerCopy?: WorkspaceFileManagerI18nRuntime | null;
   workspaceFileReferenceAdapter?: WorkspaceFileReferenceAdapter | null;

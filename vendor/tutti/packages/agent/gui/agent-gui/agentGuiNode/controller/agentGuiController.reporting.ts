@@ -29,7 +29,6 @@ import {
   getAgentGUIErrorCode,
   normalizeAgentGUIDiagnosticError
 } from "./agentGuiController.errors";
-import type { AgentConversationBatchDeletionCapability } from "./agentConversationBatchDeletionCapability";
 export {
   normalizePermissionModeSemantic,
   permissionConfigFromComposerOptions,
@@ -183,39 +182,6 @@ export function reportAgentGUIConversationFilterTargetUnresolved(input: {
       "[agent-gui] reportAgentGUIConversationFilterTargetUnresolved failed",
       reportError
     );
-  }
-}
-
-export function reportAgentGUIConversationBatchDeletionCapabilityIncomplete(input: {
-  missingMethods: AgentConversationBatchDeletionCapability["missingMethods"];
-  runtime: AgentGUIRuntime;
-  workspaceId: string;
-}): void {
-  const reportDiagnostic = input.runtime.reportDiagnostic;
-  if (!reportDiagnostic) {
-    return;
-  }
-  const reportFailure = (error: unknown) => {
-    console.error(
-      "[agent-gui-conversation-batch-delete-capability]",
-      JSON.stringify({
-        error: normalizeAgentGUIDiagnosticError(error),
-        workspaceId: input.workspaceId
-      })
-    );
-  };
-  try {
-    void Promise.resolve(
-      reportDiagnostic.call(input.runtime, {
-        details: { missingMethods: input.missingMethods },
-        event: "agent.gui.conversation_batch_delete.capability_incomplete",
-        level: "warn",
-        source: "agent-gui",
-        workspaceId: input.workspaceId
-      })
-    ).catch(reportFailure);
-  } catch (error) {
-    reportFailure(error);
   }
 }
 
