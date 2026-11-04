@@ -271,8 +271,8 @@ class ItemModel {
 | 1. 打点 | 投影（①②）、engine 分发（③）、React 提交（④⑤，`Profiler` 无法再细分）按 5 秒窗口汇总，并记录 item 数和堆大小，用真实长会话记录基线 | 无 |
 | 2a. Model 和 Service | 新包；`ConversationStore`、`V2Conversation` 迁入，Model 实例稳定；派生逻辑从投影移进 Turn；测试假后端移到 `LocalV2Transport` 层 | 无 |
 | 2a+. 读取一致性 | 第 13 节：旧快照和换库前的读取不再覆盖 Model，`refresh` 合并 | 无，修复现有问题 |
-| 2b. 增量提交 | 第 10 节；merge 保留未变化消息的引用并改为有序插入 | ①、②，③ 的大部分 |
-| 3. 转录 | 按轮次的行 computed 和不依赖内容的结构索引；view 直接读 Model；engine 不再持有 assistant 内容，只留 reducer 需要的轮次和用户消息 | ③、④ |
+| 2b. 增量提交 | 第 10 节 | ①、②，③ 的一部分 |
+| 3. 转录 | 按轮次的行 computed 和不依赖内容的结构索引；view 直接读 Model；engine 不再持有 assistant 内容，只留 reducer 需要的轮次和用户消息 | ③ 的其余部分、④ |
 | 3b. 列表 | 列表和未读迁入 `ConversationListModel`；**删除** rail 的分页查询层，本地列表本来就全在内存里 | 列表的全量计算 |
 | 4. 写路径 | 第 6 节和 daemon 能力；提交、新建会话、队列、取消、交互、发送可用性一起迁；结束时迁出 `sessionLifecycle` | 数据存两份的主体 |
 | 5. 其余领域 | composer → detail，同时删除对应的 runtime 方法、controller hook、RPC 方法和 `useAgentHostApi` | |
@@ -292,16 +292,23 @@ class ItemModel {
 - `observer` 和 React 19 的配合只验证了 host 里的组件测试（批量事件只渲染一次，且只渲染变化的行）。虚拟列表要到阶段 3 才验证。
 
 
-## 10. 增量提交通道（阶段 2b）
+## 10. 增量提交（阶段 2b）
 
-`message/snapshotReceived` 不适合作为主通道：它只能增改、不能删，按字段合并会留下旧值（reasoning 结束时不带 `status`，“思考中”就不会结束），也不更新轮次状态。
+和最初的设想不同：没有在 engine 新增 intent，流式更新继续走 `session/historyAuthoritativeSnapshotReceived`，只是传入的数组由增量维护。
 
-- **首次读取、快照、历史页、generation 变化：** 继续用 `session/historyAuthoritativeSnapshotReceived`。
-- **流式更新：** 在 engine 新增一个原子 intent，包含 session、upserted turns、upserted messages、removed ids 和 window，消息整体替换，一次分发只通知一次。
+这个 intent 本身就是原子的：能删除、整体替换消息、更新轮次状态，一次分发只通知一次。结算围栏和未读回放都在 `applyDetail` 里，不用移动。engine 反正要删，少改它也少一份要删的代码。
 
-结算围栏和未读回放（`applyDetail` 里的 `replayAcceptedLiveCompletion`）要在新 intent 中保留。
+host 新增 `LocalTranscript`，每个会话一个：
 
-这个通道只存在于阶段 2b 到 6，engine 删除时一起移除。
+- 事件带来的 `turn_id` 决定重新提交哪些轮次。不是事件的变化（快照、翻页）读全部。
+- `ConversationModel` 按轮次建索引，读一轮的开销只和这一轮有关。Turn、用户消息和交互缓存自己的行，内容没变就返回同一个对象。
+- `sequence` 编码为 `(turnIndex + 1) * 2^20 + 轮内序号`，前插旧轮次不影响已有消息。轮内顺序沿用原规则：用户消息在前，其余按开始时间。没有已加载轮次的行（轮次开始前的用户消息、未翻到的轮次的问题）按时间放到对应轮次之前。
+- 流式路径上，行对象变了就直接递增版本，不再序列化和 hash。全量路径仍按内容比较。
+- `areAgentActivityMessagesEqual` 先比引用。
+
+**消除的开销：** 第 1 节的 ①②。③ 里 reducer 的深比较也没了，但 selector 和 `workspaceAgentSessionMessages` 里的克隆排序还在，它们在阶段 3 移除。
+
+**还在的开销：** 每批仍要复制一遍消息数组的引用，并重建所有轮次的投影对象。轮次数远小于 item 数，先不处理。
 
 ## 11. 风险
 

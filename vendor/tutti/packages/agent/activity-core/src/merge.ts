@@ -71,6 +71,9 @@ export function areAgentActivityMessagesEqual(
   left: AgentActivityMessage,
   right: AgentActivityMessage
 ): boolean {
+  if (left === right) {
+    return true;
+  }
   return (
     left.workspaceId === right.workspaceId &&
     left.agentSessionId === right.agentSessionId &&

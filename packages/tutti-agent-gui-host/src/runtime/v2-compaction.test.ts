@@ -7,6 +7,8 @@ import { localV2ServerMessageSchema, localV2SnapshotSchema } from "@multica/core
 import { projectAgentActivitySessionToConversationVM } from "../../../../vendor/tutti/packages/agent/gui/shared/agentConversation/projection/workspaceAgentMessageProjection";
 import { ConversationModel } from "@multica/conversation-client/models";
 import { projectV2Conversation } from "./v2-projection";
+import { LocalTranscript } from "./local-transcript";
+import { RuntimeLedger } from "./ledger";
 
 const at = "2026-10-29T12:00:00Z";
 const fixture = localV2ServerMessageSchema.parse(JSON.parse(readFileSync(join(__dirname, "../../../../server/internal/localconversation/protocol/testdata/local-v2/valid/server_message__compaction.json"), "utf8")));
@@ -21,7 +23,10 @@ function snapshot(provider: string, history = events.slice(0, 1)) {
   });
 }
 
-const project = (conversation: ConversationModel) => projectV2Conversation(conversation, { workspaceId: "ws", agentSessionId: "gui-1", locale: "en" });
+const project = (conversation: ConversationModel) => ({
+  ...projectV2Conversation(conversation, { agentSessionId: "gui-1" }),
+  messages: new LocalTranscript(new RuntimeLedger(), "ws", "gui-1", "en").update(conversation, "all"),
+});
 
 function sharedRows(conversation: ConversationModel) {
   const view = project(conversation);
