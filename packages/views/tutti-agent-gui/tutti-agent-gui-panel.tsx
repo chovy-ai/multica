@@ -166,7 +166,7 @@ export function TuttiAgentGuiPanel(props: Props) {
 
   const rendered = useCallback(() => { clearTimeout(renderTimer.current); setStatus("ready"); }, []);
   return <div ref={container} className="relative flex min-h-0 flex-1 flex-col" data-testid="tutti-agent-gui-host">
-    {connection && <LoadBoundary key={attempt} onError={() => setStatus("error")}><Suspense fallback={null}><AgentGuiMount client={connection.client} initial={connection.initial} onRendered={rendered} /></Suspense></LoadBoundary>}
+    {connection && <LoadBoundary key={attempt} onError={() => setStatus("error")}><Suspense fallback={null}><AgentGuiMount client={connection.client} initial={connection.initial} localConversations={serviceRef.current?.localConversations} onRendered={rendered} /></Suspense></LoadBoundary>}
     {status !== "ready" && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background" role="status">
       <span>{t(($) => status === "error" ? $.workbench.load_error : $.workbench.loading)}</span>
       {status === "error" && <Button variant="outline" onClick={() => setAttempt((value) => value + 1)}>{t(($) => $.workbench.retry)}</Button>}

@@ -14,7 +14,7 @@ import { RuntimeLedger } from "./ledger";
 import { chatAuthoredPrompt } from "@multica/core/chat/context-snapshot";
 import { localMessageDisplayContent } from "@multica/core/local-conversation/protocol";
 import { backgroundTaskPresentation } from "./background-task-presentation";
-import type { V2Conversation } from "./v2-conversation";
+import type { V2Conversation } from "@multica/core/local-conversation/conversation";
 import { projectV2Conversation } from "./v2-projection";
 
 export const MULTICA_GUI_CAPABILITIES: AgentActivitySessionCapabilities = {

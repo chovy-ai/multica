@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { localV2ServerMessageSchema, localV2SnapshotSchema, type LocalV2Event } from "@multica/core/local-conversation/v2";
-import { V2Conversation } from "./v2-conversation";
+import { V2Conversation } from "@multica/core/local-conversation/conversation";
 import { projectV2Conversation } from "./v2-projection";
 import { mergeWorkspaceAgentActivityDurableAndOverlayMessages } from "../../../../vendor/tutti/packages/agent/gui/shared/workspaceAgentMessageOverlay";
 
@@ -27,7 +27,7 @@ function empty(seq = 0): V2Conversation {
 function withSample(name: string): V2Conversation {
   const events = sampleEvents(name);
   const conversation = empty(events[0]!.seq - 1);
-  conversation.turns.set("turn-1", { id: "turn-1", requestId: "r1", status: "running", startedAt: at, completedAt: null, error: null });
+  conversation.turns.set("turn-1", { id: "turn-1", index: 0, requestId: "r1", status: "running", startedAt: at, completedAt: null, error: null });
   expect(conversation.apply(events)).toBe("applied");
   return conversation;
 }
@@ -152,7 +152,7 @@ describe("V2Conversation", () => {
 
   it("shows background task progress and its final state", () => {
     const conversation = empty(39);
-    conversation.turns.set("turn-1", { id: "turn-1", requestId: "r1", status: "running", startedAt: at, completedAt: null, error: null });
+    conversation.turns.set("turn-1", { id: "turn-1", index: 0, requestId: "r1", status: "running", startedAt: at, completedAt: null, error: null });
     const events = sampleEvents("background_task");
     conversation.apply(events.slice(0, 2));
     expect(project(conversation).messages[0]).toMatchObject({ status: "running", payload: { noticeKind: "background_task", title: "Background task running · watch build" } });

@@ -10,7 +10,6 @@
     "./resource-reference": "./src/resource-reference.ts",
     "./protocol": "./src/protocol.ts",
     "./local-timing": "./src/local-timing.ts",
-    "./v2-conversation": "./src/runtime/v2-conversation.ts",
     "./html-preview": "./src/html-preview-contract.ts",
     "./subagent-transcript": "./src/subagent-transcript.tsx",
     "./timeline-end-position": "./src/timeline-end-position.ts",

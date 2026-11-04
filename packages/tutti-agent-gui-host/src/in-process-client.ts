@@ -26,8 +26,6 @@ export interface AgentGuiHostService {
 /** Methods a hidden or unfocused GUI may still call; every other one is a user action. */
 function allowedInBackground(method: string, params: unknown): boolean {
   if (method === "workspace.load" || method === "session.load" || method === "session.watch" || method === "task.messages") return true;
-  // Local history and its event stream must survive startup and focus changes.
-  if (method === "local.snapshot" || method === "local.storedSnapshot" || method === "local.subscribe" || method === "local.unsubscribe") return true;
   // A transfer outlives the focus that started it.
   if (method === "attachment.cancel" || method === "attachment.retry" || method === "attachment.forget" || method === "attachment.url" || method === "image.url") return true;
   if (method === "attachment.read" || method === "image.read" || method === "context.tasks" || method === "host.promptApplied" || method === "host.showMessage" || method.startsWith("storage.")) return true;

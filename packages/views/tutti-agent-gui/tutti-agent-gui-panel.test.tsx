@@ -138,8 +138,8 @@ describe("Agent GUI requests", () => {
     mock.foreground = false;
     await expect(client(mount).request("session.send", { sessionId: "s", content: "x" } as never)).rejects.toMatchObject({ code: "inactive_host", status: 409 });
     expect(service.request).not.toHaveBeenCalled();
-    await client(mount).request("local.snapshot", { sessionId: "s" } as never);
-    expect(service.request).toHaveBeenCalledWith("local.snapshot", { sessionId: "s" });
+    await client(mount).request("storage.read", { key: "k" } as never);
+    expect(service.request).toHaveBeenCalledWith("storage.read", { key: "k" });
     await client(mount).request("session.send", { sessionId: "s", content: "x", queued: true } as never);
     expect(service.request).toHaveBeenCalledWith("session.send", expect.objectContaining({ queued: true }));
   });

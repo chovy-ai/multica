@@ -3,7 +3,7 @@ import { AgentGUIStartupShell } from "@tutti-os/agent-gui/startup-shell";
 import { Button } from "@tutti-os/ui-system/components";
 import { AGENT_GUI_ROOT_CLASS, applyAgentGuiAppearance, syncAgentGuiDocument } from "./agent-gui-appearance";
 import { AgentGuiApplication } from "./application";
-import type { AgentGuiInitSnapshot, AgentGuiRpcClient } from "./protocol";
+import type { AgentGuiInitSnapshot, AgentGuiRpcClient, LocalConversationSource } from "./protocol";
 import { createMulticaAgentGuiRuntime } from "./runtime";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/inter/wght-italic.css";
@@ -39,11 +39,12 @@ type Handle = ReturnType<typeof createMulticaAgentGuiRuntime>;
 export interface AgentGuiMountProps {
   client: AgentGuiRpcClient;
   initial: AgentGuiInitSnapshot;
+  localConversations?: LocalConversationSource;
   onRendered?: () => void;
 }
 
 /** One GUI instance. Its runtime lives exactly as long as this component. */
-export default function AgentGuiMount({ client, initial, onRendered }: AgentGuiMountProps) {
+export default function AgentGuiMount({ client, initial, localConversations, onRendered }: AgentGuiMountProps) {
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   const [state, setState] = useState<{ handle: Handle | null; error: Error | null }>({ handle: null, error: null });
   const [attempt, setAttempt] = useState(0);
@@ -51,7 +52,7 @@ export default function AgentGuiMount({ client, initial, onRendered }: AgentGuiM
 
   useEffect(() => {
     let current = true;
-    const handle = createMulticaAgentGuiRuntime(client, initial);
+    const handle = createMulticaAgentGuiRuntime(client, initial, localConversations);
     setState({ handle: null, error: null });
     handle.initialize().then(
       () => { if (current) setState({ handle, error: null }); },

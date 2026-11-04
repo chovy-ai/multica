@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import "../../../apps/desktop/src/renderer/src/globals.css";
 import AgentGuiMount from "../src/mount";
 import { createInProcessRpcClient } from "../src/in-process-client";
-import { withLocalSnapshots } from "../src/runtime/local-snapshot-test-host";
+import { localSourceFromClient } from "../src/runtime/local-snapshot-test-host";
 import type { AgentGuiHostEvent, AgentGuiInitSnapshot } from "../src/protocol";
 
 const at = "2026-11-03T10:00:00Z";
@@ -33,12 +33,15 @@ function service(id: string, theme: "light" | "dark", sidePane: boolean) {
       default: return undefined;
     }
   };
-  return { request: withLocalSnapshots(request as never), subscribe(listener: (event: AgentGuiHostEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); } };
+  return { request, subscribe(listener: (event: AgentGuiHostEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); } };
 }
 
 function Instance({ id, theme, sidePane }: { id: string; theme: "light" | "dark"; sidePane: boolean }) {
-  const connection = useMemo(() => createInProcessRpcClient(service(id, theme, sidePane) as never, { interactive: () => true, current: () => true }), [id, theme, sidePane]);
-  return <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-instance={id}><AgentGuiMount client={connection.client} initial={snapshot(id, theme, sidePane)} /></div>;
+  const { connection, source } = useMemo(() => {
+    const host = service(id, theme, sidePane);
+    return { connection: createInProcessRpcClient(host as never, { interactive: () => true, current: () => true }), source: localSourceFromClient(host as never) };
+  }, [id, theme, sidePane]);
+  return <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-instance={id}><AgentGuiMount client={connection.client} initial={snapshot(id, theme, sidePane)} localConversations={source} /></div>;
 }
 
 function Page() {
