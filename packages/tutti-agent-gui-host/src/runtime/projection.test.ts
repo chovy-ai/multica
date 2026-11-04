@@ -9,7 +9,7 @@ import type { AgentGuiSessionDetail } from "../protocol";
 import { RuntimeLedger } from "./ledger";
 import { projectLocalMetadata, projectV2Detail } from "./projection";
 import { LocalTranscript } from "./local-transcript";
-import { ConversationModel } from "@multica/conversation-client/models";
+import { ConversationModel, TranscriptModel } from "@multica/conversation-client/models";
 
 const at = "2026-10-29T12:00:00Z";
 const reason = "Authentication failed: please sign in again.";
@@ -42,7 +42,7 @@ describe("local failure detail disclosure", () => {
     const detail: AgentGuiSessionDetail = { session, messages: [], pending: {} };
     const project = () => {
       const ledger = new RuntimeLedger();
-      return projectV2Detail(detail, conversation, undefined, ledger, new LocalTranscript(ledger, "ws", session.id, "en"));
+      return projectV2Detail(detail, conversation, undefined, ledger, new LocalTranscript(ledger, new TranscriptModel(), "ws", session.id, "en"));
     };
     expect(project().turns[0]?.error).toEqual({ message: reason, code, detail: reason });
     expect(visibleError(project().turns)).toMatchObject({ detail: reason, detailAvailable: true });

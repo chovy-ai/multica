@@ -8,11 +8,13 @@ import {
   type AgentActivitySession,
   type AgentActivitySnapshot,
   type AgentSessionActivateEffectInput,
+  type AgentSessionEngine,
   type EngineExtensionCommand,
   type EngineTypedCommandPort,
 } from "@tutti-os/agent-activity-core";
 import type { AgentGUIRuntime } from "@tutti-os/agent-gui";
 import { extractRichTextMentionsFromContent } from "@tutti-os/ui-rich-text/core";
+import { runInAction } from "mobx";
 import { contentReferencesAttachment } from "@multica/core/types/attachment-url";
 import type { Attachment } from "@multica/core/types";
 import type {
@@ -32,7 +34,8 @@ import { ModelPreferences } from "./model-preferences";
 import { PermissionPreferences } from "./permission-preferences";
 import type { LocalV2Event } from "@multica/core/local-conversation/v2";
 import { isLocalReasoningEffort, localReasoningLevels, isLocalPermissionMode, type LocalReasoningEffort, type LocalPermissionMode } from "@multica/core/local-conversation/protocol";
-import { ComposerService } from "@multica/conversation-client/services";
+import { TranscriptModel } from "@multica/conversation-client/models";
+import { CommitCadence, ComposerService } from "@multica/conversation-client/services";
 import { RuntimeLedger } from "./ledger";
 import { LocalTranscript, mergeTranscriptChange, type LocalTranscriptChange } from "./local-transcript";
 import { composerOptions, projectLocalMetadata, projectPendingSession, projectSession, projectV2Detail } from "./projection";
@@ -82,10 +85,11 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
   const details = new Map<string, AgentGuiSessionDetail>();
   /** Local conversations in view: each one's release and its observer's. */
   const openLocal = new Map<string, () => void>();
-  const v2Applies = new Set<string>();
   /** The turns events changed since the last apply; "all" when a change was not events. */
   const v2Changes = new Map<string, LocalTranscriptChange>();
   const transcripts = new Map<string, LocalTranscript>();
+  const transcriptModel = new TranscriptModel<AgentActivityDurableMessage>();
+  const commits = new CommitCadence<string>(commitLocal);
   let hostVisible = init.hostVisible !== false;
   const attachments = new Map<string, Attachment>();
   const sessionLoads = new Map<string, Promise<AgentActivitySession>>();
@@ -213,7 +217,16 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       }).catch(reportError);
     },
   });
-  const engine = desktopQueue.engine;
+  const queueEngine = desktopQueue.engine;
+  // Anything entering the engine decides against its turn state, which must not
+  // be behind what has already arrived and is waiting for the next commit.
+  const engine: AgentSessionEngine = {
+    ...queueEngine,
+    submitPrompt(input) { commits.flush(); return queueEngine.submitPrompt(input); },
+    dispatch(intent, options) { commits.flush(); queueEngine.dispatch(intent, options); },
+    stopSession(input) { commits.flush(); queueEngine.stopSession(input); },
+    submitInteractionResponse(input) { commits.flush(); return queueEngine.submitInteractionResponse(input); },
+  };
   const projectSnapshot = createAgentActivitySnapshotProjector(workspaceId);
   const unrestoredQueueSessionIds = new Set<string>();
 
@@ -436,6 +449,8 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     }
   }
   function receiveWorkspace(next: AgentGuiWorkspaceState) {
+    // Projecting below reads each conversation as it is now, ahead of the engine otherwise.
+    commits.flush();
     const previousPending = workspace.pendingTasks;
     workspace = next;
     workspaceRevision++;
@@ -497,10 +512,11 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     const conversation = localConversation(guiId);
     if (!conversation) {
       transcripts.delete(guiId);
+      transcriptModel.commit(guiId, []);
       return projectLocalMetadata(detail, agent, ledger);
     }
     let transcript = transcripts.get(guiId);
-    if (!transcript) transcripts.set(guiId, transcript = new LocalTranscript(ledger, detail.session.workspace_id, ledger.guiId(detail.session.id), init.locale));
+    if (!transcript) transcripts.set(guiId, transcript = new LocalTranscript(ledger, transcriptModel, detail.session.workspace_id, ledger.guiId(detail.session.id), init.locale));
     return projectV2Detail(detail, conversation, agent, ledger, transcript, changedTurns);
   }
 
@@ -529,19 +545,19 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       if (event.turn_id && isLocalTimingModelOutput(event.type, event.payload.kind)) presentationTiming.received(conversation.summary.conversation_id, event.turn_id);
     }
     v2Changes.set(guiId, mergeTranscriptChange(v2Changes.get(guiId), events));
-    // Coalesce a burst of event batches into one projection.
-    if (v2Applies.has(guiId)) return;
-    v2Applies.add(guiId);
-    queueMicrotask(() => {
-      v2Applies.delete(guiId);
-      if (disposed || !details.has(guiId)) return;
-      const id = resolvedServerId(guiId);
-      const detail = id ? source.detail(id) : null;
-      if (detail) details.set(guiId, detail);
-      const change = v2Changes.get(guiId);
-      v2Changes.delete(guiId);
-      applyDetail(guiId, change);
-    });
+    commits.schedule(guiId);
+    // A page of history or a queue change is not a stream: only this tick's changes can join it.
+    if (!events.length) queueMicrotask(() => commits.flush());
+  }
+
+  function commitLocal(guiId: string) {
+    if (disposed || !details.has(guiId)) return;
+    const id = resolvedServerId(guiId);
+    const detail = id ? source.detail(id) : null;
+    if (detail) details.set(guiId, detail);
+    const change = v2Changes.get(guiId);
+    v2Changes.delete(guiId);
+    applyDetail(guiId, change);
   }
 
   async function loadSession(guiId: string, fresh = false): Promise<AgentActivitySession> {
@@ -561,16 +577,26 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     return loadSession(guiId, true);
   }
 
+  /**
+   * One commit: observers of the transcript run when it ends, by which time the
+   * engine holds the same turns, so no view sees messages and turn state disagree.
+   */
   function applyDetail(guiId: string, changedTurns: LocalTranscriptChange = "all"): AgentActivitySession {
+    return runInAction(() => commitDetail(guiId, changedTurns));
+  }
+
+  function commitDetail(guiId: string, changedTurns: LocalTranscriptChange): AgentActivitySession {
     const detail = details.get(guiId)!;
     desktopQueue.receive(guiId, detail.promptQueue);
     const result = costProfile.measure("projection", detail.session.id, () => project(guiId, changedTurns));
     const unsettled = new Set(Object.values(engine.getSnapshot().sessionLifecycle.turnsById)
       .filter((turn) => turn.agentSessionId === guiId && turn.phase !== "settled").map((turn) => turn.turnId));
-    costProfile.measure("dispatch", detail.session.id, () => engine.dispatch({
+    costProfile.measure("dispatch", detail.session.id, () => queueEngine.dispatch({
       type: "session/historyAuthoritativeSnapshotReceived", workspaceId,
       agentSessionId: guiId, childSessions: [], historyRevision: ++historyRevision,
-      session: withModel(result.session), turns: result.turns, messages: result.messages,
+      session: withModel(result.session), turns: result.turns,
+      // Confirming a submit needs only the user's messages; the transcript reads the model.
+      messages: result.messages.filter((message) => message.role === "user"),
       sessionMessageWindows: [{ agentSessionId: guiId, hasOlderMessages: localConversation(guiId)?.hasOlderTurns ?? false,
         oldestLoadedVersion: result.messages.reduce<number | null>((oldest, message) => oldest === null || message.version < oldest ? message.version : oldest, null) }],
     }));
@@ -578,7 +604,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     // pointer intact. Fence that specific transition once: replaying every
     // historical settlement would itself request another live reconciliation.
     for (const turn of result.turns) {
-      if (turn.phase === "settled" && engine.getSnapshot().sessionLifecycle.sessionsById[guiId]?.activeTurnId === turn.turnId) engine.dispatch({
+      if (turn.phase === "settled" && engine.getSnapshot().sessionLifecycle.sessionsById[guiId]?.activeTurnId === turn.turnId) queueEngine.dispatch({
         type: "turn/projectionReceived", workspaceId, turn, activeTurnId: null,
         hostFencedSameTurnSettlement: true,
       });
@@ -587,7 +613,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     // that history now settles is a real completion: replay it as an accepted
     // live completion so the conversation list shows its unread mark.
     for (const turn of Object.values(engine.getSnapshot().sessionLifecycle.turnsById)) {
-      if (turn.agentSessionId === guiId && turn.phase === "settled" && unsettled.has(turn.turnId)) engine.dispatch({
+      if (turn.agentSessionId === guiId && turn.phase === "settled" && unsettled.has(turn.turnId)) queueEngine.dispatch({
         type: "turn/upserted", live: true, replayAcceptedLiveCompletion: true, turn,
       });
     }
@@ -861,6 +887,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     promptContentUploadSupport: { file: true, image: true }, devDiagnosticConsoleSink: false,
     getSessionEngine: (id) => { scope(id); return engine; },
     composer,
+    transcript: transcriptModel,
     getSnapshot: (id) => { scope(id); return projectSnapshot(engine.getSnapshot()); },
     subscribe: (id, listener) => { scope(id); return engine.subscribe((state) => listener(projectSnapshot(state))); },
     subscribeSessionEvents: (id, listener) => { scope(id); eventListeners.add(listener); return () => { eventListeners.delete(listener); }; },
@@ -886,7 +913,8 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     listSessionMessages: async (input) => {
       scope(input.workspaceId);
       await loadSession(input.agentSessionId);
-      let messages = (projectSnapshot(engine.getSnapshot()).sessionMessagesById[input.agentSessionId] ?? []) as AgentActivityDurableMessage[];
+      commits.flush();
+      let messages = transcriptModel.messages(input.agentSessionId);
       if (input.afterVersion !== undefined) messages = messages.filter((message) => message.version > input.afterVersion!);
       if (input.beforeVersion !== undefined) messages = messages.filter((message) => message.version < input.beforeVersion!);
       if (input.order === "desc") messages = [...messages].reverse();
@@ -1065,6 +1093,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     dispose() {
       if (disposed) return;
       disposed = true;
+      commits.dispose();
       costProfile.dispose();
       unsubscribe();
       for (const pending of pendingIdentities.values()) pending.reject(new MulticaAgentGuiError("This connection has closed.", "disposed"));

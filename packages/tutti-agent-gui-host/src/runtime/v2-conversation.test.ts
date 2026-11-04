@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { localV2ServerMessageSchema, localV2SnapshotSchema, type LocalV2Event } from "@multica/core/local-conversation/v2";
-import { ConversationModel } from "@multica/conversation-client/models";
+import { ConversationModel, TranscriptModel } from "@multica/conversation-client/models";
 import { projectV2Conversation } from "./v2-projection";
 import { LocalTranscript } from "./local-transcript";
 import { RuntimeLedger } from "./ledger";
@@ -40,7 +40,7 @@ function event(seq: number, type: string, payload: Record<string, unknown>, extr
 
 const project = (conversation: ConversationModel) => ({
   ...projectV2Conversation(conversation, { agentSessionId: "gui-1" }),
-  messages: new LocalTranscript(new RuntimeLedger(), "ws", "gui-1", "en").update(conversation, "all"),
+  messages: new LocalTranscript(new RuntimeLedger(), new TranscriptModel(), "ws", "gui-1", "en").update(conversation, "all"),
 });
 
 describe("ConversationModel", () => {
@@ -217,7 +217,7 @@ describe("ConversationModel", () => {
         event(2, "item.started", { kind: "reasoning" }, { item_id: "it-1" }),
       ] }],
     }));
-    const reasoning = (locale: "en" | "zh-CN" = "en") => new LocalTranscript(new RuntimeLedger(), "w", "s", locale).update(conversation, "all").find((message) => message.messageId === "it-1");
+    const reasoning = (locale: "en" | "zh-CN" = "en") => new LocalTranscript(new RuntimeLedger(), new TranscriptModel(), "w", "s", locale).update(conversation, "all").find((message) => message.messageId === "it-1");
     expect(reasoning()).toMatchObject({ kind: "reasoning", status: "running", payload: { content: "Thinking" } });
     expect(reasoning("zh-CN")).toMatchObject({ payload: { content: "思考中" } });
 
@@ -238,7 +238,7 @@ describe("ConversationModel", () => {
         event(3, "item.completed", { kind: "reasoning", status: "completed", text: "" }, { item_id: "it-1", final: true }),
       ] }],
     }));
-    const message = new LocalTranscript(new RuntimeLedger(), "w", "s", "en").update(conversation, "all").find((entry) => entry.messageId === "it-1");
+    const message = new LocalTranscript(new RuntimeLedger(), new TranscriptModel(), "w", "s", "en").update(conversation, "all").find((entry) => entry.messageId === "it-1");
     expect(message?.payload.content).toBe("");
     expect(message?.status).toBeUndefined();
   });

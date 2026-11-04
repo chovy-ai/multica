@@ -43,13 +43,15 @@ import type {
   AgentConversationRailSessionsPageResult,
   AgentConversationRailUserProject
 } from "./agentConversationRailContracts";
-import { useEngineSelector } from "./shared/engine/useEngineSelector";
-
-const EMPTY_SESSION_MESSAGES: readonly AgentActivityMessage[] = [];
+import { useModelValue } from "./shared/engine/useEngineSelector";
 
 export type AgentActivitySessionMessages = Readonly<
   Record<string, readonly AgentActivityMessage[]>
 >;
+
+export interface AgentGUITranscriptReader {
+  messages(agentSessionId: string): readonly AgentActivityMessage[];
+}
 
 export interface AgentActivityRuntimeUpdateSessionSettingsResult {
   agentSessionId: string;
@@ -316,6 +318,8 @@ export interface AgentActivityRuntimePromptAsset {
 export interface AgentGUIRuntime {
   /** Each target's composer choices, for reading; getComposerOptions asks for them. */
   composer: AgentGUIComposerOptionsReader;
+  /** Each conversation's committed messages, for reading. */
+  transcript: AgentGUITranscriptReader;
   /**
    * Reads the next older page into the session itself, which then updates through
    * its usual snapshot. A runtime with this owns paging; versions need not page.
@@ -515,11 +519,9 @@ export function useAgentActivitySnapshot(
 }
 
 export function useAgentActivitySessionMessages(
-  workspaceId: string,
   agentSessionIds: readonly (string | null | undefined)[]
 ): AgentActivitySessionMessages {
-  const runtime = useAgentGUIRuntime();
-  const normalizedWorkspaceId = workspaceId.trim();
+  const { transcript } = useAgentGUIRuntime();
   const sessionIdsKey = agentSessionIds
     .map((agentSessionId) => agentSessionId?.trim() ?? "")
     .filter(Boolean)
@@ -528,19 +530,11 @@ export function useAgentActivitySessionMessages(
     () => [...new Set(sessionIdsKey.split("\u0000").filter(Boolean))],
     [sessionIdsKey]
   );
-  const workspaceStore = useMemo(
-    () => ({
-      getSnapshot: () => runtime.getSnapshot(normalizedWorkspaceId),
-      subscribe: (listener: () => void) =>
-        runtime.subscribe(normalizedWorkspaceId, listener)
-    }),
-    [normalizedWorkspaceId, runtime]
+  const readMessages = useMemo(
+    () => createSessionMessagesReader(transcript, normalizedSessionIds),
+    [normalizedSessionIds, transcript]
   );
-  const selectMessages = useMemo(
-    () => createSessionMessagesSelector(normalizedSessionIds),
-    [normalizedSessionIds]
-  );
-  return useEngineSelector(workspaceStore, selectMessages);
+  return useModelValue(readMessages, [readMessages]);
 }
 
 export function resetAgentGUIRuntimeForTests(): void {
@@ -557,15 +551,16 @@ export function setAgentGUIRuntimeForTests(
   }
 }
 
-function createSessionMessagesSelector(
+function createSessionMessagesReader(
+  transcript: AgentGUITranscriptReader,
   agentSessionIds: readonly string[]
-): (snapshot: AgentActivitySnapshot) => AgentActivitySessionMessages {
+): () => AgentActivitySessionMessages {
   let previous: AgentActivitySessionMessages = {};
-  return (snapshot) => {
+  return () => {
     const next = Object.fromEntries(
       agentSessionIds.map((agentSessionId) => [
         agentSessionId,
-        snapshot.sessionMessagesById[agentSessionId] ?? EMPTY_SESSION_MESSAGES
+        transcript.messages(agentSessionId)
       ])
     );
     if (

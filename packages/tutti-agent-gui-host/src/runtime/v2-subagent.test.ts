@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { localV2ServerMessageSchema, localV2SnapshotSchema } from "@multica/core/local-conversation/v2";
-import { ConversationModel } from "@multica/conversation-client/models";
+import { ConversationModel, TranscriptModel } from "@multica/conversation-client/models";
 import { projectV2Conversation } from "./v2-projection";
 import { LocalTranscript } from "./local-transcript";
 import { RuntimeLedger } from "./ledger";
@@ -17,7 +17,7 @@ const at = events[0]!.created_at;
 const summary = { conversation_id: "conv-1", summary_seq: 1, provider: "claude", title: "test", status: "idle", pinned: false, archived: false, updated_at: at };
 const project = (conversation: ConversationModel) => ({
   ...projectV2Conversation(conversation, { agentSessionId: "gui-1" }),
-  messages: new LocalTranscript(new RuntimeLedger(), "ws", "gui-1", "en").update(conversation, "all"),
+  messages: new LocalTranscript(new RuntimeLedger(), new TranscriptModel(), "ws", "gui-1", "en").update(conversation, "all"),
 });
 
 /** A replay holds fewer rows, so only the content compares. */

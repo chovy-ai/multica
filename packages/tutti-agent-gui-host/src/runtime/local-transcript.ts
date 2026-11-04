@@ -1,5 +1,5 @@
 import type { AgentActivityDurableMessage } from "@tutti-os/agent-activity-core";
-import type { ConversationLocale, ConversationMessage, ConversationModel } from "@multica/conversation-client/models";
+import type { ConversationLocale, ConversationMessage, ConversationModel, TranscriptModel } from "@multica/conversation-client/models";
 import type { LocalV2Event } from "@multica/core/local-conversation/v2";
 import type { RuntimeLedger } from "./ledger";
 
@@ -24,12 +24,19 @@ export class LocalTranscript {
 
   constructor(
     private readonly ledger: RuntimeLedger,
+    private readonly model: TranscriptModel<AgentActivityDurableMessage>,
     private readonly workspaceId: string,
     private readonly agentSessionId: string,
     private readonly locale: ConversationLocale,
   ) {}
 
   update(conversation: ConversationModel, change: LocalTranscriptChange): AgentActivityDurableMessage[] {
+    const messages = this.read(conversation, change);
+    this.model.commit(this.agentSessionId, messages);
+    return messages;
+  }
+
+  private read(conversation: ConversationModel, change: LocalTranscriptChange): AgentActivityDurableMessage[] {
     const full = change === "all" || conversation !== this.conversation;
     this.conversation = conversation;
     if (full) {

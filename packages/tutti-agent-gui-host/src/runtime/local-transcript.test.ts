@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { ConversationModel } from "@multica/conversation-client/models";
+import { ConversationModel, TranscriptModel } from "@multica/conversation-client/models";
 import { localV2SnapshotSchema, type LocalV2Event } from "@multica/core/local-conversation/v2";
 import { RuntimeLedger } from "./ledger";
 import { LocalTranscript, mergeTranscriptChange } from "./local-transcript";
@@ -29,7 +29,7 @@ function model(turns: ReturnType<typeof turn>[], seq = 100) {
   }));
 }
 
-const fresh = (ledger = new RuntimeLedger()) => ({ ledger, transcript: new LocalTranscript(ledger, "w", "s", "en") });
+const fresh = (ledger = new RuntimeLedger()) => ({ ledger, transcript: new LocalTranscript(ledger, new TranscriptModel(), "w", "s", "en") });
 const ids = (messages: { messageId: string }[]) => messages.map((message) => message.messageId);
 
 describe("the order of a conversation's messages", () => {

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeAgentActivitySession } from "@tutti-os/agent-activity-core";
 import { localV2ServerMessageSchema, localV2SnapshotSchema } from "@multica/core/local-conversation/v2";
 import { projectAgentActivitySessionToConversationVM } from "../../../../vendor/tutti/packages/agent/gui/shared/agentConversation/projection/workspaceAgentMessageProjection";
-import { ConversationModel } from "@multica/conversation-client/models";
+import { ConversationModel, TranscriptModel } from "@multica/conversation-client/models";
 import { projectV2Conversation } from "./v2-projection";
 import { LocalTranscript } from "./local-transcript";
 import { RuntimeLedger } from "./ledger";
@@ -25,7 +25,7 @@ function snapshot(provider: string, history = events.slice(0, 1)) {
 
 const project = (conversation: ConversationModel) => ({
   ...projectV2Conversation(conversation, { agentSessionId: "gui-1" }),
-  messages: new LocalTranscript(new RuntimeLedger(), "ws", "gui-1", "en").update(conversation, "all"),
+  messages: new LocalTranscript(new RuntimeLedger(), new TranscriptModel(), "ws", "gui-1", "en").update(conversation, "all"),
 });
 
 function sharedRows(conversation: ConversationModel) {

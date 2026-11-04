@@ -1033,7 +1033,7 @@ describe("local conversations over protocol v2", () => {
     const release = handle.runtime.ensureSessionSynchronized!({ workspaceId: init.workspaceId, agentSessionId: session.id });
     await vi.waitFor(() => expect(data.request.mock.calls.some(([method]) => method === "session.load")).toBe(true));
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const messages = () => (handle.runtime.getSnapshot(init.workspaceId).sessionMessagesById[session.id] ?? []) as { messageId: string; payload: Record<string, unknown> }[];
+    const messages = () => handle.runtime.transcript.messages(session.id);
     return { data, handle, messages, release };
   }
   const event = (seq: number, type: string, payload: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
