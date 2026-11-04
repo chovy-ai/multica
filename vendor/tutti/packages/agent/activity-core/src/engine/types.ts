@@ -116,7 +116,6 @@ export type EngineIntent =
   | PendingIntentsIntent
   | PromptQueueIntent
   | SessionReconcileIntent
-  | SessionCommandsIntent
   | SessionLifecycleIntent;
 
 // ---------------------------------------------------------------------------
@@ -237,7 +236,6 @@ export interface AgentSessionEngineStateBase {
   pendingIntents: PendingIntentsState;
   promptQueue: PromptQueueState;
   sessionReconcile: SessionReconcileState;
-  sessionCommands: SessionCommandsState;
   sessionLifecycle: SessionLifecycleState;
   sessionMessages: SessionMessagesState;
 }
@@ -469,10 +467,6 @@ import type {
   SessionReconcileIntent,
   SessionReconcileState
 } from "./sessionReconcile.types.ts";
-import type {
-  SessionCommandsIntent,
-  SessionCommandsState
-} from "./sessionCommands.types.ts";
 import type { SessionMessagesState } from "./sessionMessages.types.ts";
 import type {
   AgentActivityComposerOptions,

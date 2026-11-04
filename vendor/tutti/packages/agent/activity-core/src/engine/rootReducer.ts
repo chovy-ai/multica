@@ -25,10 +25,6 @@ import {
   validateSendInputResult
 } from "./commandResult.validation.ts";
 import {
-  createInitialSessionCommandsState,
-  sessionCommandsReducer
-} from "./sessionCommands.reducer.ts";
-import {
   createInitialSessionMessagesState,
   sessionMessagesReducer
 } from "./sessionMessages.reducer.ts";
@@ -45,7 +41,6 @@ export function createInitialAgentSessionEngineState(): RootAgentSessionEngineSt
     pendingIntents: createInitialPendingIntentsState(),
     promptQueue: createInitialPromptQueueState(),
     sessionReconcile: createInitialSessionReconcileState(),
-    sessionCommands: createInitialSessionCommandsState(),
     sessionLifecycle: createInitialSessionLifecycleState(),
     sessionMessages: createInitialSessionMessagesState()
   };
@@ -76,13 +71,6 @@ export function rootEngineReducer(
         )
       : null;
   const engineRuntime = engineRuntimeReducer(state.engineRuntime, intent);
-  const sessionCommands = sessionCommandsReducer(
-    state.sessionCommands,
-    intent,
-    {
-      deletedSessionIds: state.sessionLifecycle.deletedSessionIds
-    }
-  );
   const sessionLifecycle = sessionLifecycleReducer(
     state.sessionLifecycle,
     intent,
@@ -128,7 +116,6 @@ export function rootEngineReducer(
     engineRuntime.state === state.engineRuntime &&
     pendingIntents.state === state.pendingIntents &&
     sessionReconcile.state === state.sessionReconcile &&
-    sessionCommands.state === state.sessionCommands &&
     sessionLifecycle.state === state.sessionLifecycle &&
     sessionMessages.state === state.sessionMessages;
   const nextState = unchanged
@@ -138,7 +125,6 @@ export function rootEngineReducer(
         pendingIntents: pendingIntents.state,
         promptQueue: state.promptQueue,
         sessionReconcile: sessionReconcile.state,
-        sessionCommands: sessionCommands.state,
         sessionLifecycle: sessionLifecycle.state,
         sessionMessages: sessionMessages.state
       };
@@ -152,7 +138,6 @@ export function rootEngineReducer(
       ...engineRuntime.commands,
       ...pendingIntents.commands,
       ...sessionReconcile.commands,
-      ...sessionCommands.commands,
       ...sessionLifecycle.commands
     ],
     ...(followUpIntents.length > 0 ? { followUpIntents } : {}),
