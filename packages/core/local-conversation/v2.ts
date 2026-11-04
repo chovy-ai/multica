@@ -24,6 +24,7 @@ export const localV2EventSchema = z.object({
   created_at: z.string(),
   /** Sequence of the item's first event, on the final event a settled turn is read back from. */
   first_seq: z.number().int().optional(),
+  first_at: z.string().optional(),
   payload,
 });
 export type LocalV2Event = z.infer<typeof localV2EventSchema>;

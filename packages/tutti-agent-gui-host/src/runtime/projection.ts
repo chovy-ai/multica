@@ -326,7 +326,7 @@ export function projectV2Detail(
     const clientSubmitId = message.role === "user" ? ledger.clientSubmitId(message.messageId) : undefined;
     if (clientSubmitId) message.payload = { ...message.payload, clientSubmitId };
   }
-  const messages = ledger.project(sessionId, view.messages, new Map(view.turns.map((turn) => [turn.turnId, turn.startedAtUnixMs])));
+  const messages = ledger.project(sessionId, view.messages, new Map(view.turns.map((turn) => [turn.turnId, turn.startedAtUnixMs])), true);
   const turns = view.turns.map((turn) => ({ ...turn, providerForkBindingAvailable: agent?.canFork === true }));
   const session = projectSession(detail.session, agent, ledger, turns, view.activeTurnId);
   session.latestTurnInteractions = view.interactions.filter((item) => item.turnId === (session.activeTurnId ?? session.latestTurn?.turnId));

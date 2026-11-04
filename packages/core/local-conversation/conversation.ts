@@ -292,7 +292,7 @@ export class V2Conversation {
     if (!item) {
       item = {
         id: event.item_id, turnId: event.turn_id, order: event.first_seq ?? event.seq, lastSeq: 0, kind,
-        status: "in_progress", state: {}, startedAt: event.created_at, updatedAt: event.created_at,
+        status: "in_progress", state: {}, startedAt: event.first_at ?? event.created_at, updatedAt: event.created_at,
       };
       this.items.set(item.id, item);
     }

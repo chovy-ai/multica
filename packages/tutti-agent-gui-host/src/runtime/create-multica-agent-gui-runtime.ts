@@ -653,7 +653,8 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       type: "session/historyAuthoritativeSnapshotReceived", workspaceId,
       agentSessionId: guiId, childSessions: [], historyRevision: ++historyRevision,
       session: withModel(result.session), turns: result.turns, messages: result.messages,
-      sessionMessageWindows: [{ agentSessionId: guiId, hasOlderMessages: false, oldestLoadedVersion: result.messages.length ? Math.min(...result.messages.map((message) => message.version)) : null }],
+      sessionMessageWindows: [{ agentSessionId: guiId, hasOlderMessages: localConversation(guiId)?.hasOlderTurns ?? false,
+        oldestLoadedVersion: result.messages.reduce<number | null>((oldest, message) => oldest === null || message.version < oldest ? message.version : oldest, null) }],
     });
     // A same-timestamp terminal result can leave the engine's previous active
     // pointer intact. Fence that specific transition once: replaying every
@@ -1003,6 +1004,10 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         section: input.section === "full" ? undefined : input.section,
       });
     },
+    loadOlderSessionMessages: source ? async (input) => {
+      scope(input.workspaceId);
+      await source.loadOlder(await backendSessionId(input.agentSessionId));
+    } : undefined,
     listSessionMessages: async (input) => {
       scope(input.workspaceId);
       await loadSession(input.agentSessionId, input.signal);

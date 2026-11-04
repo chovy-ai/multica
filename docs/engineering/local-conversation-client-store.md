@@ -1,6 +1,6 @@
 # 本地会话客户端模型与去 iframe 方案
 
-日期：2026-11-03。状态：实施中。代码现状基于 `2e4755e7e`，已合入两轮代码评审的结论。
+日期：2026-11-03。状态：已实现（分支 `claude/ai-conversation-design`）。基于 `2e4755e7e`，已合入两轮代码评审的结论。
 
 本方案解决三个问题：
 
@@ -86,13 +86,12 @@ Web 没有 daemon，不使用 Store，继续通过 `parent-service.ts` 读云端
 ## 4. Manager
 
 ```ts
-interface ConversationStoreKey { userId: string; workspaceId: string; deviceId: string }
-
 interface ConversationStoreManager {
-  get(key: ConversationStoreKey): ConversationStore;
+  /** A transport is one device. */
+  get(transport: LocalV2Transport, scope: LocalV2Scope): ConversationStore;
   disposeWorkspace(userId: string, workspaceId: string): void;
-  disposeDevice(deviceId: string): void;
-  disposeUser(userId: string): void;
+  /** Signing out or a session ending. */
+  disposeAll(): void;
 }
 ```
 
@@ -100,8 +99,9 @@ interface ConversationStoreManager {
 - Store 在第一次使用时创建，是模块级单例，不随组件销毁。
 - 内容 LRU 由 Manager 统一计算，初始上限为 100 个会话。淘汰只删除内容；正在使用的会话和所有列表都不淘汰。
 - `store_generation` 属于设备上的 daemon 数据库。连接时比较 `/hello` 的值，任一 Store 发现变化，Manager 就让这台设备上所有 Store 失效：清空列表、`scope_seq` 和内容，正在打开的使用方收到通知后原地重载。
-- 退出登录和会话过期两条路径都调用 `disposeUser`，先让 Store 进入停止状态，再调用 `transport.release(scope)`，避免 release 后的发送重建连接。`release` 要加到 `LocalV2Transport` 接口。
-- `device_link_off`、`device_unknown` 触发 `disposeDevice`。
+- 退出登录和会话过期两条路径都调用 `disposeAll`，先让 Store 进入停止状态，再调用 `transport.release(scope)`，避免 release 后的发送重建连接。`release` 要加到 `LocalV2Transport` 接口。
+- 离开或删除工作区时，`DesktopShell` 根据工作区列表的变化调用 `disposeWorkspace`。
+- 设备关闭共享或离线时不销毁：内容保留，禁止发送，恢复后补差；退出登录时一起清理。
 
 ## 5. ConversationStore
 
@@ -209,8 +209,8 @@ Store 中一个会话就是一个 `V2Conversation`，它保存：
 
 - 每个 item 记录 `lastSeq`，只应用 `event.seq > lastSeq` 的事件。旧页面晚到时不会把 delta 追加到最终文本上。
 - 历史页合并不移动会话的 `seq`，并按 `turn_index` 重建轮次顺序。
-- `turn.started` 带上 `turn_index`，item 的 `kind` 在后续事件带来时补全。
-- 未加载轮次的实时事件进入 `open_background_items` 同样的结构，不丢弃。
+- 实时 `turn.started` 的轮次序号由客户端推出：快照总是含最新一轮，新轮次就是下一个序号。item 的 `kind` 在后续事件带来时补全。
+- 未加载轮次的实时事件保留在 item 中，轮次加载后显示。
 - 重读快照时，只有轮次连续才保留已翻页的旧轮次；旧轮次含未结束的 item 时，丢弃该轮及更早内容。generation 变化时全部丢弃。
 
 ### 预拉取
@@ -224,9 +224,9 @@ Store 中一个会话就是一个 `V2Conversation`，它保存：
 `useAgentGUIDetailScroll.ts` 的 `loadOlderMessagesNearTop` 是触发点，要改：
 
 - 固定 240 px 阈值改为 3 个视口高度，并允许停在底部时拉取。
-- 失败后加错误锁存，用户滚动或重连才解除。现在失败后 effect 会立刻重试，形成循环。
+- 自动触发只在几何变化时发生，用户滚动才会对同样的几何再次请求。这样失败或没有新内容的页不会循环。
 - 底部锁定分支也要清除 prepend 锚点，否则下次流式更新会把视口拉回底部。
-- 脱离底部且加载期间，流式内容会被当作前插高度补偿。改为锚定首个可见行。
+- 加载期间不做前插补偿：此时高度增长只可能来自下方的流式内容。
 - 窗口变大时也重新判断。
 
 ### 分页窗口
@@ -238,8 +238,8 @@ Store 中一个会话就是一个 `V2Conversation`，它保存：
 `ledger.ts` 的版本号只增不减，`sequence` 又是列表位置并计入指纹，所以合并旧轮次后现有消息会全部换新版本号，`merge.ts` 还拒绝版本号变小的更新。改法：
 
 - 分页不再依赖 `beforeVersion`，版本号保持不透明。
-- `sequence` 从指纹中移除，前插不再改变已有消息的版本号。
-- 排序键改为 `(turn_index, item 首事件 seq)`。final 事件的 DTO 补 `first_seq`，保证实时构建和快照构建的顺序一致。
+- 本地会话的指纹不含 `sequence`，前插不改变已有消息的版本号。云端路径的游标读取依赖位置变化，保持原样。
+- final 事件的 DTO 补 `first_seq` 和 `first_at`，item 的顺序和开始时间在实时构建和快照构建中一致。
 
 ### 兼容
 
@@ -312,14 +312,14 @@ Store 中一个会话就是一个 `V2Conversation`，它保存：
 
 | 层 | 内容 |
 | --- | --- |
-| Go | `turn_limit` 范围校验；运行中轮次完整；窗口外后台 item；不带参数时行为不变；`snapshot_seq` 和 `first_seq` 正确 |
+| Go | `turn_limit` 范围校验；窗口外后台 item；不带参数时行为不变；`first_seq` 和 `first_at` 正确 |
 | core | 设置和队列；item `lastSeq` 幂等；旧页面晚到；合并不移动 `seq`；连续性判断；重复事件和序号缺口 |
 | Store | 重新打开不读快照；离开后拉完这批就停；订阅状态表；epoch 丢弃旧页面；队列单飞；列表重连补差 |
 | Manager | LRU 不淘汰使用中的会话和列表；generation 使同设备的 Store 失效，不影响其他设备；登出和过期都清理 |
 | GUI | 打开时补足三屏、读到最早一轮后停止、失败不循环、底部锁定和流式时滚动不跳、输入框历史翻页入口 |
 | 实测 | 长会话打开和切回 tab 的耗时；反复切 tab 后内存；翻页到数千 item 时的流式性能；多工作区和两台设备 |
 
-阶段 1 结束前必须确认：浅色和深色主题、主对话和多个 Side 并存、HTML 预览全屏、Web 版首屏加载、packaged `file://`。
+`e2e/agent-gui-direct-mount.spec.ts` 在真实浏览器中覆盖：样式互不影响、多实例、主题、overlay、长会话三屏预拉取和翻页、失败不循环。还需要在真实应用中确认：连接真实 daemon 的完整流程、HTML 预览全屏、Web 版首屏加载、Windows。
 
 `snapshot.server_read` 只记录远端调用方，测本机耗时需要补打点。
 

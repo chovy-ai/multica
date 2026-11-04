@@ -84,7 +84,16 @@ export function SideEntryProvider({ children, root, ...entry }: Entry & { root: 
         anchor.scrollIntoView({ block: "center", behavior: "smooth" });
         anchor.setAttribute("data-multica-located", "true"); setTimeout(() => anchor.removeAttribute("data-multica-located"), 2000);
       } else {
-        if (event.turnId) root.querySelector<HTMLElement>(`[data-multica-locator-turn-id="${CSS.escape(event.turnId)}"]`)?.click();
+        if (event.turnId) {
+          root.querySelector<HTMLElement>(`[data-multica-locator-turn-id="${CSS.escape(event.turnId)}"]`)?.click();
+          // The turn may be older than what is loaded: read back until it is, or none are left.
+          const source = current.current.handle.localConversations;
+          const conversation = source?.conversation(event.sessionId);
+          if (conversation && !conversation.turns.has(event.turnId) && conversation.hasOlderTurns) {
+            attempts = 0;
+            void source?.loadOlder(event.sessionId).catch(() => {});
+          }
+        }
         setTimeout(find, 100);
       }
     };

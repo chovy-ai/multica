@@ -73,3 +73,62 @@ test("GUI overlays are styled, though they render outside its root", async ({ pa
   expect(background).not.toBe("rgba(0, 0, 0, 0)");
   await page.screenshot({ path: ".tmp/agent-gui-direct/overlay.png" });
 });
+
+const paging = (page: Page) => page.evaluate(() => (window as unknown as { paging: { reads: number; started: number[] } }).paging);
+const scroller = (page: Page) => page.getByText("Answer 59").evaluate((node) => {
+  for (let element = node.parentElement; element; element = element.parentElement) {
+    const overflow = getComputedStyle(element).overflowY;
+    if ((overflow === "auto" || overflow === "scroll") && element.scrollHeight > element.clientHeight) {
+      element.setAttribute("data-test-scroller", "true");
+      return true;
+    }
+  }
+  return false;
+});
+
+test("a long conversation opens at its end with three screens of history above, and pages to its start", async ({ page }) => {
+
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.locator("#paged").click();
+  await expect(page.getByText("Answer 59", { exact: false })).toBeVisible();
+  expect(await scroller(page)).toBe(true);
+  const area = page.locator("[data-test-scroller]");
+  // It keeps fetching until three screens sit above the view, then stops.
+  await expect.poll(async () => area.evaluate((element) => element.scrollTop >= 3 * element.clientHeight)).toBe(true);
+  const settled = (await paging(page)).reads;
+  await page.waitForTimeout(400);
+  expect((await paging(page)).reads).toBe(settled);
+  expect(settled).toBeLessThan(6);
+  await expect(page.getByText("Answer 59", { exact: false })).toBeInViewport();
+
+  // Scrolling up keeps what is on screen in place while older turns arrive above it.
+  for (let i = 0; i < 40 && !(await page.getByText("Question 0", { exact: true }).isVisible().catch(() => false)); i++) {
+    await area.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+    await page.waitForTimeout(80);
+  }
+  await expect(page.getByText("Question 0", { exact: true })).toBeVisible();
+  const reads = (await paging(page)).reads;
+  await area.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await page.waitForTimeout(300);
+  expect((await paging(page)).reads).toBe(reads);
+  expect(new Set((await paging(page)).started).size).toBe((await paging(page)).started.length);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: ".tmp/agent-gui-direct/paged-top.png" });
+});
+
+test("a failing history read does not retry by itself, and scrolling asks again", async ({ page }) => {
+  await page.goto("/tutti-agent-gui/direct.html?failOlder=1");
+  await page.locator("#paged").click();
+  await expect(page.getByText("Answer 59", { exact: false })).toBeVisible();
+  await expect.poll(async () => (await paging(page)).reads).toBeGreaterThan(0);
+  await page.waitForTimeout(600);
+  const reads = (await paging(page)).reads;
+  expect(reads).toBeLessThan(3);
+  await page.waitForTimeout(400);
+  expect((await paging(page)).reads).toBe(reads);
+  expect(await scroller(page)).toBe(true);
+  await page.locator("[data-test-scroller]").hover();
+  await page.mouse.wheel(0, -200);
+  await expect.poll(async () => (await paging(page)).reads).toBeGreaterThan(reads);
+});
