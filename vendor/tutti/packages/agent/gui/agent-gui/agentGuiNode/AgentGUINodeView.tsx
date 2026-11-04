@@ -635,7 +635,9 @@ export function AgentGUINodeView({
             inert={conversationRailCollapsed ? true : undefined}
           >
             <AgentConversationClockProvider isVisible={isVisible}>
-              {/* Selecting an Activity row must not rebuild its all-provider snapshot. */}
+              {/* Collapsed, it would only keep paging and searching for no one. Selecting
+                  an Activity row must not rebuild its all-provider snapshot. */}
+              {conversationRailCollapsed ? null : (
               <AgentGUIConversationRailController
                 {...conversationRailStoreState}
                 activityContextKey={[
@@ -649,6 +651,7 @@ export function AgentGUINodeView({
                 userProjects={viewModel.rail.userProjects}
                 workspaceId={viewModel.shell.workspaceId}
               />
+              )}
             </AgentConversationClockProvider>
           </aside>
           <div

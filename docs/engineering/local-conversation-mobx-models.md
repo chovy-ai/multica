@@ -234,7 +234,7 @@ class ItemModel {
 | `sessionMutations` | 3176 | `PromptService`、`ConversationService` |
 | `sessionReconcile` | 1767 | **要迁：** 水合、加载状态和打开未知会话进 `ConversationService` |
 | `engineRuntime` | 1641 | 删除，但 `workspaceReconcile` 和重连后重新加载工作区要先迁走 |
-| `attentionReadState` | 1507 | **必需：** 它是列表未读的唯一来源，进 `ConversationListModel` |
+| `attentionReadState` | 1507 | 删除：Desktop 的会话列表不显示未读，读它的只有已不挂载的 vendor rail，`session.markRead` 在本地也是空操作 |
 | `composerOptions` | 1503 | `ComposerService` |
 | `editRetry` | 894 | `PromptService` |
 | `sessionEntities` | 784 | `ConversationListModel` |
@@ -273,7 +273,7 @@ class ItemModel {
 | 2a+. 读取一致性 | 第 13 节：旧快照和换库前的读取不再覆盖 Model，`refresh` 合并 | 无，修复现有问题 |
 | 2b. 增量提交 | 第 10 节 | ①、②，③ 的一部分 |
 | 3. 转录 | 按轮次的行 computed 和不依赖内容的结构索引；view 直接读 Model；engine 不再持有 assistant 内容，只留 reducer 需要的轮次和用户消息 | ③ 的其余部分、④ |
-| 3b. 列表 | 列表和未读迁入 `ConversationListModel`；**删除** rail 的分页查询层，本地列表本来就全在内存里 | 列表的全量计算 |
+| 3b. 列表 | 列表和设备在线状态迁入 `ConversationListModel`；vendor rail 在 Desktop 上固定折叠，折叠时不再挂载，分页查询层不再运行，代码在阶段 7 删除 | 列表的全量计算 |
 | 4. 写路径 | 第 6 节和 daemon 能力；提交、新建会话、队列、取消、交互、发送可用性一起迁；结束时迁出 `sessionLifecycle` | 数据存两份的主体 |
 | 5. 其余领域 | composer → detail，同时删除对应的 runtime 方法、controller hook、RPC 方法和 `useAgentHostApi` | |
 | 6. 删除 engine 和翻译层 | 删除 engine、`useEngineSelector`、投影、ledger、`AgentGuiRpcClient`、`AgentGUIRuntime`、runtime | 只有 MobX |
@@ -282,6 +282,12 @@ class ItemModel {
 **controller 重写的主体在阶段 3 到 5，不在阶段 7**：删除 engine 前，controller 的 69 处 `useEngineSelector`、28 处 `getSnapshot`、18 处 `dispatch` 都要替换。
 
 每到一个阶段结束，用打点结果重新评估下一阶段的节奏。
+
+### 阶段 3 的范围说明
+
+按用户选择分两步，每一步应用都能跑。第一步已完成：时间线项、明细轮次和行都按输入对象缓存，每批只重建变化的轮次。行模型和现有组件没有变。合成数据下（200 轮、4200 条消息，不含 React），一批事件从约 69ms 降到约 8ms。
+
+第二步把组件逐个改成 `observer` 直接读 Model，engine 不再持有 assistant 内容。它和阶段 5、6 一起做：现在消息还要进 engine，供 `pendingIntents` 等写路径确认发送。分发本身只要几毫秒（同样的数据约 3.6ms），不急。
 
 ### 阶段 2a 的范围说明
 
