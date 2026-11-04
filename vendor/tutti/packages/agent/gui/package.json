@@ -127,6 +127,7 @@
     "@types/react-dom": "19.2.3",
     "@types/three": "0.185.1",
     "@types/use-sync-external-store": "0.0.6",
+    "mobx-react-lite": "catalog:",
     "vitest": "catalog:"
   }
 }

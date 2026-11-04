@@ -287,7 +287,16 @@ class ItemModel {
 
 按用户选择分两步，每一步应用都能跑。第一步已完成：时间线项、明细轮次和行都按输入对象缓存，每批只重建变化的轮次。行模型和现有组件没有变。合成数据下（200 轮、4200 条消息，不含 React），一批事件从约 69ms 降到约 8ms。
 
-第二步把组件逐个改成 `observer` 直接读 Model，engine 不再持有 assistant 内容。它和阶段 5、6 一起做：现在消息还要进 engine，供 `pendingIntents` 等写路径确认发送。分发本身只要几毫秒（同样的数据约 3.6ms），不急。
+第二步让 engine 不再持有 assistant 内容：
+
+- **读取：** `TranscriptModel` 持有每个会话已提交的消息列表，由 `LocalTranscript` 写入，经 `AgentGUIRuntime.transcript` 读取。`useAgentActivitySessionMessages` 用 `useModelValue` 订阅它，行模型和组件没有改。没有消息变化的提交保留原数组，下游不会重跑。
+- **engine：** 只收到用户消息和轮次，`pendingIntents`、`promptQueue` 和取消只看 `clientSubmitId`。`sessionMessagesById`、`selectSessionMessages` 还在，但只含用户消息。还在读它们的：标题和 rail 标题（只读首条用户消息）、`desktop-queue-engine`（是否已有用户消息）、历史版本的回退。计划检测读 assistant 消息，但本地转录不产出计划消息，结果不变；message center 没有挂载。
+- **同一次提交：** `applyDetail` 在一个 MobX batch 里写 Model 和分发 engine。observer 在 batch 结束时才运行，engine 的订阅者读到的 Model 已是新值，所以两边不会看到不一致的轮次状态（第 11 节风险 2）。
+- **节奏：** `CommitCadence` 约 30 ms 提交一次，取代 `receiveLocal` 的微任务合并。没有用 rAF：它在隐藏或被遮挡的窗口里暂停，在 120Hz 屏幕上又太频繁；定时器在隐藏窗口里只是被浏览器降频。提交之前 `ConversationModel` 已是新值，只有 `TranscriptModel` 和 engine 等这一拍。
+- **立即提交：** 进入 engine 的 `submitPrompt`、`dispatch`、`stopSession`、`submitInteractionResponse`，以及 `listSessionMessages`、`receiveWorkspace`。不是事件的变化（翻页、队列）在当前微任务里提交。把这些操作从 engine 迁到 Service 时，要带上这次 flush，否则发送判断会比已到达的事件晚一拍。
+- **虚拟列表：** `AgentTranscriptView.observer.spec.tsx` 在 jsdom 里跑真实的 `useVirtualizer`，尺寸是打桩的。`useModelValue` 和 `observer` 两种读法都覆盖：窗口不变时更新可见行、不在窗口内的行回来时显示最新内容、追加、卸载后不再订阅，没有 `flushSync` 警告。`observer` 行放进虚拟列表时只重渲染变化的行，滚出窗口后不再订阅。真实布局下的高度增长、滚动锚定和跟随到底，要在真实应用里看。
+
+把组件逐个改成 `observer` 直接读 Model 和阶段 5、6 一起做。
 
 ### 阶段 4 的范围说明
 
@@ -314,8 +323,8 @@ class ItemModel {
 - 迁入的是内容部分和 `ConversationService`。`ConversationListModel` 和 Service 的 observable 入口留到阶段 3、3b，那时才有 view 读它们。
 - 消息列表由 Model 派生：Turn 产出 assistant 行，用户消息和交互各自产出自己的行，`ConversationModel.transcript()` 按原有顺序拼起来。按轮次排序和 `(turnIndex, rank)` 位置留到阶段 2b。
 - 派生仍是普通方法，每次调用都重算，和现在的投影开销一样。`computed` 留到阶段 3，那时才有 reaction 观察它。
-- 第 4 节的事件缓冲还没做：现在没有 observer 读 Model，流式更新仍走 runtime 已有的合并。阶段 3 接入 view 时一起做。
-- `observer` 和 React 19 的配合只验证了 host 里的组件测试（批量事件只渲染一次，且只渲染变化的行）。虚拟列表要到阶段 3 才验证。
+- 第 4 节的事件缓冲在阶段 3 第二步完成，见“阶段 3 的范围说明”。
+- `observer` 和 React 19 的配合在这个阶段只验证了 host 里的组件测试（批量事件只渲染一次，且只渲染变化的行）。虚拟列表的验证见“阶段 3 的范围说明”。
 
 
 ## 10. 增量提交（阶段 2b）
