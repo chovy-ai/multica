@@ -41,6 +41,10 @@ interface ContentEntry {
   version: number;
   error: Error | null;
   loading?: Promise<ConversationModel>;
+  /** The read a refresh during `loading` waits for: one started after it was asked. */
+  reread?: Promise<ConversationModel>;
+  /** The daemon said the cursor is ahead of its store, so the next snapshot is the truth. */
+  cursorAhead: boolean;
   older?: Promise<void>;
   /** A subscription exists on the daemon. */
   subscribed: boolean;
@@ -83,6 +87,8 @@ export class ConversationService {
   private summaryListeners = new Set<() => void>();
   private entries = new Map<string, ContentEntry>();
   private nextEpoch = 1;
+  /** Counts database replacements: what was asked before one says nothing about the database now. */
+  private invalidations = 0;
   private disposed = false;
   private presenceMap = new Map<string, LocalV2Device[]>();
   private presenceListeners = new Set<() => void>();
@@ -112,11 +118,14 @@ export class ConversationService {
 
   /** Reads a snapshot without touching what the store keeps; callers needing live content use ensure. */
   async snapshot(id: string, turns?: number): Promise<LocalV2Snapshot> {
+    const invalidations = this.invalidations;
     const raw = await this.request("GET", `/sessions/${encodeURIComponent(id)}/snapshot${turns ? `?turn_limit=${turns}` : ""}`);
     const snapshot = parseWithFallback<LocalV2Snapshot | null>(raw, localV2SnapshotSchema, null, { endpoint: "local-v2.snapshot" });
     if (!snapshot) throw new LocalV2RequestError("invalid_response", "Invalid local conversation response. Reload and retry.");
-    this.noteGeneration(snapshot.store_generation);
-    this.receiveSummary(snapshot.conversation);
+    if (invalidations === this.invalidations) {
+      this.noteGeneration(snapshot.store_generation);
+      this.receiveSummary(snapshot.conversation);
+    }
     return snapshot;
   }
 
@@ -203,7 +212,7 @@ export class ConversationService {
   private entry(id: string): ContentEntry {
     let entry = this.entries.get(id);
     if (!entry) {
-      entry = { epoch: this.nextEpoch++, users: 0, observers: new Set(), version: 0, error: null, subscribed: false, confirmed: false, highWater: 0, retries: 0 };
+      entry = { epoch: this.nextEpoch++, users: 0, observers: new Set(), version: 0, error: null, subscribed: false, confirmed: false, highWater: 0, retries: 0, cursorAhead: false };
       this.entries.set(id, entry);
     }
     return entry;
@@ -289,8 +298,20 @@ export class ConversationService {
     return this.read(id, entry);
   }
 
-  /** Reads the conversation's current state from the daemon, for a caller that must see what it just caused. */
-  refresh(id: string): Promise<ConversationModel> { return this.read(id, this.entry(id)); }
+  /**
+   * Reads the conversation's current state from the daemon, for a caller that must
+   * see what it just caused. A read under way may have been answered before that,
+   * so this waits for one started afterwards, which all such callers share.
+   */
+  refresh(id: string): Promise<ConversationModel> {
+    const entry = this.entry(id);
+    if (!entry.loading) return this.read(id, entry);
+    return entry.reread ??= entry.loading.catch(() => {}).then(() => {
+      entry.reread = undefined;
+      if (this.disposed) throw new LocalV2RequestError("disposed", "This conversation service has stopped");
+      return this.read(id, this.entry(id));
+    });
+  }
 
   retry(id: string): void {
     const entry = this.entry(id);
@@ -300,36 +321,51 @@ export class ConversationService {
   }
 
   private read(id: string, entry: ContentEntry): Promise<ConversationModel> {
-    return entry.loading ??= (async () => {
-      const epoch = entry.epoch;
+    if (entry.loading) return entry.loading;
+    const epoch = entry.epoch;
+    const superseded = () => this.entries.get(id)?.epoch !== epoch;
+    const loading: Promise<ConversationModel> = (async () => {
       // Another device's conversation shows as last read while the current one travels.
       if (!entry.conversation && this.options.snapshots) {
         const stored = await this.options.snapshots.read(this.snapshotKey(id)).catch(() => null);
-        if (stored && !entry.conversation && this.entries.get(id)?.epoch === epoch) {
+        if (stored && !entry.conversation && !superseded()) {
           entry.conversation = ConversationModel.fromSnapshot(stored);
           this.changed(id, entry);
         }
       }
       const snapshot = await this.snapshot(id, PAGE_TURNS);
-      if (this.entries.get(id)?.epoch !== epoch && !this.entries.has(id)) return ConversationModel.fromSnapshot(snapshot);
+      if (superseded()) return this.current(id, snapshot);
+      const authoritative = entry.cursorAhead;
+      entry.cursorAhead = false;
       // The same instance: views hold on to it.
       const conversation = entry.conversation;
-      if (conversation) conversation.replaceSnapshot(snapshot);
-      else entry.conversation = ConversationModel.fromSnapshot(snapshot);
+      const taken = conversation ? conversation.replaceSnapshot(snapshot, { authoritative }) : true;
+      if (!conversation) entry.conversation = ConversationModel.fromSnapshot(snapshot);
       entry.error = null;
       entry.retries = 0;
-      void this.options.snapshots?.write(this.snapshotKey(id), snapshot);
+      if (taken) void this.options.snapshots?.write(this.snapshotKey(id), snapshot);
       this.changed(id, entry);
       // Subscribed already and the new cursor is ahead: duplicates are skipped by sequence.
       if (entry.users > 0 && !entry.subscribed) this.subscribe(id, entry);
       return entry.conversation!;
     })().catch((error: unknown) => {
+      // A read the database replaced underneath it failed for nothing that matters now.
+      if (superseded() && !this.disposed) return this.current(id);
       const failure = error instanceof Error ? error : new Error(String(error));
       entry.error = failure;
       entry.version++;
       for (const observer of [...entry.observers]) observer([]);
       throw failure;
-    }).finally(() => { entry.loading = undefined; });
+    }).finally(() => { if (entry.loading === loading) entry.loading = undefined; });
+    entry.loading = loading;
+    return loading;
+  }
+
+  /** What a superseded read answers its caller with: the state the current read arrives at. */
+  private current(id: string, answer?: LocalV2Snapshot): Promise<ConversationModel> {
+    if (this.disposed && answer) return Promise.resolve(ConversationModel.fromSnapshot(answer));
+    const entry = this.entry(id);
+    return entry.loading ?? (entry.conversation ? Promise.resolve(entry.conversation) : this.read(id, entry));
   }
 
   private snapshotKey(id: string) { return JSON.stringify([this.options.deviceId, this.scope.userId, this.scope.workspaceId, id]); }
@@ -432,6 +468,7 @@ export class ConversationService {
         return;
       case "snapshot_required":
         entry.subscribed = false; entry.confirmed = false;
+        entry.cursorAhead = true;
         if (entry.users > 0) void this.refresh(id).catch(() => {});
         return;
       case "rejected":
@@ -486,6 +523,7 @@ export class ConversationService {
 
   /** The daemon's database was replaced: nothing here describes it any more. */
   invalidate(): void {
+    this.invalidations++;
     this.scopeSeq = 0;
     this.summariesRead = false;
     this.summaryMap.clear();
@@ -497,6 +535,7 @@ export class ConversationService {
       entry.conversation = undefined;
       entry.subscribed = false; entry.confirmed = false;
       entry.loading = undefined;
+      entry.cursorAhead = false;
       if (entry.users > 0) void this.read(id, entry).catch(() => {});
       else if (!entry.observers.size) this.entries.delete(id);
     }

@@ -361,6 +361,8 @@ if (sameStore && snapshot.snapshot_seq < this.seq) {
 
 序号相等时内容相同，正常替换。
 
+**例外：** daemon 判定客户端游标超前于 store 时会发 `snapshot_required`（`hub.go`），此时 generation 没变，但更小的序号才是真相。这种读取标记为权威读取，跳过比较；否则会一直用旧游标重新订阅，形成死循环。
+
 **换库作废旧读取：**
 
 1. `read()` 只要 `epoch` 不一致就丢弃结果，调用方改为等待当前那次读取。
@@ -382,6 +384,7 @@ if (sameStore && snapshot.snapshot_seq < this.seq) {
 都放在 `packages/conversation-client`，先写失败的回归测试：
 
 - 迟到的同库旧快照不改变 `seq` 和轮次状态，更新的队列仍被接收。
+- 收到 `snapshot_required` 后接受更小的序号，并用它重新订阅。
 - 换库前发出的读取无论先回还是后回，都不写入 Model，也不再次触发失效。
 - 读取进行中调用 `refresh`，返回的结果来自调用之后才发出的读取；多次调用只多读一次。
 - `runtime.test.ts` 里“等上一次读完”的等待可以去掉。

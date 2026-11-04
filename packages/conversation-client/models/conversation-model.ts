@@ -66,9 +66,21 @@ export class ConversationModel {
     return new ConversationModel(snapshot);
   }
 
-  /** Becomes the snapshot, keeping older turns paged in when it continues them without a hole. */
-  replaceSnapshot(snapshot: LocalV2Snapshot): void {
+  /**
+   * Becomes the snapshot, keeping older turns paged in when it continues them
+   * without a hole. A snapshot older than the events applied here says nothing
+   * new, except for its queue, which the daemon reads after the rest. Sequences
+   * compare only within one store. `authoritative` is for when the daemon has said
+   * the cursor is ahead of its store, so a smaller sequence is the truth.
+   *
+   * Returns whether the snapshot was taken.
+   */
+  replaceSnapshot(snapshot: LocalV2Snapshot, options: { authoritative?: boolean } = {}): boolean {
     const sameStore = snapshot.store_generation === this.storeGeneration;
+    if (sameStore && !options.authoritative && snapshot.snapshot_seq < this.seq) {
+      this.queue.receive(snapshot.queue);
+      return false;
+    }
     const previous = {
       turns: [...this.turns.values()], items: [...this.items.values()],
       messages: [...this.messages.values()], interactions: [...this.interactions.values()],
@@ -81,6 +93,7 @@ export class ConversationModel {
     this.load(snapshot);
     this.queue.replace(snapshot.queue);
     if (sameStore) this.retainHistory(previous);
+    return true;
   }
 
   private load(snapshot: LocalV2Snapshot): void {
