@@ -32,6 +32,7 @@ import { ModelPreferences } from "./model-preferences";
 import { PermissionPreferences } from "./permission-preferences";
 import type { LocalV2Event } from "@multica/core/local-conversation/v2";
 import { isLocalReasoningEffort, localReasoningLevels, isLocalPermissionMode, type LocalReasoningEffort, type LocalPermissionMode } from "@multica/core/local-conversation/protocol";
+import { ComposerService } from "@multica/conversation-client/services";
 import { RuntimeLedger } from "./ledger";
 import { LocalTranscript, mergeTranscriptChange, type LocalTranscriptChange } from "./local-transcript";
 import { composerOptions, projectLocalMetadata, projectPendingSession, projectSession, projectV2Detail } from "./projection";
@@ -177,6 +178,17 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     },
     execute: executeExtension,
   };
+  const composer = new ComposerService<AgentActivityComposerOptions>(async (request) => {
+    const agent = descriptor(request.targetKey);
+    const options = composerOptions(agent);
+    const model = selectedModel(agent.id, request.agentSessionId) ?? agent.model ?? null;
+    const catalog = await loadReasoningCatalog(agent.id);
+    const reasoningEffort = selectedReasoning(agent.id, request.agentSessionId);
+    const levels = localReasoningLevels(catalog.models, model);
+    return { ...options, models: catalog.models.map((entry) => ({ value: entry.id, label: entry.label })), modelConfigurable: catalog.supported !== false,
+      reasoningEfforts: levels.map((entry) => ({ value: entry.value, label: entry.label })), reasoningConfigurable: levels.length > 0,
+      effectiveModel: model, effectiveSettings: { ...options.effectiveSettings, model, reasoningEffort } };
+  });
   const baseEngine = createAgentSessionEngine({
     identity: { workspaceId, origin: "multica" },
     clock: { nowUnixMs: () => Date.now() },
@@ -817,17 +829,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       case "session/ackForkObserved": return undefined;
       case "engine/reconcileWorkspace": return loadWorkspace();
       case "session/reconcile": await loadSession(command.agentSessionId); return { status: "applied" };
-      case "composerOptions/load": {
-        const agent = descriptor(command.targetKey);
-        const options = composerOptions(agent);
-        const model = selectedModel(agent.id, command.agentSessionId) ?? agent.model ?? null;
-        const catalog = await loadReasoningCatalog(agent.id);
-        const reasoningEffort = selectedReasoning(agent.id, command.agentSessionId);
-        const levels = localReasoningLevels(catalog.models, model);
-        return { ...options, models: catalog.models.map((entry) => ({ value: entry.id, label: entry.label })), modelConfigurable: catalog.supported !== false,
-          reasoningEfforts: levels.map((entry) => ({ value: entry.value, label: entry.label })), reasoningConfigurable: levels.length > 0,
-          effectiveModel: model, effectiveSettings: { ...options.effectiveSettings, model, reasoningEffort } };
-      }
       case "session/unactivate": return undefined;
       case "attention/readState/read": return attention;
       case "attention/readState/write": {
@@ -859,6 +860,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     origin: "multica", projectPathIsRemote: false, conversationActivityViewEnabled: true,
     promptContentUploadSupport: { file: true, image: true }, devDiagnosticConsoleSink: false,
     getSessionEngine: (id) => { scope(id); return engine; },
+    composer,
     getSnapshot: (id) => { scope(id); return projectSnapshot(engine.getSnapshot()); },
     subscribe: (id, listener) => { scope(id); return engine.subscribe((state) => listener(projectSnapshot(state))); },
     subscribeSessionEvents: (id, listener) => { scope(id); eventListeners.add(listener); return () => { eventListeners.delete(listener); }; },
@@ -866,7 +868,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     getSession: (id, sessionId) => { scope(id); return loadSession(sessionId); },
     getComposerOptions: async (input): Promise<AgentActivityComposerOptions> => {
       scope(input.workspaceId);
-      return engine.loadComposerOptions({
+      return composer.load({
         targetKey: input.agentTargetId,
         provider: input.provider ?? descriptor(input.agentTargetId).provider,
         agentSessionId: input.agentSessionId,

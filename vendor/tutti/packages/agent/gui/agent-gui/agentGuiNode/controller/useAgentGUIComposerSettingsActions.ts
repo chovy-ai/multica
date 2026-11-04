@@ -296,7 +296,7 @@ export function useAgentGUIComposerSettingsActions(
           }
         }
         const snapshotComposerOptions = composerOptionsForTarget({
-          snapshot: agentActivityRuntime.getSnapshot(workspaceId),
+          composer: agentActivityRuntime.composer,
           target: targetData
         });
         draftSettingsBySessionIdRef.current = {

@@ -57,10 +57,6 @@ import {
   createInitialSessionMessagesState,
   sessionMessagesReducer
 } from "./sessionMessages.reducer.ts";
-import {
-  composerOptionsReducer,
-  createInitialComposerOptionsState
-} from "./composerOptions.reducer.ts";
 import { canonicalTurnKey } from "./sessionEntityKeys.ts";
 import { deriveCanonicalSubmitAvailability } from "./sessionLifecycle.availability.ts";
 import { activeTurnIdForSession } from "./promptQueue.drainDecision.ts";
@@ -100,7 +96,6 @@ export function createInitialAgentSessionEngineState(): RootAgentSessionEngineSt
     sessionCommands: createInitialSessionCommandsState(),
     sessionLifecycle: createInitialSessionLifecycleState(),
     sessionMessages: createInitialSessionMessagesState(),
-    composerOptions: createInitialComposerOptionsState(),
     tuttiModeActivation: createInitialTuttiModeActivationState()
   };
 }
@@ -459,13 +454,6 @@ export function rootEngineReducer(
       sessionsById: sessionLifecycle.state.sessionsById
     }
   );
-  const composerOptions = composerOptionsReducer(
-    state.composerOptions,
-    intent,
-    {
-      settingsResultValidation
-    }
-  );
   const tuttiModeActivation = tuttiModeActivationReducer(
     state.tuttiModeActivation,
     intent,
@@ -485,7 +473,6 @@ export function rootEngineReducer(
     sessionCommands.state === state.sessionCommands &&
     sessionLifecycle.state === state.sessionLifecycle &&
     sessionMessages.state === state.sessionMessages &&
-    composerOptions.state === state.composerOptions &&
     tuttiModeActivation.state === state.tuttiModeActivation;
   const nextState = unchanged
     ? state
@@ -503,7 +490,6 @@ export function rootEngineReducer(
         sessionCommands: sessionCommands.state,
         sessionLifecycle: sessionLifecycle.state,
         sessionMessages: sessionMessages.state,
-        composerOptions: composerOptions.state,
         tuttiModeActivation: tuttiModeActivation.state
       };
   const followUpIntents = [
@@ -530,7 +516,6 @@ export function rootEngineReducer(
       ...sessionCommands.commands,
       ...sessionLifecycle.commands,
       ...promptQueue.commands,
-      ...composerOptions.commands,
       ...tuttiModeActivation.commands
     ],
     ...(followUpIntents.length > 0 ? { followUpIntents } : {}),

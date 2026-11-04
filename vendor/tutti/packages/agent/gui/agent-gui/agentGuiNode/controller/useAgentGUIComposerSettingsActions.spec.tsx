@@ -60,7 +60,7 @@ describe("useAgentGUIComposerSettingsActions", () => {
         activeConversationIdRef: { current: null },
         activeEngineActiveTurn: null,
         agentActivityRuntime: {
-          getSnapshot: () => ({})
+          composer: { options: () => null, status: () => undefined }
         } as unknown as AgentGUIRuntime,
         composerSupportPermissionModeChangeDeferred: false,
         dataRef: { current: data },
@@ -158,9 +158,8 @@ describe("useAgentGUIComposerSettingsActions", () => {
         activeConversationIdRef: { current: null },
         activeEngineActiveTurn: null,
         agentActivityRuntime: {
-          getSnapshot: () => ({
-            composerOptionsByTargetKey: {
-              "local:codex": {
+          composer: {
+            options: () => ({
                 behavior: { refreshModelOptionsAfterSettings: false },
                 models: [],
                 permissionConfig: {
@@ -171,9 +170,9 @@ describe("useAgentGUIComposerSettingsActions", () => {
                 reasoningConfigurable: false,
                 reasoningEfforts: [],
                 speeds: []
-              }
-            }
-          }),
+              }),
+            status: () => undefined
+          },
           trackDraftComposerSettingsChange: vi.fn()
         } as unknown as AgentGUIRuntime,
         composerSupportPermissionModeChangeDeferred: false,
@@ -334,7 +333,7 @@ describe("useAgentGUIComposerSettingsActions", () => {
         activeConversationIdRef: { current: "session-1" },
         activeEngineActiveTurn: null,
         agentActivityRuntime: {
-          getSnapshot: () => ({})
+          composer: { options: () => null, status: () => undefined }
         } as unknown as AgentGUIRuntime,
         composerSupportPermissionModeChangeDeferred: false,
         dataRef: { current: data },
@@ -445,7 +444,7 @@ describe("useAgentGUIComposerSettingsActions", () => {
         activeConversationIdRef: { current: null },
         activeEngineActiveTurn: null,
         agentActivityRuntime: {
-          getSnapshot: () => ({})
+          composer: { options: () => null, status: () => undefined }
         } as unknown as AgentGUIRuntime,
         composerSupportPermissionModeChangeDeferred: false,
         dataRef: { current: data },
@@ -574,7 +573,7 @@ describe("useAgentGUIComposerSettingsActions", () => {
         activeConversationIdRef: { current: null },
         activeEngineActiveTurn: null,
         agentActivityRuntime: {
-          getSnapshot: () => ({})
+          composer: { options: () => null, status: () => undefined }
         } as unknown as AgentGUIRuntime,
         composerSupportPermissionModeChangeDeferred: false,
         dataRef: { current: data },
@@ -757,7 +756,7 @@ describe("useAgentGUIComposerSettingsActions", () => {
         activeConversationIdRef: { current: null },
         activeEngineActiveTurn: null,
         agentActivityRuntime: {
-          getSnapshot: () => ({})
+          composer: { options: () => null, status: () => undefined }
         } as unknown as AgentGUIRuntime,
         composerSupportPermissionModeChangeDeferred: false,
         dataRef: { current: data },
@@ -842,7 +841,7 @@ describe("useAgentGUIComposerSettingsActions", () => {
         activeConversationIdRef: { current: null },
         activeEngineActiveTurn: null,
         agentActivityRuntime: {
-          getSnapshot: () => ({})
+          composer: { options: () => null, status: () => undefined }
         } as unknown as AgentGUIRuntime,
         composerSupportPermissionModeChangeDeferred: false,
         dataRef: { current: data },

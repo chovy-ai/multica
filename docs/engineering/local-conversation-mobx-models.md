@@ -297,6 +297,18 @@ class ItemModel {
 - 未确认发送的存储 key 对非本机设备带设备 id。本机 key 不变，升级后已有草稿还在。
 - 还没迁的：engine 的 `pendingIntents`、`sessionMutations`、`promptExecution`、`editRetry` 和 `sessionLifecycle`。它们和新建会话、取消、交互、发送可用性缠在一起，要等 controller 的读写换掉后才能删，和阶段 5、6 一起做。
 
+### 阶段 5 的迁移做法
+
+以 composer 选项为样板，每个领域都这样做：
+
+1. 在 `packages/conversation-client/services/` 写 Service，按原语义移植 reducer 的逻辑，并把对应的 reducer 测试移植成 Service 测试。Service 不依赖 `@tutti-os/*`，类型用泛型或结构类型。
+2. host 的 runtime 创建 Service，把原来 engine 命令处理里的逻辑作为依赖注入，并挂到 `AgentGUIRuntime` 上。
+3. controller 的 hook 还不是 `observer` 时，用 `useModelValue(read, deps)` 读 Model，它负责在 React 和 MobX 之间订阅。
+4. 从 engine 整个删除这个 slice：reducer、selector、intent、command、snapshot 字段。不留兼容层。
+5. 改 spec 的夹具，不改断言的语义。删除行为测试要说明理由。
+
+每个领域完成的标准：`pnpm typecheck`、`pnpm test` 通过；GUI spec 对照基线清单（`.tmp/gui-spec-baseline.fail`）没有新增失败。
+
 ### 阶段 2a 的范围说明
 
 - 迁入的是内容部分和 `ConversationService`。`ConversationListModel` 和 Service 的 observable 入口留到阶段 3、3b，那时才有 view 读它们。

@@ -125,7 +125,6 @@ export type EngineIntent =
   | SessionCommandsIntent
   | SessionLifecycleIntent
   | SessionGoalControlIntent
-  | ComposerOptionsIntent
   | EditRetryIntent
   | TuttiModeActivationIntent;
 
@@ -201,7 +200,6 @@ export type EngineExternalCommand =
   | SessionMutationCommand
   | SessionGoalControlCommand
   | TurnCancelCommand
-  | ComposerOptionsCommand
   | EditRetryCommand
   | TuttiModeActivationCommand;
 
@@ -276,7 +274,6 @@ export interface AgentSessionEngineStateBase {
   sessionCommands: SessionCommandsState;
   sessionLifecycle: SessionLifecycleState;
   sessionMessages: SessionMessagesState;
-  composerOptions: ComposerOptionsState;
   tuttiModeActivation: TuttiModeActivationState;
 }
 
@@ -457,17 +454,6 @@ export type AgentSessionEngineListener = (
 
 export type AgentSessionEngineIntentObserver = (intent: EngineIntent) => void;
 
-export interface AgentSessionLoadComposerOptionsInput {
-  agentSessionId?: string | null;
-  cwd?: string | null;
-  force?: boolean;
-  waitForFreshModelCatalog?: boolean;
-  provider: string;
-  section?: import("./composerOptions.types.ts").ComposerOptionsSection;
-  settings?: AgentActivityComposerSettings | null;
-  signal?: AbortSignal;
-  targetKey: string;
-}
 
 export interface AgentSessionUpdateSettingsInput {
   agentSessionId: string;
@@ -562,9 +548,6 @@ export interface AgentSessionEngine {
   dispatch(intent: EngineIntent, options?: EngineDispatchOptions): void;
   dispose(): void;
   getSnapshot(): AgentSessionEngineState;
-  loadComposerOptions(
-    input: AgentSessionLoadComposerOptionsInput
-  ): Promise<AgentActivityComposerOptions>;
   renameSession(
     input: Omit<AgentActivityRenameSessionInput, "signal" | "workspaceId"> & {
       signal?: AbortSignal;
@@ -628,11 +611,6 @@ import type {
   SessionCommandsState
 } from "./sessionCommands.types.ts";
 import type { SessionMessagesState } from "./sessionMessages.types.ts";
-import type {
-  ComposerOptionsCommand,
-  ComposerOptionsIntent,
-  ComposerOptionsState
-} from "./composerOptions.types.ts";
 import type {
   SessionMutationCommand,
   SessionMutationsIntent,

@@ -801,7 +801,7 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
     expect(request.mock.calls.some(([method]) => method === "session.delete")).toBe(false);
     const options = await handle.runtime.getComposerOptions({ workspaceId: init.workspaceId, agentTargetId: agent.id });
     expect(options.capabilities).toMatchObject({ goalPause: false, planMode: false, modelSwitch: true, activeTurnGuidance: false });
-    expect(handle.runtime.getSnapshot(init.workspaceId).composerOptionsByTargetKey?.[agent.id]).toEqual(options);
+    expect(handle.runtime.composer.options(agent.id)).toEqual(options);
     expect(() => handle.runtime.getSessionEngine("another-workspace")).toThrow("workspace changed");
   });
 

@@ -210,17 +210,6 @@ export {
   type AgentSessionFamilySnapshot
 } from "./engine/sessionFamily.selectors.ts";
 export type { SessionMessagesState } from "./engine/sessionMessages.types.ts";
-export {
-  selectComposerOptions,
-  selectComposerOptionsLoadStatus,
-  selectComposerOptionsSectionLoadStatus
-} from "./engine/composerOptions.selectors.ts";
-export type {
-  ComposerOptionsIntent,
-  ComposerOptionsCommand,
-  ComposerOptionsSection,
-  ComposerOptionsState
-} from "./engine/composerOptions.types.ts";
 export type {
   AttentionCompletionKind,
   AttentionReadCommand,

@@ -330,7 +330,7 @@ export function useAgentGUINodeController({
     draftSettingsBySessionId,
     optimisticComposerTarget,
     selectedComposerTargetData,
-    sessionEngine
+    composer: agentActivityRuntime.composer
   });
   const {
     composerSupport,

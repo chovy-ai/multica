@@ -204,13 +204,6 @@ export interface AgentActivitySnapshot {
   presences: AgentActivityPresence[];
   sessionMessagesById: Record<string, AgentActivityMessage[]>;
   sessionMessageWindowsById?: Record<string, AgentActivitySessionMessageWindow>;
-  /** Composer options keyed by the opaque, verbatim loadComposerOptions targetKey. */
-  composerOptionsByTargetKey?: Record<string, AgentActivityComposerOptions>;
-  /** Request lifecycle for composer options, keyed by the same opaque target. */
-  composerOptionsLoadStatusByTargetKey?: Record<
-    string,
-    AgentActivityComposerOptionsLoadStatus
-  >;
 }
 
 export type AgentActivitySnapshotListener = (

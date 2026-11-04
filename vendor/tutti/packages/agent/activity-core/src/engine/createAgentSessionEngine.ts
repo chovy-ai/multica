@@ -1,8 +1,6 @@
 import type { EngineDiagnosticSink } from "./diagnostics.ts";
 import type { AgentActivityComposerOptions } from "../types.ts";
 import { projectAgentActivitySession } from "./agentActivitySnapshot.projector.ts";
-import { composerOptionsRequestSignature } from "./composerOptions.helpers.ts";
-import type { ComposerOptionsEntry } from "./composerOptions.types.ts";
 import { projectPublicAgentSessionEngineState } from "./engineState.publicProjection.ts";
 import { createEngineEffectExecutor } from "./effectExecutor.ts";
 import { createEngineExpiryClock } from "./expiryClock.ts";
@@ -43,7 +41,6 @@ import {
   type AgentSessionEngineIntentObserver,
   type AgentSessionEngineListener,
   type AgentSessionActivationInput,
-  type AgentSessionLoadComposerOptionsInput,
   type AgentSessionStopInput,
   type AgentSessionSubmitInteractionResponseInput,
   type AgentSessionSubmitPromptInput,
@@ -122,13 +119,11 @@ export function createAgentSessionEngine({
   let batchFlushTask: EngineScheduledTask | null = null;
   let draining = false;
   let disposed = false;
-  let composerOptionsCommandSequence = 1;
   let interactionResponseCommandSequence = 1;
   let sessionGoalControlCommandSequence = 1;
   let sessionMutationSequence = 1;
   let sessionSettingsUpdateSequence = 1;
   let sessionStopCommandSequence = 1;
-  const pendingComposerOptionsDisposals = new Set<() => void>();
 
   const expiryClock = createEngineExpiryClock({
     clock,
@@ -276,146 +271,6 @@ export function createAgentSessionEngine({
     flushBatchedIntents();
     intentQueue.push(scopedIntent);
     drainQueue();
-  }
-
-  function nextComposerOptionsCommandId(): string {
-    const sequence = composerOptionsCommandSequence++;
-    return `composer-options:${clock.nowUnixMs()}:${sequence}`;
-  }
-
-  function loadComposerOptions(
-    input: AgentSessionLoadComposerOptionsInput
-  ): Promise<AgentActivityComposerOptions> {
-    const targetKey = input.targetKey.trim();
-    const provider = input.provider.trim();
-    if (!targetKey) {
-      return Promise.reject(new Error("composer_options_target_key_required"));
-    }
-    if (!provider) {
-      return Promise.reject(new Error("composer_options_provider_required"));
-    }
-    if (disposed) {
-      return Promise.reject(new Error("agent_session_engine_disposed"));
-    }
-    if (input.signal?.aborted) {
-      return Promise.reject(composerOptionsAbortReason(input.signal));
-    }
-
-    const commandId = nextComposerOptionsCommandId();
-    const signature = composerOptionsRequestSignature({
-      agentSessionId: input.agentSessionId,
-      cwd: input.cwd,
-      provider,
-      settings: input.settings
-    });
-    const section = input.section;
-    const initialEntry = section
-      ? publicSnapshot.composerOptions.sectionEntriesByTargetKey[targetKey]?.[
-          section
-        ]
-      : publicSnapshot.composerOptions.entriesByTargetKey[targetKey];
-    const joinedCommandId =
-      initialEntry?.status === "loading" &&
-      initialEntry.loadingSignature === signature
-        ? initialEntry.inFlightCommandId
-        : null;
-
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let awaitedCommandId = joinedCommandId;
-      let previousEntry: ComposerOptionsEntry | undefined = initialEntry;
-      let unsubscribe = (): void => {};
-
-      const cleanup = (): void => {
-        unsubscribe();
-        input.signal?.removeEventListener("abort", onAbort);
-        pendingComposerOptionsDisposals.delete(onDispose);
-      };
-      const rejectOnce = (error: unknown): void => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(error);
-      };
-      const resolveOnce = (
-        options: AgentActivityComposerOptions | undefined
-      ): void => {
-        if (settled || !options) return;
-        settled = true;
-        cleanup();
-        resolve(options);
-      };
-      const observe = (): void => {
-        if (settled || !awaitedCommandId) return;
-        const composerOptions = publicSnapshot.composerOptions;
-        const entry = section
-          ? composerOptions.sectionEntriesByTargetKey[targetKey]?.[section]
-          : composerOptions.entriesByTargetKey[targetKey];
-        if (entry?.inFlightCommandId === awaitedCommandId) {
-          previousEntry = entry;
-          return;
-        }
-        if (previousEntry?.inFlightCommandId !== awaitedCommandId) {
-          rejectOnce(new Error("composer_options_load_superseded"));
-          return;
-        }
-        if (entry?.status === "ready") {
-          resolveOnce(composerOptions.optionsByTargetKey[targetKey]);
-          return;
-        }
-        if (entry?.status === "error") {
-          rejectOnce(new Error("composer_options_load_failed"));
-          return;
-        }
-        rejectOnce(new Error("composer_options_load_superseded"));
-      };
-      const onAbort = (): void => {
-        rejectOnce(composerOptionsAbortReason(input.signal));
-      };
-      const onDispose = (): void => {
-        rejectOnce(new Error("agent_session_engine_disposed"));
-      };
-
-      unsubscribe = engine.subscribe(observe);
-      input.signal?.addEventListener("abort", onAbort, { once: true });
-      pendingComposerOptionsDisposals.add(onDispose);
-      engine.dispatch({
-        agentSessionId: input.agentSessionId,
-        commandId,
-        cwd: input.cwd,
-        force: input.force,
-        provider,
-        ...(input.waitForFreshModelCatalog
-          ? { waitForFreshModelCatalog: true }
-          : {}),
-        ...(section !== undefined ? { section } : {}),
-        settings: input.settings,
-        targetKey,
-        type: "composerOptions/loadRequested",
-        workspaceId: engineIdentity.workspaceId
-      });
-
-      const composerOptions = publicSnapshot.composerOptions;
-      const entry = section
-        ? composerOptions.sectionEntriesByTargetKey[targetKey]?.[section]
-        : composerOptions.entriesByTargetKey[targetKey];
-      if (entry?.status === "ready" && entry.settledSignature === signature) {
-        resolveOnce(composerOptions.optionsByTargetKey[targetKey]);
-        return;
-      }
-      awaitedCommandId =
-        entry?.inFlightCommandId === commandId
-          ? commandId
-          : entry?.loadingSignature === signature
-            ? (entry.inFlightCommandId ?? null)
-            : null;
-      previousEntry = entry;
-      if (!awaitedCommandId) {
-        rejectOnce(new Error("composer_options_load_not_accepted"));
-        return;
-      }
-      observe();
-    });
   }
 
   function nextSessionMutationId(kind: "delete" | "pin" | "rename"): string {
@@ -712,10 +567,6 @@ export function createAgentSessionEngine({
       }
       batchedIntents.length = 0;
       intentQueue.length = 0;
-      for (const disposePendingLoad of [...pendingComposerOptionsDisposals]) {
-        disposePendingLoad();
-      }
-      pendingComposerOptionsDisposals.clear();
       expiryClock.dispose();
       effectExecutor.dispose();
       listeners.clear();
@@ -723,7 +574,6 @@ export function createAgentSessionEngine({
     getSnapshot() {
       return publicSnapshot;
     },
-    loadComposerOptions,
     async renameSession(input) {
       const agentSessionId = input.agentSessionId.trim();
       const mutation = await dispatchSessionMutationWithCancellation(
@@ -782,8 +632,4 @@ export function createAgentSessionEngine({
     updateSessionSettings
   };
   return engine;
-}
-
-function composerOptionsAbortReason(signal?: AbortSignal): unknown {
-  return signal?.reason ?? new Error("composer_options_load_aborted");
 }
