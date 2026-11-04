@@ -180,14 +180,12 @@ export type EngineInternalCommand =
 export type EngineExternalCommand =
   | EngineProbeCommand
   | EngineReconcileWorkspaceCommand
-  | PromptQueueSendCommand
   | SessionActivateCommand
   | SessionUpdateSettingsCommand
   | SessionUnactivateCommand
   | SessionReconcileCommand;
 
 type AgentSessionEffectCommand =
-  | PromptQueueSendCommand
   | SessionActivateCommand
   | SessionUpdateSettingsCommand;
 
@@ -343,10 +341,6 @@ export interface AgentSessionEffectPort {
     input: AgentSessionActivateEffectInput,
     options: EngineEffectOptions
   ): Promise<AgentSessionActivateEffectResult>;
-  sendInput(
-    input: AgentActivitySendInput,
-    options: EngineEffectOptions
-  ): Promise<unknown>;
   updateSessionSettings(
     input: {
       agentSessionId: string;
@@ -456,7 +450,6 @@ export interface AgentSessionEngine {
 }
 import type {
   PromptQueueIntent,
-  PromptQueueSendCommand,
   PromptQueueState
 } from "./promptQueue.types.ts";
 import type {
