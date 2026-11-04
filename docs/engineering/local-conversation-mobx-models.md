@@ -289,6 +289,14 @@ class ItemModel {
 
 第二步把组件逐个改成 `observer` 直接读 Model，engine 不再持有 assistant 内容。它和阶段 5、6 一起做：现在消息还要进 engine，供 `pendingIntents` 等写路径确认发送。分发本身只要几毫秒（同样的数据约 3.6ms），不急。
 
+### 阶段 4 的范围说明
+
+- daemon 能力已补齐：`queue.updated` 带 `request_ids`、`reason`、`dispatching_request_id`；`POST /sessions/{id}/queue/status` 批量查状态（能力 `prompt-status-v1`）；删除留墓碑，保留 7 天；重提比较时排除 `display`；`send_now` 不改变暂停的队列。
+- `PromptService` 接管了 `desktop-queue-engine` 的全部状态和逻辑，后者只把它投影给 engine。原有 28 个队列测试没有修改。
+- 重载后恢复的消息会查询状态：已送达、已入队、派发中、已删除的不再显示；未送达和结果未知的留给用户判断，不自动重发。
+- 未确认发送的存储 key 对非本机设备带设备 id。本机 key 不变，升级后已有草稿还在。
+- 还没迁的：engine 的 `pendingIntents`、`sessionMutations`、`promptExecution`、`editRetry` 和 `sessionLifecycle`。它们和新建会话、取消、交互、发送可用性缠在一起，要等 controller 的读写换掉后才能删，和阶段 5、6 一起做。
+
 ### 阶段 2a 的范围说明
 
 - 迁入的是内容部分和 `ConversationService`。`ConversationListModel` 和 Service 的 observable 入口留到阶段 3、3b，那时才有 view 读它们。

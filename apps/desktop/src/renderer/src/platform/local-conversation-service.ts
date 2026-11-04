@@ -8,7 +8,7 @@ import type { AgentTask, Attachment } from "@multica/core/types";
 import { createAgentGuiWorkspaceService, type AgentGuiParentService, type ParentServiceOptions } from "./agent-gui-parent-service";
 import type { AgentGuiHostEvent, AgentGuiRpcMethod, AgentGuiRpcMethods, AgentGuiSession, AgentGuiSessionDetail, AgentGuiWorkspaceState, LocalConversationSource } from "@multica/tutti-agent-gui-host/protocol";
 import { isTaskCreationReference, type LocalFolderProject, type LocalPromptQueue, type LocalProviderId, type LocalProviderUsage, type LocalQueuedPrompt } from "@multica/core/local-conversation/protocol";
-import { localV2SummarySchema, type LocalV2Scope, type LocalV2Summary, type LocalV2Transport } from "@multica/core/local-conversation/v2";
+import { localV2SummarySchema, type LocalV2Scope, type LocalV2Summary, type LocalV2Transport, LOCAL_V2_PROMPT_STATUS_CAPABILITY, localV2PromptStatusesSchema } from "@multica/core/local-conversation/v2";
 import { isAutomaticLocalDirectory } from "@multica/tutti-agent-gui-host/local-projects";
 import { projectForDirectory } from "./local-conversation-projects";
 import { blobBase64 } from "./local-preview-file";
@@ -162,7 +162,7 @@ export function createLocalConversationParentService(options: ParentServiceOptio
     const providers = qc.getQueryData<LocalProviderList>(providersQuery.queryKey)!;
     const folderProjects = qc.getQueryData<LocalFolderProjectList>(foldersQuery.queryKey);
     const summaries = client.list.summaries;
-    return { local: true, composerDraftScope: JSON.stringify([api.getBaseUrl(), options.storagePrefix ?? ""]), queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: lastAgents.get(client) ?? [],
+    return { local: true, composerDraftScope: JSON.stringify([api.getBaseUrl(), options.storagePrefix ?? "", ...(deviceId === "local" ? [] : [deviceId])]), queueOwner: "desktop", sideWorkspace: true, sidePane: Boolean(options.storagePrefix), agents: lastAgents.get(client) ?? [],
       executionTargets: providers.providers.map((entry) => ({ id: localTargetId(entry.id), name: entry.name, provider: entry.id, iconUrl: "", canInvoke: entry.available, canFork: true, runtimeBound: entry.available, runtimeOnline: entry.available, unavailableReason: entry.available ? undefined : "未在本机安装" })),
       sessions: summaries.map((summary) => projectLocalSession(summary, scope)),
       folderProjects: (folderProjects?.projects ?? []).map((project): LocalFolderProject => ({ id: project.id, title: project.title, path: project.path, createdAt: project.created_at })),
@@ -213,6 +213,11 @@ export function createLocalConversationParentService(options: ParentServiceOptio
         const agents = await mentionedAgents(item.references ?? []);
         if (agents.length) item.agents = agents;
         return projectQueue(await command(params.sessionId, { type: "queue_enqueue", item, paused: params.paused === true }));
+      }
+      case "queue.statuses": {
+        if (!(await transport.capabilities?.())?.includes(LOCAL_V2_PROMPT_STATUS_CAPABILITY)) return {};
+        const raw = await client.request("POST", `/sessions/${encodeURIComponent(params.sessionId)}/queue/status`, { request_ids: params.requestIds });
+        return parseWithFallback(raw, localV2PromptStatusesSchema, { statuses: {} }, { endpoint: "local-v2.queue-status" }).statuses;
       }
       case "queue.update":
         return projectQueue(await command(params.sessionId, { type: "queue_update", action: params.action === "sendNow" ? "send_now" : params.action, request_id: params.requestId }));

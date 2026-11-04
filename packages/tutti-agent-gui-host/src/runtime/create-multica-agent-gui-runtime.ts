@@ -193,6 +193,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     locale: () => init.locale,
     enqueue: enqueueDesktop,
     update: async (id, action, requestId) => client.request("queue.update", { sessionId: await backendSessionId(id), action, requestId }),
+    statuses: async (id, requestIds) => client.request("queue.statuses", { sessionId: await backendSessionId(id), requestIds }),
     error(error) {
       reportError(error);
       if (!disposed) void client.request("host.showMessage", {
