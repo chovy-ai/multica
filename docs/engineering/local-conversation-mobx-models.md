@@ -251,16 +251,15 @@ class ItemModel {
 
 ## 8. 删除 Web 的 AI 会话
 
-- **页面：** 删除 `apps/web/app/[workspaceSlug]/(dashboard)/conversations/` 和 `packages/views/tutti-agent-gui/conversation-flow-page.tsx`。
-- **重定向：** Next 配 `/:slug/conversations` → `/:slug/chat`。
-- **Web 入口：** 都在共享层，要加平台开关：`app-sidebar.tsx`、`agents-page.tsx`、`search-command.tsx`。
-- **云端任务链接：** `agent-task-panel.tsx` 用 `conversationFlowSession` 打开云端 chat session，改为 `chatSession`。它在 Desktop 上也带着云端 id 进本地会话页，同样要改。
-- **路径：** Desktop 还依赖 `conversationFlow`、`conversationFlowDevice`，只删没有调用方的 `conversationFlowWithAgent`。
-- **Web 构建：** 回退 `next.config.ts` 中 GUI 相关的 `transpilePackages`、webpack 规则和服务端别名，以及 `apps/web/package.json` 的 `prepare.mjs` 调用。
-- **runtime：** 删除 43 处 `init.local` 和 `queueOwner` 的云端分支。`projection.ts` 不是只服务云端，`projectSession`、`projectPendingSession`、`composerOptions` 本地还在用。
-- **`TuttiAgentGuiPanel`：** 移到 Desktop。它引用的 `use-app-foreground`、`use-chat-draft-restore` 要先从 views 导出。
-- **`parent-service.ts`：** 精简后移到 Desktop。本地会话还用它取云端智能体、`context.tasks`，以及 `host.openTask`、`host.openInternalResource`、`host.showMessage`、`host.promptApplied`。
-- **e2e：** `tutti-agent-gui`、`tutti-agent-mentions`、`tutti-cloud-compatibility`、`tutti-conversation-interactions`、`tutti-conversation-visual` 这些 spec 直接访问 Web 路由。测试台现在也靠 Web 服务提供，要换地方。
+已在阶段 0 完成。实施时和评审结论不同的地方：
+
+- **重定向：** Next 配 `/:workspaceSlug/conversations` → `/:workspaceSlug/chat`。`/chat` 读同样的 `?session=` 和 `?agent=`，目标路径不带查询时 Next 会保留原查询，不需要映射。
+- **Web 入口：** `app-sidebar.tsx` 直接去掉 `personalNav` 里的条目，分组由 `conversationFlowDevices` 决定；`AgentsPage` 用 `showConversationFlowEntry`，`SearchCommand` 用 `showConversationFlow`，默认都不显示。
+- **路径：** 删除 `conversationFlowSession` 和 `conversationFlowWithAgent`，两者都没有调用方了。`conversationFlow`、`conversationFlowDevice`、`WORKSPACE_PAGES.conversationFlow` 保留给 Desktop。
+- **`TuttiAgentGuiPanel`：** 只有类型来自 `use-chat-draft-restore`。这个 hook 还被 Chat 和 builder 使用，不能跟着页面删除。
+- **`parent-service.ts`：** 移到 Desktop 后改名 `agent-gui-parent-service.ts`，工作区部分为 `createAgentGuiWorkspaceService`，只保留云端智能体、`context.tasks`、`storage.*`、`host.openTask`、`host.openInternalResource`、`host.showMessage`、`host.promptApplied`。
+- **runtime：** `projectDetail` 虽然不是纯云端（`replaceMetadata` 和被 LRU 淘汰的会话会走它），但本地传入的 detail 永远为空，所以替换成只投影元数据的 `projectLocalMetadata`。`session.load` 留在协议里，只有测试台的 `localSourceFromClient` 使用。`send()` 和 `session.send` 保留：它们是 engine 必须提供的 `sendInput`，队列接管后没有已知调用方，等阶段 4 迁移时处理。host 其余文件里按 `local` 的分支（`host-api`、`context-mentions`、`composer-drafts`）不在 runtime 内，没有动。
+- **e2e：** 只直接访问 Web 路由的五个 spec 已删除。测试台继续输出到 `apps/web/public/tutti-agent-gui`，只有测试需要它，Web 不再构建或发布 GUI。runtime 不再有 `session.send` 路径的队列，所以假后端只实现 `session.send`、快照不声明 `queueOwner` 的 spec 需要改成走 `queue.enqueue`；`invocation-avatars` 的 cloud 用例要删除。
 
 ## 9. 实施阶段
 
