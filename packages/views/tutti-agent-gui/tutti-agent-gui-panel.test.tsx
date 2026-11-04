@@ -6,7 +6,7 @@ import type { AgentGuiHostEvent, AgentGuiInitSnapshot, AgentGuiRpcClient } from 
 import { TuttiAgentGuiPanel } from "./tutti-agent-gui-panel";
 import { NavigationProvider } from "../navigation";
 
-type Service = { load: ReturnType<typeof vi.fn>; request: ReturnType<typeof vi.fn>; publish: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn>; subscribe: (listener: (event: AgentGuiHostEvent) => void) => () => void; reconnect: ReturnType<typeof vi.fn> };
+type Service = { load: ReturnType<typeof vi.fn>; request: ReturnType<typeof vi.fn>; publish: ReturnType<typeof vi.fn<(event: AgentGuiHostEvent) => void>>; dispose: ReturnType<typeof vi.fn>; subscribe: (listener: (event: AgentGuiHostEvent) => void) => () => void; reconnect: ReturnType<typeof vi.fn> };
 const mock = vi.hoisted(() => ({
   foreground: true,
   create: vi.fn(),
