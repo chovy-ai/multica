@@ -121,7 +121,6 @@ export type EngineIntent =
   | PlanDecisionIntent
   | PromptQueueIntent
   | SessionReconcileIntent
-  | SessionMutationsIntent
   | SessionCommandsIntent
   | SessionLifecycleIntent
   | SessionGoalControlIntent
@@ -197,17 +196,12 @@ export type EngineExternalCommand =
   | SessionUpdateSettingsCommand
   | SessionUnactivateCommand
   | SessionReconcileCommand
-  | SessionMutationCommand
   | SessionGoalControlCommand
   | TurnCancelCommand
   | EditRetryCommand
   | TuttiModeActivationCommand;
 
 type AgentSessionEffectCommand =
-  | Extract<
-      SessionMutationCommand,
-      { type: "session/rename" | "session/setPinned" | "sessions/delete" }
-    >
   | InteractionRespondCommand
   | PromptQueueSendCommand
   | SessionActivateCommand
@@ -270,7 +264,6 @@ export interface AgentSessionEngineStateBase {
   planDecisions: PlanDecisionState;
   promptQueue: PromptQueueState;
   sessionReconcile: SessionReconcileState;
-  sessionMutations: SessionMutationsState;
   sessionCommands: SessionCommandsState;
   sessionLifecycle: SessionLifecycleState;
   sessionMessages: SessionMessagesState;
@@ -388,26 +381,14 @@ export interface AgentSessionEffectPort {
     input: AgentSessionGoalControlEffectInput,
     options?: EngineEffectOptions
   ): Promise<AgentActivityGoalControlResult>;
-  deleteSessions(
-    input: Omit<AgentActivityDeleteSessionsInput, "signal">,
-    options?: EngineEffectOptions
-  ): Promise<AgentActivityDeleteSessionsResult>;
   respondToInteraction(
     input: AgentActivitySubmitInteractiveInput,
     options: EngineEffectOptions
   ): Promise<unknown>;
-  renameSession(
-    input: Omit<AgentActivityRenameSessionInput, "signal">,
-    options?: EngineEffectOptions
-  ): Promise<{ session: AgentActivitySession }>;
   sendInput(
     input: AgentActivitySendInput,
     options: EngineEffectOptions
   ): Promise<unknown>;
-  setSessionPinned(
-    input: Omit<AgentActivitySetSessionPinnedInput, "signal">,
-    options?: EngineEffectOptions
-  ): Promise<{ session: AgentActivitySession }>;
   updateSessionSettings(
     input: {
       agentSessionId: string;
@@ -454,11 +435,6 @@ export type AgentSessionEngineListener = (
 
 export type AgentSessionEngineIntentObserver = (intent: EngineIntent) => void;
 
-
-export interface AgentSessionUpdateSettingsInput {
-  agentSessionId: string;
-  settings: AgentActivitySessionSettings;
-}
 
 export interface AgentSessionSubmitInteractionResponseInput {
   action?: string;
@@ -540,27 +516,9 @@ export interface AgentSessionEngine {
   controlGoal(
     input: AgentSessionControlGoalInput
   ): AgentSessionControlGoalAdmission;
-  deleteSessions(
-    input: Omit<AgentActivityDeleteSessionsInput, "signal" | "workspaceId"> & {
-      signal?: AbortSignal;
-    }
-  ): Promise<AgentActivityDeleteSessionsResult>;
   dispatch(intent: EngineIntent, options?: EngineDispatchOptions): void;
   dispose(): void;
   getSnapshot(): AgentSessionEngineState;
-  renameSession(
-    input: Omit<AgentActivityRenameSessionInput, "signal" | "workspaceId"> & {
-      signal?: AbortSignal;
-    }
-  ): Promise<AgentActivitySession>;
-  setSessionPinned(
-    input: Omit<
-      AgentActivitySetSessionPinnedInput,
-      "signal" | "workspaceId"
-    > & {
-      signal?: AbortSignal;
-    }
-  ): Promise<AgentActivitySession>;
   submitInteractionResponse(
     input: AgentSessionSubmitInteractionResponseInput
   ): boolean;
@@ -611,11 +569,6 @@ import type {
 } from "./sessionCommands.types.ts";
 import type { SessionMessagesState } from "./sessionMessages.types.ts";
 import type {
-  SessionMutationCommand,
-  SessionMutationsIntent,
-  SessionMutationsState
-} from "./sessionMutations.types.ts";
-import type {
   TuttiModeActivationCommand,
   TuttiModeActivationIntent,
   TuttiModeActivationState
@@ -624,13 +577,9 @@ import type {
   AgentActivityCancelTurnInput,
   AgentActivityComposerOptions,
   AgentActivityComposerSettings,
-  AgentActivityDeleteSessionsInput,
-  AgentActivityDeleteSessionsResult,
   AgentActivityGoalControlResult,
   AgentActivityInitialGoalControl,
-  AgentActivityRenameSessionInput,
   AgentActivitySendInput,
-  AgentActivitySetSessionPinnedInput,
   AgentActivitySession,
   AgentActivitySessionSettings,
   AgentActivitySubmitDiagnostics,

@@ -228,7 +228,6 @@ export type {
   AgentActivityRuntimeDeleteSessionsBatchResult,
   AgentActivityRuntimeSessionSectionDeletionCandidates,
   AgentActivityRuntimeSessionSectionScopeInput,
-  AgentActivityRuntimeSetSessionPinnedInput,
   AgentActivityRuntimeUploadPromptContentInput,
   AgentActivityRuntimeUploadPromptContentResult,
   AgentActivityRuntimeUnactivateSessionInput,

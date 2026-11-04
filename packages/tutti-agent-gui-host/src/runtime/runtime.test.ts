@@ -794,6 +794,48 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
   });
 
 
+  it("renames and pins through the server, then shows what it committed", async () => {
+    const data = backend(); data.sessions.push(session);
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "session.rename") return { ...session, title: params.title };
+      if (method === "session.pin") return { ...session, pinned: params.pinned };
+      return original(method, params);
+    });
+    const { handle } = await setup(data);
+    await handle.runtime.getSession(init.workspaceId, session.id);
+    await expect(handle.runtime.mutations.rename({ agentSessionId: session.id, title: " Renamed " })).resolves.toMatchObject({ title: "Renamed" });
+    expect(data.request).toHaveBeenCalledWith("session.rename", { sessionId: session.id, title: "Renamed" }, expect.anything());
+    expect(handle.runtime.getSnapshot(init.workspaceId).sessions[0]?.title).toBe("Renamed");
+    await handle.runtime.mutations.setPinned({ agentSessionId: session.id, pinned: true });
+    expect(data.request).toHaveBeenCalledWith("session.pin", { sessionId: session.id, pinned: true }, expect.anything());
+    expect(handle.runtime.getSnapshot(init.workspaceId).sessions[0]?.pinnedAtUnixMs).not.toBeNull();
+  });
+
+  it("forks through a turn and binds the child to the id it was asked to appear under", async () => {
+    const forkable = { ...init, agents: [{ ...init.agents[0]!, canFork: true }] };
+    const child = { ...session, id: "server-child" };
+    const data = backend(); data.sessions.push(session);
+    data.messages.push({ id: "message-1", chat_session_id: session.id, role: "user", content: "hi", task_id: "turn-1", created_at: time } as ChatMessage);
+    data.tasks.push({ id: "turn-1", chat_session_id: session.id, status: "completed", created_at: time, started_at: time, completed_at: time } as AgentTask);
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "workspace.load") return { ...await original(method, params), agents: forkable.agents };
+      if (method === "session.fork") return child;
+      if (method === "session.load" && params.sessionId === child.id) return { ...await original(method, params), session: child, messages: [], tasks: [],
+        forkedFrom: { sessionId: session.id, turnId: "turn-1", targetTurnId: "child-turn", operationId: child.id, createdAt: time } };
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, forkable);
+    handles.push(handle);
+    await handle.initialize();
+    await handle.runtime.getSession(init.workspaceId, session.id);
+    const fork = await handle.runtime.mutations.forkThroughTurn({ sourceAgentSessionId: session.id, turnId: "turn-1" });
+    expect(handle.toServerSessionId(fork.targetAgentSessionId)).toBe(child.id);
+    expect(data.request).toHaveBeenCalledWith("session.fork", expect.objectContaining({ sessionId: session.id, turnId: "turn-1" }), expect.anything());
+    expect(handle.runtime.mutations.pendingForkTurnIds(session.id)).toEqual([]);
+  });
+
   it("rejects recoverable deletion and unsupported capabilities without calling a destructive API", async () => {
     const { handle, request } = await setup();
     await expect(handle.runtime.deleteSession({ workspaceId: init.workspaceId, agentSessionId: "anything" })).rejects.toMatchObject({ code: "unsupported" });

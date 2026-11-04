@@ -2,6 +2,8 @@ import { createLocalCostProfile, createLocalPresentationTiming, createLocalSendT
 import {
   createAgentActivitySnapshotProjector,
   createAgentSessionEngine,
+  providerForkBindingAllowsAttempt,
+  selectEngineTurn,
   type AgentActivityComposerOptions,
   type AgentActivityDurableMessage,
   type AgentActivitySendInput,
@@ -30,7 +32,7 @@ import { executionTargets } from "../protocol";
 import type { LocalV2Event } from "@multica/core/local-conversation/v2";
 import { localReasoningLevels, type LocalPermissionMode } from "@multica/core/local-conversation/protocol";
 import { reaction } from "mobx";
-import { ComposerService } from "@multica/conversation-client/services";
+import { ComposerService, ConversationMutationService } from "@multica/conversation-client/services";
 import { RuntimeLedger } from "./ledger";
 import { LocalTranscript, mergeTranscriptChange, type LocalTranscriptChange } from "./local-transcript";
 import { composerOptions, projectLocalMetadata, projectPendingSession, projectSession, projectV2Detail } from "./projection";
@@ -124,7 +126,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
           ? { cancel: { canceled: turn.outcome === "canceled", reason: turn.outcome === "canceled" ? "turn_canceled" : "already_settled" }, turn }
           : { cancel: { canceled: false, reason: "cancel_requested" }, turn: { ...turn, phase: "settling", outcome: null } };
       },
-      deleteSessions: async () => unsupported("Recoverable session deletion"),
       respondToInteraction: async (input, options) => {
         scope(input.workspaceId);
         if (input.action !== "submit" || !input.payload?.answersByQuestionId) unsupported("This interaction response");
@@ -133,20 +134,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
           answers: input.payload.answersByQuestionId as Record<string, string | string[]>,
         }, { signal: options.signal });
         return { session: await loadFreshSession(input.agentSessionId) };
-      },
-      renameSession: async (input, options) => {
-        scope(input.workspaceId);
-        const session = await client.request("session.rename", {
-          sessionId: await backendSessionId(input.agentSessionId), title: input.title,
-        }, { signal: options?.signal });
-        return { session: replaceMetadata(session) };
-      },
-      setSessionPinned: async (input, options) => {
-        scope(input.workspaceId);
-        const session = await client.request("session.pin", {
-          sessionId: await backendSessionId(input.agentSessionId), pinned: input.pinned,
-        }, { signal: options?.signal });
-        return { session: replaceMetadata(session) };
       },
       // Only a new conversation's patch reaches the engine's port; later choices go straight to the composer.
       updateSessionSettings: async (input) => {
@@ -195,6 +182,38 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       const session = sessionsById[sessionId];
       return session ? { agentId: session.agentTargetId ?? null, settings: session.settings, runtimeBlocked: operationBySessionId[sessionId]?.runtimeAvailability.state === "blocked" } : null;
     },
+  });
+  const mutations = new ConversationMutationService<AgentActivitySession>({
+    session(id) {
+      const { sessionsById, deletedSessionIds } = engine.getSnapshot().sessionLifecycle;
+      const session = sessionsById[id];
+      if (!session || deletedSessionIds[id]) return null;
+      return { title: session.title, pinned: session.pinnedAtUnixMs != null, forkable: session.kind === "root" && session.lifecycleCapabilities.forkThroughTurn === true };
+    },
+    deleted: (id) => Boolean(engine.getSnapshot().sessionLifecycle.deletedSessionIds[id]),
+    turnForkable(sourceId, turnId) {
+      const turn = selectEngineTurn(engine.getSnapshot(), sourceId, turnId);
+      return turn ? providerForkBindingAllowsAttempt(turn) : false;
+    },
+    current: (id) => projectSnapshot(engine.getSnapshot()).sessions.find((entry) => entry.agentSessionId === id) ?? null,
+    async rename(input, signal) {
+      scope(workspaceId);
+      return replaceMetadata(await client.request("session.rename", { sessionId: await backendSessionId(input.agentSessionId), title: input.title }, { signal }));
+    },
+    async setPinned(input, signal) {
+      scope(workspaceId);
+      return replaceMetadata(await client.request("session.pin", { sessionId: await backendSessionId(input.agentSessionId), pinned: input.pinned }, { signal }));
+    },
+    deleteSessions: async () => unsupported("Recoverable session deletion"),
+    async fork(input, signal) {
+      scope(workspaceId);
+      const session = await client.request("session.fork", { sessionId: await backendSessionId(input.sourceAgentSessionId), turnId: input.turnId, requestId: input.requestId }, { signal });
+      scope(workspaceId);
+      ledger.bind(input.targetAgentSessionId, session.id);
+      await persist(); replaceMetadata(session);
+      return loadFreshSession(input.targetAgentSessionId);
+    },
+    removed: (id) => { engine.dispatch({ type: "session/removed", agentSessionId: id }); },
   });
   const baseEngine = createAgentSessionEngine({
     identity: { workspaceId, origin: "multica" },
@@ -694,16 +713,6 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
 
   async function executeExtension(command: EngineExtensionCommand, options?: { signal?: AbortSignal }): Promise<unknown> {
     switch (command.type) {
-      case "session/forkThroughTurn": {
-        scope(command.workspaceId);
-        const session = await client.request("session.fork", { sessionId: await backendSessionId(command.sourceAgentSessionId), turnId: command.turnId, requestId: command.requestId }, { signal: options?.signal });
-        scope(command.workspaceId);
-        ledger.bind(command.targetAgentSessionId, session.id);
-        await persist(); replaceMetadata(session);
-        const result = await loadFreshSession(command.targetAgentSessionId);
-        return { operationId: session.id, requestId: command.requestId, sourceAgentSessionId: command.sourceAgentSessionId, targetAgentSessionId: command.targetAgentSessionId, turnId: command.turnId, status: "committed", session: result, error: null };
-      }
-      case "session/ackForkObserved": return undefined;
       case "engine/reconcileWorkspace": return loadWorkspace();
       case "session/reconcile": await loadSession(command.agentSessionId); return { status: "applied" };
       case "session/unactivate": return undefined;
@@ -738,6 +747,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     promptContentUploadSupport: { file: true, image: true }, devDiagnosticConsoleSink: false,
     getSessionEngine: (id) => { scope(id); return engine; },
     composer,
+    mutations,
     getSnapshot: (id) => { scope(id); return projectSnapshot(engine.getSnapshot()); },
     subscribe: (id, listener) => { scope(id); return engine.subscribe((state) => listener(projectSnapshot(state))); },
     subscribeSessionEvents: (id, listener) => { scope(id); eventListeners.add(listener); return () => { eventListeners.delete(listener); }; },
@@ -781,9 +791,11 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
         if (!disposed) syncLocalWatch();
       };
     },
-    renameSession: (input) => engine.renameSession(input),
-    setSessionPinned: (input) => engine.setSessionPinned(input),
-    deleteSession: async () => unsupported("Recoverable session deletion"),
+    deleteSession: async (input) => {
+      scope(input.workspaceId);
+      const result = await mutations.deleteSessions({ agentSessionIds: [input.agentSessionId] });
+      return { cleanupFailed: result.cleanupFailedSessionIds.length > 0, removed: result.removedSessions > 0 };
+    },
     uploadPromptContent: async (input) => {
       scope(input.workspaceId);
       const content = await Promise.all(input.content.map(async (block) => {
@@ -944,6 +956,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
       for (const release of openLocal.values()) release();
       openLocal.clear();
       composer.dispose();
+      mutations.dispose();
       engine.dispose();
       workspaceListeners.clear();
       eventListeners.clear();

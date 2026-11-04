@@ -309,6 +309,12 @@ class ItemModel {
 
 每个领域完成的标准：`pnpm typecheck`、`pnpm test` 通过；GUI spec 对照基线清单（`.tmp/gui-spec-baseline.fail`）没有新增失败。
 
+**会话设置（`sessionSettings`）：** 选择和保存在 `ComposerService`，preferences 类移到 `models/composer-preferences.ts`。每个会话一条写入通道，状态和乐观值由 `composer.settingsUpdate(id)` 读取。Engine 只留下裸的 `session/updateSettings` 命令，供 `pendingIntents` 的新建补丁和 `promptExecution` 的前置设置使用，前者经 `applyActivationSettings` 回到同一条通道。等 `pendingIntents` 和 `promptExecution` 迁走后，这个命令和 `AgentSessionEffectPort.updateSessionSettings` 一起删除。
+
+队列排空不再被未结算的设置挡住：Desktop 的提示不进 engine 队列，由 `PromptService` 经 daemon 派发，发送前会等 `ComposerService` 的写入完成，界面上的发送也由 composer gate 拦截。
+
+**会话变更（`sessionMutations`）：** rename、pin、delete、fork 在 `ConversationMutationService`。fork 的 observation ACK 和 `accepted` 状态没有迁：host 的 ACK 本来就是空操作，`session.fork` 是同步提交的。归档从未进过 engine，仍由 `local-conversation-flow` 发命令。
+
 ### 阶段 2a 的范围说明
 
 - 迁入的是内容部分和 `ConversationService`。`ConversationListModel` 和 Service 的 observable 入口留到阶段 3、3b，那时才有 view 读它们。

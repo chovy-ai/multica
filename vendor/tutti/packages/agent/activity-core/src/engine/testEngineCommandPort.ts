@@ -40,19 +40,10 @@ export function createTestEngineCommandPort(
     controlGoal(_input, options) {
       return executeObserved(options);
     },
-    deleteSessions(_input, options) {
-      return executeObserved(options);
-    },
-    renameSession(_input, options) {
-      return executeObserved(options);
-    },
     respondToInteraction(_input, options) {
       return executeObserved(options);
     },
     sendInput(_input, options) {
-      return executeObserved(options);
-    },
-    setSessionPinned(_input, options) {
       return executeObserved(options);
     },
     updateSessionSettings(_input, options) {

@@ -61,10 +61,6 @@ import { canonicalTurnKey } from "./sessionEntityKeys.ts";
 import { deriveCanonicalSubmitAvailability } from "./sessionLifecycle.availability.ts";
 import { activeTurnIdForSession } from "./promptQueue.drainDecision.ts";
 import {
-  createInitialSessionMutationsState,
-  sessionMutationsReducer
-} from "./sessionMutations.reducer.ts";
-import {
   createInitialTuttiModeActivationState,
   tuttiModeActivationReducer
 } from "./tuttiModeActivation.reducer.ts";
@@ -92,7 +88,6 @@ export function createInitialAgentSessionEngineState(): RootAgentSessionEngineSt
     promptQueue: createInitialPromptQueueState(),
     goalControl: createInitialSessionGoalControlState(),
     sessionReconcile: createInitialSessionReconcileState(),
-    sessionMutations: createInitialSessionMutationsState(),
     sessionCommands: createInitialSessionCommandsState(),
     sessionLifecycle: createInitialSessionLifecycleState(),
     sessionMessages: createInitialSessionMessagesState(),
@@ -328,16 +323,6 @@ export function rootEngineReducer(
       deletedSessionIds: state.sessionLifecycle.deletedSessionIds
     }
   );
-  const sessionMutations = sessionMutationsReducer(
-    state.sessionMutations,
-    intent,
-    {
-      deletedSessionIds: state.sessionLifecycle.deletedSessionIds,
-      interactionsById: state.sessionLifecycle.interactionsById,
-      sessionsById: state.sessionLifecycle.sessionsById,
-      turnsById: state.sessionLifecycle.turnsById
-    }
-  );
   const sessionLifecycle = sessionLifecycleReducer(
     state.sessionLifecycle,
     intent,
@@ -453,7 +438,6 @@ export function rootEngineReducer(
     promptExecutions.state === state.promptExecutions &&
     promptQueue.state === state.promptQueue &&
     sessionReconcile.state === state.sessionReconcile &&
-    sessionMutations.state === state.sessionMutations &&
     sessionCommands.state === state.sessionCommands &&
     sessionLifecycle.state === state.sessionLifecycle &&
     sessionMessages.state === state.sessionMessages &&
@@ -470,7 +454,6 @@ export function rootEngineReducer(
         promptExecutions: promptExecutions.state,
         promptQueue: promptQueue.state,
         sessionReconcile: sessionReconcile.state,
-        sessionMutations: sessionMutations.state,
         sessionCommands: sessionCommands.state,
         sessionLifecycle: sessionLifecycle.state,
         sessionMessages: sessionMessages.state,
@@ -480,7 +463,6 @@ export function rootEngineReducer(
     ...(editRetry.followUpIntents ?? []),
     ...(goalControl.followUpIntents ?? []),
     ...(sessionReconcile.followUpIntents ?? []),
-    ...(sessionMutations.followUpIntents ?? []),
     ...(sessionLifecycle.followUpIntents ?? []),
     ...(pendingIntents.followUpIntents ?? []),
     ...(promptExecutions.followUpIntents ?? []),
@@ -496,7 +478,6 @@ export function rootEngineReducer(
       ...planDecisions.commands,
       ...promptExecutions.commands,
       ...sessionReconcile.commands,
-      ...sessionMutations.commands,
       ...sessionCommands.commands,
       ...sessionLifecycle.commands,
       ...promptQueue.commands,

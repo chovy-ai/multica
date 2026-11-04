@@ -43,7 +43,6 @@ export function projectPublicAgentSessionEngineState(
     sessionCommands: state.sessionCommands,
     sessionLifecycle: state.sessionLifecycle,
     sessionMessages: state.sessionMessages,
-    sessionMutations: state.sessionMutations,
     sessionReconcile: state.sessionReconcile,
     tuttiModeActivation: state.tuttiModeActivation
   };

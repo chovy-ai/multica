@@ -79,11 +79,8 @@ export function createTestEngineCommandPort(
     activateSession: (_input, options) => executeObserved(options),
     cancelTurn: (_input, options) => executeObserved(options),
     controlGoal: (_input, options) => executeObserved(options),
-    deleteSessions: (_input, options) => executeObserved(options),
-    renameSession: (_input, options) => executeObserved(options),
     respondToInteraction: (_input, options) => executeObserved(options),
     sendInput: (_input, options) => executeObserved(options),
-    setSessionPinned: (_input, options) => executeObserved(options),
     updateSessionSettings: (_input, options) => executeObserved(options)
   };
   return {

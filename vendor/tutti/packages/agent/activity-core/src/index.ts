@@ -153,35 +153,6 @@ export type {
   TurnRecoverEditRetryCommand
 } from "./engine/editRetry.types.ts";
 export {
-  dispatchSessionForkThroughTurn,
-  type DispatchSessionForkThroughTurnInput
-} from "./engine/sessionMutationDispatch.ts";
-export {
-  selectPendingSessionForkThroughTurnIds,
-  selectSessionForkThroughTurnMutation,
-  selectSessionMutation,
-  selectSessionMutations,
-  type SessionForkThroughTurnPendingSelectorInput,
-  type SessionForkThroughTurnMutationSelectorInput
-} from "./engine/sessionMutations.selectors.ts";
-export type {
-  SessionDeleteMutationResult,
-  SessionAcknowledgeForkObservedCommand,
-  SessionForkObservationAckStatus,
-  SessionForkThroughTurnCommand,
-  SessionForkThroughTurnMutationRecord,
-  SessionForkThroughTurnRequestedIntent,
-  SessionMutationCommand,
-  SessionMutationRecord,
-  SessionMutationStatus,
-  SessionMutationsIntent,
-  SessionMutationsState,
-  SessionPinRequestedIntent,
-  SessionSetPinnedCommand,
-  SessionsDeleteCommand,
-  SessionsDeleteRequestedIntent
-} from "./engine/sessionMutations.types.ts";
-export {
   selectTuttiModeActivationPresentation,
   selectTuttiModeDraftIsActive,
   selectTuttiModeDraftOrchestrationIntensity,
