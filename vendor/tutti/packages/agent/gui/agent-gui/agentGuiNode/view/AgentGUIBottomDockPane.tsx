@@ -6,11 +6,6 @@ import { AgentInteractivePromptSurface } from "../AgentInteractivePromptSurface"
 import { AgentComposerRegion } from "../AgentComposerRegion";
 import { AgentSessionChrome } from "../AgentSessionChrome";
 import { AgentComposer, type AgentComposerProps } from "../AgentComposer";
-import {
-  AgentGoalBanner,
-  isGoalBannerVisible,
-  type AgentGoalBannerLabels
-} from "../AgentGoalBanner";
 import { resolveAgentGUIInteractionDisabledReason } from "./agentGUIDetailModelHelpers";
 import type {
   AgentGUINodeViewModel,
@@ -46,7 +41,6 @@ interface AgentGUIBottomDockPaneProps {
   sessionChrome: AgentGUISessionChrome;
   keyboardShortcutsEnabled: boolean;
   chromeLabels: ChromeLabels;
-  goalBannerLabels: AgentGoalBannerLabels;
   promptLabels: InteractivePromptLabels;
   onSubmitApprovalOption: AgentGUINodeViewProps["actions"]["submitApprovalOption"];
   onAuthLogin?: (provider?: string | null) => void;
@@ -54,8 +48,6 @@ interface AgentGUIBottomDockPaneProps {
   onRetryInlineNotice: () => void;
   onContinueInNewConversation: AgentGUINodeViewProps["actions"]["continueInNewConversation"];
   onSubmitBottomDockInteractivePrompt: AgentGUINodeViewProps["actions"]["submitInteractivePrompt"];
-  onGoalControl: AgentGUINodeViewProps["actions"]["goalControl"];
-  goalPauseSupported: boolean;
 }
 
 export const AgentGUIBottomDockPane = memo(function AgentGUIBottomDockPane({
@@ -73,16 +65,13 @@ export const AgentGUIBottomDockPane = memo(function AgentGUIBottomDockPane({
   sessionChrome,
   keyboardShortcutsEnabled,
   chromeLabels,
-  goalBannerLabels,
   promptLabels,
   onSubmitApprovalOption,
   onAuthLogin,
   onRetryActivation,
   onRetryInlineNotice,
   onContinueInNewConversation,
-  onSubmitBottomDockInteractivePrompt,
-  onGoalControl,
-  goalPauseSupported
+  onSubmitBottomDockInteractivePrompt
 }: AgentGUIBottomDockPaneProps): React.JSX.Element {
   "use memo";
 
@@ -98,20 +87,6 @@ export const AgentGUIBottomDockPane = memo(function AgentGUIBottomDockPane({
       interactivePromptReason: interactivePromptDisabledReason
     });
 
-  // Active thread goal rides the same runtimeContext channel as account /
-  // rateLimits, so we read it straight off the session chrome's raw state.
-  const goal = objectRecord(sessionChrome.rawState?.goal);
-  const goalObjective = goal ? stringValue(goal.objective) : "";
-  const goalStatus = goal ? stringValue(goal.status) : "";
-  const goalTokenBudget = goal ? numberValue(goal.tokenBudget) : null;
-  const goalTokensUsed = goal ? numberValue(goal.tokens) : null;
-  const goalStartedAtUnixMs = goal ? numberValue(goal.startedAtUnixMs) : null;
-  const goalDurationMs = goal ? numberValue(goal.durationMs) : null;
-  const goalIsOptimistic = sessionChrome.rawState?.goalIsOptimistic === true;
-  const goalControlPending =
-    sessionChrome.rawState?.goalControlStatus === "pending" ||
-    sessionChrome.rawState?.goalControlStatus === "pending_create";
-  const showGoalBanner = isGoalBannerVisible(goalObjective, goalStatus);
 
   return (
     <AgentComposerRegion
@@ -179,31 +154,6 @@ export const AgentGUIBottomDockPane = memo(function AgentGUIBottomDockPane({
             onContinueInNewConversation={onContinueInNewConversation}
             labels={chromeLabels}
           />
-          {showGoalBanner ? (
-            <AgentGoalBanner
-              objective={goalObjective}
-              status={goalStatus}
-              tokenBudget={goalTokenBudget ?? undefined}
-              tokensUsed={goalTokensUsed ?? undefined}
-              startedAtUnixMs={goalStartedAtUnixMs ?? undefined}
-              durationMs={goalDurationMs ?? undefined}
-              optimistic={goalIsOptimistic}
-              labels={goalBannerLabels}
-              onPauseGoal={
-                goalPauseSupported && !goalControlPending
-                  ? () => onGoalControl("pause")
-                  : undefined
-              }
-              onResumeGoal={
-                goalPauseSupported && !goalControlPending
-                  ? () => onGoalControl("resume")
-                  : undefined
-              }
-              onClearGoal={
-                goalControlPending ? undefined : () => onGoalControl("clear")
-              }
-            />
-          ) : null}
         </>
       }
       primary={

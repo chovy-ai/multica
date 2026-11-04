@@ -10098,13 +10098,6 @@ html[data-theme="light"] [data-message-center-item-id].agent-gui-edge-glow {
   color: var(--state-warning);
 }
 
-.agent-gui-node__composer-menu-trigger[data-agent-goal-badge="true"],
-.agent-gui-node__composer-menu-trigger[data-agent-goal-badge="true"]:hover:not(
-    :disabled
-  ) {
-  color: var(--tutti-purple);
-}
-
 .agent-gui-node__composer-menu-trigger:hover:not(:disabled) {
   color: var(--agent-gui-text-primary);
 }

@@ -239,14 +239,6 @@ export function selectEngineSessionSettingsUpdate(
   );
 }
 
-export function selectEngineGoalControl(
-  state: AgentSessionEngineState,
-  agentSessionId: string | null | undefined
-) {
-  const id = agentSessionId?.trim() ?? "";
-  return state.goalControl.presentationsBySessionId[id] ?? null;
-}
-
 export function selectEngineInteractionResponseError(
   state: AgentSessionEngineStateBase,
   agentSessionId: string | null | undefined

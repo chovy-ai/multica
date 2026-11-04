@@ -37,9 +37,6 @@ export function createTestEngineCommandPort(
     cancelTurn(_input, options) {
       return executeObserved(options);
     },
-    controlGoal(_input, options) {
-      return executeObserved(options);
-    },
     deleteSessions(_input, options) {
       return executeObserved(options);
     },

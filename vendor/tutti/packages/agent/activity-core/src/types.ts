@@ -2,7 +2,6 @@ import type {
   AgentActivityComposerOptions,
   AgentActivityComposerOptionsLoadStatus
 } from "./composerOptions.types.ts";
-import type { AgentActivityInitialGoalControl } from "./goalControl.types.ts";
 import type {
   AgentActivityDurableMessage,
   AgentActivityMessage,
@@ -101,13 +100,6 @@ export interface AgentActivitySession {
   lifecycleCapabilitiesProjected?: boolean;
   forkedFrom: AgentActivitySessionForkLineage | null;
   usage: AgentActivitySessionUsage | null;
-  goal: AgentActivitySessionGoal | null;
-  /**
-   * Optional host-owned projection of the durable Goal synchronization state.
-   * Absence means the host cannot prove operation progress; it is not an idle,
-   * failed, or synced assertion.
-   */
-  goalSyncState?: AgentActivitySessionGoalSyncState | null;
   imported: boolean;
   visible: boolean;
   resumable: boolean;
@@ -366,7 +358,6 @@ export interface AgentActivityCreateSessionInput {
   isolation?: AgentActivitySessionIsolation["mode"] | null;
   noProject?: boolean | null;
   capabilityRefs?: readonly AgentActivityCapabilityReference[] | null;
-  initialGoalControl?: AgentActivityInitialGoalControl | null;
   railPlacement?: AgentActivityRailPlacement;
   initialContent?: AgentPromptContentBlock[] | null;
   /** 仅展示用的首轮文本(bundle 折叠成一个 chip);initialContent 仍带展开后的文件。 */
@@ -417,19 +408,11 @@ export interface AgentActivitySubmitDiagnostics {
   uiMode?: "os" | "agent";
 }
 
-export type AgentActivitySendInputResult =
-  | {
-      /** Optional for compatibility with adapters predating the discriminator. */
-      kind?: "turn";
-      session: AgentActivitySession;
-      turnId: string;
-      turn: AgentActivityTurn;
-    }
-  | {
-      kind: "goalControl";
-      session: AgentActivitySession;
-      goal?: AgentActivitySessionGoal | null;
-    };
+export interface AgentActivitySendInputResult {
+  session: AgentActivitySession;
+  turnId: string;
+  turn: AgentActivityTurn;
+}
 
 export interface AgentPromptContentBlock {
   type: "text" | "image" | "file" | "skill" | "mention" | "connector";
@@ -447,19 +430,6 @@ export interface AgentPromptContentBlock {
   assetId?: string;
   kind?: string;
   sizeBytes?: number;
-}
-
-export type {
-  AgentActivityGoalControlAction,
-  AgentActivityGoalControlInput,
-  AgentActivityInitialGoalControl
-} from "./goalControl.types.ts";
-
-export interface AgentActivityGoalControlResult {
-  session: AgentActivitySession;
-  goal?: AgentActivitySessionGoal | null;
-  operationId?: string | null;
-  state?: AgentActivitySessionGoalState | null;
 }
 
 export interface AgentActivitySubmitInteractiveInput {
@@ -632,51 +602,6 @@ export interface AgentActivitySessionPermissionConfig {
   configurable: boolean;
   defaultValue?: string;
   modes: AgentActivitySessionPermissionModeOption[];
-}
-
-export interface AgentActivitySessionGoal {
-  objective: string;
-  status:
-    | "active"
-    | "paused"
-    | "blocked"
-    | "usageLimited"
-    | "budgetLimited"
-    | "complete";
-  reason?: string;
-  startedAtUnixMs?: number;
-  iterations?: number;
-  durationMs?: number;
-  tokens?: number;
-}
-
-export type AgentActivitySessionGoalSyncStatus =
-  | "pending"
-  | "applying"
-  | "synced"
-  | "diverged"
-  | "unknown"
-  | "failed";
-
-export interface AgentActivitySessionGoalSyncState {
-  revision: number;
-  syncStatus: AgentActivitySessionGoalSyncStatus;
-  pendingOperationId: string | null;
-  /** Optional for mixed-version hosts; true is authoritative Host evidence. */
-  executionPending?: boolean;
-}
-
-export interface AgentActivitySessionGoalState {
-  desired?: AgentActivitySessionGoal | null;
-  observed?: AgentActivitySessionGoal | null;
-  revision: number;
-  tombstoned: boolean;
-  syncStatus: AgentActivitySessionGoalSyncStatus;
-  pendingOperationId?: string | null;
-  lastEvidence: Readonly<Record<string, unknown>>;
-  lastError?: string;
-  observedAtUnixMs?: number | null;
-  updatedAtUnixMs: number;
 }
 
 export interface AgentActivitySessionUsage {

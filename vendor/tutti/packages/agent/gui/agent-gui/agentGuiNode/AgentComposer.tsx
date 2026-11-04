@@ -16,7 +16,6 @@ import { type AgentFileMentionSuggestionState } from "./agentRichText/agentFileM
 import { formatSlashStatusTokenCount } from "./AgentSlashStatusPanel";
 import { useOptionalAgentGUIRuntime } from "../../agentActivityRuntime";
 import { useComposerDraftAttachmentsWithConnectors } from "./composer/useComposerDraftAttachmentsWithConnectors";
-import { goalDraftObjectiveFromPrompt } from "./composer/composerDraftUtils";
 import {
   INITIAL_DOCK_COMPOSER_METRICS,
   useComposerLayout
@@ -127,7 +126,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     isActive = true,
     workspaceReferencePickerOpen = false,
     promptImagesSupported = true,
-    canGoalControl = true,
     canUploadAttachment = true,
     composerFocusRequestSequence = null,
     layoutMode = "dock",
@@ -176,10 +174,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
   });
   const draftPrompt = agentComposerDraftPrompt(draftContent);
   const draftQuoteCount = agentComposerDraftQuotes(draftContent).length;
-  const goalDraftObjective = canGoalControl
-    ? goalDraftObjectiveFromPrompt(draftPrompt)
-    : null;
-  const isGoalModeActive = goalDraftObjective !== null;
   const {
     images: draftImages,
     files: draftFiles,
@@ -223,9 +217,7 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     shouldResetMentionHighlightToFilter,
     setShouldResetMentionHighlightToFilter
   ] = useState(false);
-  const [paletteDraftPrompt, setPaletteDraftPrompt] = useState(
-    goalDraftObjective ?? draftPrompt
-  );
+  const [paletteDraftPrompt, setPaletteDraftPrompt] = useState(draftPrompt);
   const [fileMentionSuggestion, setFileMentionSuggestion] =
     useState<AgentFileMentionSuggestionState | null>(null);
   const selectedProjectPath =
@@ -314,8 +306,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
   );
   const paletteCatalog = useComposerPaletteCatalog({
     provider,
-    isGoalModeActive,
-    goalSupported: canGoalControl,
     paletteDraftPrompt,
     availableCommands,
     availableSkills,
@@ -430,7 +420,7 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     draftLargeTextsRef.current = agentComposerDraftLargeTexts(draftContent);
     const isExternalDraftReplacement = draftPromptRef.current !== draftPrompt;
     draftPromptRef.current = draftPrompt;
-    setPaletteDraftPrompt(goalDraftObjective ?? draftPrompt);
+    setPaletteDraftPrompt(draftPrompt);
     settlePendingInputHistory();
     if (isExternalDraftReplacement && draftPrompt) {
       window.requestAnimationFrame(() => {
@@ -444,7 +434,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
   }, [
     draftContent,
     draftPrompt,
-    goalDraftObjective,
     settlePendingInputHistory
   ]);
 
@@ -556,8 +545,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     draftContent,
     draftScopeKey,
     draftByScopeKeyRef,
-    goalDraftObjective,
-    isGoalModeActive,
     promptImagesSupported: canUploadAttachment && promptImagesSupported,
     promptFilesSupported,
     promptAssetLimit,
@@ -749,7 +736,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
       setIsSelectedProjectMissing={setIsSelectedProjectMissing}
       setIsPaletteOpen={setIsPaletteOpen}
       setHighlightedIndex={setHighlightedIndex}
-      isGoalModeActive={isGoalModeActive}
       isPlanModeActive={composerSettings.draftSettings.planMode}
       onClearPlanMode={() => onSettingsChange({ planMode: false })}
       isPromptTipOverflowing={isPromptTipOverflowing}

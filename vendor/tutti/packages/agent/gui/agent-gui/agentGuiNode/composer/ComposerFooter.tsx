@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { ListChecks, Target, X } from "lucide-react";
+import { ListChecks, X } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -50,7 +50,6 @@ interface Props {
   permissionModeControlsDisabled: boolean;
   isSendingTurn: boolean;
   showComposerAction: boolean;
-  isGoalModeActive: boolean;
   isPlanModeActive: boolean;
   connectorsVisible: boolean;
   connectorsReadOnly?: boolean;
@@ -85,7 +84,6 @@ interface Props {
   onMentionPaletteButton: () => void;
   onSettingsChange: AgentComposerProps["onSettingsChange"];
   onSubmit: AgentComposerProps["onSubmit"];
-  onClearGoalMode: () => void;
   draftPrompt: string;
   onClearPlanMode: () => void;
 }
@@ -106,7 +104,6 @@ export function ComposerFooter({
   permissionModeControlsDisabled,
   isSendingTurn,
   showComposerAction,
-  isGoalModeActive,
   isPlanModeActive,
   connectorsVisible,
   connectorsReadOnly = false,
@@ -141,7 +138,6 @@ export function ComposerFooter({
   onMentionPaletteButton: handleMentionPaletteButton,
   onSettingsChange,
   onSubmit,
-  onClearGoalMode: clearGoalModeBadge,
   draftPrompt: _draftPrompt,
   onClearPlanMode
 }: Props) {
@@ -408,40 +404,6 @@ export function ComposerFooter({
                   icon={<ListChecks className="size-3.5" />}
                 />
                 <span className="min-w-0 truncate">{labels.planModeLabel}</span>
-              </span>
-            </button>
-          ) : null}
-          {isGoalModeActive ? (
-            <button
-              type="button"
-              disabled={settingsControlsDisabled}
-              aria-label={labels.goalLabel}
-              title={labels.goalLabel}
-              data-agent-goal-badge="true"
-              className={cn(
-                styles.composerMenuTrigger,
-                "group w-auto",
-                "disabled:cursor-not-allowed disabled:opacity-60"
-              )}
-              onClick={clearGoalModeBadge}
-            >
-              <span className="flex min-w-0 items-center gap-1 overflow-hidden">
-                <span className="relative flex size-3.5 shrink-0 items-center justify-center">
-                  <Target
-                    aria-hidden
-                    className="size-3.5 transition-opacity duration-150 group-hover:opacity-0 group-focus-visible:opacity-0"
-                  />
-                  <span
-                    aria-hidden
-                    className="absolute inset-0 flex items-center justify-center rounded-full bg-[var(--text-secondary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 group-disabled:opacity-0"
-                  >
-                    <X
-                      className="size-2.5 text-[var(--background-fronted)]"
-                      strokeWidth={3}
-                    />
-                  </span>
-                </span>
-                <span className="min-w-0 truncate">{labels.goalLabel}</span>
               </span>
             </button>
           ) : null}

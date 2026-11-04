@@ -92,9 +92,6 @@ export function requestSessionActivation(
           ...sharedIntent,
           agentTargetId,
           clientSubmitId,
-          ...(input.initialGoalControl
-            ? { initialGoalControl: { ...input.initialGoalControl } }
-            : {}),
           mode: "new",
           ...(input.optimisticTitle?.trim()
             ? { optimisticTitle: input.optimisticTitle.trim() }

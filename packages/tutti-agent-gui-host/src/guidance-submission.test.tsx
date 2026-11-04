@@ -45,7 +45,7 @@ async function mount({ waiting = true, mentioned = false, active = true, editor 
     activeEnginePendingInteractions: waiting ? [{ agentSessionId: "session", turnId: "active", requestId: "question", kind: "question", status: "pending", createdAtUnixMs: 1, updatedAtUnixMs: 1,
       input: { questions: [{ id: "scope", header: "排查范围", question: "查哪里？", allowFreeText: true, options: [] }] } }] : [],
     agentActivityRuntime: {}, conversationListQuery: {}, conversationsRef: { current: [] }, dataRef: { current: {} },
-    draftByScopeKeyRef: draft, executePromptRef: { current: vi.fn() }, goalControlSupported: false,
+    draftByScopeKeyRef: draft, executePromptRef: { current: vi.fn() },
     isComposerHomeRef: { current: false }, isCurrentConversation: () => true, isRespondingToInteraction: false,
     isSessionMarkedNonResumable: () => false, persistActiveConversation: vi.fn(),
     planActionsRef: { current: { implement: vi.fn(), feedback: vi.fn(), skip: vi.fn() } },

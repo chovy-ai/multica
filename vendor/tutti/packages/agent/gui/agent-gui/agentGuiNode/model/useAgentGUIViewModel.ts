@@ -56,7 +56,6 @@ export function useAgentGUIViewModel(
       candidate.composer.draftContent,
       candidate.composer.draftPrompt,
       candidate.composer.drainingQueuedPromptId,
-      candidate.composer.goalPauseSupported,
       candidate.composer.gate,
       candidate.composer.hasPendingSubmitStopTarget,
       candidate.composer.handoffAgentTargets,
@@ -95,7 +94,6 @@ export function useAgentGUIViewModel(
     () => candidate.operations,
     [
       candidate.operations.forkThroughTurnPendingTurnIds,
-      candidate.operations.goalClearNoticeSequence,
       candidate.operations.isDeletingConversation,
       candidate.operations.isDeletingProjectConversations,
       candidate.operations.isUserProjectMutationPending,

@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import type { AgentActivityGoalControlAction } from "@tutti-os/agent-activity-core";
 import type { AgentGuiWorkbenchCommandBridge } from "../../../workbench/commands";
 import type { ReferenceSourceAggregator } from "@tutti-os/workspace-file-reference/core";
 import type { ReferenceSourcePickerProps } from "@tutti-os/workspace-file-reference/ui";
@@ -233,20 +232,6 @@ export interface AgentGUIViewLabels extends AgentGUIProviderReadinessLabels {
   cancellingSession: string;
   retryActivation: string;
   continueInNewConversation: string;
-  goalLabel: string;
-  goalTitleActive: string;
-  goalTitlePaused: string;
-  goalTitleBlocked: string;
-  goalTitleUsageLimited: string;
-  goalTitleBudgetLimited: string;
-  goalTitleComplete: string;
-  goalBudgetUsage: (used: number, budget: number) => string;
-  goalClearHint: string;
-  goalEditAction: string;
-  goalPauseAction: string;
-  goalResumeAction: string;
-  goalClearAction: string;
-  goalRemoved: string;
   processing: string;
   turnSummary: string;
   userMessageLocator: string;
@@ -644,10 +629,6 @@ export interface AgentGUINodeViewProps extends AgentGUIComposerExternalPromptPro
       content: AgentPromptContentBlock[],
       displayPrompt?: string,
       options?: Parameters<AgentComposerProps["onSubmit"]>[2]
-    ) => void;
-    goalControl: (
-      action: AgentActivityGoalControlAction,
-      objective?: string
     ) => void;
     submitGuidancePrompt: (
       content: AgentPromptContentBlock[],

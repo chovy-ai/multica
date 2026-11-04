@@ -106,7 +106,6 @@ function authoritativeSession() {
     createdAtUnixMs: 1,
     cwd: "/workspace",
     endedAtUnixMs: null,
-    goal: null,
     imported: false,
     kind: "root" as const,
     lastEventUnixMs: 2,

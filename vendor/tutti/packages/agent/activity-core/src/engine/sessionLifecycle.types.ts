@@ -139,7 +139,6 @@ export type CanonicalSessionMetadataPatch = Partial<
   Pick<
     CanonicalAgentSession,
     | "cwd"
-    | "goal"
     | "pinnedAtUnixMs"
     | "resumable"
     | "title"

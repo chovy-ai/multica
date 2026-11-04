@@ -20,12 +20,6 @@ export type PromptExecutionStateRemainsPrivate = Assert<
   "promptExecutions" extends keyof AgentSessionEngineState ? false : true
 >;
 
-export type GoalControlOperationLedgerRemainsPrivate = Assert<
-  "operationsBySessionId" extends keyof AgentSessionEngineState["goalControl"]
-    ? false
-    : true
->;
-
 export type RenameRemainsTypedEffect = Assert<
   IsNever<Extract<EngineExtensionCommand, { type: "session/rename" }>>
 >;

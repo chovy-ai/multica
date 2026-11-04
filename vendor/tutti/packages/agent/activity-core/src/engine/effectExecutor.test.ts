@@ -42,17 +42,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
         signal: options.signal
       });
     },
-    async controlGoal(input, options) {
-      assert.ok(options);
-      calls.push({
-        commandId: options.commandId,
-        input,
-        kind: "goal",
-        origin: options.origin,
-        signal: options.signal
-      });
-      return { goal: null, session };
-    },
     async deleteSessions(input, options) {
       calls.push({
         commandId: options?.commandId ?? "",
@@ -137,7 +126,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     modelExplicit: false,
     initialContent: [{ text: "build it", type: "text" }],
     initialDisplayPrompt: "Build it",
-    initialGoalControl: { action: "set", objective: "ship it" },
     mode: "new",
     railPlacement: {
       kind: "project",
@@ -217,16 +205,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     type: "interaction/respond",
     workspaceId: "workspace-1"
   });
-  await executeAndWait(port, {
-    action: "set",
-    agentSessionId: "session-1",
-    clientSubmitId: "goal-submit-1",
-    commandId: "goal-1",
-    correlationId: "goal-submit-1",
-    objective: "ship it",
-    type: "goal/control",
-    workspaceId: "workspace-1"
-  });
 
   assert.equal(extensionCalls, 0);
   assert.deepEqual(
@@ -239,8 +217,7 @@ test("projects shared commands onto typed lifecycle effects without host switche
       "pin",
       "rename",
       "delete",
-      "respond",
-      "goal"
+      "respond"
     ]
   );
   assert.deepEqual(
@@ -253,8 +230,7 @@ test("projects shared commands onto typed lifecycle effects without host switche
       "pin-1",
       "rename-1",
       "delete-1",
-      "respond-1",
-      "goal-1"
+      "respond-1"
     ]
   );
   assert.deepEqual(calls[0]?.input, {
@@ -268,7 +244,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     modelExplicit: false,
     initialContent: [{ text: "build it", type: "text" }],
     initialDisplayPrompt: "Build it",
-    initialGoalControl: { action: "set", objective: "ship it" },
     mode: "new",
     railPlacement: {
       kind: "project",
@@ -316,7 +291,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
   assert.deepEqual(
     calls.map((call) => call.origin),
     [
-      "engine",
       "engine",
       "engine",
       "engine",

@@ -1,6 +1,5 @@
 import type {
   AgentActivityCapabilityReference,
-  AgentActivityInitialGoalControl,
   AgentActivityMessage,
   AgentActivitySessionSettings,
   AgentActivitySubmitDiagnostics,
@@ -67,7 +66,6 @@ interface PendingActivationIntentRecordBase {
   initialPromptRetracted: boolean;
   initialTurnExpected: boolean;
   lastObservedStage: PendingActivationLastObservedStage;
-  initialGoalControl?: Readonly<AgentActivityInitialGoalControl>;
   isolation?: "worktree";
   modelExplicit?: boolean;
   railSectionKey?: string;
@@ -148,7 +146,6 @@ interface SessionActivationRequestedIntentBase {
   cwd?: string;
   expiresAtUnixMs: number;
   initialTurnExpected?: boolean;
-  initialGoalControl?: Readonly<AgentActivityInitialGoalControl>;
   isolation?: "worktree";
   modelExplicit?: boolean;
   railSectionKey?: string;
@@ -221,7 +218,6 @@ interface SessionActivateCommandBase {
   cwd?: string;
   initialContent?: readonly AgentPromptContentBlock[];
   initialDisplayPrompt?: string;
-  initialGoalControl?: Readonly<AgentActivityInitialGoalControl>;
   isolation?: "worktree";
   modelExplicit?: boolean;
   railPlacement?: AgentActivityRailPlacement;

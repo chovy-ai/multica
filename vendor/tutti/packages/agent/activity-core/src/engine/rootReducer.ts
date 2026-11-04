@@ -68,10 +68,6 @@ import {
   createInitialEditRetryState,
   editRetryReducer
 } from "./editRetry.reducer.ts";
-import {
-  createInitialSessionGoalControlState,
-  sessionGoalControlReducer
-} from "./sessionGoalControl.reducer.ts";
 
 // Root reducer: static composition of domain reducers, zero business logic.
 // Cross-domain read-only context is passed explicitly; domains still own all
@@ -86,7 +82,6 @@ export function createInitialAgentSessionEngineState(): RootAgentSessionEngineSt
     planDecisions: createInitialPlanDecisionState(),
     promptExecutions: createInitialPromptExecutionState(),
     promptQueue: createInitialPromptQueueState(),
-    goalControl: createInitialSessionGoalControlState(),
     sessionReconcile: createInitialSessionReconcileState(),
     sessionMutations: createInitialSessionMutationsState(),
     sessionCommands: createInitialSessionCommandsState(),
@@ -364,10 +359,6 @@ export function rootEngineReducer(
       cancelResultValidation
     }
   );
-  const goalControl = sessionGoalControlReducer(state.goalControl, intent, {
-    deletedSessionIds: sessionLifecycle.state.deletedSessionIds,
-    sessionsById: sessionLifecycle.state.sessionsById
-  });
   const promptExecutions = promptExecutionReducer(
     state.promptExecutions,
     intent,
@@ -453,7 +444,6 @@ export function rootEngineReducer(
     attentionReadState.state === state.attentionReadState &&
     editRetry.state === state.editRetry &&
     engineRuntime.state === state.engineRuntime &&
-    goalControl.state === state.goalControl &&
     pendingIntents.state === state.pendingIntents &&
     planDecisions.state === state.planDecisions &&
     promptExecutions.state === state.promptExecutions &&
@@ -469,7 +459,6 @@ export function rootEngineReducer(
         attentionReadState: attentionReadState.state,
         editRetry: editRetry.state,
         engineRuntime: engineRuntime.state,
-        goalControl: goalControl.state,
         pendingIntents: pendingIntents.state,
         planDecisions: planDecisions.state,
         promptExecutions: promptExecutions.state,
@@ -482,7 +471,6 @@ export function rootEngineReducer(
       };
   const followUpIntents = [
     ...(editRetry.followUpIntents ?? []),
-    ...(goalControl.followUpIntents ?? []),
     ...(sessionReconcile.followUpIntents ?? []),
     ...(sessionMutations.followUpIntents ?? []),
     ...(sessionLifecycle.followUpIntents ?? []),
@@ -495,7 +483,6 @@ export function rootEngineReducer(
       ...attentionReadState.commands,
       ...editRetry.commands,
       ...engineRuntime.commands,
-      ...goalControl.commands,
       ...pendingIntents.commands,
       ...planDecisions.commands,
       ...promptExecutions.commands,

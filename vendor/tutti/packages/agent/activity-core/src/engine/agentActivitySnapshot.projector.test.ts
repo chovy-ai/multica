@@ -174,7 +174,6 @@ function session(): AgentActivitySession {
     cwd: "/workspace",
     isolation: null,
     endedAtUnixMs: null,
-    goal: null,
     imported: false,
     lastEventUnixMs: 20,
     latestTurn: turn,

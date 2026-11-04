@@ -1,5 +1,4 @@
 import {
-  type AgentActivityGoalControlAction,
   type AgentActivityInteraction,
   type AgentActivityTurn,
   type AgentSessionEngine
@@ -43,7 +42,6 @@ import { clearSubmittedAgentGUIHomeDraft } from "./agentGuiController.homeDraftH
 import {
   agentGUIInteractionDraftSettlementKey,
   AgentGUIEngineSettlementController,
-  type AgentGUIGoalControlPendingSettlement,
   type AgentGUIInteractionDraftPendingSettlement
 } from "./AgentGUIEngineSettlementController";
 import {
@@ -52,10 +50,8 @@ import {
   buildProviderSessionNotFoundActivationError,
   buildResumeSessionNotLocalActivationError,
   getAgentGUIErrorMessage,
-  goalControlSettlementError,
   isNonRetryableResumeErrorCode
 } from "./agentGuiController.errors";
-import { typedGoalControlFromComposer } from "./agentGuiController.composerHelpers";
 import {
   agentSubmitTraceDiagnostics,
   createAgentSubmitTraceState,
@@ -72,7 +68,6 @@ import {
 } from "./useAgentConversationSelection";
 import type { useAgentGUIActivation } from "./useAgentGUIActivation";
 import type { AgentGUINewConversationActivationResult } from "./agentGuiNewConversationActivation.types";
-import { useAgentGUIGoalControlActions } from "./useAgentGUIGoalControlActions";
 import { resolvePendingQuestionComposerResponse } from "./pendingQuestionComposerResponse";
 
 interface UseAgentGUISubmitInteractionActionsInput {
@@ -102,7 +97,6 @@ interface UseAgentGUISubmitInteractionActionsInput {
       }
     ) => void
   >;
-  goalControlSupported: boolean;
   isComposerHomeRef: RefObject<boolean>;
   isCurrentConversation(agentSessionId: string): boolean;
   isRespondingToInteraction: boolean;
@@ -121,18 +115,13 @@ interface UseAgentGUISubmitInteractionActionsInput {
   setDraftByScopeKey: Dispatch<
     SetStateAction<Record<string, AgentComposerDraft>>
   >;
-  setGoalClearNoticeSequence: Dispatch<SetStateAction<number>>;
   setIntent: Dispatch<SetStateAction<ConversationIntent>>;
   submittedDraftSnapshotsRef: RefObject<Record<string, SubmittedDraftSnapshot>>;
   startConversation(
     content: AgentPromptContentBlock[],
     displayPrompt?: string,
     options?: AgentComposerSubmitOptions,
-    initialTurnExpected?: boolean,
-    initialGoalControl?: {
-      action: AgentActivityGoalControlAction;
-      objective?: string;
-    }
+    initialTurnExpected?: boolean
   ): AgentGUINewConversationActivationResult | null;
   submitPromptRef: RefObject<
     (
@@ -159,7 +148,6 @@ export function useAgentGUISubmitInteractionActions(
     dataRef,
     draftByScopeKeyRef,
     executePromptRef,
-    goalControlSupported,
     isComposerHomeRef,
     isCurrentConversation,
     isRespondingToInteraction,
@@ -172,7 +160,6 @@ export function useAgentGUISubmitInteractionActions(
     setActiveConversationId,
     setDetailError,
     setDraftByScopeKey,
-    setGoalClearNoticeSequence,
     setIntent,
     submittedDraftSnapshotsRef,
     startConversation,
@@ -180,19 +167,9 @@ export function useAgentGUISubmitInteractionActions(
     transientConversation,
     workspaceId
   } = input;
-  const goalControlSettlementsRef = useRef<
-    Record<string, AgentGUIGoalControlPendingSettlement>
-  >({});
   const interactionDraftSettlementsRef = useRef<
     Record<string, AgentGUIInteractionDraftPendingSettlement>
   >({});
-  const { goalControl } = useAgentGUIGoalControlActions({
-    activeConversationIdRef,
-    draftByScopeKeyRef,
-    goalControlSettlementsRef,
-    sessionEngine,
-    setDetailError
-  });
   const retryActivation = useCallback(() => {
     const agentSessionId = activeConversationIdRef.current;
     if (!agentSessionId) {
@@ -368,18 +345,8 @@ export function useAgentGUISubmitInteractionActions(
         });
       },
       engine: sessionEngine,
-      goalControlSettlements: goalControlSettlementsRef.current,
       interactionDraftSettlements: interactionDraftSettlementsRef.current,
       isCurrentConversation,
-      onGoalControlCleared: () =>
-        setGoalClearNoticeSequence((current) => current + 1),
-      onGoalControlFailed: (settlement) => {
-        setDetailError(
-          settlement.errorMessage
-            ? getAgentGUIErrorMessage(goalControlSettlementError(settlement))
-            : translate("agentHost.agentGui.goalControlFailed")
-        );
-      },
       onSubmitFailed: (submit) => {
         setDetailError(
           getAgentGUIErrorMessage(agentGUISubmitSettlementError(submit))
@@ -394,7 +361,6 @@ export function useAgentGUISubmitInteractionActions(
     sessionEngine,
     setDetailError,
     setDraftByScopeKey,
-    setGoalClearNoticeSequence,
     submittedDraftSnapshotsRef
   ]);
 
@@ -521,11 +487,6 @@ export function useAgentGUISubmitInteractionActions(
       }
       const displayPromptText =
         displayPrompt && displayPrompt.trim() ? displayPrompt : undefined;
-      const typedGoal = typedGoalControlFromComposer(
-        normalizedContent,
-        displayPromptText,
-        goalControlSupported
-      );
       if (
         !promptImagesSupported &&
         agentPromptContentHasImage(normalizedContent)
@@ -566,14 +527,6 @@ export function useAgentGUISubmitInteractionActions(
             setActiveConversationId(recoveredAgentSessionId);
             setIntent({ tag: "active", id: recoveredAgentSessionId });
             persistActiveConversation(recoveredAgentSessionId);
-            if (typedGoal) {
-              goalControl(
-                typedGoal.action,
-                typedGoal.objective,
-                resolveAgentComposerDraftScopeKey({})
-              );
-              return;
-            }
             submitExistingPrompt(
               recoveredAgentSessionId,
               normalizedContent,
@@ -598,9 +551,7 @@ export function useAgentGUISubmitInteractionActions(
         const activationResult = startConversation(
           normalizedContent,
           displayPromptText,
-          options,
-          typedGoal ? false : undefined,
-          typedGoal ?? undefined
+          options
         );
         if (activationResult) {
           draftByScopeKeyRef.current = clearSubmittedAgentGUIHomeDraft({
@@ -616,14 +567,6 @@ export function useAgentGUISubmitInteractionActions(
             })
           );
         }
-        return;
-      }
-      if (typedGoal) {
-        goalControl(
-          typedGoal.action,
-          typedGoal.objective,
-          resolveAgentComposerDraftScopeKey({ agentSessionId })
-        );
         return;
       }
       const activeTurnId = activeEngineActiveTurn?.turnId.trim() ?? "";
@@ -689,8 +632,6 @@ export function useAgentGUISubmitInteractionActions(
       activeEnginePendingInteractions,
       agentActivityRuntime,
       conversationListQuery,
-      goalControl,
-      goalControlSupported,
       persistActiveConversation,
       promptImagesSupported,
       startConversation,
@@ -791,7 +732,6 @@ export function useAgentGUISubmitInteractionActions(
   );
 
   return {
-    goalControl,
     interruptCurrentTurn,
     retryActivation,
     showPromptImagesUnsupported,

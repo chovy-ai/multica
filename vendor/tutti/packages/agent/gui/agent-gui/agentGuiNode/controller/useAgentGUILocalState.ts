@@ -92,7 +92,6 @@ export function useAgentGUILocalState({
   ] = useState<AgentGUIProjectConversationDeleteTarget | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [goalClearNoticeSequence, setGoalClearNoticeSequence] = useState(0);
   const railRevealRevisionRef = useRef(0);
   const [railRevealRequest, setRailRevealRequest] =
     useState<AgentGUIConversationRailRevealRequest | null>(null);
@@ -118,7 +117,6 @@ export function useAgentGUILocalState({
     detailError,
     draftByScopeKey,
     draftSettingsBySessionId,
-    goalClearNoticeSequence,
     intent,
     isComposerHome,
     isDeletingConversation,
@@ -137,7 +135,6 @@ export function useAgentGUILocalState({
     setDetailError,
     setDraftByScopeKey,
     setDraftSettingsBySessionId,
-    setGoalClearNoticeSequence,
     setIntent,
     setIsComposerHome,
     setIsDeletingConversation,

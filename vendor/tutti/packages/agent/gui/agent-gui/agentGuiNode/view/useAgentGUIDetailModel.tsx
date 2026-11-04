@@ -217,7 +217,6 @@ export function useAgentGUIDetailModel(input: Input) {
   const {
     chromeLabels,
     conversationFlowLabels,
-    goalBannerLabels,
     interactivePromptLabels
   } = useAgentGUIDetailLabels({
     canAnswerPendingInteractivePromptFromComposer:
@@ -293,7 +292,6 @@ export function useAgentGUIDetailModel(input: Input) {
       planModeOnLabel: labels.planModeOnLabel,
       planModeOffLabel: labels.planModeOffLabel,
       planUnavailable: labels.planUnavailable,
-      goalLabel: labels.goalLabel,
       queuedLabel: labels.queuedLabel,
       queuePausedByUserLabel: labels.queuePausedByUserLabel,
       sendQueuedPromptNext: labels.sendQueuedPromptNext,
@@ -480,7 +478,6 @@ export function useAgentGUIDetailModel(input: Input) {
       labels.planModeOffLabel,
       labels.planModeOnLabel,
       labels.planUnavailable,
-      labels.goalLabel,
       labels.projectLocked,
       labels.sessionLaunchModeLabel,
       labels.sessionLaunchModeLocal,
@@ -607,7 +604,6 @@ export function useAgentGUIDetailModel(input: Input) {
     conversationFlowLabels,
     dismissBottomDockPrompt,
     emptyProviderReadinessGate,
-    goalBannerLabels,
     hasActiveConversation,
     homeNoticeChrome,
     inlineNoticeChrome,

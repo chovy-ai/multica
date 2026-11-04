@@ -38,9 +38,6 @@ export type SlashCommandSelectionEffect =
       draft: string;
     }
   | {
-      kind: "activateGoalMode";
-    }
-  | {
       kind: "submitPrompt";
       prompt: string;
       displayPrompt?: string;
@@ -90,7 +87,6 @@ interface ProviderSlashPolicy {
   reviewPickerCommands: ReadonlySet<string>;
   /** Commands surfaced when the agent advertises none of its own. */
   fallbackCommands: readonly AgentSessionCommand[];
-  localGoalCommands: ReadonlySet<string>;
   localPlanCommands: ReadonlySet<string>;
   localStatusCommands: ReadonlySet<string>;
   localSpeedCommands: ReadonlySet<string>;
@@ -135,7 +131,6 @@ function providerSlashPolicy(
       fallbackCommands: fallbackCommands.map((name) => ({ name })),
       immediateCommands: commandsForEffect("submitImmediate"),
       reviewPickerCommands: commandsForEffect("showReviewPicker"),
-      localGoalCommands: commandsForEffect("activateGoalMode"),
       localPlanCommands: commandsForEffect("togglePlanMode"),
       localStatusCommands: commandsForEffect("showStatus"),
       localSpeedCommands: commandsForEffect("toggleSpeed")
@@ -235,9 +230,6 @@ export function resolveSlashCommandSelectionEffect({
   if (isLocalTogglePlanCommand(commandName, policy)) {
     return { kind: "enablePlanMode" };
   }
-  if (isLocalGoalCommand(commandName, policy)) {
-    return { kind: "activateGoalMode" };
-  }
   if (isLocalToggleSpeedCommand(commandName, policy)) {
     return { kind: "toggleSpeed" };
   }
@@ -299,9 +291,6 @@ export function resolveSlashCommandSubmitEffect({
   if (isLocalTogglePlanCommand(commandName, policy)) {
     return invocation.args.trim() === "" ? { kind: "enablePlanMode" } : null;
   }
-  if (isLocalGoalCommand(commandName, policy)) {
-    return invocation.args.trim() === "" ? { kind: "activateGoalMode" } : null;
-  }
   if (isLocalToggleSpeedCommand(commandName, policy)) {
     return { kind: "toggleSpeed" };
   }
@@ -360,17 +349,6 @@ function isLocalTogglePlanCommand(
 ): boolean {
   return (
     providerSlashPolicy(policy)?.localPlanCommands.has(
-      commandName.trim().toLowerCase()
-    ) ?? false
-  );
-}
-
-function isLocalGoalCommand(
-  commandName: string,
-  policy?: AgentSlashCommandPolicy | null
-): boolean {
-  return (
-    providerSlashPolicy(policy)?.localGoalCommands.has(
       commandName.trim().toLowerCase()
     ) ?? false
   );

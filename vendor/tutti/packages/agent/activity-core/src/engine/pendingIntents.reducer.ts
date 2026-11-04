@@ -9,7 +9,6 @@ import {
 } from "./pendingIntents.types.ts";
 import { reconcilePendingIntentsFromAuthoritativeHistory } from "./pendingIntents.authoritativeHistory.ts";
 import {
-  pendingActivationGoalControlFields,
   pendingActivationRailSectionKeyFields
 } from "./pendingIntents.activationExtras.ts";
 import {
@@ -297,7 +296,6 @@ function requestActivation(
     ...(intent.modelExplicit !== undefined
       ? { modelExplicit: intent.modelExplicit }
       : {}),
-    ...pendingActivationGoalControlFields(intent),
     ...pendingActivationRailSectionKeyFields(intent),
     ...(intent.railPlacement
       ? { railPlacement: { ...intent.railPlacement } }
@@ -356,7 +354,6 @@ function requestActivation(
               ? { initialContent: runtimeContent }
               : {}),
             ...(displayPrompt ? { initialDisplayPrompt: displayPrompt } : {}),
-            ...pendingActivationGoalControlFields(intent),
             ...(intent.isolation ? { isolation: intent.isolation } : {}),
             ...(intent.modelExplicit !== undefined
               ? { modelExplicit: intent.modelExplicit }

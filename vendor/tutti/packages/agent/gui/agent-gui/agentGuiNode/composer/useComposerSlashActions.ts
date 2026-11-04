@@ -42,7 +42,6 @@ import {
   updateAgentComposerDraft
 } from "../model/agentComposerDraft";
 import { resolvePermissionModeControlsDisabled } from "../model/composerModeSelection";
-import { GOAL_MODE_SLASH_COMMAND } from "./AgentComposerChrome";
 import type { AgentComposerProps } from "./AgentComposer.types";
 import { reportAgentComposerDiagnostic } from "./agentComposerDiagnostics";
 
@@ -268,22 +267,6 @@ export function useComposerSlashActions(input: UseComposerSlashActionsInput) {
           setIsSlashStatusPanelOpen(false);
         }
         setIsReviewPickerOpen(true);
-        return;
-      }
-      if (effect.kind === "activateGoalMode") {
-        if (isSlashStatusPanelOpen) {
-          onSlashStatusClose?.();
-        }
-        draftPromptRef.current = GOAL_MODE_SLASH_COMMAND;
-        setPaletteDraftPrompt("");
-        setIsSlashStatusPanelOpen(false);
-        setIsReviewPickerOpen(false);
-        setIsPaletteOpen(false);
-        onDraftContentChange(
-          updateAgentComposerDraft(draftContent, {
-            prompt: GOAL_MODE_SLASH_COMMAND
-          })
-        );
         return;
       }
       if (effect.kind === "enablePlanMode") {

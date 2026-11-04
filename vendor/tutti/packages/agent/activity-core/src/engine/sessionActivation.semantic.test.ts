@@ -52,7 +52,6 @@ test("semantic new-Session activation owns scope, confirmation window, and comma
     modelExplicit: false,
     initialContent: [{ text: "display instructions", type: "text" }],
     initialDisplayPrompt: " /browser ",
-    initialGoalControl: { action: "set", objective: "ship it" },
     initialTurnExpected: false,
     mode: "new",
     optimisticTitle: " Review browser flow ",
@@ -84,7 +83,6 @@ test("semantic new-Session activation owns scope, confirmation window, and comma
     modelExplicit: false,
     expiresAtUnixMs: 120_100,
     initialDisplayPrompt: "/browser",
-    initialGoalControl: { action: "set", objective: "ship it" },
     initialTurnExpected: false,
     mode: "new",
     optimisticTitle: "Review browser flow",
@@ -119,7 +117,6 @@ test("semantic new-Session activation owns scope, confirmation window, and comma
       modelExplicit: false,
       initialContent: [{ text: "runtime instructions", type: "text" }],
       initialDisplayPrompt: "/browser",
-      initialGoalControl: { action: "set", objective: "ship it" },
       mode: "new",
       railPlacement: {
         kind: "project",

@@ -56,7 +56,6 @@ export interface AgentComposerViewProps {
   setIsSelectedProjectMissing: (value: boolean) => void;
   setIsPaletteOpen: Dispatch<SetStateAction<boolean>>;
   setHighlightedIndex: Dispatch<SetStateAction<number>>;
-  isGoalModeActive: boolean;
   isPlanModeActive: boolean;
   onClearPlanMode: () => void;
   isPromptTipOverflowing: boolean;

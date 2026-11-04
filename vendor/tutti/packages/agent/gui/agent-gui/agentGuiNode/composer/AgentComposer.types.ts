@@ -142,7 +142,6 @@ export interface AgentComposerProps {
   isActive?: boolean;
   workspaceReferencePickerOpen?: boolean;
   promptImagesSupported?: boolean;
-  canGoalControl?: boolean;
   canUploadAttachment?: boolean;
   composerFocusRequestSequence?: number | null;
   /**
@@ -221,7 +220,6 @@ export interface AgentComposerProps {
     planModeOnLabel: string;
     planModeOffLabel: string;
     planUnavailable: string;
-    goalLabel: string;
     browserUseCapabilityLabel: string;
     browserUseCapabilityDescription: string;
     browserUseCapabilityDescriptionAutoConnect: string;

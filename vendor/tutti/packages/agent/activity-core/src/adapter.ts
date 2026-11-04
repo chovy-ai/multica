@@ -1,6 +1,4 @@
 import type {
-  AgentActivityGoalControlInput,
-  AgentActivityGoalControlResult,
   AgentActivityCreateSessionInput,
   AgentActivityDeleteSessionInput,
   AgentActivityDeleteSessionResult,
@@ -50,9 +48,6 @@ export interface AgentActivityAdapter {
   sendInput(
     input: AgentActivitySendInput
   ): Promise<AgentActivitySendInputResult>;
-  goalControl(
-    input: AgentActivityGoalControlInput
-  ): Promise<AgentActivityGoalControlResult>;
   submitInteractive(
     input: AgentActivitySubmitInteractiveInput
   ): Promise<AgentActivitySubmitInteractiveResult>;

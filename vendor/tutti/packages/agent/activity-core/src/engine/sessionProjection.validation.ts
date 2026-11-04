@@ -112,8 +112,6 @@ function optionalSessionFieldsMatch(
     optionalBoolean(value.lifecycleCapabilitiesProjected) &&
     optionalForkLineage(value.forkedFrom) &&
     optionalUsage(value.usage) &&
-    optionalGoal(value.goal) &&
-    optionalGoalSyncState(value.goalSyncState) &&
     optionalBoolean(value.imported) &&
     optionalBoolean(value.visible) &&
     optionalBoolean(value.resumable) &&
@@ -124,20 +122,6 @@ function optionalSessionFieldsMatch(
     optionalNullableNumber(value.pinnedAtUnixMs) &&
     optionalFiniteNumber(value.createdAtUnixMs) &&
     optionalFiniteNumber(value.updatedAtUnixMs)
-  );
-}
-
-function optionalGoalSyncState(value: unknown): boolean {
-  return Boolean(
-    value === undefined ||
-    value === null ||
-    (isRecord(value) &&
-      Number.isSafeInteger(value.revision) &&
-      (value.revision as number) >= 0 &&
-      isOneOf(value.syncStatus, GOAL_SYNC_STATUSES) &&
-      isNullableString(value.pendingOperationId) &&
-      (value.executionPending === undefined ||
-        typeof value.executionPending === "boolean"))
   );
 }
 
@@ -269,21 +253,6 @@ function optionalUsage(value: unknown): boolean {
         isFiniteNumber(quota.percentRemaining) &&
         isNullableNumber(quota.resetsAtUnixMs)
     )
-  );
-}
-
-function optionalGoal(value: unknown): boolean {
-  return Boolean(
-    value === undefined ||
-    value === null ||
-    (isRecord(value) &&
-      typeof value.objective === "string" &&
-      isOneOf(value.status, GOAL_STATUSES) &&
-      optionalString(value.reason) &&
-      optionalFiniteNumber(value.startedAtUnixMs) &&
-      optionalFiniteNumber(value.iterations) &&
-      optionalFiniteNumber(value.durationMs) &&
-      optionalFiniteNumber(value.tokens))
   );
 }
 
@@ -435,22 +404,6 @@ const PERMISSION_MODE_SEMANTICS = [
   "auto",
   "full-access",
   "unconfigurable"
-] as const;
-const GOAL_STATUSES = [
-  "active",
-  "paused",
-  "blocked",
-  "usageLimited",
-  "budgetLimited",
-  "complete"
-] as const;
-const GOAL_SYNC_STATUSES = [
-  "pending",
-  "applying",
-  "synced",
-  "diverged",
-  "unknown",
-  "failed"
 ] as const;
 const COMPLETED_COMMAND_KINDS = ["compact", "review", "undo", "goal"] as const;
 const COMPLETED_COMMAND_STATUSES = ["completed", "failed", "canceled"] as const;

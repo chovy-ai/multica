@@ -489,21 +489,6 @@ export function useAgentGUIViewLabels(input: {
       continueInNewConversation: t(
         "agentHost.agentGui.continueInNewConversation"
       ),
-      goalLabel: t("agentHost.agentGui.goalLabel"),
-      goalTitleActive: t("agentHost.agentGui.goalTitleActive"),
-      goalTitlePaused: t("agentHost.agentGui.goalTitlePaused"),
-      goalTitleBlocked: t("agentHost.agentGui.goalTitleBlocked"),
-      goalTitleUsageLimited: t("agentHost.agentGui.goalTitleUsageLimited"),
-      goalTitleBudgetLimited: t("agentHost.agentGui.goalTitleBudgetLimited"),
-      goalTitleComplete: t("agentHost.agentGui.goalTitleComplete"),
-      goalBudgetUsage: (used: number, budget: number) =>
-        t("agentHost.agentGui.goalBudgetUsage", { used, budget }),
-      goalClearHint: t("agentHost.agentGui.goalClearHint"),
-      goalEditAction: t("agentHost.agentGui.goalEditAction"),
-      goalPauseAction: t("agentHost.agentGui.goalPauseAction"),
-      goalResumeAction: t("agentHost.agentGui.goalResumeAction"),
-      goalClearAction: t("agentHost.agentGui.goalClearAction"),
-      goalRemoved: t("agentHost.agentGui.goalRemoved"),
       processing: t("agentHost.agentGui.processing"),
       turnSummary: t("agentHost.agentGui.turnSummary"),
       userMessageLocator: t("agentHost.agentGui.userMessageLocator"),

@@ -12,7 +12,6 @@ const CODEX_POLICY = {
     { command: "init", effect: "submitImmediate" },
     { command: "compact", effect: "submitImmediate" },
     { command: "review", effect: "showReviewPicker" },
-    { command: "goal", effect: "activateGoalMode" },
     { command: "plan", effect: "togglePlanMode" },
     { command: "status", effect: "showStatus" },
     { command: "fast", effect: "toggleSpeed" }
@@ -27,7 +26,6 @@ const CLAUDE_POLICY = {
     { command: "context", effect: "submitImmediate" },
     { command: "usage", effect: "submitImmediate" },
     { command: "review", effect: "showReviewPicker" },
-    { command: "goal", effect: "activateGoalMode" },
     { command: "plan", effect: "togglePlanMode" },
     { command: "status", effect: "showStatus" },
     { command: "fast", effect: "toggleSpeed" }
@@ -45,7 +43,6 @@ const OPENCODE_POLICY = {
   commandEffects: [
     { command: "compact", effect: "submitImmediate" },
     { command: "review", effect: "showReviewPicker" },
-    { command: "goal", effect: "activateGoalMode" },
     { command: "plan", effect: "togglePlanMode" }
   ]
 } as const;
@@ -375,36 +372,6 @@ describe("agentSlashCommandProviderPolicy", () => {
     ).toEqual({ kind: "fillDraft", draft: "/compact " });
   });
 
-  it("activates goal mode instead of filling a raw /goal draft", () => {
-    expect(
-      resolveSlashCommandSelectionEffect({
-        provider: "codex",
-        policy: CODEX_POLICY,
-        command: { name: "web" },
-        currentDraft: "/"
-      })
-    ).toEqual({ kind: "fillDraft", draft: "/web " });
-    expect(
-      resolveSlashCommandSelectionEffect({
-        provider: "codex",
-        policy: CODEX_POLICY,
-        command: { name: "goal" },
-        currentDraft: "/"
-      })
-    ).toEqual({ kind: "activateGoalMode" });
-  });
-
-  it("does not infer Codex goal behavior when the typed policy omits it", () => {
-    expect(
-      resolveSlashCommandSelectionEffect({
-        provider: "codex",
-        policy: { fallbackCommands: ["goal"], commandEffects: [] },
-        command: { name: "goal" },
-        currentDraft: "/"
-      })
-    ).toEqual({ kind: "fillDraft", draft: "/goal " });
-  });
-
   it("handles Codex local status without provider prompts", () => {
     expect(
       resolveSlashCommandSelectionEffect({
@@ -454,17 +421,6 @@ describe("agentSlashCommandProviderPolicy", () => {
     ).toEqual({ kind: "submitPrompt", prompt: "/compact" });
   });
 
-  it("activates goal mode for Claude Code goal command selection", () => {
-    expect(
-      resolveSlashCommandSelectionEffect({
-        provider: "claude-code",
-        policy: CLAUDE_POLICY,
-        command: { name: "goal" },
-        currentDraft: "/"
-      })
-    ).toEqual({ kind: "activateGoalMode" });
-  });
-
   it("parses manual Codex status and toggles plan mode on submit", () => {
     const commands = resolveSlashCommandsForProvider({
       provider: "codex",
@@ -489,14 +445,6 @@ describe("agentSlashCommandProviderPolicy", () => {
         draft: "/plan"
       })
     ).toEqual({ kind: "enablePlanMode" });
-    expect(
-      resolveSlashCommandSubmitEffect({
-        provider: "codex",
-        policy: CODEX_POLICY,
-        commands,
-        draft: "/goal"
-      })
-    ).toEqual({ kind: "activateGoalMode" });
   });
 
   it("parses manual Claude Code status and toggles plan mode on submit", () => {

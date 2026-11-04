@@ -1,6 +1,5 @@
 import {
   type AgentActivityComposerOptions,
-  type AgentActivityInitialGoalControl,
   type AgentActivityRailPlacement,
   isPendingActivationViable,
   selectLatestActivationForSession,
@@ -243,8 +242,7 @@ export function useAgentGUINewConversationActivation(
       initialContentInput?: unknown,
       displayPrompt?: string,
       submitOptions?: AgentComposerSubmitOptions,
-      initialTurnExpected?: boolean,
-      initialGoalControl?: AgentActivityInitialGoalControl
+      initialTurnExpected?: boolean
     ): AgentGUINewConversationActivationResult | null => {
       const target = selectedAgentTargetRef.current;
       const targetData = selectedComposerTargetDataRef.current;
@@ -372,7 +370,6 @@ export function useAgentGUINewConversationActivation(
         railSectionKey,
         initialContent: normalizedInitialContent,
         ...(initialTurnExpected !== undefined ? { initialTurnExpected } : {}),
-        ...(initialGoalControl ? { initialGoalControl } : {}),
         initialDisplayPrompt,
         runtimeContent: toRuntimeSendContent(normalizedInitialContent),
         submitDiagnostics: agentSubmitTraceDiagnostics(submitTrace),

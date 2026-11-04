@@ -287,7 +287,6 @@ export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
       hasPendingSubmitStopTarget: session.hasPendingSubmitStopTarget,
       promptImagesSupported: input.promptImagesSupported,
       compactSupported: input.compactSupported,
-      goalPauseSupported: input.goalPauseSupported,
       gate: session.composerGate,
       composerSettings: stableComposerSettings,
       queueStatus: detail.queueStatus,
@@ -319,7 +318,6 @@ export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
     },
     operations: {
       forkThroughTurnPendingTurnIds,
-      goalClearNoticeSequence: input.goalClearNoticeSequence,
       isDeletingConversation: input.isDeletingConversation,
       isDeletingProjectConversations: input.isDeletingProjectConversations,
       isUserProjectMutationPending: input.isUserProjectMutationPending,

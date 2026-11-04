@@ -739,17 +739,11 @@ function preserveProjectedSessionState(
     current?.messageVersion ?? 0,
     incoming.messageVersion ?? 0
   );
-  const goalSyncState =
-    current?.goalSyncState !== undefined &&
-    !Object.prototype.hasOwnProperty.call(incoming, "goalSyncState")
-      ? current.goalSyncState
-      : undefined;
   const preserved = {
     ...incoming,
     ...(messageVersion === (incoming.messageVersion ?? 0)
       ? {}
       : { messageVersion }),
-    ...(goalSyncState === undefined ? {} : { goalSyncState })
   };
   if (
     current?.lifecycleCapabilitiesProjected === true &&

@@ -519,20 +519,6 @@ export const enAgentGui = {
   cancellingSession: "Cancelling...",
   retryActivation: "Retry",
   continueInNewConversation: "New session",
-  goalLabel: "Goal",
-  goalTitleActive: "Active goal",
-  goalTitlePaused: "Paused goal",
-  goalTitleBlocked: "Blocked goal",
-  goalTitleUsageLimited: "Usage-limited goal",
-  goalTitleBudgetLimited: "Budget-limited goal",
-  goalTitleComplete: "Completed goal",
-  goalBudgetUsage: "{{used}}/{{budget}} tokens",
-  goalClearHint: "Type /goal clear to clear",
-  goalEditAction: "Edit goal",
-  goalPauseAction: "Pause goal",
-  goalResumeAction: "Resume goal",
-  goalClearAction: "Delete goal",
-  goalRemoved: "Goal removed",
   processing: "Planning next moves",
   turnProcessedSeconds: "Processed for {{seconds}}s",
   turnProcessedMinutes: "Processed for {{minutes}}m",
@@ -549,7 +535,6 @@ export const enAgentGui = {
   agentTargetRequired:
     "Select an available agent target before starting a session.",
   sessionActivationFailed: "The agent session could not be started.",
-  goalControlFailed: "The goal change could not be applied.",
   sessionNoLongerAvailable:
     "The previous agent session is no longer available.",
   promptImagesUnsupported:

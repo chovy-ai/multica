@@ -88,20 +88,6 @@ export function normalizeAgentActivitySession(
         }
       : null,
     usage: source.usage ?? null,
-    goal: source.goal ?? null,
-    ...(Object.prototype.hasOwnProperty.call(source, "goalSyncState")
-      ? {
-          goalSyncState: source.goalSyncState
-            ? {
-                revision: source.goalSyncState.revision,
-                syncStatus: source.goalSyncState.syncStatus,
-                pendingOperationId:
-                  source.goalSyncState.pendingOperationId?.trim() || null,
-                executionPending: source.goalSyncState.executionPending === true
-              }
-            : null
-        }
-      : {}),
     imported: source.imported ?? false,
     visible: source.visible ?? true,
     resumable: source.resumable ?? false,

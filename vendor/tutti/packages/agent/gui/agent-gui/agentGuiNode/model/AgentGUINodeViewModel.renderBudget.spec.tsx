@@ -165,7 +165,6 @@ function createViewModel(): AgentGUINodeViewModel {
       hasPendingSubmitStopTarget: false,
       promptImagesSupported: false,
       compactSupported: false,
-      goalPauseSupported: false,
       gate: {
         conversationBusy: false,
         isAwaitingTurnStart: false,

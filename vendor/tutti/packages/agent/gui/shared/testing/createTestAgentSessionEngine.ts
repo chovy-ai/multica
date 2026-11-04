@@ -78,7 +78,6 @@ export function createTestEngineCommandPort(
   const effects: AgentSessionEffectPort = {
     activateSession: (_input, options) => executeObserved(options),
     cancelTurn: (_input, options) => executeObserved(options),
-    controlGoal: (_input, options) => executeObserved(options),
     deleteSessions: (_input, options) => executeObserved(options),
     renameSession: (_input, options) => executeObserved(options),
     respondToInteraction: (_input, options) => executeObserved(options),

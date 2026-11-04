@@ -28,7 +28,6 @@ export function useAgentGUIControllerActions(
     actions.selectConversation
   );
   const submitPrompt = useStableControllerEventCallback(actions.submitPrompt);
-  const goalControl = useStableControllerEventCallback(actions.goalControl);
   const submitGuidancePrompt = useStableControllerEventCallback(
     actions.submitGuidancePrompt
   );
@@ -121,7 +120,6 @@ export function useAgentGUIControllerActions(
       createConversation,
       selectConversation,
       submitPrompt,
-      goalControl,
       submitGuidancePrompt,
       loadOlderConversationMessages,
       showPromptImagesUnsupported,
@@ -160,7 +158,6 @@ export function useAgentGUIControllerActions(
       continueInNewConversation,
       createConversation,
       editQueuedPrompt,
-      goalControl,
       interruptCurrentTurn,
       loadOlderConversationMessages,
       markConversationUnread,

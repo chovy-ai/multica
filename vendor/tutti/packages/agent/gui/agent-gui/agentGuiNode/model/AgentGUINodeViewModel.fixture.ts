@@ -69,7 +69,6 @@ export function groupAgentGUINodeViewModelFixture(
       hasPendingSubmitStopTarget: flat.hasPendingSubmitStopTarget,
       promptImagesSupported: flat.promptImagesSupported,
       compactSupported: flat.compactSupported,
-      goalPauseSupported: flat.goalPauseSupported,
       gate: flat.gate,
       composerSettings: flat.composerSettings,
       queueStatus: flat.queueStatus,
@@ -95,7 +94,6 @@ export function groupAgentGUINodeViewModelFixture(
     },
     operations: {
       forkThroughTurnPendingTurnIds: flat.forkThroughTurnPendingTurnIds ?? [],
-      goalClearNoticeSequence: flat.goalClearNoticeSequence ?? 0,
       isDeletingConversation: flat.isDeletingConversation,
       isDeletingProjectConversations: flat.isDeletingProjectConversations,
       isUserProjectMutationPending: flat.isUserProjectMutationPending ?? false,

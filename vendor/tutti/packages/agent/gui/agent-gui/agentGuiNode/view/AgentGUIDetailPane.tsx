@@ -126,7 +126,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
     conversationFlowLabels,
     dismissBottomDockPrompt,
     emptyProviderReadinessGate,
-    goalBannerLabels,
     hasActiveConversation,
     homeNoticeChrome,
     inlineNoticeChrome,
@@ -212,7 +211,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
     []
   );
   const submitPrompt = useStableEventCallback(actions.submitPrompt);
-  const goalControl = useStableEventCallback(actions.goalControl);
   const submitGuidancePrompt = useStableEventCallback(
     actions.submitGuidancePrompt
   );
@@ -635,13 +633,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
       aria-busy={timelineInteractionLocked || undefined}
       data-agent-session-id={viewModel.rail.activeConversationId ?? undefined}
     >
-      {viewModel.operations.goalClearNoticeSequence > 0 ? (
-        <AgentGUIContentToast
-          key={viewModel.operations.goalClearNoticeSequence}
-          insetTopPx={16}
-          message={labels.goalRemoved}
-        />
-      ) : null}
       <div className={styles.detailWorkbench}>
         <section
           className={styles.detailPrimary}
@@ -696,7 +687,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
               sessionChrome={sessionChrome}
               keyboardShortcutsEnabled={isActive && !sideComposerFocused}
               chromeLabels={chromeLabels}
-              goalBannerLabels={goalBannerLabels}
               promptLabels={interactivePromptLabels}
               onSubmitApprovalOption={submitApproval}
               onRetryActivation={retryActivation}
@@ -706,8 +696,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
               onSubmitBottomDockInteractivePrompt={
                 submitBottomDockInteractivePrompt
               }
-              onGoalControl={goalControl}
-              goalPauseSupported={viewModel.composer.goalPauseSupported}
             />
           ) : null}
         </section>

@@ -4,11 +4,9 @@ import {
   selectPlanTurnDismissed,
   type AgentActivityDisplayStatus,
   type AgentActivityMessage,
-  type AgentActivitySessionGoalSyncState,
   type AgentActivityTurn,
   type CanonicalAgentSession,
   type PendingActivationIntentRecord,
-  type SessionGoalControlPresentation,
   type SessionRuntimeAvailability,
   type AgentSessionEngine
 } from "@tutti-os/agent-activity-core";
@@ -143,7 +141,6 @@ interface UseAgentGUISessionPresentationInput {
   activeEngineSettingsUpdate: {
     status: string;
   } | null;
-  activeGoalControlPresentation: SessionGoalControlPresentation;
   activeLatestPendingSubmitTurnId: string | null;
   activeLiveState: "inactive" | "activating" | "active" | "failed";
   activeMessages: readonly AgentActivityMessage[];
@@ -277,24 +274,9 @@ export function useAgentGUISessionPresentation(
     isPendingActivationViable(input.activePendingActivation) &&
     !input.activeEngineLatestTurn
   );
-  const activeInitialGoalSetHasPendingOperation = Boolean(
-    input.activeConversationId &&
-    input.activePendingActivation?.mode === "new" &&
-    input.activePendingActivation.agentSessionId ===
-      input.activeConversationId &&
-    input.activePendingActivation.initialGoalControl?.action === "set" &&
-    isPendingActivationViable(input.activePendingActivation) &&
-    input.activeGoalControlPresentation.goal?.status === "active" &&
-    initialGoalHasPendingOperationEvidence({
-      goalIsOptimistic: input.activeGoalControlPresentation.optimistic,
-      syncState: input.activeEngineSession?.goalSyncState ?? null
-    }) &&
-    !input.activeEngineLatestTurn
-  );
   const hasPendingTurnStartEvidence = Boolean(
     input.activeConversationId &&
     (activeActivationAwaitsInitialTurn ||
-      activeInitialGoalSetHasPendingOperation ||
       input.hasUnconfirmedSubmit ||
       input.isSubmitting ||
       (!input.activeEngineSession && input.activeLatestPendingSubmitTurnId))
@@ -343,22 +325,14 @@ export function useAgentGUISessionPresentation(
     AgentGUISessionChrome["rawState"]
   >(() => {
     const agentSessionId =
-      input.activeEngineSession?.agentSessionId ??
-      input.activeGoalControlPresentation.agentSessionId ??
-      input.activeConversationId;
+      input.activeEngineSession?.agentSessionId ?? input.activeConversationId;
     if (!agentSessionId) {
       return null;
     }
-    return {
-      agentSessionId,
-      goal: input.activeGoalControlPresentation.goal,
-      goalControlStatus: input.activeGoalControlPresentation.status,
-      goalIsOptimistic: input.activeGoalControlPresentation.optimistic
-    };
+    return { agentSessionId };
   }, [
     input.activeConversationId,
-    input.activeEngineSession?.agentSessionId,
-    input.activeGoalControlPresentation
+    input.activeEngineSession?.agentSessionId
   ]);
   const sessionChrome = useMemo<AgentGUISessionChrome>(() => {
     if (interactionReadinessBlock?.reason === "binding_revoked") {
@@ -733,23 +707,6 @@ export function useAgentGUISessionPresentation(
     pendingInteractivePrompt,
     sessionChrome
   };
-}
-
-function initialGoalHasPendingOperationEvidence(input: {
-  goalIsOptimistic: boolean;
-  syncState: AgentActivitySessionGoalSyncState | null;
-}): boolean {
-  if (input.goalIsOptimistic) return true;
-  switch (input.syncState?.syncStatus) {
-    case "pending":
-    case "applying":
-    case "unknown":
-      return Boolean(input.syncState.pendingOperationId?.trim());
-    case "synced":
-      return input.syncState.executionPending === true;
-    default:
-      return false;
-  }
 }
 
 function interactionReadinessReasonMessage(
