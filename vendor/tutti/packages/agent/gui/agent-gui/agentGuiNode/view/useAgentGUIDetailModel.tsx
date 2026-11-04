@@ -276,8 +276,6 @@ export function useAgentGUIDetailModel(input: Input) {
   const composerLabels = useMemo(
     () => ({
       send: labels.send,
-      sendAccept: labels.tuttiModePlanSendAccept,
-      sendRequestChanges: labels.tuttiModePlanSendRequestChanges,
       modelLabel: labels.modelLabel,
       modelSelectionLabel: labels.modelSelectionLabel,
       modelContextWindowSuffix: labels.modelContextWindowSuffix,
@@ -483,8 +481,6 @@ export function useAgentGUIDetailModel(input: Input) {
       labels.composerOptionsRetry,
       labels.composerOptionsRetryTooltip,
       labels.defaultModel,
-      labels.tuttiModePlanSendAccept,
-      labels.tuttiModePlanSendRequestChanges,
       labels.addReference,
       labels.addContent,
       labels.addContentResourcePanel,

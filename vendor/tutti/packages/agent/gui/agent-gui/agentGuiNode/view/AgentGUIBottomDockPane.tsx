@@ -11,15 +11,7 @@ import {
   isGoalBannerVisible,
   type AgentGoalBannerLabels
 } from "../AgentGoalBanner";
-import {
-  TuttiWorkflowDock,
-  type TuttiWorkflowDockLabels
-} from "../TuttiWorkflowDock";
 import { resolveAgentGUIInteractionDisabledReason } from "./agentGUIDetailModelHelpers";
-import type {
-  TuttiModePlanPanelLabels,
-  TuttiPlanIssuePanelLabels
-} from "../../../workspaceWorkflow";
 import type {
   AgentGUINodeViewModel,
   AgentGUISessionChrome
@@ -30,7 +22,6 @@ import type {
   InteractivePromptLabels
 } from "./AgentGUINodeView.types";
 import { numberValue, objectRecord, stringValue } from "./agentGUIViewUtils";
-import type { AgentGUITuttiWorkflowDockController } from "./useAgentGUITuttiWorkflow";
 
 interface AgentGUIBottomDockPaneProps {
   bottomDockRef: React.RefObject<HTMLDivElement | null>;
@@ -65,10 +56,6 @@ interface AgentGUIBottomDockPaneProps {
   onSubmitBottomDockInteractivePrompt: AgentGUINodeViewProps["actions"]["submitInteractivePrompt"];
   onGoalControl: AgentGUINodeViewProps["actions"]["goalControl"];
   goalPauseSupported: boolean;
-  tuttiWorkflowDock: AgentGUITuttiWorkflowDockController;
-  tuttiWorkflowDockLabels: TuttiWorkflowDockLabels;
-  tuttiPlanPanelLabels: TuttiModePlanPanelLabels;
-  tuttiPlanIssuePanelLabels: TuttiPlanIssuePanelLabels;
 }
 
 export const AgentGUIBottomDockPane = memo(function AgentGUIBottomDockPane({
@@ -95,11 +82,7 @@ export const AgentGUIBottomDockPane = memo(function AgentGUIBottomDockPane({
   onContinueInNewConversation,
   onSubmitBottomDockInteractivePrompt,
   onGoalControl,
-  goalPauseSupported,
-  tuttiWorkflowDock,
-  tuttiWorkflowDockLabels,
-  tuttiPlanPanelLabels,
-  tuttiPlanIssuePanelLabels
+  goalPauseSupported
 }: AgentGUIBottomDockPaneProps): React.JSX.Element {
   "use memo";
 
@@ -129,8 +112,6 @@ export const AgentGUIBottomDockPane = memo(function AgentGUIBottomDockPane({
     sessionChrome.rawState?.goalControlStatus === "pending" ||
     sessionChrome.rawState?.goalControlStatus === "pending_create";
   const showGoalBanner = isGoalBannerVisible(goalObjective, goalStatus);
-
-  const workflowPhase = tuttiWorkflowDock.phase;
 
   return (
     <AgentComposerRegion
@@ -221,46 +202,6 @@ export const AgentGUIBottomDockPane = memo(function AgentGUIBottomDockPane({
               onClearGoal={
                 goalControlPending ? undefined : () => onGoalControl("clear")
               }
-            />
-          ) : null}
-          {workflowPhase ? (
-            <TuttiWorkflowDock
-              assignmentCatalog={tuttiWorkflowDock.assignmentCatalog}
-              assignmentDrafts={tuttiWorkflowDock.assignmentDrafts}
-              preferencePopoverLabels={{
-                title: composerProps.labels.tuttiBudgetTitle,
-                effectLabel: composerProps.labels.tuttiBudgetEffectLabel,
-                speedLabel: composerProps.labels.tuttiBudgetSpeedLabel,
-                previewHint: composerProps.labels.tuttiBudgetPreviewHint,
-                previewCost: composerProps.labels.tuttiBudgetPreviewCost,
-                previewBalance: composerProps.labels.tuttiBudgetPreviewBalance,
-                previewPowerful:
-                  composerProps.labels.tuttiBudgetPreviewPowerful,
-                modelPreferenceLabel:
-                  composerProps.labels.tuttiBudgetModelPreferenceLabel,
-                modelPreferenceCost:
-                  composerProps.labels.tuttiBudgetModelPreferenceCost,
-                modelPreferenceBalance:
-                  composerProps.labels.tuttiBudgetModelPreferenceBalance,
-                modelPreferencePowerful:
-                  composerProps.labels.tuttiBudgetModelPreferencePowerful,
-                parallelismLabel:
-                  composerProps.labels.tuttiBudgetParallelismLabel,
-                parallelismValue:
-                  composerProps.labels.tuttiBudgetParallelismValue
-              }}
-              labels={tuttiWorkflowDockLabels}
-              phase={workflowPhase}
-              planPanelLabels={tuttiPlanPanelLabels}
-              planIssuePanelLabels={tuttiPlanIssuePanelLabels}
-              onAssignmentDraftChange={tuttiWorkflowDock.updateAssignment}
-              onCancelReview={tuttiWorkflowDock.cancelReview}
-              onTaskAction={tuttiWorkflowDock.taskAction}
-              onEffectChange={tuttiWorkflowDock.changeEffect}
-              onSpeedChange={tuttiWorkflowDock.changeSpeed}
-              onOpenIssue={tuttiWorkflowDock.openIssue}
-              onOpenTask={tuttiWorkflowDock.openTask}
-              onRetry={tuttiWorkflowDock.retry}
             />
           ) : null}
         </>

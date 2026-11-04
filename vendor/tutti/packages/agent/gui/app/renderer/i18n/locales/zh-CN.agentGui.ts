@@ -7,7 +7,6 @@ import { zhCNAgentGuiRuntimeNotices } from "./zh-CN.agentGuiRuntimeNotices.ts";
 import { zhCNAgentGuiSlashPalette } from "./zh-CN.agentGuiSlashPalette.ts";
 import { zhCNAgentGuiSessionActions } from "./zh-CN.agentGuiSessionActions.ts";
 import { zhCNAgentGuiCollaboration } from "./zh-CN.agentGuiCollaboration.ts";
-import { zhCNTuttiModePlan } from "./zh-CN.tuttiModePlan.ts";
 import { zhCNAgentGuiComposer } from "./zh-CN.agentGuiComposer.ts";
 import { zhCNAgentGuiProjectLaunch } from "./zh-CN.agentGuiProjectLaunch.ts";
 import { zhCNAgentGuiSide } from "./zh-CN.agentGuiSide.ts";
@@ -295,7 +294,6 @@ export const zhCNAgentGui = {
   tuttiBudgetParallelismValue_other: "最多 {{count}} 个 Agent",
   tuttiModeUpdateFailed: "Tutti 模式更新失败，请重试",
   tuttiModeUpdateUncertain: "Tutti 模式状态仍在确认中，请稍后重试",
-  tuttiModePlan: zhCNTuttiModePlan,
   planModeDescription: "先生成计划，再实施或拆解为 Issue",
   planModeOnLabel: "开启",
   planModeOffLabel: "关闭",

@@ -1,4 +1,3 @@
-import { enTuttiModePlan } from "./en.tuttiModePlan.ts";
 
 export const enAgentGuiOrchestration = {
   codexSaverModeLabel: "Codex saver mode",
@@ -32,7 +31,6 @@ export const enAgentGuiOrchestration = {
   tuttiModeUpdateFailed: "Tutti mode couldn't be updated. Try again.",
   tuttiModeUpdateUncertain:
     "Tutti mode is still being reconciled. Try again after it finishes.",
-  tuttiModePlan: enTuttiModePlan,
   planModeDescription: "Plan first, then implement or break down into an Issue",
   planModeOnLabel: "On",
   planModeOffLabel: "Off",

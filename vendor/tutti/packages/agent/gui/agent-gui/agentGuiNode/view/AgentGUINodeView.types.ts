@@ -41,11 +41,6 @@ import type { AgentGUIEngagementEventSink } from "../engagement/agentGUIEngageme
 import type { AgentGUIProviderReadinessLabels } from "../model/agentGuiProviderReadiness";
 import type { OpenAgentEnvPanelInput } from "../../../shared/agentEnv";
 import type {
-  TuttiModePlanPanelLabels,
-  TuttiPlanIssuePanelLabels
-} from "../../../workspaceWorkflow";
-import type { TuttiWorkflowDockLabels } from "../TuttiWorkflowDock";
-import type {
   AgentGUIComposerEmptySubmit,
   AgentGUIComposerFooterAccessoryRenderer
 } from "./AgentGUIComposerFooterAccessory.types";
@@ -148,26 +143,6 @@ export interface AgentGUIViewLabels extends AgentGUIProviderReadinessLabels {
   tuttiBudgetParallelismValue: (count: number) => string;
   tuttiModeUpdateFailed: string;
   tuttiModeUpdateUncertain: string;
-  tuttiModePlanPanel: TuttiModePlanPanelLabels;
-  tuttiWorkflowDock: TuttiWorkflowDockLabels;
-  tuttiModePlanIssuePanel: TuttiPlanIssuePanelLabels;
-  tuttiModePlanIssueAcceptPrompt: (reference: string) => string;
-  tuttiModePlanIssueReworkPrompt: (reference: string) => string;
-  tuttiModePlanSendAccept: string;
-  tuttiModePlanSendRequestChanges: string;
-  /** Auto feedback for an empty send after either preference diverged. */
-  tuttiModePlanReplanFeedback: (
-    fromEffect: string,
-    fromSpeed: string,
-    toEffect: string,
-    toSpeed: string
-  ) => string;
-  /** Appended to typed feedback when either preference diverged. */
-  tuttiModePlanReplanFeedbackSuffix: (effect: string, speed: string) => string;
-  tuttiModePlanLoadFailed: string;
-  tuttiModePlanRetry: string;
-  /** Accepted plan whose Issue creation durably failed; message is the cause. */
-  tuttiModePlanIssueCreateFailed: (message: string) => string;
   planModeDescription?: string;
   planModeOnLabel: string;
   planModeOffLabel: string;

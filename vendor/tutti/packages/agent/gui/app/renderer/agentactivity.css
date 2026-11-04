@@ -3482,26 +3482,6 @@ aside.workspace-agents-status-panel
   transform: translateY(12px);
 }
 
-/* Tutti workflow plan-review surfaces: --background-fronted base with an 8%
-   tutti-purple wash. Geometry (fused panel/banner overlap, radii, borders)
-   stays identical to the generic disclosure card. */
-.agent-gui-chrome__tutti-workflow-panel {
-  padding: 8px;
-  background: color-mix(
-    in srgb,
-    var(--tutti-purple) 8%,
-    var(--background-fronted)
-  );
-}
-
-.agent-gui-chrome__tutti-workflow-banner {
-  background: color-mix(
-    in srgb,
-    var(--tutti-purple) 8%,
-    var(--background-fronted)
-  );
-}
-
 .agent-gui-chrome__composer-disclosure[data-expanded="true"]
   .agent-gui-chrome__composer-disclosure-banner {
   border-top-left-radius: 0;
