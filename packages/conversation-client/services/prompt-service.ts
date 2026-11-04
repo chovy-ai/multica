@@ -1,6 +1,10 @@
-import { action, makeObservable, observable } from "mobx";
+import { action, comparer, makeObservable, observable, reaction } from "mobx";
 import type { LocalPromptQueue } from "@multica/core/local-conversation/protocol";
 import "../mobx-config";
+import { EditRetries, type EditRetriesOptions, type EditRetryAvailability, type EditRetryOperation, type EditRetryRecoveryAction, type PromptSessionReconcile } from "./edit-retries";
+import { InteractionResponses, type InteractionResponseInput, type InteractionResponseRecord, type InteractionResponsesOptions } from "./interaction-responses";
+import { PromptCommands } from "./prompt-command";
+import { TurnCancels, type PromptTurnReader, type StopResult, type TurnCancelRecord, type TurnCancelStatus } from "./turn-cancels";
 
 export type PromptQueueAction = "pause" | "stop" | "resume" | "remove" | "sendNow";
 
@@ -30,6 +34,16 @@ export interface PromptServiceOptions<Input extends PromptInput, Display extends
   save?(queues: { agentSessionId: string; items: { input: Input; display: Display }[] }[]): void;
   /** Reports each message's fate; absent on a daemon that cannot. */
   statuses?(id: string, requestIds: string[]): Promise<Record<string, PromptStatus>>;
+  workspaceId: string;
+  turns: PromptTurnReader;
+  respondToInteraction: InteractionResponsesOptions["respond"];
+  editRetry: EditRetriesOptions["editRetry"];
+  recoverEditRetry: EditRetriesOptions["recoverEditRetry"];
+  /** Asks for the session's state again. */
+  reconcile(input: PromptSessionReconcile): void;
+  reconcileWorkspace(): void;
+  /** Brings what `turns` reads up to date; runs before each operation decides against it. */
+  beforeTurnOperation?(): void;
 }
 
 /**
@@ -42,11 +56,15 @@ export class PromptService<Input extends PromptInput, Display extends PromptDisp
   private readonly queues = new Map<string, LocalPromptQueue>();
   private readonly pendingBySession = new Map<string, PendingPrompt<Input, Display>[]>();
   private readonly errors = new Map<string, PromptError>();
-  private readonly operations = new Map<string, Promise<void>>();
+  private readonly operations = new Map<string, Promise<StopResult>>();
   private readonly steering = new Map<string, { sessionId: string; requestId?: string; promptId: string; accepted: boolean }>();
   private readonly reconciled = new Set<string>();
+  private readonly commands = new PromptCommands();
+  private readonly cancels: TurnCancels;
+  private readonly interactions: InteractionResponses;
+  private readonly editRetries: EditRetries;
   private disposed = false;
-  /** Changes with everything here, for whoever presents it. */
+  /** Changes with what is sent and queued, for whoever presents it. */
   revision = 0;
 
   constructor(private readonly options: PromptServiceOptions<Input, Display>) {
@@ -56,6 +74,11 @@ export class PromptService<Input extends PromptInput, Display extends PromptDisp
       this.pendingBySession.set(item.agentSessionId, list);
     }
     makeObservable(this, { revision: observable, bump: action });
+    const { workspaceId, turns, reconcile } = options;
+    const { commands } = this;
+    this.cancels = new TurnCancels({ workspaceId, turns, commands, stop: (id) => this.sendStop(id), reconcileWorkspace: options.reconcileWorkspace });
+    this.interactions = new InteractionResponses({ workspaceId, turns, commands, respond: options.respondToInteraction, reconcile });
+    this.editRetries = new EditRetries({ workspaceId, commands, editRetry: options.editRetry, recoverEditRetry: options.recoverEditRetry, reconcile });
   }
 
   bump(): void { this.revision++; }
@@ -164,6 +187,7 @@ export class PromptService<Input extends PromptInput, Display extends PromptDisp
       if (this.disposed) throw error;
       // A canonical queue snapshot can confirm admission before its reply.
       if (item.confirmed) return this.queues.get(id)!;
+      this.cancels.abandonSubmit(item.input.clientSubmitId, error);
       item.display = { ...item.display, visibleInQueue: true };
       this.fail(id, error, item.display.id, "admission");
       throw error;
@@ -172,30 +196,34 @@ export class PromptService<Input extends PromptInput, Display extends PromptDisp
   }
 
   update(id: string, queueAction: PromptQueueAction, promptId?: string): void {
+    void this.runUpdate(id, queueAction, promptId);
+  }
+
+  private runUpdate(id: string, queueAction: PromptQueueAction, promptId?: string): Promise<StopResult> | undefined {
     const prompt = this.prompts(id).find((item) => item.id === promptId);
     const requestId = prompt?.clientSubmitId || promptId;
     const key = JSON.stringify([id, queueAction, requestId]);
-    if (this.operations.has(key) || this.steering.has(key)) return;
+    if (this.operations.has(key) || this.steering.has(key)) return undefined;
     const request = queueAction === "sendNow" && promptId ? { sessionId: id, requestId, promptId, accepted: false } : undefined;
     if (request) { this.steering.set(key, request); this.publish(); }
-    const operation = (async () => {
+    const operation = (async (): Promise<StopResult> => {
       const item = this.pending(id).find((value) => value.input.clientSubmitId === requestId);
       if (queueAction === "sendNow" && item) {
-        try { await this.admit(id, item); } catch { return; }
+        try { await this.admit(id, item); } catch { return undefined; }
       }
       if (queueAction === "remove" && item?.admission) {
         // Wait for the original admission before removing its canonical item.
         // A rejected admission can still be discarded explicitly.
         try { await item.admission; } catch { /* Removal also handles rejection. */ }
       }
-      if (this.disposed) return;
+      if (this.disposed) return undefined;
       // Re-admission uses the original id. A missing or dispatching item was
       // already accepted for execution; never interrupt it or send it again.
       const current = this.queues.get(id);
-      if (queueAction === "sendNow" && current && (!current.items.some((value) => value.requestId === requestId) || current.dispatchingRequestId === requestId)) return;
+      if (queueAction === "sendNow" && current && (!current.items.some((value) => value.requestId === requestId) || current.dispatchingRequestId === requestId)) return undefined;
       try {
         const queue = await this.options.update(id, queueAction, requestId);
-        if (this.disposed) return;
+        if (this.disposed) return undefined;
         if (queueAction === "remove" && item) {
           this.pendingBySession.set(id, this.pending(id).filter((value) => value !== item));
           this.clearError(id, item.display.id, "admission");
@@ -204,7 +232,8 @@ export class PromptService<Input extends PromptInput, Display extends PromptDisp
         if (request) request.accepted = true;
         this.receive(id, queue);
         this.publish();
-      } catch (error) { this.steering.delete(key); this.fail(id, error, promptId); }
+        return undefined;
+      } catch (error) { this.steering.delete(key); this.fail(id, error, promptId); return { error }; }
     })();
     this.operations.set(key, operation);
     void operation.finally(() => {
@@ -213,7 +242,64 @@ export class PromptService<Input extends PromptInput, Display extends PromptDisp
       // daemon reports dispatch, removal, failure or an explicit stop.
       if (request && !request.accepted) { this.steering.delete(key); this.publish(); }
     });
+    return operation;
   }
 
-  dispose(): void { this.disposed = true; }
+  /** A stop still on its way may predate the turn this one is for, so it goes after it. */
+  private sendStop(id: string): Promise<StopResult> {
+    const running = this.operations.get(JSON.stringify([id, "stop", undefined]));
+    return running ? running.then(() => this.sendStop(id)) : this.runUpdate(id, "stop")!;
+  }
+
+  /** Stops the session; a message on its way is stopped once it has started a turn. */
+  stop(rawId: string, clientSubmitId?: string | null): void {
+    const id = rawId.trim();
+    if (!id || this.disposed) return;
+    this.options.beforeTurnOperation?.();
+    if (this.cancels.pending(id)) return;
+    // Sent whatever this client knows, since the daemon may be running what it has not
+    // heard of, and it persists the pause before the cancellation can release the next turn.
+    this.cancels.request(id, clientSubmitId, this.sendStop(id));
+  }
+
+  cancelStatus(id: string | null | undefined): TurnCancelStatus | null { return this.cancels.status(id?.trim() ?? ""); }
+  cancelRecord(id: string): TurnCancelRecord | undefined { return this.cancels.record(id.trim()); }
+
+  respondToInteraction(input: InteractionResponseInput): boolean {
+    if (this.disposed) return false;
+    this.options.beforeTurnOperation?.();
+    return this.interactions.respond(input);
+  }
+  interactionResponse(id: string, turnId: string, requestId: string): InteractionResponseRecord | null { return this.interactions.response(id, turnId, requestId); }
+  isRespondingToInteraction(id: string | null | undefined): boolean { return this.interactions.isResponding(id?.trim() ?? ""); }
+  interactionError(id: string | null | undefined): string | null { return this.interactions.error(id?.trim() ?? ""); }
+  subscribeInteractionResponses(listener: () => void): () => void {
+    return reaction(() => this.interactions.all(), listener, { equals: comparer.shallow });
+  }
+
+  editRetryAvailability(id: string | null | undefined): EditRetryAvailability | null { return this.editRetries.availability(id ?? ""); }
+  editRetryOperation(id: string | null | undefined): EditRetryOperation { return this.editRetries.operation(id ?? ""); }
+  receiveEditRetryAvailability(id: string, availability: EditRetryAvailability): void { this.editRetries.receiveAvailability(id, availability); }
+  requestEditRetry(input: { agentSessionId: string; editedText: string; turnId: string }): Promise<EditRetryOperation> {
+    this.options.beforeTurnOperation?.();
+    return this.editRetries.request(input);
+  }
+  recoverEditRetry(input: { action: EditRetryRecoveryAction; agentSessionId: string }): Promise<EditRetryOperation> {
+    this.options.beforeTurnOperation?.();
+    return this.editRetries.recover(input);
+  }
+
+  /** The conversation data this service reads has changed. */
+  lifecycleChanged(): void {
+    if (this.disposed) return;
+    this.cancels.reconcile();
+    this.interactions.reconcile();
+    for (const id of this.editRetries.sessionIds()) if (this.options.turns.deleted(id)) this.editRetries.remove(id);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.cancels.dispose();
+    this.commands.dispose();
+  }
 }

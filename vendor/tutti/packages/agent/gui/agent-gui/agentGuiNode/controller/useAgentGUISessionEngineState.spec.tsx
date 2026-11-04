@@ -1,3 +1,4 @@
+import { createTestPromptOperations } from "../../../shared/testing/createTestPromptOperations";
 import { act, renderHook } from "@testing-library/react";
 import {
   createAgentSessionEngine,
@@ -7,6 +8,8 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { createTestEngineCommandPort } from "../../../shared/testing/createTestAgentSessionEngine";
 import { useAgentGUISessionEngineState } from "./useAgentGUISessionEngineState";
+
+const prompts = createTestPromptOperations();
 
 describe("useAgentGUISessionEngineState", () => {
   it("shows an optimistic session selection then silently restores canonical settings on failure", () => {
@@ -38,6 +41,7 @@ describe("useAgentGUISessionEngineState", () => {
     const rendered = renderHook(() =>
       useAgentGUISessionEngineState({
         activeConversationId: "session-1",
+        prompts,
         sessionEngine
       })
     );
@@ -100,6 +104,7 @@ describe("useAgentGUISessionEngineState", () => {
     const rendered = renderHook(() =>
       useAgentGUISessionEngineState({
         activeConversationId: "session-1",
+        prompts,
         sessionEngine
       })
     );
@@ -219,6 +224,7 @@ describe("useAgentGUISessionEngineState", () => {
       ({ activeConversationId }) =>
         useAgentGUISessionEngineState({
           activeConversationId,
+          prompts,
           sessionEngine
         }),
       { initialProps: { activeConversationId: "session-1" } }

@@ -1,7 +1,7 @@
 import type { AgentSessionEngine, EngineQueuedPrompt, PromptQueueRecord } from "@tutti-os/agent-activity-core";
-import { selectEngineSubmitWouldBeVisibleInQueue } from "@tutti-os/agent-activity-core";
+import { selectEngineInteraction, selectEngineSubmitWouldBeVisibleInQueue, selectEngineTurn, selectLatestStopTargetSubmitForSession } from "@tutti-os/agent-activity-core";
 import { reaction } from "mobx";
-import { PromptService, type PromptQueueAction, type PromptStatus } from "@multica/conversation-client/services";
+import { PromptService, type PromptQueueAction, type PromptServiceOptions, type PromptStatus } from "@multica/conversation-client/services";
 import type { LocalPromptQueue } from "@multica/core/local-conversation/protocol";
 import type { DesktopPendingStore } from "./desktop-pending-store";
 import { promptSubmissionError } from "./prompt-submission-policy";
@@ -15,12 +15,39 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
   statuses?(id: string, requestIds: string[]): Promise<Record<string, PromptStatus>>;
   error(error: unknown): void;
   pendingStore?: DesktopPendingStore;
+  respondToInteraction: PromptServiceOptions<SubmitInput, EngineQueuedPrompt>["respondToInteraction"];
+  editRetry: PromptServiceOptions<SubmitInput, EngineQueuedPrompt>["editRetry"];
+  recoverEditRetry: PromptServiceOptions<SubmitInput, EngineQueuedPrompt>["recoverEditRetry"];
+  reconcileWorkspace(): void;
+  beforeTurnOperation?(): void;
 }) {
+  const workspaceId = base.identity.workspaceId;
   const service = new PromptService<SubmitInput, EngineQueuedPrompt>({
     enqueue: options.enqueue,
     update: options.update,
     error: options.error,
     statuses: options.statuses,
+    workspaceId,
+    turns: {
+      session(id) {
+        const session = base.getSnapshot().sessionLifecycle.sessionsById[id];
+        return session ? { workspaceId: session.workspaceId, activeTurnId: session.activeTurnId } : null;
+      },
+      turn: (id, turnId) => selectEngineTurn(base.getSnapshot(), id, turnId),
+      deleted: (id) => base.getSnapshot().sessionLifecycle.deletedSessionIds[id] === true,
+      runtimeBlocked: (id) => base.getSnapshot().sessionLifecycle.operationBySessionId[id]?.runtimeAvailability.state === "blocked",
+      interactionStatus: (id, turnId, requestId) => selectEngineInteraction(base.getSnapshot(), id, turnId, requestId)?.status ?? null,
+      // The presented state, because this client's messages on their way live in this service.
+      stopTarget: (id) => selectLatestStopTargetSubmitForSession(snapshot(), id)?.clientSubmitId ?? null,
+      turnForSubmit: (id, clientSubmitId) => base.getSnapshot().sessionMessages.messagesBySessionId[id]
+        ?.find((message) => message.turnId && message.payload?.clientSubmitId === clientSubmitId)?.turnId ?? null,
+    },
+    respondToInteraction: options.respondToInteraction,
+    editRetry: options.editRetry,
+    recoverEditRetry: options.recoverEditRetry,
+    reconcile: (input) => base.dispatch({ ...input, type: "session/reconcileRequested", workspaceId }),
+    reconcileWorkspace: options.reconcileWorkspace,
+    beforeTurnOperation: options.beforeTurnOperation,
     restored: (options.pendingStore?.getState().queues ?? []).flatMap((queue) => queue.prompts.map((prompt) => ({
       agentSessionId: queue.agentSessionId,
       input: { ...prompt, agentSessionId: queue.agentSessionId, clientSubmitId: prompt.clientSubmitId || prompt.id } as SubmitInput,
@@ -77,7 +104,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
   };
   const notify = () => { for (const listener of listeners) listener(snapshot()); };
   const stopPresenting = reaction(() => service.revision, notify);
-  const unsubscribe = base.subscribe(notify);
+  const unsubscribe = base.subscribe(() => { service.lifecycleChanged(); notify(); });
   const engine: AgentSessionEngine = { ...base,
     getSnapshot: snapshot,
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -114,11 +141,7 @@ export function createDesktopQueueEngine(base: AgentSessionEngine, options: {
       }
       base.dispatch(intent, dispatchOptions);
     },
-    stopSession(input) {
-      // Persist the pause before the cancellation can release the next turn.
-      service.update(input.agentSessionId, "stop");
-    },
     dispose() { service.dispose(); stopPresenting(); unsubscribe(); listeners.clear(); base.dispose(); },
   };
-  return { engine, receive: (id: string, queue?: LocalPromptQueue) => service.receive(id, queue) };
+  return { engine, prompts: service, receive: (id: string, queue?: LocalPromptQueue) => service.receive(id, queue) };
 }

@@ -13,7 +13,11 @@ const restored = (id: string) => ({ agentSessionId: "s", input: { agentSessionId
 function service(options: Partial<PromptServiceOptions<Input, Display>> = {}) {
   const update = vi.fn(async () => empty(2));
   const enqueue = vi.fn(async () => empty(2));
-  return { update, enqueue, prompts: new PromptService<Input, Display>({ enqueue, update, error: vi.fn(), ...options }) };
+  return { update, enqueue, prompts: new PromptService<Input, Display>({
+    enqueue, update, error: vi.fn(), workspaceId: "w", respondToInteraction: vi.fn(), editRetry: vi.fn(), recoverEditRetry: vi.fn(), reconcile: vi.fn(), reconcileWorkspace: vi.fn(),
+    turns: { session: () => null, turn: () => null, deleted: () => false, runtimeBlocked: () => false, interactionStatus: () => null, stopTarget: () => null, turnForSubmit: () => null },
+    ...options,
+  }) };
 }
 
 describe("messages restored after a reload", () => {

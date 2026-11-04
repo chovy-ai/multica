@@ -125,33 +125,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     effects: {
       activateSession: (input, options) => activate(input, options.signal),
       sendInput: (input, options) => send(input, options.signal),
-      cancelTurn: async (input, options) => {
-        scope(input.workspaceId);
-        const result = await client.request("session.cancel", {
-          sessionId: await backendSessionId(input.agentSessionId), taskId: input.turnId,
-        }, { signal: options.signal });
-        const detail = details.get(input.agentSessionId);
-        if (detail) {
-          detail.tasks = [...(detail.tasks ?? []).filter((task) => task.id !== result.id), result];
-        }
-        await loadFreshSession(input.agentSessionId);
-        const turn = Object.values(engine.getSnapshot().sessionLifecycle.turnsById)
-          .find((entry) => entry.agentSessionId === input.agentSessionId && entry.turnId === input.turnId);
-        if (!turn) throw new MulticaAgentGuiError("The cancellation was accepted, but its run is still synchronizing.", "cancel_pending_sync");
-        return turn.phase === "settled"
-          ? { cancel: { canceled: turn.outcome === "canceled", reason: turn.outcome === "canceled" ? "turn_canceled" : "already_settled" }, turn }
-          : { cancel: { canceled: false, reason: "cancel_requested" }, turn: { ...turn, phase: "settling", outcome: null } };
-      },
       deleteSessions: async () => unsupported("Recoverable session deletion"),
-      respondToInteraction: async (input, options) => {
-        scope(input.workspaceId);
-        if (input.action !== "submit" || !input.payload?.answersByQuestionId) unsupported("This interaction response");
-        await client.request("interaction.respond", {
-          sessionId: await backendSessionId(input.agentSessionId), turnId: input.turnId, requestId: input.requestId,
-          answers: input.payload.answersByQuestionId as Record<string, string | string[]>,
-        }, { signal: options.signal });
-        return { session: await loadFreshSession(input.agentSessionId) };
-      },
       renameSession: async (input, options) => {
         scope(input.workspaceId);
         const session = await client.request("session.rename", {
@@ -206,6 +180,18 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     enqueue: enqueueDesktop,
     update: async (id, action, requestId) => client.request("queue.update", { sessionId: await backendSessionId(id), action, requestId }),
     statuses: async (id, requestIds) => client.request("queue.statuses", { sessionId: await backendSessionId(id), requestIds }),
+    respondToInteraction: async (input, options) => {
+      scope(input.workspaceId);
+      if (input.action !== "submit" || !input.payload?.answersByQuestionId) unsupported("This interaction response");
+      await client.request("interaction.respond", {
+        sessionId: await backendSessionId(input.agentSessionId), turnId: input.turnId, requestId: input.requestId,
+        answers: input.payload.answersByQuestionId as Record<string, string | string[]>,
+      }, { signal: options.signal });
+      return { session: await loadFreshSession(input.agentSessionId) };
+    },
+    editRetry: async () => unsupported("turn/editRetry"),
+    recoverEditRetry: async () => unsupported("turn/recoverEditRetry"),
+    reconcileWorkspace: () => { void loadWorkspace().catch(reportError); },
     error(error) {
       reportError(error);
       if (!disposed) void client.request("host.showMessage", {
@@ -861,6 +847,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     promptContentUploadSupport: { file: true, image: true }, devDiagnosticConsoleSink: false,
     getSessionEngine: (id) => { scope(id); return engine; },
     composer,
+    prompts: desktopQueue.prompts,
     getSnapshot: (id) => { scope(id); return projectSnapshot(engine.getSnapshot()); },
     subscribe: (id, listener) => { scope(id); return engine.subscribe((state) => listener(projectSnapshot(state))); },
     subscribeSessionEvents: (id, listener) => { scope(id); eventListeners.add(listener); return () => { eventListeners.delete(listener); }; },

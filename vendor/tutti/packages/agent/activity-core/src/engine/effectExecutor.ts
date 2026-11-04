@@ -240,32 +240,10 @@ function executeCommand(
         },
         { commandId: command.commandId, origin: "engine", signal }
       );
-    case "turn/cancel":
-      return effects.cancelTurn(
-        {
-          agentSessionId: command.agentSessionId,
-          turnId: command.turnId,
-          workspaceId: command.workspaceId
-        },
-        { commandId: command.commandId, origin: "engine", signal }
-      );
     case "sessions/delete":
       return effects.deleteSessions(
         {
           agentSessionIds: [...command.agentSessionIds],
-          workspaceId: command.workspaceId
-        },
-        { commandId: command.commandId, origin: "engine", signal }
-      );
-    case "interaction/respond":
-      return effects.respondToInteraction(
-        {
-          ...(command.action ? { action: command.action } : {}),
-          agentSessionId: command.agentSessionId,
-          ...(command.optionId ? { optionId: command.optionId } : {}),
-          ...(command.payload ? { payload: { ...command.payload } } : {}),
-          requestId: command.requestId,
-          turnId: command.turnId,
           workspaceId: command.workspaceId
         },
         { commandId: command.commandId, origin: "engine", signal }

@@ -1,9 +1,6 @@
 import type { AgentActivitySendInputResult } from "../types.ts";
 import type { AgentActivitySession } from "../types.ts";
-import type {
-  AgentActivityTurn,
-  AgentActivityTurnCancelResponse
-} from "../types.ts";
+import type { AgentActivityTurn } from "../types.ts";
 import type { PendingSubmitIntentRecord } from "./pendingIntents.types.ts";
 
 export type SendInputResultValidation =
@@ -13,62 +10,6 @@ export type SendInputResultValidation =
 export type ScopedSessionResultValidation =
   | { kind: "valid"; session: AgentActivitySession }
   | { kind: "invalid"; reason: string };
-
-export type CancelResultValidation =
-  | { kind: "valid"; response: AgentActivityTurnCancelResponse }
-  | { kind: "invalid"; reason: string };
-
-export function validateCancelResult(
-  value: unknown,
-  expected:
-    | {
-        agentSessionId: string;
-        currentTurn: AgentActivityTurn | null;
-        turnId: string | null;
-        workspaceMatches: boolean;
-      }
-    | undefined
-): CancelResultValidation {
-  if (!expected || !expected.turnId || !expected.workspaceMatches) {
-    return { kind: "invalid", reason: "cancel_scope_missing" };
-  }
-  if (!value || typeof value !== "object") {
-    return { kind: "invalid", reason: "cancel_result_missing" };
-  }
-  const response = value as Partial<AgentActivityTurnCancelResponse>;
-  const cancel = response.cancel;
-  if (!cancel || typeof cancel.canceled !== "boolean") {
-    return { kind: "invalid", reason: "cancel_result_malformed" };
-  }
-  const turn = response.turn;
-  const exactTurn =
-    turn?.agentSessionId === expected.agentSessionId &&
-    turn.turnId === expected.turnId;
-  const cancelRequested =
-    cancel.canceled === false &&
-    cancel.reason === "cancel_requested" &&
-    exactTurn &&
-    turn.phase === "settling" &&
-    turn.outcome == null;
-  const canceled =
-    cancel.canceled === true &&
-    cancel.reason === "turn_canceled" &&
-    exactTurn &&
-    turn.phase === "settled" &&
-    turn.outcome === "canceled";
-  const alreadySettled =
-    cancel.canceled === false &&
-    cancel.reason === "already_settled" &&
-    ((exactTurn && turn.phase === "settled" && turn.outcome !== null) ||
-      expected.currentTurn?.phase === "settled");
-  const targetAbsent =
-    cancel.canceled === false &&
-    cancel.reason === "not_found" &&
-    expected.currentTurn === null;
-  return cancelRequested || canceled || alreadySettled || targetAbsent
-    ? { kind: "valid", response: response as AgentActivityTurnCancelResponse }
-    : { kind: "invalid", reason: "cancel_target_mismatch" };
-}
 
 export function validateScopedSessionResult(
   value: unknown,

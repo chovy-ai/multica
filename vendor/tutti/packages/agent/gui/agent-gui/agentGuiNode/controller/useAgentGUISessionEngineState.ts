@@ -1,9 +1,7 @@
 import {
   pendingSubmitRecordListsEqual,
   selectEngineActiveTurn,
-  selectEngineCancelState,
   selectEngineHasPendingInteractions,
-  selectEngineInteractionResponseError,
   selectEngineLatestTurn,
   selectEnginePendingInteractions,
   selectEnginePromptQueue,
@@ -15,7 +13,6 @@ import {
   selectEngineSessionOperationError,
   selectEngineSessionRuntimeAvailability,
   selectEngineSessionRuntimeActivity,
-  selectEngineSessionIsRespondingToInteraction,
   selectEngineSessionReconcile,
   selectEngineSessionSettingsUpdate,
   selectEngineSubmitAvailability,
@@ -38,7 +35,11 @@ import type {
   AgentSessionSpeed,
   AgentSessionState
 } from "../../../shared/agentSessionTypes";
-import { useEngineSelector } from "../../../shared/engine/useEngineSelector";
+import {
+  useEngineSelector,
+  useModelValue
+} from "../../../shared/engine/useEngineSelector";
+import type { AgentGUIPromptOperations } from "./agentGuiController.promptOperations";
 import { EMPTY_QUEUED_PROMPTS } from "./agentGuiController.draftMessageHelpers";
 import { agentActivityInteractionListsEqual } from "./agentGuiController.providerHelpers";
 import { agentGUIQueueStatusFromPromptQueue } from "./agentGuiQueueStatus";
@@ -46,9 +47,10 @@ import { isPendingNewConversationActivation } from "./useAgentGUIActivation";
 
 export function useAgentGUISessionEngineState(input: {
   activeConversationId: string | null;
+  prompts: AgentGUIPromptOperations;
   sessionEngine: AgentSessionEngine;
 }) {
-  const { activeConversationId, sessionEngine } = input;
+  const { activeConversationId, prompts, sessionEngine } = input;
   const activeQueuedPromptSnapshot = useEngineSelector(sessionEngine, (state) =>
     selectEnginePromptQueue(state, activeConversationId)
   );
@@ -87,8 +89,9 @@ export function useAgentGUISessionEngineState(input: {
     (state) =>
       selectSessionHasPendingSubmitStopTarget(state, activeConversationId)
   );
-  const activeCancelState = useEngineSelector(sessionEngine, (state) =>
-    selectEngineCancelState(state, activeConversationId)
+  const activeCancelStatus = useModelValue(
+    () => prompts.cancelStatus(activeConversationId),
+    [prompts, activeConversationId]
   );
   const activeEngineSession = useEngineSelector(sessionEngine, (state) =>
     selectEngineSession(state, activeConversationId)
@@ -181,16 +184,17 @@ export function useAgentGUISessionEngineState(input: {
   const activeEngineQueueError = useEngineSelector(sessionEngine, (state) =>
     selectEnginePromptQueueError(state, activeConversationId)
   );
-  const activeEngineInteractionError = useEngineSelector(
-    sessionEngine,
-    (state) => selectEngineInteractionResponseError(state, activeConversationId)
+  const activeEngineInteractionError = useModelValue(
+    () => prompts.interactionError(activeConversationId),
+    [prompts, activeConversationId]
   );
   const activeEngineError =
     activeEngineOperationError ??
     activeEngineInteractionError ??
     activeEngineQueueError;
-  const isRespondingToInteraction = useEngineSelector(sessionEngine, (state) =>
-    selectEngineSessionIsRespondingToInteraction(state, activeConversationId)
+  const isRespondingToInteraction = useModelValue(
+    () => prompts.isRespondingToInteraction(activeConversationId),
+    [prompts, activeConversationId]
   );
   const activeEngineAvailability: "available" | "blocked" | "missing" =
     useEngineSelector(
@@ -219,7 +223,7 @@ export function useAgentGUISessionEngineState(input: {
   );
 
   return {
-    activeCancelState,
+    activeCancelStatus,
     activeCanonicalComposerSettings,
     activeEngineActiveTurn,
     activeEngineAvailability,

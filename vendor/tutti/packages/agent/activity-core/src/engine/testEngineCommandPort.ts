@@ -34,9 +34,6 @@ export function createTestEngineCommandPort(
     activateSession(_input, options) {
       return executeObserved(options);
     },
-    cancelTurn(_input, options) {
-      return executeObserved(options);
-    },
     controlGoal(_input, options) {
       return executeObserved(options);
     },
@@ -44,9 +41,6 @@ export function createTestEngineCommandPort(
       return executeObserved(options);
     },
     renameSession(_input, options) {
-      return executeObserved(options);
-    },
-    respondToInteraction(_input, options) {
       return executeObserved(options);
     },
     sendInput(_input, options) {

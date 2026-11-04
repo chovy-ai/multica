@@ -1,3 +1,4 @@
+import { createTestPromptOperations } from "../../../shared/testing/createTestPromptOperations";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   createAgentSessionEngine,
@@ -300,7 +301,9 @@ function renderNewConversationScenario(input: {
     current: {} as Record<string, AgentComposerDraft>
   };
   const submittedDraftSnapshotsRef = { current: {} };
-  const agentActivityRuntime = {} as AgentGUIRuntime;
+  const agentActivityRuntime = {
+    prompts: createTestPromptOperations()
+  } as unknown as AgentGUIRuntime;
   const setDraftByScopeKey = vi.fn();
   const persistActiveConversation = vi.fn();
   const conversationsRef = {

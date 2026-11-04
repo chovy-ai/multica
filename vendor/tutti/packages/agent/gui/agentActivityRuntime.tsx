@@ -7,6 +7,7 @@ import {
   type PropsWithChildren
 } from "react";
 import type { AgentGUIComposerOptionsReader } from "./agent-gui/agentGuiNode/controller/agentGuiController.providerHelpers";
+import type { AgentGUIPromptOperations } from "./agent-gui/agentGuiNode/controller/agentGuiController.promptOperations";
 import type {
   AgentActivityCollaborationRun,
   AgentActivityComposerOptions,
@@ -316,6 +317,8 @@ export interface AgentActivityRuntimePromptAsset {
 export interface AgentGUIRuntime {
   /** Each target's composer choices, for reading; getComposerOptions asks for them. */
   composer: AgentGUIComposerOptionsReader;
+  /** Stops, answers to interactions and edit retries. */
+  prompts: AgentGUIPromptOperations;
   /**
    * Reads the next older page into the session itself, which then updates through
    * its usual snapshot. A runtime with this owns paging; versions need not page.

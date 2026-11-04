@@ -722,10 +722,3 @@ export interface AgentActivityTurnCancelResponse {
   };
   turn?: AgentActivityTurn;
 }
-
-export interface AgentActivityCancelTurnInput {
-  agentSessionId: string;
-  signal?: AbortSignal;
-  turnId: string;
-  workspaceId: string;
-}

@@ -7,7 +7,6 @@ import type {
 } from "../types.ts";
 import { normalizeAgentActivitySession } from "../sessionNormalization.ts";
 import type {
-  CancelResultValidation,
   SendInputResultValidation
 } from "./commandResult.validation.ts";
 import {
@@ -98,7 +97,6 @@ test("user settings inFlight blocks drain until settings settle to idle", () => 
       value: { agentSessionId: "session-1", session: acceptedSession }
     },
     {
-      queueSendNowRequiresCancel: false,
       settingsResultValidation: {
         kind: "valid",
         session: acceptedSession
@@ -317,7 +315,7 @@ test("guidance failure without the no-active-turn reason still blocks the queue"
   assert.deepEqual(failed.commands, []);
 });
 
-test("cancel-then-send waits until validated cancellation updates canonical lifecycle", () => {
+test("cancel-then-send waits until the canonical lifecycle settles", () => {
   const running = canonicalLifecycle("running", 1);
   let state = reduce(
     createInitialPromptQueueState(),
@@ -333,19 +331,10 @@ test("cancel-then-send waits until validated cancellation updates canonical life
     "prompt-1"
   );
 
-  const turn = settledTurn("turn-1", 2, "canceled");
-  const validation: CancelResultValidation = {
-    kind: "valid",
-    response: {
-      cancel: { canceled: true, reason: "turn_canceled" },
-      turn: { ...turn, completedCommand: null, error: null, fileChanges: null }
-    }
-  };
   const canceled = reduce(
     promoted.state,
-    commandResult("cancel-1", "turn/cancel", "succeeded"),
-    canonicalLifecycle("settled", 2),
-    { cancelValidation: validation }
+    turnUpserted(settledTurn("turn-1", 2, "canceled")),
+    canonicalLifecycle("settled", 2)
   );
   assert.equal(canceled.commands[0]?.type, "queue/sendPrompt");
   assert.equal(send(canceled.commands[0]).guidance, undefined);
@@ -463,8 +452,6 @@ test("user stop suspension blocks drain until explicit resume", () => {
     state,
     {
       agentSessionId: "session-1",
-      awaitingTurnExpiresAtUnixMs: 30_000,
-      commandId: "stop-1",
       type: "session/stopRequested",
       workspaceId: "workspace-1"
     },
@@ -1112,7 +1099,6 @@ function reduce(
   intent: Parameters<typeof promptQueueReducer>[1],
   lifecycle: SessionLifecycleState,
   options: {
-    cancelValidation?: CancelResultValidation;
     deletedSessionIds?: Readonly<Record<string, true>>;
     sendValidation?: SendInputResultValidation;
     strategy?: PromptQueueSendNowStrategy;
@@ -1139,7 +1125,6 @@ function reduce(
           )
         : null);
   return promptQueueReducer(state, intent, {
-    cancelResultValidation: options.cancelValidation,
     deletedSessionIds: options.deletedSessionIds ?? {},
     lifecycle,
     sendNowStrategy: strategy,

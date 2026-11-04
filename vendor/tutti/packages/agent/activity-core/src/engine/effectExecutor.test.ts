@@ -33,15 +33,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
         session
       };
     },
-    async cancelTurn(input, options) {
-      calls.push({
-        commandId: options.commandId,
-        input,
-        kind: "cancel",
-        origin: options.origin,
-        signal: options.signal
-      });
-    },
     async controlGoal(input, options) {
       assert.ok(options);
       calls.push({
@@ -67,15 +58,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
         removedSessionIds: [],
         removedSessions: 0
       };
-    },
-    async respondToInteraction(input, options) {
-      calls.push({
-        commandId: options.commandId,
-        input,
-        kind: "respond",
-        origin: options.origin,
-        signal: options.signal
-      });
     },
     async renameSession(input, options) {
       calls.push({
@@ -183,13 +165,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
   });
   await executeAndWait(port, {
     agentSessionId: "session-1",
-    commandId: "cancel-1",
-    turnId: "turn-1",
-    type: "turn/cancel",
-    workspaceId: "workspace-1"
-  });
-  await executeAndWait(port, {
-    agentSessionId: "session-1",
     commandId: "pin-1",
     correlationId: "pin-1",
     pinned: true,
@@ -212,18 +187,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     workspaceId: "workspace-1"
   });
   await executeAndWait(port, {
-    action: "accept",
-    agentSessionId: "session-1",
-    commandId: "respond-1",
-    correlationId: "request-1",
-    optionId: "yes",
-    payload: { approved: true },
-    requestId: "request-1",
-    turnId: "turn-1",
-    type: "interaction/respond",
-    workspaceId: "workspace-1"
-  });
-  await executeAndWait(port, {
     action: "set",
     agentSessionId: "session-1",
     clientSubmitId: "goal-submit-1",
@@ -241,11 +204,9 @@ test("projects shared commands onto typed lifecycle effects without host switche
       "activate",
       "send",
       "settings",
-      "cancel",
       "pin",
       "rename",
       "delete",
-      "respond",
       "goal"
     ]
   );
@@ -255,11 +216,9 @@ test("projects shared commands onto typed lifecycle effects without host switche
       "activate-1",
       "send-1",
       "settings-1",
-      "cancel-1",
       "pin-1",
       "rename-1",
       "delete-1",
-      "respond-1",
       "goal-1"
     ]
   );
@@ -310,17 +269,17 @@ test("projects shared commands onto typed lifecycle effects without host switche
     settings: { speed: "fast" },
     workspaceId: "workspace-1"
   });
-  assert.deepEqual(calls[4]?.input, {
+  assert.deepEqual(calls[3]?.input, {
     agentSessionId: "session-1",
     pinned: true,
     workspaceId: "workspace-1"
   });
-  assert.deepEqual(calls[5]?.input, {
+  assert.deepEqual(calls[4]?.input, {
     agentSessionId: "session-1",
     title: "Renamed session",
     workspaceId: "workspace-1"
   });
-  assert.deepEqual(calls[6]?.input, {
+  assert.deepEqual(calls[5]?.input, {
     agentSessionIds: ["session-1", "session-2"],
     workspaceId: "workspace-1"
   });
@@ -328,8 +287,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
   assert.deepEqual(
     calls.map((call) => call.origin),
     [
-      "engine",
-      "engine",
       "engine",
       "engine",
       "engine",
