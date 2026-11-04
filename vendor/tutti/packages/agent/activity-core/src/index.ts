@@ -127,32 +127,6 @@ export type {
 } from "./engine/sessionGoalControl.types.ts";
 export { selectWorkspaceReconcileState } from "./engine/engineRuntime.selectors.ts";
 export {
-  editRetryPresentationRecordsEqual,
-  selectEditRetryAvailabilityIsNewer,
-  selectEditRetryPresentation,
-  type EditRetryPresentationRecord
-} from "./engine/editRetry.selectors.ts";
-export {
-  dispatchEditRetry,
-  dispatchEditRetryRecovery
-} from "./engine/editRetry.command.ts";
-export type {
-  AgentActivityEditRetryAvailability,
-  AgentActivityEditRetryInput,
-  AgentActivityEditRetryReasonCode,
-  AgentActivityEditRetryRecoveryAction,
-  AgentActivityEditRetryRecoveryState,
-  AgentActivityEditRetryResult,
-  AgentActivityRecoverEditRetryInput,
-  EditRetryCommand,
-  EditRetryIntent,
-  EditRetryOperationRecord,
-  EditRetryOperationStatus,
-  EditRetryState,
-  TurnEditRetryCommand,
-  TurnRecoverEditRetryCommand
-} from "./engine/editRetry.types.ts";
-export {
   selectTuttiModeActivationPresentation,
   selectTuttiModeDraftIsActive,
   selectTuttiModeDraftOrchestrationIntensity,
@@ -192,21 +166,16 @@ export type {
 } from "./engine/attentionReadState.types.ts";
 export {
   selectEngineActiveTurn,
-  selectEngineCancelState,
-  selectEngineCancelPending,
   selectEngineGoalControl,
   selectEngineHasPendingInteractions,
   selectEngineInteractionsForSession,
   selectEngineInteraction,
-  selectEngineInteractionResponse,
-  selectEngineInteractionResponseError,
   selectEngineLatestTurn,
   selectEnginePendingInteractions,
   selectEngineSession,
   selectEngineSessionCanReload,
   selectFailedNewActivationResolution,
   selectEngineSessionDeleted,
-  selectEngineSessionIsRespondingToInteraction,
   selectEngineSessionRuntimeAvailability,
   selectEngineSessionRuntimeActivity,
   selectEngineSessionOperationError,
@@ -239,16 +208,10 @@ export type {
 } from "./engine/sessionLifecycle.selectors.ts";
 export type {
   CanonicalAgentSession,
-  InteractionRespondCommand,
-  InteractionResponseState,
-  InteractionResponseStatus,
-  SessionCancelState,
-  SessionCancelStatus,
   SessionOperationState,
   SessionRuntimeAvailability,
   SessionRuntimeActivity,
-  SessionLifecycleState,
-  TurnCancelCommand
+  SessionLifecycleState
 } from "./engine/sessionLifecycle.types.ts";
 export type {
   PlanDecisionOperation,
@@ -319,6 +282,7 @@ export {
   sessionActivationPresentationMapsEqual,
   selectLatestActivationForSession,
   selectLatestPendingSubmitForSession,
+  selectLatestStopTargetSubmitForSession,
   selectPendingSubmits,
   selectPendingSubmitsForSession,
   selectSessionActivationPresentations,
@@ -342,7 +306,6 @@ export type {
   AgentActivityActivateSessionResult,
   AgentActivityActivationMode,
   AgentActivityActivationStatus,
-  AgentActivityCancelTurnInput,
   AgentActivityGoalControlAction,
   AgentActivityInitialGoalControl,
   AgentActivityGoalControlInput,
@@ -417,8 +380,8 @@ export type {
   AgentActivitySubmitDiagnostics,
   AgentActivitySubmitSettingsPatch,
   AgentActivityTurn,
-  AgentActivityTurnOrigin,
   AgentActivityTurnCancelResponse,
+  AgentActivityTurnOrigin,
   AgentActivityTransientMessage,
   AgentActivityInteraction,
   AgentActivityUpdatedApplyResult,

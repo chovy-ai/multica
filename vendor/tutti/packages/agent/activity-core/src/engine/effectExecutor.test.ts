@@ -33,15 +33,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
         session
       };
     },
-    async cancelTurn(input, options) {
-      calls.push({
-        commandId: options.commandId,
-        input,
-        kind: "cancel",
-        origin: options.origin,
-        signal: options.signal
-      });
-    },
     async controlGoal(input, options) {
       assert.ok(options);
       calls.push({
@@ -52,15 +43,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
         signal: options.signal
       });
       return { goal: null, session };
-    },
-    async respondToInteraction(input, options) {
-      calls.push({
-        commandId: options.commandId,
-        input,
-        kind: "respond",
-        origin: options.origin,
-        signal: options.signal
-      });
     },
     async sendInput(input, options) {
       calls.push({
@@ -147,25 +129,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     workspaceId: "workspace-1"
   });
   await executeAndWait(port, {
-    agentSessionId: "session-1",
-    commandId: "cancel-1",
-    turnId: "turn-1",
-    type: "turn/cancel",
-    workspaceId: "workspace-1"
-  });
-  await executeAndWait(port, {
-    action: "accept",
-    agentSessionId: "session-1",
-    commandId: "respond-1",
-    correlationId: "request-1",
-    optionId: "yes",
-    payload: { approved: true },
-    requestId: "request-1",
-    turnId: "turn-1",
-    type: "interaction/respond",
-    workspaceId: "workspace-1"
-  });
-  await executeAndWait(port, {
     action: "set",
     agentSessionId: "session-1",
     clientSubmitId: "goal-submit-1",
@@ -183,8 +146,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
       "activate",
       "send",
       "settings",
-      "cancel",
-      "respond",
       "goal"
     ]
   );
@@ -194,8 +155,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
       "activate-1",
       "send-1",
       "settings-1",
-      "cancel-1",
-      "respond-1",
       "goal-1"
     ]
   );
@@ -249,7 +208,7 @@ test("projects shared commands onto typed lifecycle effects without host switche
   assert.ok(calls.every((call) => call.signal instanceof AbortSignal));
   assert.deepEqual(
     calls.map((call) => call.origin),
-    ["engine", "engine", "engine", "engine", "engine", "engine"]
+    ["engine", "engine", "engine", "engine"]
   );
 });
 

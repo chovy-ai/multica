@@ -7,7 +7,6 @@ import type {
 } from "@tutti-os/agent-activity-core";
 import { normalizeAgentApprovalPurpose } from "../shared/agentConversation/agentApprovalPurpose";
 import {
-  selectEngineInteractionResponse,
   selectPendingPlanFeedbackSubmit,
   selectPlanDecisionForTurn,
   selectPlanTurnDismissed,
@@ -122,7 +121,12 @@ export interface WorkspaceAgentMessageCenterPresentation {
 }
 
 export function selectWorkspaceAgentMessageCenterPresentation(
-  state: AgentSessionEngineState
+  state: AgentSessionEngineState,
+  interactionResponse?: (
+    agentSessionId: string,
+    turnId: string,
+    requestId: string
+  ) => { status: WorkspaceAgentMessageCenterPromptStatus } | null
 ): WorkspaceAgentMessageCenterPresentation {
   const consumers = selectWorkspaceAgentRootConversationSessions(state);
   const promptStatusByKey: Record<
@@ -145,8 +149,7 @@ export function selectWorkspaceAgentMessageCenterPresentation(
         consumer.latestTurn.turnId;
     }
     for (const interaction of consumer.pendingInteractions) {
-      const response = selectEngineInteractionResponse(
-        state,
+      const response = interactionResponse?.(
         interaction.agentSessionId,
         interaction.turnId,
         interaction.requestId

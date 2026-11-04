@@ -1,3 +1,4 @@
+import { createTestPromptOperations } from "../../../shared/testing/createTestPromptOperations";
 import {
   normalizeAgentActivitySession,
   selectEngineHasVisibleQueuedSubmit,
@@ -38,6 +39,7 @@ describe("AgentGUIEngineSettlementController", () => {
       [sourceScopeKey]: submittedDraft
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts: createTestPromptOperations(),
       applyDraftUpdate: (update) => {
         drafts = update(drafts);
       },
@@ -83,6 +85,7 @@ describe("AgentGUIEngineSettlementController", () => {
       [sourceScopeKey]: submittedDraft
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts: createTestPromptOperations(),
       applyDraftUpdate: (update) => {
         drafts = update(drafts);
       },
@@ -142,6 +145,7 @@ describe("AgentGUIEngineSettlementController", () => {
       [sourceScopeKey]: emptyAgentComposerDraft()
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts: createTestPromptOperations(),
       applyDraftUpdate: (update) => {
         drafts = update(drafts);
       },
@@ -210,6 +214,7 @@ describe("AgentGUIEngineSettlementController", () => {
       [sourceScopeKey]: emptyAgentComposerDraft()
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts: createTestPromptOperations(),
       applyDraftUpdate: (update) => {
         drafts = update(drafts);
       },
@@ -306,6 +311,7 @@ describe("AgentGUIEngineSettlementController", () => {
       [sourceScopeKey]: emptyAgentComposerDraft()
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts: createTestPromptOperations(),
       applyDraftUpdate: (update) => {
         drafts = update(drafts);
       },
@@ -372,16 +378,17 @@ describe("AgentGUIEngineSettlementController", () => {
   });
 
   it("restores a composer answer when the interaction response fails", async () => {
-    let rejectResponse: (error: Error) => void = vi.fn();
-    const engine = createTestAgentSessionEngine("test-workspace", {
-      execute(command) {
-        if (command.type !== "interaction/respond") {
-          return Promise.resolve({ ok: true });
-        }
-        return new Promise((_, reject) => {
-          rejectResponse = reject;
-        });
+    let responseStatus: "responding" | "failed" = "responding";
+    let responseChanged: () => void = vi.fn();
+    const prompts = createTestPromptOperations({
+      interactionResponse: () => ({ status: responseStatus }),
+      subscribeInteractionResponses: (listener) => {
+        responseChanged = listener;
+        return () => undefined;
       }
+    });
+    const engine = createTestAgentSessionEngine("test-workspace", {
+      execute: () => Promise.resolve({ ok: true })
     });
     const { interaction, session } = waitingQuestionSession();
     engine.dispatch({ sessions: [session], type: "session/snapshotReceived" });
@@ -406,6 +413,7 @@ describe("AgentGUIEngineSettlementController", () => {
       [sourceScopeKey]: emptyAgentComposerDraft()
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts,
       applyDraftUpdate: (update) => {
         drafts = update(drafts);
       },
@@ -415,25 +423,13 @@ describe("AgentGUIEngineSettlementController", () => {
     });
     const detach = controller.attach();
 
-    expect(
-      engine.submitInteractionResponse({
-        action: "submit",
-        agentSessionId: interaction.agentSessionId,
-        payload: {
-          answers: ["You decide"],
-          answersByQuestionId: { "execution-mode": "You decide" }
-        },
-        requestId: interaction.requestId,
-        turnId: interaction.turnId
-      })
-    ).toBe(true);
-    rejectResponse(new Error("response failed"));
+    expect(agentComposerDraftPrompt(drafts[sourceScopeKey]!)).toBe("");
+    responseStatus = "failed";
+    responseChanged();
 
-    await vi.waitFor(() => {
-      expect(agentComposerDraftPrompt(drafts[sourceScopeKey]!)).toBe(
-        "You decide"
-      );
-    });
+    expect(agentComposerDraftPrompt(drafts[sourceScopeKey]!)).toBe(
+      "You decide"
+    );
     expect(interactionDraftSettlements).toEqual({});
     detach();
     engine.dispose();
@@ -464,6 +460,7 @@ describe("AgentGUIEngineSettlementController", () => {
       [sourceScopeKey]: emptyAgentComposerDraft()
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts: createTestPromptOperations(),
       applyDraftUpdate: (update) => {
         drafts = update(drafts);
       },
@@ -527,6 +524,7 @@ describe("AgentGUIEngineSettlementController", () => {
       }
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts: createTestPromptOperations(),
       applyDraftUpdate: (update) => {
         drafts = update(drafts);
       },
@@ -578,6 +576,7 @@ describe("AgentGUIEngineSettlementController", () => {
       }
     };
     const controller = new AgentGUIEngineSettlementController({
+      prompts: createTestPromptOperations(),
       applyDraftUpdate: vi.fn(),
       engine,
       goalControlSettlements,

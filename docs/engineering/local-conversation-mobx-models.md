@@ -323,6 +323,15 @@ class ItemModel {
 队列排空不再被未结算的设置挡住：Desktop 的提示不进 engine 队列，由 `PromptService` 经 daemon 派发，发送前会等 `ComposerService` 的写入完成，界面上的发送也由 composer gate 拦截。
 
 **会话变更（`sessionMutations`）：** rename、pin、delete、fork 在 `ConversationMutationService`。fork 的 observation ACK 和 `accepted` 状态没有迁：host 的 ACK 本来就是空操作，`session.fork` 是同步提交的。归档从未进过 engine，仍由 `local-conversation-flow` 发命令。
+### 轮次操作（取消、交互回应、编辑重试）
+
+已从 engine 迁到 `PromptService`，内部拆成 `TurnCancels`、`InteractionResponses`、`EditRetries`，经 `runtime.prompts` 读写。Service 不存轮次数据，通过注入的 `PromptTurnReader` 读 engine，由 `lifecycleChanged()` 触发对账。`beforeTurnOperation` 在用户发起的操作判断之前执行，供 runtime 先提交还在缓冲的事件。
+
+- **停止：** 一直走 `queue.update stop`，它在 daemon 里同时暂停队列并中断当前轮次。`turn/cancel` 和 `session.cancel` 不再使用。客户端只负责 daemon 还不知道的情况：发送中的消息到达时会解除暂停并开始新轮次，所以没有活动轮次时进入 `awaitingTurn`，等到对应轮次出现后再停一次，30 秒过期。
+- **取消结果：** daemon 的回执不带轮次，不再校验 `cancel` 响应，改为回执后读取当前轮次状态。
+- **显示：** 之前 `desktop-queue-engine` 绕过了 engine 的取消状态，Desktop 上 `isInterrupting`、`isCancelPending` 恒为假；迁移后它们生效。
+- **编辑重试：** 状态机已移植，但本地会话目前用不到：host 不提供 availability，命令也返回 `unsupported`。
+- **还留在 engine：** `session/stopRequested` 只剩 `pendingIntents`（中止激活）和 `promptQueue`（暂停）在处理，Desktop 上没有派发方；`promptQueue` 的 `cancel_then_send` 不再触发取消。`promptExecution`、`pendingSubmit` 依赖 `promptQueue`、设置前置条件和 `pendingIntents`，等它们迁走后再动。
 
 ### 阶段 2a 的范围说明
 

@@ -1,3 +1,4 @@
+import { createTestPromptOperations } from "../../../shared/testing/createTestPromptOperations";
 import { act, renderHook } from "@testing-library/react";
 import {
   createAgentSessionEngine,
@@ -37,6 +38,7 @@ function composerFixture() {
     }
   };
 }
+const prompts = createTestPromptOperations();
 
 describe("useAgentGUISessionEngineState", () => {
   it("shows an optimistic session selection then silently restores canonical settings on failure", () => {
@@ -70,6 +72,7 @@ describe("useAgentGUISessionEngineState", () => {
       useAgentGUISessionEngineState({
         activeConversationId: "session-1",
         composer,
+        prompts,
         sessionEngine
       })
     );
@@ -116,6 +119,7 @@ describe("useAgentGUISessionEngineState", () => {
       useAgentGUISessionEngineState({
         activeConversationId: "session-1",
         composer,
+        prompts,
         sessionEngine
       })
     );
@@ -177,6 +181,7 @@ describe("useAgentGUISessionEngineState", () => {
         useAgentGUISessionEngineState({
           activeConversationId,
           composer: composerFixture().composer,
+          prompts,
           sessionEngine
         }),
       { initialProps: { activeConversationId: "session-1" } }

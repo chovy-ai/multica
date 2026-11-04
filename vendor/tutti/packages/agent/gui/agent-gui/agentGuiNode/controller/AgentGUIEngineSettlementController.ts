@@ -1,6 +1,5 @@
 import {
   selectEngineInteraction,
-  selectEngineInteractionResponse,
   selectEngineHasVisibleQueuedSubmit,
   selectPendingActivations,
   selectPendingSubmitsForSession,
@@ -18,6 +17,7 @@ import type {
   SubmittedDraftSnapshot
 } from "../model/agentGuiNodeTypes";
 import { clearSubmittedDraftIfUnchanged } from "./agentGuiController.draftMessageHelpers";
+import type { AgentGUIPromptOperations } from "./agentGuiController.promptOperations";
 import { restoreFailedAgentGUIHomeDraft } from "./agentGuiController.homeDraftHelpers";
 
 export interface AgentGUIGoalControlPendingSettlement {
@@ -52,6 +52,10 @@ interface AgentGUIEngineSettlementControllerInput {
     ) => Record<string, AgentComposerDraft>
   ): void;
   engine: AgentSessionEngine;
+  prompts: Pick<
+    AgentGUIPromptOperations,
+    "interactionResponse" | "subscribeInteractionResponses"
+  >;
   goalControlSettlements?: Record<string, AgentGUIGoalControlPendingSettlement>;
   interactionDraftSettlements?: Record<
     string,
@@ -67,6 +71,7 @@ interface AgentGUIEngineSettlementControllerInput {
 export class AgentGUIEngineSettlementController {
   private readonly applyDraftUpdate: AgentGUIEngineSettlementControllerInput["applyDraftUpdate"];
   private readonly engine: AgentSessionEngine;
+  private readonly prompts: AgentGUIEngineSettlementControllerInput["prompts"];
   private readonly goalControlSettlements: Record<
     string,
     AgentGUIGoalControlPendingSettlement
@@ -93,6 +98,7 @@ export class AgentGUIEngineSettlementController {
   constructor(input: AgentGUIEngineSettlementControllerInput) {
     this.applyDraftUpdate = input.applyDraftUpdate;
     this.engine = input.engine;
+    this.prompts = input.prompts;
     this.goalControlSettlements = input.goalControlSettlements ?? {};
     this.interactionDraftSettlements = input.interactionDraftSettlements ?? {};
     this.isCurrentConversation = input.isCurrentConversation ?? (() => false);
@@ -106,8 +112,13 @@ export class AgentGUIEngineSettlementController {
     if (this.unsubscribe) return this.unsubscribe;
     this.settle(this.engine.getSnapshot());
     const unsubscribe = this.engine.subscribe((state) => this.settle(state));
+    // A failed answer changes nothing in the engine.
+    const unsubscribeResponses = this.prompts.subscribeInteractionResponses(() =>
+      this.settle(this.engine.getSnapshot())
+    );
     this.unsubscribe = () => {
       unsubscribe();
+      unsubscribeResponses();
       this.unsubscribe = null;
     };
     return this.unsubscribe;
@@ -204,8 +215,7 @@ export class AgentGUIEngineSettlementController {
         pending.turnId,
         pending.requestId
       );
-      const response = selectEngineInteractionResponse(
-        state,
+      const response = this.prompts.interactionResponse(
         pending.agentSessionId,
         pending.turnId,
         pending.requestId

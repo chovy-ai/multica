@@ -1011,8 +1011,6 @@ test("stopping after activation command success preserves the command outcome", 
   }).state;
   const stopped = reduce(state, {
     agentSessionId: "session-new",
-    awaitingTurnExpiresAtUnixMs: 31_000,
-    commandId: "stop:1",
     type: "session/stopRequested",
     workspaceId: "workspace-1"
   }).state.activationsByRequestId["activation-1"];

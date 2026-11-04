@@ -42,7 +42,6 @@ import {
 } from "./attentionReadState.reducer.ts";
 import {
   validateScopedSessionResult,
-  validateCancelResult,
   validateSendInputResult
 } from "./commandResult.validation.ts";
 import {
@@ -65,10 +64,6 @@ import {
   tuttiModeActivationReducer
 } from "./tuttiModeActivation.reducer.ts";
 import {
-  createInitialEditRetryState,
-  editRetryReducer
-} from "./editRetry.reducer.ts";
-import {
   createInitialSessionGoalControlState,
   sessionGoalControlReducer
 } from "./sessionGoalControl.reducer.ts";
@@ -80,7 +75,6 @@ import {
 export function createInitialAgentSessionEngineState(): RootAgentSessionEngineState {
   return {
     attentionReadState: createInitialAttentionReadState(),
-    editRetry: createInitialEditRetryState(),
     engineRuntime: createInitialEngineRuntimeState(),
     pendingIntents: createInitialPendingIntentsState(),
     planDecisions: createInitialPlanDecisionState(),
@@ -126,19 +120,6 @@ export function rootEngineReducer(
           ]
         )
       : null;
-  const interactionResponse =
-    intent.type === "engine/commandResult" &&
-    intent.commandType === "interaction/respond"
-      ? Object.values(state.sessionLifecycle.interactionResponsesById).find(
-          (response) => response.commandId === intent.commandId
-        )
-      : undefined;
-  const interactionResultValidation =
-    intent.type === "engine/commandResult" &&
-    intent.commandType === "interaction/respond" &&
-    intent.outcome === "succeeded"
-      ? validateScopedSessionResult(intent.value, interactionResponse)
-      : null;
   const settingsSessionId =
     intent.type === "engine/commandResult" &&
     intent.commandType === "session/updateSettings"
@@ -163,38 +144,6 @@ export function rootEngineReducer(
     intent.type === "engine/commandResult" &&
     intent.commandType === "session/updateSettings"
       ? selectPromptSettingsExecution(state.promptExecutions, intent.commandId)
-      : null;
-  const cancelEntry =
-    intent.type === "engine/commandResult" &&
-    intent.commandType === "turn/cancel"
-      ? Object.entries(state.sessionLifecycle.operationBySessionId).find(
-          ([, operation]) => operation.cancel.commandId === intent.commandId
-        )
-      : undefined;
-  const cancelResultValidation =
-    intent.type === "engine/commandResult" &&
-    intent.commandType === "turn/cancel" &&
-    intent.outcome === "succeeded"
-      ? validateCancelResult(
-          intent.value,
-          cancelEntry
-            ? {
-                agentSessionId: cancelEntry[0],
-                currentTurn: cancelEntry[1].cancel.turnId
-                  ? (state.sessionLifecycle.turnsById[
-                      canonicalTurnKey(
-                        cancelEntry[0],
-                        cancelEntry[1].cancel.turnId
-                      )
-                    ] ?? null)
-                  : null,
-                turnId: cancelEntry[1].cancel.turnId,
-                workspaceMatches:
-                  state.sessionLifecycle.sessionsById[cancelEntry[0]]
-                    ?.workspaceId === cancelEntry[1].cancel.requestedWorkspaceId
-              }
-            : undefined
-        )
       : null;
   const engineRuntime = engineRuntimeReducer(state.engineRuntime, intent);
   const planIntent =
@@ -327,15 +276,8 @@ export function rootEngineReducer(
     state.sessionLifecycle,
     intent,
     {
-      queueSendNowRequiresCancel: sendNowStrategy === "cancel_then_send",
-      sendNowSubmitRequiresCancel:
-        intent.type === "submit/requested" &&
-        submitRequestAccepted &&
-        sendNowStrategy === "cancel_then_send",
       sendResultValidation,
-      interactionResultValidation,
-      settingsResultValidation,
-      cancelResultValidation
+      settingsResultValidation
     }
   );
   const goalControl = sessionGoalControlReducer(state.goalControl, intent, {
@@ -348,9 +290,7 @@ export function rootEngineReducer(
     { settingsResultValidation }
   );
   const promptQueue = promptQueueReducer(state.promptQueue, intent, {
-    cancelResultValidation,
     deletedSessionIds: sessionLifecycle.state.deletedSessionIds,
-    interactionResultValidation,
     lifecycle: sessionLifecycle.state,
     planFeedbackAccepted: feedbackAccepted,
     sendResultValidation,
@@ -370,7 +310,6 @@ export function rootEngineReducer(
       turnsById: sessionLifecycle.state.turnsById
     }
   );
-  const editRetry = editRetryReducer(state.editRetry, intent);
   const pendingIntents = pendingIntentsReducer(state.pendingIntents, intent, {
     deletedSessionIds: sessionLifecycle.state.deletedSessionIds,
     turnsById: sessionLifecycle.state.turnsById,
@@ -430,7 +369,6 @@ export function rootEngineReducer(
   );
   const unchanged =
     attentionReadState.state === state.attentionReadState &&
-    editRetry.state === state.editRetry &&
     engineRuntime.state === state.engineRuntime &&
     goalControl.state === state.goalControl &&
     pendingIntents.state === state.pendingIntents &&
@@ -446,7 +384,6 @@ export function rootEngineReducer(
     ? state
     : {
         attentionReadState: attentionReadState.state,
-        editRetry: editRetry.state,
         engineRuntime: engineRuntime.state,
         goalControl: goalControl.state,
         pendingIntents: pendingIntents.state,
@@ -460,7 +397,6 @@ export function rootEngineReducer(
         tuttiModeActivation: tuttiModeActivation.state
       };
   const followUpIntents = [
-    ...(editRetry.followUpIntents ?? []),
     ...(goalControl.followUpIntents ?? []),
     ...(sessionReconcile.followUpIntents ?? []),
     ...(sessionLifecycle.followUpIntents ?? []),
@@ -471,7 +407,6 @@ export function rootEngineReducer(
   return {
     commands: [
       ...attentionReadState.commands,
-      ...editRetry.commands,
       ...engineRuntime.commands,
       ...goalControl.commands,
       ...pendingIntents.commands,

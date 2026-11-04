@@ -368,6 +368,7 @@ export function useAgentGUISubmitInteractionActions(
         });
       },
       engine: sessionEngine,
+      prompts: agentActivityRuntime.prompts,
       goalControlSettlements: goalControlSettlementsRef.current,
       interactionDraftSettlements: interactionDraftSettlementsRef.current,
       isCurrentConversation,
@@ -389,6 +390,7 @@ export function useAgentGUISubmitInteractionActions(
     });
     return controller.attach();
   }, [
+    agentActivityRuntime,
     draftByScopeKeyRef,
     isCurrentConversation,
     sessionEngine,
@@ -490,7 +492,7 @@ export function useAgentGUISubmitInteractionActions(
         return false;
       }
       setDetailError(null);
-      return sessionEngine.submitInteractionResponse({
+      return agentActivityRuntime.prompts.respondToInteraction({
         ...(input.action?.trim() ? { action: input.action.trim() } : {}),
         agentSessionId: target.agentSessionId,
         ...(normalizedOptionId ? { optionId: normalizedOptionId } : {}),
@@ -501,9 +503,9 @@ export function useAgentGUISubmitInteractionActions(
     },
     [
       activeEnginePendingInteractions,
+      agentActivityRuntime,
       interactionReadinessSource,
       isRespondingToInteraction,
-      sessionEngine,
       workspaceId
     ]
   );
@@ -765,9 +767,9 @@ export function useAgentGUISubmitInteractionActions(
       if (!agentSessionId) return;
       void noRunningResponseMessage;
       setDetailError(null);
-      sessionEngine.stopSession({ agentSessionId });
+      agentActivityRuntime.prompts.stop(agentSessionId);
     },
-    [sessionEngine]
+    [agentActivityRuntime]
   );
 
   const updateDraftContent = useCallback(

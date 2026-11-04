@@ -11,7 +11,6 @@ import type {
   PromptQueueState
 } from "./promptQueue.types.ts";
 import type {
-  CancelResultValidation,
   SendInputResultValidation,
   ScopedSessionResultValidation
 } from "./commandResult.validation.ts";
@@ -69,8 +68,6 @@ export interface PromptQueueReducerContext {
   deletedSessionIds: Readonly<Record<string, true>>;
   planFeedbackAccepted?: boolean;
   submitRequestAccepted?: boolean;
-  cancelResultValidation?: CancelResultValidation | null;
-  interactionResultValidation?: ScopedSessionResultValidation | null;
   sendResultValidation?: SendInputResultValidation | null;
   sendNowStrategy?: PromptQueueSendNowStrategy | null;
   settingsPreconditionPromptCommandId?: string | null;

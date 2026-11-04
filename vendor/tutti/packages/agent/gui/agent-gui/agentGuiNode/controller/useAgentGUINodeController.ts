@@ -1,6 +1,5 @@
 import {
   createAgentSessionFamilySnapshotSelector,
-  selectEngineSessionIsRespondingToInteraction,
   selectWorkspaceAgentConsumerSession,
   selectWorkspaceAgentConsumerSessions
 } from "@tutti-os/agent-activity-core";
@@ -10,7 +9,10 @@ import { useAgentGUIRuntime } from "../../../agentActivityRuntime";
 import { useAccountStore } from "../../../host/agentHostAccountStore";
 import type { AgentHostUserProject } from "../../../host/agentHostApi";
 import type { AgentSessionComposerSettings } from "../../../shared/agentSessionTypes";
-import { useEngineSelector } from "../../../shared/engine/useEngineSelector";
+import {
+  useEngineSelector,
+  useModelValue
+} from "../../../shared/engine/useEngineSelector";
 import type { AgentGUIDetailViewModel } from "../model/agentGuiNodeTypes";
 import {
   AGENT_GUI_RUNTIME_SESSION_ORIGIN,
@@ -259,6 +261,7 @@ export function useAgentGUINodeController({
   const sessionEngineState = useAgentGUISessionEngineState({
     activeConversationId,
     composer: agentActivityRuntime.composer,
+    prompts: agentActivityRuntime.prompts,
     sessionEngine
   });
   const {
@@ -279,15 +282,14 @@ export function useAgentGUINodeController({
   );
   const activeRelatedPendingInteractions =
     activeSessionFamily.pendingInteractions;
-  const activeRelatedIsRespondingToInteraction = useEngineSelector(
-    sessionEngine,
-    (state) =>
+  const activeRelatedIsRespondingToInteraction = useModelValue(
+    () =>
       activeRelatedPendingInteractions.some((interaction) =>
-        selectEngineSessionIsRespondingToInteraction(
-          state,
+        agentActivityRuntime.prompts.isRespondingToInteraction(
           interaction.agentSessionId
         )
-      )
+      ),
+    [agentActivityRuntime.prompts, activeRelatedPendingInteractions]
   );
   const optimisticComposerTarget =
     useMemo<OptimisticComposerTarget | null>(() => {
@@ -729,7 +731,7 @@ export function useAgentGUINodeController({
     ...sessionDetailTransport,
     ...conversationSelection,
     ...operationActions,
-    activeCancelStatus: sessionEngineState.activeCancelState?.status ?? null,
+    activeCancelStatus: sessionEngineState.activeCancelStatus,
     activePendingInteractions: activeRelatedPendingInteractions,
     activeTurn: sessionEngineState.activeEngineActiveTurn,
     activeLatestPendingSubmitTurnId:

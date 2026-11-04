@@ -10,6 +10,7 @@ import type {
   AgentGUIComposerOptionsReader,
   AgentGUIComposerSettingsLane
 } from "./agent-gui/agentGuiNode/controller/agentGuiController.providerHelpers";
+import type { AgentGUIPromptOperations } from "./agent-gui/agentGuiNode/controller/agentGuiController.promptOperations";
 import type {
   AgentActivityCollaborationRun,
   AgentActivityComposerOptions,
@@ -337,6 +338,8 @@ export interface AgentGUIRuntime {
   composer: AgentGUIComposerOptionsReader & AgentGUIComposerSettingsLane;
   /** Each conversation's committed messages, for reading. */
   transcript: AgentGUITranscriptReader;
+  /** Stops, answers to interactions and edit retries. */
+  prompts: AgentGUIPromptOperations;
   /**
    * Reads the next older page into the session itself, which then updates through
    * its usual snapshot. A runtime with this owns paging; versions need not page.

@@ -730,7 +730,7 @@ test("rescheduling an expiry id replaces the previous deadline", () => {
   assert.equal(engine.getSnapshot().engineRuntime.lastExpiredIntentId, "e-3");
 });
 
-test("stop aborts activation immediately and cancels the first turn when it arrives", () => {
+test("stop aborts activation immediately", () => {
   const { commandPort, engine } = createHarness();
   engine.dispatch({
     agentSessionId: "session-1",
@@ -752,8 +752,6 @@ test("stop aborts activation immediately and cancels the first turn when it arri
 
   engine.dispatch({
     agentSessionId: "session-1",
-    awaitingTurnExpiresAtUnixMs: 30_000,
-    commandId: "stop-1",
     type: "session/stopRequested",
     workspaceId: "ws-1"
   });
@@ -766,48 +764,6 @@ test("stop aborts activation immediately and cancels the first turn when it arri
     engine.getSnapshot().pendingIntents.activationsByRequestId["activation-1"]
       ?.status,
     "canceled"
-  );
-  assert.equal(
-    engine.getSnapshot().sessionLifecycle.operationBySessionId["session-1"]
-      ?.cancel.status,
-    "awaitingTurn"
-  );
-
-  engine.dispatch({
-    session: {
-      activeTurn: {
-        agentSessionId: "session-1",
-        origin: "user_prompt",
-        phase: "running",
-        startedAtUnixMs: 2,
-        turnId: "turn-1",
-        updatedAtUnixMs: 2
-      },
-      activeTurnId: "turn-1",
-      agentSessionId: "session-1",
-      cwd: "/workspace",
-      latestTurnInteractions: [],
-      pendingInteractions: [],
-      provider: "cursor",
-      title: "Session",
-      updatedAtUnixMs: 2,
-      workspaceId: "ws-1"
-    },
-    type: "session/upserted"
-  });
-
-  assert.deepEqual(
-    commandPort.executedCommands.find(
-      (command) => command.type === "turn/cancel"
-    ),
-    {
-      agentSessionId: "session-1",
-      commandId: "stop-1",
-      timeoutMs: 30_000,
-      turnId: "turn-1",
-      type: "turn/cancel",
-      workspaceId: "ws-1"
-    }
   );
 });
 

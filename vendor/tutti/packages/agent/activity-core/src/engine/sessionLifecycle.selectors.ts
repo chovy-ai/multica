@@ -5,8 +5,6 @@ import type {
   AgentSessionEngineStateBase
 } from "./types.ts";
 import type {
-  InteractionResponseState,
-  SessionCancelState,
   CanonicalAgentSession,
   SessionOperationState
 } from "./sessionLifecycle.types.ts";
@@ -201,33 +199,6 @@ export function selectEngineInteraction(
     : null;
 }
 
-export function selectEngineInteractionResponse(
-  state: AgentSessionEngineStateBase,
-  agentSessionId: string | null | undefined,
-  turnId: string | null | undefined,
-  requestId: string | null | undefined
-): InteractionResponseState | null {
-  const sessionId = agentSessionId?.trim() ?? "";
-  const turn = turnId?.trim() ?? "";
-  const id = requestId?.trim() ?? "";
-  return sessionId && turn && id
-    ? (state.sessionLifecycle.interactionResponsesById[
-        canonicalInteractionKey(sessionId, turn, id)
-      ] ?? null)
-    : null;
-}
-
-export function selectEngineSessionIsRespondingToInteraction(
-  state: AgentSessionEngineStateBase,
-  agentSessionId: string | null | undefined
-): boolean {
-  const id = agentSessionId?.trim() ?? "";
-  return Object.values(state.sessionLifecycle.interactionResponsesById).some(
-    (response) =>
-      response.agentSessionId === id &&
-      (response.status === "responding" || response.status === "unknown")
-  );
-}
 
 export function selectEngineGoalControl(
   state: AgentSessionEngineState,
@@ -235,19 +206,6 @@ export function selectEngineGoalControl(
 ) {
   const id = agentSessionId?.trim() ?? "";
   return state.goalControl.presentationsBySessionId[id] ?? null;
-}
-
-export function selectEngineInteractionResponseError(
-  state: AgentSessionEngineStateBase,
-  agentSessionId: string | null | undefined
-): string | null {
-  const id = agentSessionId?.trim() ?? "";
-  return (
-    Object.values(state.sessionLifecycle.interactionResponsesById)
-      .filter((response) => response.agentSessionId === id)
-      .sort((left, right) => right.commandId.localeCompare(left.commandId))
-      .find((response) => response.errorMessage)?.errorMessage ?? null
-  );
 }
 
 export function selectEngineLatestTurn(
@@ -303,25 +261,6 @@ export function selectEngineSubmitAvailability(
   return availability.reason
     ? { state: availability.state, reason: availability.reason }
     : { state: availability.state };
-}
-
-export function selectEngineCancelPending(
-  state: AgentSessionEngineStateBase,
-  agentSessionId: string | null | undefined
-): boolean {
-  const id = agentSessionId?.trim() ?? "";
-  const status = state.sessionLifecycle.operationBySessionId[id]?.cancel.status;
-  return (
-    status === "requested" || status === "accepted" || status === "awaitingTurn"
-  );
-}
-
-export function selectEngineCancelState(
-  state: AgentSessionEngineStateBase,
-  agentSessionId: string | null | undefined
-): SessionCancelState | null {
-  const id = agentSessionId?.trim() ?? "";
-  return state.sessionLifecycle.operationBySessionId[id]?.cancel ?? null;
 }
 
 export function selectEngineSessionOperation(

@@ -124,7 +124,6 @@ export type EngineIntent =
   | SessionCommandsIntent
   | SessionLifecycleIntent
   | SessionGoalControlIntent
-  | EditRetryIntent
   | TuttiModeActivationIntent;
 
 // ---------------------------------------------------------------------------
@@ -189,7 +188,6 @@ export type EngineExternalCommand =
   | AttentionReadCommand
   | EngineProbeCommand
   | EngineReconcileWorkspaceCommand
-  | InteractionRespondCommand
   | PlanSubmitDecisionCommand
   | PromptQueueSendCommand
   | SessionActivateCommand
@@ -197,17 +195,13 @@ export type EngineExternalCommand =
   | SessionUnactivateCommand
   | SessionReconcileCommand
   | SessionGoalControlCommand
-  | TurnCancelCommand
-  | EditRetryCommand
   | TuttiModeActivationCommand;
 
 type AgentSessionEffectCommand =
-  | InteractionRespondCommand
   | PromptQueueSendCommand
   | SessionActivateCommand
   | SessionGoalControlCommand
-  | SessionUpdateSettingsCommand
-  | TurnCancelCommand;
+  | SessionUpdateSettingsCommand;
 
 export type EngineExtensionCommand = Exclude<
   EngineExternalCommand,
@@ -258,7 +252,6 @@ export interface EngineRuntimeState {
  */
 export interface AgentSessionEngineStateBase {
   attentionReadState: AttentionReadState;
-  editRetry: EditRetryState;
   engineRuntime: EngineRuntimeState;
   pendingIntents: PendingIntentsState;
   planDecisions: PlanDecisionState;
@@ -373,18 +366,10 @@ export interface AgentSessionEffectPort {
     input: AgentSessionActivateEffectInput,
     options: EngineEffectOptions
   ): Promise<AgentSessionActivateEffectResult>;
-  cancelTurn(
-    input: AgentActivityCancelTurnInput,
-    options: EngineEffectOptions
-  ): Promise<unknown>;
   controlGoal?(
     input: AgentSessionGoalControlEffectInput,
     options?: EngineEffectOptions
   ): Promise<AgentActivityGoalControlResult>;
-  respondToInteraction(
-    input: AgentActivitySubmitInteractiveInput,
-    options: EngineEffectOptions
-  ): Promise<unknown>;
   sendInput(
     input: AgentActivitySendInput,
     options: EngineEffectOptions
@@ -435,15 +420,6 @@ export type AgentSessionEngineListener = (
 
 export type AgentSessionEngineIntentObserver = (intent: EngineIntent) => void;
 
-
-export interface AgentSessionSubmitInteractionResponseInput {
-  action?: string;
-  agentSessionId: string;
-  optionId?: string;
-  payload?: Readonly<Record<string, unknown>>;
-  requestId: string;
-  turnId: string;
-}
 
 interface AgentSessionActivationInputBase {
   agentSessionId: string;
@@ -504,12 +480,6 @@ export interface AgentSessionSubmitPromptResult {
   queued: boolean;
 }
 
-export interface AgentSessionStopInput {
-  agentSessionId: string;
-  /** Identity of the pending submit to stop while its Turn is being admitted. */
-  clientSubmitId?: string;
-}
-
 export interface AgentSessionEngine {
   readonly identity: AgentSessionEngineIdentity;
   activateSession(input: AgentSessionActivationInput): boolean;
@@ -519,13 +489,9 @@ export interface AgentSessionEngine {
   dispatch(intent: EngineIntent, options?: EngineDispatchOptions): void;
   dispose(): void;
   getSnapshot(): AgentSessionEngineState;
-  submitInteractionResponse(
-    input: AgentSessionSubmitInteractionResponseInput
-  ): boolean;
   submitPrompt(
     input: AgentSessionSubmitPromptInput
   ): AgentSessionSubmitPromptResult;
-  stopSession(input: AgentSessionStopInput): void;
   subscribe(listener: AgentSessionEngineListener): () => void;
 }
 import type {
@@ -541,10 +507,8 @@ import type {
   SessionUnactivateCommand
 } from "./pendingIntents.types.ts";
 import type {
-  InteractionRespondCommand,
   SessionLifecycleIntent,
-  SessionLifecycleState,
-  TurnCancelCommand
+  SessionLifecycleState
 } from "./sessionLifecycle.types.ts";
 import type {
   AgentActivitySessionDetailSnapshot,
@@ -574,7 +538,6 @@ import type {
   TuttiModeActivationState
 } from "./tuttiModeActivation.types.ts";
 import type {
-  AgentActivityCancelTurnInput,
   AgentActivityComposerOptions,
   AgentActivityComposerSettings,
   AgentActivityGoalControlResult,
@@ -592,11 +555,6 @@ import type {
   AgentActivityCapabilityReference,
   AgentActivityInitialTuttiModeActivation
 } from "../tuttiMode.types.ts";
-import type {
-  EditRetryCommand,
-  EditRetryIntent,
-  EditRetryState
-} from "./editRetry.types.ts";
 import type {
   AgentSessionControlGoalAdmission,
   AgentSessionControlGoalInput,

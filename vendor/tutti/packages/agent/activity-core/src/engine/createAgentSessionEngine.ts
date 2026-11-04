@@ -9,12 +9,8 @@ import {
 } from "./engineIntent.normalization.ts";
 import {
   selectEngineActiveTurn,
-  selectEngineInteractionResponse
 } from "./sessionLifecycle.selectors.ts";
-import {
-  selectLatestStopTargetSubmitForSession,
-  selectPendingSubmitsForSession
-} from "./pendingIntents.selectors.ts";
+import { selectPendingSubmitsForSession } from "./pendingIntents.selectors.ts";
 import {
   selectEngineHasVisibleQueuedSubmit,
   selectEngineSubmitWouldBeVisibleInQueue
@@ -31,8 +27,6 @@ import {
   type AgentSessionEngineIntentObserver,
   type AgentSessionEngineListener,
   type AgentSessionActivationInput,
-  type AgentSessionStopInput,
-  type AgentSessionSubmitInteractionResponseInput,
   type AgentSessionSubmitPromptInput,
   type AgentSessionSubmitPromptResult,
   type EngineClock,
@@ -63,8 +57,6 @@ import type {
  */
 export const ENGINE_INTENT_BATCH_DELAY_MS = 33;
 const SESSION_GOAL_CONTROL_TIMEOUT_MS = 30_000;
-const SESSION_STOP_TIMEOUT_MS = 30_000;
-const INTERACTION_RESPONSE_TIMEOUT_MS = 30_000;
 const SESSION_PROMPT_CONFIRMATION_TIMEOUT_MS = 120_000;
 
 export interface CreateAgentSessionEngineInput {
@@ -106,9 +98,7 @@ export function createAgentSessionEngine({
   let batchFlushTask: EngineScheduledTask | null = null;
   let draining = false;
   let disposed = false;
-  let interactionResponseCommandSequence = 1;
   let sessionGoalControlCommandSequence = 1;
-  let sessionStopCommandSequence = 1;
 
   const expiryClock = createEngineExpiryClock({
     clock,
@@ -258,11 +248,6 @@ export function createAgentSessionEngine({
     drainQueue();
   }
 
-  function nextInteractionResponseCommandId(): string {
-    const sequence = interactionResponseCommandSequence++;
-    return `interaction:${clock.nowUnixMs()}:${sequence}`;
-  }
-
   function nextSessionGoalControlCommandId(requestedAtUnixMs: number): string {
     const sequence = sessionGoalControlCommandSequence++;
     return `goal:${requestedAtUnixMs}:${sequence}`;
@@ -307,75 +292,6 @@ export function createAgentSessionEngine({
         operation?.commandId === commandId && operation.status === "pending",
       clientSubmitId
     };
-  }
-
-  function stopSession(input: AgentSessionStopInput): void {
-    const agentSessionId = input.agentSessionId.trim();
-    if (!agentSessionId) {
-      return;
-    }
-    const activeTurn = selectEngineActiveTurn(publicSnapshot, agentSessionId);
-    const requestedClientSubmitId = input.clientSubmitId?.trim() || null;
-    const clientSubmitId =
-      requestedClientSubmitId ??
-      (!activeTurn
-        ? selectLatestStopTargetSubmitForSession(publicSnapshot, agentSessionId)
-            ?.clientSubmitId
-        : undefined);
-    const requestedAtUnixMs = clock.nowUnixMs();
-    const sequence = sessionStopCommandSequence++;
-    dispatch({
-      agentSessionId,
-      awaitingTurnExpiresAtUnixMs: requestedAtUnixMs + SESSION_STOP_TIMEOUT_MS,
-      commandId: `stop:${requestedAtUnixMs}:${sequence}`,
-      ...(clientSubmitId ? { clientSubmitId } : {}),
-      timeoutMs: SESSION_STOP_TIMEOUT_MS,
-      type: "session/stopRequested",
-      workspaceId: engineIdentity.workspaceId
-    });
-  }
-
-  function submitInteractionResponse(
-    input: AgentSessionSubmitInteractionResponseInput
-  ): boolean {
-    const agentSessionId = input.agentSessionId.trim();
-    const requestId = input.requestId.trim();
-    const turnId = input.turnId.trim();
-    if (!agentSessionId || !requestId || !turnId) {
-      return false;
-    }
-    const action = input.action?.trim() || undefined;
-    const optionId = input.optionId?.trim() || undefined;
-    const payload = input.payload ? { ...input.payload } : undefined;
-    const current = selectEngineInteractionResponse(
-      publicSnapshot,
-      agentSessionId,
-      turnId,
-      requestId
-    );
-    const commandId = nextInteractionResponseCommandId();
-    dispatch({
-      ...(action ? { action } : {}),
-      agentSessionId,
-      commandId,
-      ...(optionId ? { optionId } : {}),
-      ...(payload ? { payload } : {}),
-      requestId,
-      retry: current?.status === "failed",
-      timeoutMs: INTERACTION_RESPONSE_TIMEOUT_MS,
-      turnId,
-      type: "interaction/responseRequested",
-      workspaceId: engineIdentity.workspaceId
-    });
-    const response = selectEngineInteractionResponse(
-      publicSnapshot,
-      agentSessionId,
-      turnId,
-      requestId
-    );
-    return (
-      response?.commandId === commandId && response.status === "responding"
-    );
   }
 
   function activateSession(input: AgentSessionActivationInput): boolean {
@@ -481,9 +397,7 @@ export function createAgentSessionEngine({
     getSnapshot() {
       return publicSnapshot;
     },
-    submitInteractionResponse,
     submitPrompt,
-    stopSession,
     subscribe(listener) {
       listeners.add(listener);
       return () => {

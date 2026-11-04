@@ -27,7 +27,6 @@ export function projectPublicAgentSessionEngineState(
       previousRoot.sessionLifecycle.sessionsById;
   const projected: AgentSessionEngineState = {
     attentionReadState: state.attentionReadState,
-    editRetry: state.editRetry,
     engineRuntime: state.engineRuntime,
     goalControl: goalControlUnchanged
       ? previous.goalControl

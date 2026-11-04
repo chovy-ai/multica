@@ -622,17 +622,16 @@ describe("workspaceAgentConsumerSelectors", () => {
     expect(model.waitingCount).toBe(1);
     expect(selectMessageCenterAttentionDeckItems(model.items)).toHaveLength(1);
 
-    engine.dispatch({
-      type: "interaction/responseRequested",
-      agentSessionId: "child-1",
-      commandId: "respond-child-approval-1",
-      requestId: "child-approval-1",
-      turnId: "child-turn-1",
-      workspaceId: "workspace-1",
-      optionId: "allow"
-    });
     const respondingPresentation =
-      selectWorkspaceAgentMessageCenterPresentation(engine.getSnapshot());
+      selectWorkspaceAgentMessageCenterPresentation(
+        engine.getSnapshot(),
+        (agentSessionId, turnId, requestId) =>
+          agentSessionId === "child-1" &&
+          turnId === "child-turn-1" &&
+          requestId === "child-approval-1"
+            ? { status: "responding" }
+            : null
+      );
     expect(
       workspaceAgentMessageCenterPromptStatus(
         respondingPresentation,

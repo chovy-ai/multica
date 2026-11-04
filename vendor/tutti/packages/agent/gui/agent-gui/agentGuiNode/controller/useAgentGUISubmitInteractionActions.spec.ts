@@ -1,3 +1,4 @@
+import { createTestPromptOperations } from "../../../shared/testing/createTestPromptOperations";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   createAgentSessionEngine,
@@ -121,7 +122,7 @@ function createGoalControlInput(
     activeConversationIdRef: { current: "session-1" },
     activeEngineActiveTurn: null,
     activeEnginePendingInteractions: [],
-    agentActivityRuntime: {},
+    agentActivityRuntime: { prompts: createTestPromptOperations() },
     conversationListQuery: {},
     conversationsRef: { current: [] },
     dataRef: { current: {} },
@@ -204,22 +205,20 @@ describe("new-conversation home draft lifecycle", () => {
 });
 
 describe("conversation stop", () => {
-  it("routes activation and active-turn stop through the Engine semantic operation", () => {
+  it("routes activation and active-turn stop through the prompt service", () => {
     const goalControl = vi.fn(async () => undefined);
-    const { input, sessionEngine } = createGoalControlInput(
+    const { input } = createGoalControlInput(
       goalControl as never
     );
-    const stopSession = vi.spyOn(sessionEngine, "stopSession");
+    const stop = vi.spyOn(input.agentActivityRuntime.prompts, "stop");
     const { result } = renderHook(() =>
       useAgentGUISubmitInteractionActions(input)
     );
 
     act(() => result.current.interruptCurrentTurn("not running"));
 
-    expect(stopSession).toHaveBeenCalledTimes(1);
-    expect(stopSession).toHaveBeenCalledWith({
-      agentSessionId: "session-1"
-    });
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledWith("session-1");
   });
 });
 
@@ -252,13 +251,12 @@ describe("interaction submissions", () => {
     }
   );
 
-  it("routes the explicit answer through the Engine semantic operation", () => {
+  it("routes the explicit answer through the prompt service", () => {
     const goalControl = vi.fn(async () => undefined);
     const { input, sessionEngine, setDetailError } = createGoalControlInput(
       goalControl as never
     );
-    const submitInteractionResponse = vi
-      .spyOn(sessionEngine, "submitInteractionResponse")
+    const submitInteractionResponse = vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction")
       .mockReturnValue(true);
     const { result } = renderHook(() =>
       useAgentGUISubmitInteractionActions({
@@ -302,8 +300,7 @@ describe("interaction submissions", () => {
     const { input, sessionEngine } = createGoalControlInput(
       goalControl as never
     );
-    const submitInteractionResponse = vi
-      .spyOn(sessionEngine, "submitInteractionResponse")
+    const submitInteractionResponse = vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction")
       .mockReturnValue(true);
     let readiness: "ready" | "blocked" = "blocked";
     const interactionReadinessSource = {
@@ -371,8 +368,7 @@ describe("interaction submissions", () => {
     const { input, sessionEngine } = createGoalControlInput(
       goalControl as never
     );
-    const submitInteractionResponse = vi
-      .spyOn(sessionEngine, "submitInteractionResponse")
+    const submitInteractionResponse = vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction")
       .mockReturnValue(true);
     const interactionReadinessSource = {
       getInteractionReadiness: vi.fn(() => ({ status: "ready" }) as const),
@@ -437,10 +433,7 @@ describe("interaction submissions", () => {
     const { input, sessionEngine } = createGoalControlInput(
       goalControl as never
     );
-    const submitInteractionResponse = vi.spyOn(
-      sessionEngine,
-      "submitInteractionResponse"
-    );
+    const submitInteractionResponse = vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction");
     const { result } = renderHook(() =>
       useAgentGUISubmitInteractionActions(input)
     );
@@ -521,8 +514,7 @@ describe("existing-session prompt submission", () => {
     draftByScopeKeyRef.current = {
       "session:session-1": draft("Continue with a different direction")
     };
-    const submitInteractionResponse = vi
-      .spyOn(sessionEngine, "submitInteractionResponse")
+    const submitInteractionResponse = vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction")
       .mockReturnValue(true);
     const submitPrompt = vi.spyOn(sessionEngine, "submitPrompt");
     const { result } = renderHook(() =>
@@ -585,7 +577,7 @@ describe("existing-session prompt submission", () => {
     draftByScopeKeyRef.current = {
       "session:session-1": draft("stale projection")
     };
-    vi.spyOn(sessionEngine, "submitInteractionResponse").mockReturnValue(true);
+    vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction").mockReturnValue(true);
     const { result } = renderHook(() =>
       useAgentGUISubmitInteractionActions(input)
     );
@@ -639,7 +631,7 @@ describe("existing-session prompt submission", () => {
     draftByScopeKeyRef.current = {
       "session:session-1": draft("Continue with a different direction")
     };
-    vi.spyOn(sessionEngine, "submitInteractionResponse").mockReturnValue(false);
+    vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction").mockReturnValue(false);
     const submitPrompt = vi.spyOn(sessionEngine, "submitPrompt");
     const { result } = renderHook(() =>
       useAgentGUISubmitInteractionActions(input)
@@ -686,10 +678,7 @@ describe("existing-session prompt submission", () => {
         updatedAtUnixMs: 1
       }
     ];
-    const submitInteractionResponse = vi.spyOn(
-      sessionEngine,
-      "submitInteractionResponse"
-    );
+    const submitInteractionResponse = vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction");
     const submitPrompt = vi
       .spyOn(sessionEngine, "submitPrompt")
       .mockReturnValue({ accepted: true, queued: true });
@@ -735,10 +724,7 @@ describe("existing-session prompt submission", () => {
         updatedAtUnixMs: 1
       }
     ];
-    const submitInteractionResponse = vi.spyOn(
-      sessionEngine,
-      "submitInteractionResponse"
-    );
+    const submitInteractionResponse = vi.spyOn(input.agentActivityRuntime.prompts, "respondToInteraction");
     const submitPrompt = vi
       .spyOn(sessionEngine, "submitPrompt")
       .mockReturnValue({ accepted: true, queued: true });
