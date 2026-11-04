@@ -31,21 +31,6 @@ import type {
 } from "@tutti-os/agent-activity-core";
 import type { AgentComposerDraft } from "./agent-gui/agentGuiNode/model/agentGuiNodeTypes";
 import type { AgentHostAgentSessionComposerSettings } from "./shared/contracts/dto";
-import type {
-  AgentConversationRailDeleteSessionsBatchInput,
-  AgentConversationRailDeleteSessionsBatchResult,
-  AgentConversationRailListPinnedSessionsPageInput,
-  AgentConversationRailListSessionSectionPageInput,
-  AgentConversationRailListSessionSectionsInput,
-  AgentConversationRailListSessionsPageInput,
-  AgentConversationRailSessionPage,
-  AgentConversationRailSessionSection,
-  AgentConversationRailSessionSectionDeletionCandidates,
-  AgentConversationRailSessionSectionScopeInput,
-  AgentConversationRailSessionSectionsResult,
-  AgentConversationRailSessionsPageResult,
-  AgentConversationRailUserProject
-} from "./agentConversationRailContracts";
 import { useModelValue } from "./shared/engine/useEngineSelector";
 
 export type AgentActivitySessionMessages = Readonly<
@@ -83,22 +68,16 @@ export interface AgentActivityRuntimeListGeneratedFilesInput {
   workspaceId: string;
 }
 
-export type AgentActivityRuntimeListSessionsPageInput =
-  AgentConversationRailListSessionsPageInput;
-export type AgentActivityRuntimeSessionPageResult =
-  AgentConversationRailSessionsPageResult;
-export type AgentActivityRuntimeListSessionSectionsInput =
-  AgentConversationRailListSessionSectionsInput;
-export type AgentActivityRuntimeListSessionSectionPageInput =
-  AgentConversationRailListSessionSectionPageInput;
-export type AgentActivityRuntimeListPinnedSessionsPageInput =
-  AgentConversationRailListPinnedSessionsPageInput;
-export type AgentActivityRuntimeUserProject = AgentConversationRailUserProject;
-export type AgentActivityRuntimeSessionSection =
-  AgentConversationRailSessionSection;
-export type AgentActivityRuntimeSessionPage = AgentConversationRailSessionPage;
-export type AgentActivityRuntimeSessionSectionsResult =
-  AgentConversationRailSessionSectionsResult;
+export interface AgentActivityRuntimeUserProject {
+  createdAtUnixMs: number;
+  id: string;
+  label: string;
+  lastUsedAtUnixMs?: number;
+  path: string;
+  pinnedAtUnixMs: number;
+  sectionKey: string;
+  updatedAtUnixMs: number;
+}
 
 export interface AgentActivityRuntimeGeneratedFile {
   label: string;
@@ -184,8 +163,6 @@ export type AgentActivityRuntimeActivateSessionInput =
   | (AgentActivityRuntimeActivateSessionInputBase & {
       agentTargetId: string;
       clientSubmitId: string;
-      initialGoalControl?: AgentActivityCreateSessionInput["initialGoalControl"];
-      initialTuttiModeActivation?: AgentActivityCreateSessionInput["initialTuttiModeActivation"];
       mode: "new";
     })
   | (AgentActivityRuntimeActivateSessionInputBase & {
@@ -278,15 +255,6 @@ export type AgentActivityRuntimeStagePastedTextResult =
       uri?: string;
     };
 
-export type AgentActivityRuntimeSessionSectionScopeInput =
-  AgentConversationRailSessionSectionScopeInput;
-export type AgentActivityRuntimeSessionSectionDeletionCandidates =
-  AgentConversationRailSessionSectionDeletionCandidates;
-export type AgentActivityRuntimeDeleteSessionsBatchInput =
-  AgentConversationRailDeleteSessionsBatchInput;
-export type AgentActivityRuntimeDeleteSessionsBatchResult =
-  AgentConversationRailDeleteSessionsBatchResult;
-
 export interface AgentActivityRuntimeSessionAttachment {
   attachmentId: string;
   mimeType: string;
@@ -364,13 +332,6 @@ export interface AgentGUIRuntime {
    */
   conversationActivityViewEnabled?: boolean;
   /**
-   * Host query limits for the Conversation Rail. Omit when the backend accepts
-   * AgentGUI's default limits.
-   */
-  conversationRailQueryLimits?: {
-    sectionRefreshLimitMax: number;
-  };
-  /**
    * The session cwd is not resolvable on the local filesystem (e.g. a
    * shared/cloud sandbox not mounted locally), so AgentGUI must not run its
    * local stat-based "working directory missing" existence check — it would
@@ -402,24 +363,6 @@ export interface AgentGUIRuntime {
   listAgentGeneratedFiles?(
     input: AgentActivityRuntimeListGeneratedFilesInput
   ): Promise<AgentActivityRuntimeGeneratedFileList>;
-  listSessionsPage?(
-    input: AgentActivityRuntimeListSessionsPageInput
-  ): Promise<AgentActivityRuntimeSessionPageResult>;
-  listSessionSections?(
-    input: AgentActivityRuntimeListSessionSectionsInput
-  ): Promise<AgentActivityRuntimeSessionSectionsResult>;
-  listSessionSectionPage?(
-    input: AgentActivityRuntimeListSessionSectionPageInput
-  ): Promise<AgentActivityRuntimeSessionSection>;
-  listSessionSectionDeletionCandidates?(
-    input: AgentActivityRuntimeSessionSectionScopeInput
-  ): Promise<AgentActivityRuntimeSessionSectionDeletionCandidates>;
-  deleteSessionsBatch?(
-    input: AgentActivityRuntimeDeleteSessionsBatchInput
-  ): Promise<AgentActivityRuntimeDeleteSessionsBatchResult>;
-  listPinnedSessionsPage?(
-    input: AgentActivityRuntimeListPinnedSessionsPageInput
-  ): Promise<AgentActivityRuntimeSessionPage>;
   load(
     workspaceId: string,
     signal?: AbortSignal

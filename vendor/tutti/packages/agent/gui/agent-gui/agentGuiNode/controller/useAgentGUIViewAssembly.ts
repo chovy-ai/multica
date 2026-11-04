@@ -14,7 +14,6 @@ import type { useAgentGUILocalState } from "./useAgentGUILocalState";
 import type { useAgentGUIComposerCapabilities } from "./useAgentGUIComposerCapabilities";
 import type { useAgentGUISessionDetailTransport } from "./useAgentGUISessionDetailTransport";
 import { resolveAgentGUIProviderReadinessGateForView } from "../model/agentGuiProviderReadiness";
-import type { useAgentGUITuttiModeActivation } from "./useAgentGUITuttiModeActivation";
 import { targetConnectionForAgentGUIView } from "./agentGuiController.providerHelpers";
 import { isAgentGUIAgentTargetComingSoon } from "../../../agentTargets";
 import { useModelValue } from "../../../shared/engine/useEngineSelector";
@@ -79,7 +78,6 @@ type UseAgentGUIViewAssemblyInput = ConversationPresentationInput &
       typeof useAgentGUIControllerActions
     >[0]["selectConversation"];
     providerRailMode: AgentGUIProviderRailMode | undefined;
-    tuttiModeActivation: ReturnType<typeof useAgentGUITuttiModeActivation>;
   };
 
 export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
@@ -232,10 +230,6 @@ export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
     ...providerHome,
     loadOlderConversationMessages: input.loadOlderConversationMessages,
     selectConversation: input.selectConversation,
-    setTuttiModeActive: input.tuttiModeActivation.setActive,
-    setTuttiModeEffect: input.tuttiModeActivation.setEffect,
-    setTuttiModeSpeed: input.tuttiModeActivation.setSpeed,
-    retryTuttiModeActivation: input.tuttiModeActivation.retry,
     updateSelectedProjectPath: input.updateSelectedProjectPath
   });
   const viewData =
@@ -290,15 +284,7 @@ export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
       hasPendingSubmitStopTarget: session.hasPendingSubmitStopTarget,
       promptImagesSupported: input.promptImagesSupported,
       compactSupported: input.compactSupported,
-      goalPauseSupported: input.goalPauseSupported,
       gate: session.composerGate,
-      isTuttiModeActive: input.tuttiModeActivation.active,
-      isTuttiModeUpdating: input.tuttiModeActivation.updatePending,
-      tuttiModeEffect:
-        input.tuttiModeActivation.effect ??
-        input.tuttiModeActivation.orchestrationIntensity,
-      tuttiModeSpeed: input.tuttiModeActivation.speed ?? 50,
-      tuttiModeUpdateStatus: input.tuttiModeActivation.updateStatus,
       composerSettings: stableComposerSettings,
       queueStatus: detail.queueStatus,
       queuedPrompts: detail.queuedPrompts,
@@ -329,9 +315,7 @@ export function useAgentGUIViewAssembly(input: UseAgentGUIViewAssemblyInput) {
     },
     operations: {
       forkThroughTurnPendingTurnIds,
-      goalClearNoticeSequence: input.goalClearNoticeSequence,
       isDeletingConversation: input.isDeletingConversation,
-      isDeletingProjectConversations: input.isDeletingProjectConversations,
       isUserProjectMutationPending: input.isUserProjectMutationPending,
       pendingDeleteConversation: input.pendingDeleteConversation,
       pendingDeleteProjectConversations: input.pendingDeleteProjectConversations

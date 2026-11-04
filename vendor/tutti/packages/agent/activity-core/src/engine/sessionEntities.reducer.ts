@@ -731,25 +731,11 @@ function preserveProjectedSessionState(
     current?.messageVersion ?? 0,
     incoming.messageVersion ?? 0
   );
-  const goalSyncState =
-    current?.goalSyncState !== undefined &&
-    !Object.prototype.hasOwnProperty.call(incoming, "goalSyncState")
-      ? current.goalSyncState
-      : undefined;
-  const tuttiModeActivation =
-    current?.tuttiModeActivation &&
-    (!incoming.tuttiModeActivation ||
-      incoming.tuttiModeActivation.currentRevision.revision <
-        current.tuttiModeActivation.currentRevision.revision)
-      ? current.tuttiModeActivation
-      : undefined;
   const preserved = {
     ...incoming,
     ...(messageVersion === (incoming.messageVersion ?? 0)
       ? {}
       : { messageVersion }),
-    ...(goalSyncState === undefined ? {} : { goalSyncState }),
-    ...(tuttiModeActivation === undefined ? {} : { tuttiModeActivation })
   };
   if (
     current?.lifecycleCapabilitiesProjected === true &&

@@ -66,9 +66,6 @@ export function validateSendInputResult(
       reason: "send_result_workspace_scope_mismatch"
     };
   }
-  if (value.kind === "goalControl") {
-    return { kind: "valid", result: value };
-  }
   const turnSessionId = value.turn.agentSessionId.trim();
   const turnId = value.turnId.trim();
   if (!turnId || value.turn.turnId.trim() !== turnId) {
@@ -93,16 +90,6 @@ function isSendInputResult(
     turn?: Partial<AgentActivityTurn>;
     turnId?: unknown;
   };
-  if (
-    result.kind === "goalControl" &&
-    result.session &&
-    typeof result.session.agentSessionId === "string" &&
-    typeof result.session.workspaceId === "string" &&
-    Array.isArray(result.session.latestTurnInteractions) &&
-    Array.isArray(result.session.pendingInteractions)
-  ) {
-    return true;
-  }
   return Boolean(
     result.session &&
     result.turn &&

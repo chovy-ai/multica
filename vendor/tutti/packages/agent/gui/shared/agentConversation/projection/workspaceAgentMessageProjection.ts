@@ -144,32 +144,11 @@ function projectMessageToTimelineItem(
     const kind = normalizeToken(message.kind);
     const role = normalizeToken(message.role);
     const payload = normalizedPayload(message.payload);
-    const goalControlAudit = isGoalControlAudit(message);
     const id = normalizedMessageId(message.version, index);
     const seq = index + 1;
-    const eventId = goalControlAudit
-      ? firstNonEmptyString(
-          stringValue(payload.messageId),
-          message.messageId,
-          `message:${id}`
-        )
-      : message.messageId.trim() || `message:${id}`;
+    const eventId = message.messageId.trim() || `message:${id}`;
     const turnId = message.turnId?.trim() || undefined;
     const occurredAtUnixMs = messageDisplayOrderTime(message);
-
-    if (goalControlAudit) {
-      return messageTimelineItem({
-        message,
-        id,
-        seq,
-        eventId,
-        actorType: "user",
-        itemType: "goal.control",
-        role: "user",
-        content: messageText(message),
-        occurredAtUnixMs
-      });
-    }
 
     if (kind === "tool_call") {
       const callId = firstNonEmptyString(
@@ -346,13 +325,6 @@ function projectMessageToTimelineItem(
       content: statusMessageText(statusMessage),
       occurredAtUnixMs
     });
-}
-
-function isGoalControlAudit(message: AgentActivityMessage): boolean {
-  return (
-    normalizeToken(message.kind) === "session_audit" &&
-    normalizedPayload(message.payload).goalControl === true
-  );
 }
 
 function normalizeLegacyCompactNotice(

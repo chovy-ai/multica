@@ -1,11 +1,9 @@
 import type { AgentActivityTurn } from "@tutti-os/agent-activity-core";
 import type { WorkspaceAgentActivityTimelineItem } from "./workspaceAgentTimelineTypes";
-import { appendWorkspaceAgentGoalControl } from "./workspaceAgentGoalControlProjection";
 import { isWorkspaceAgentToolCallItem } from "./workspaceAgentToolCallDisplay";
 import type {
   BuildWorkspaceAgentSessionDetailInput,
   WorkspaceAgentSessionDetailAgentItem,
-  WorkspaceAgentSessionDetailGoalControl,
   WorkspaceAgentSessionDetailToolCall,
   WorkspaceAgentSessionDetailToolGroupEntry,
   WorkspaceAgentSessionDetailTurn,
@@ -103,7 +101,6 @@ function buildDetailView(
     workspaceRoot = null
   } = input;
   const turns = new Map<string, WorkspaceAgentSessionDetailTurn>();
-  const goalControls: WorkspaceAgentSessionDetailGoalControl[] = [];
   const recentUserMessages = new Map<
     string,
     WorkspaceAgentActivityTimelineItem
@@ -157,12 +154,6 @@ function buildDetailView(
           recentUserMessages.set(projectionKey, item);
         }
       }
-      continue;
-    }
-
-    if (
-      appendWorkspaceAgentGoalControl(goalControls, item, itemId(item), body)
-    ) {
       continue;
     }
 
@@ -338,7 +329,7 @@ function buildDetailView(
     turn.rawAgentItems = [...turn.agentItems];
     turn.agentItems = regroupAgentItems(turn.agentItems);
   });
-  if (groups && !delegatedCalls && goalControls.length === 0) {
+  if (groups && !delegatedCalls) {
     for (const turn of builtTurns) {
       const items = groups.get(turn.id);
       if (!items || dedupedTurnIds.has(turn.id)) continue;
@@ -356,7 +347,6 @@ function buildDetailView(
     sessionTurns,
     cwd: session.cwd.trim(),
     workspaceRoot: workspaceRoot?.trim() || null,
-    goalControls,
     turns: visibleTurns,
     showProcessingIndicator: shouldShowProcessingIndicator(
       session,

@@ -163,11 +163,6 @@ export function useAgentGUIComposerCapabilities(
     connectorOptionsLoading,
     composerTargetData,
     defaultReasoningEffort,
-    goalPauseSupported:
-      resolveAgentActivityCapability("goalPause", {
-        composerOptions: providerComposerOptions,
-        sessionCapabilities
-      }) ?? false,
     promptImagesSupported:
       (resolvedPromptImagesSupported ?? true) &&
       selectedModelImageInputSupported,

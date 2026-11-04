@@ -37,17 +37,9 @@ import type {
   RootEngineReducerResult
 } from "./rootReducer.types.ts";
 import {
-  attentionReadStateReducer,
-  createInitialAttentionReadState
-} from "./attentionReadState.reducer.ts";
-import {
   validateScopedSessionResult,
   validateSendInputResult
 } from "./commandResult.validation.ts";
-import {
-  createInitialPlanDecisionState,
-  planDecisionReducer
-} from "./planDecision.reducer.ts";
 import {
   createInitialSessionCommandsState,
   sessionCommandsReducer
@@ -59,14 +51,6 @@ import {
 import { canonicalTurnKey } from "./sessionEntityKeys.ts";
 import { deriveCanonicalSubmitAvailability } from "./sessionLifecycle.availability.ts";
 import { activeTurnIdForSession } from "./promptQueue.drainDecision.ts";
-import {
-  createInitialTuttiModeActivationState,
-  tuttiModeActivationReducer
-} from "./tuttiModeActivation.reducer.ts";
-import {
-  createInitialSessionGoalControlState,
-  sessionGoalControlReducer
-} from "./sessionGoalControl.reducer.ts";
 
 // Root reducer: static composition of domain reducers, zero business logic.
 // Cross-domain read-only context is passed explicitly; domains still own all
@@ -74,18 +58,14 @@ import {
 
 export function createInitialAgentSessionEngineState(): RootAgentSessionEngineState {
   return {
-    attentionReadState: createInitialAttentionReadState(),
     engineRuntime: createInitialEngineRuntimeState(),
     pendingIntents: createInitialPendingIntentsState(),
-    planDecisions: createInitialPlanDecisionState(),
     promptExecutions: createInitialPromptExecutionState(),
     promptQueue: createInitialPromptQueueState(),
-    goalControl: createInitialSessionGoalControlState(),
     sessionReconcile: createInitialSessionReconcileState(),
     sessionCommands: createInitialSessionCommandsState(),
     sessionLifecycle: createInitialSessionLifecycleState(),
-    sessionMessages: createInitialSessionMessagesState(),
-    tuttiModeActivation: createInitialTuttiModeActivationState()
+    sessionMessages: createInitialSessionMessagesState()
   };
 }
 
@@ -146,32 +126,7 @@ export function rootEngineReducer(
       ? selectPromptSettingsExecution(state.promptExecutions, intent.commandId)
       : null;
   const engineRuntime = engineRuntimeReducer(state.engineRuntime, intent);
-  const planIntent =
-    intent.type === "plan/decisionRequested" ||
-    intent.type === "plan/feedbackRequested" ||
-    intent.type === "plan/skipped"
-      ? intent
-      : null;
-  const planTurnValid = Boolean(
-    planIntent &&
-    !state.sessionLifecycle.deletedSessionIds[planIntent.agentSessionId] &&
-    state.sessionLifecycle.sessionsById[planIntent.agentSessionId]
-      ?.workspaceId === planIntent.workspaceId &&
-    state.sessionLifecycle.turnsById[
-      canonicalTurnKey(planIntent.agentSessionId, planIntent.turnId)
-    ]?.phase === "settled" &&
-    state.sessionLifecycle.turnsById[
-      canonicalTurnKey(planIntent.agentSessionId, planIntent.turnId)
-    ]?.outcome === "completed" &&
-    state.sessionLifecycle.operationBySessionId[
-      planIntent.agentSessionId.trim()
-    ]?.runtimeAvailability.state !== "blocked"
-  );
-  const submitIntent =
-    intent.type === "submit/requested" ||
-    intent.type === "plan/feedbackRequested"
-      ? intent
-      : null;
+  const submitIntent = intent.type === "submit/requested" ? intent : null;
   const submitId = submitIntent?.clientSubmitId.trim() ?? "";
   const submitSessionId = submitIntent?.agentSessionId.trim() ?? "";
   const submitWorkspaceId = submitIntent?.workspaceId.trim() ?? "";
@@ -179,8 +134,7 @@ export function rootEngineReducer(
     ? state.sessionLifecycle.sessionsById[submitSessionId]
     : undefined;
   const submitSendNowStrategy =
-    submitIntent?.type === "submit/requested" &&
-    submitIntent.routing === "send_now"
+    submitIntent?.routing === "send_now"
       ? resolvePromptSendNowStrategy(
           deriveCanonicalSubmitAvailability(
             state.sessionLifecycle,
@@ -199,8 +153,7 @@ export function rootEngineReducer(
   const submitSessionScopeValid =
     submitSession !== undefined
       ? submitSession.workspaceId === submitWorkspaceId
-      : submitIntent?.type === "submit/requested" &&
-        submitIntent.routing !== "immediate";
+      : submitIntent !== null && submitIntent.routing !== "immediate";
   const submitRequestAccepted = Boolean(
     submitIntent &&
     submitId &&
@@ -208,9 +161,7 @@ export function rootEngineReducer(
     submitWorkspaceId &&
     submitSessionScopeValid &&
     submitIntent.content.length > 0 &&
-    (submitIntent.type !== "submit/requested" ||
-      submitIntent.routing !== "send_now" ||
-      submitSendNowStrategy !== null) &&
+    (submitIntent.routing !== "send_now" || submitSendNowStrategy !== null) &&
     !state.sessionLifecycle.deletedSessionIds[submitSessionId] &&
     !state.pendingIntents.submitsByClientSubmitId[submitId] &&
     !queueRecord?.prompts.some(
@@ -218,11 +169,6 @@ export function rootEngineReducer(
     ) &&
     queueRecord?.inFlight?.promptId !== submitId &&
     queueRecord?.uncertainDelivery?.promptId !== submitId
-  );
-  const feedbackAccepted = Boolean(
-    intent.type === "plan/feedbackRequested" &&
-    planTurnValid &&
-    submitRequestAccepted
   );
   const queuedSendNowTargetTurnId =
     intent.type === "queue/sendNowRequested"
@@ -261,10 +207,6 @@ export function rootEngineReducer(
       : "";
   const expiringSubmit =
     state.pendingIntents.submitsByClientSubmitId[expiringSubmitId];
-  const planDecisions = planDecisionReducer(state.planDecisions, intent, {
-    feedbackAccepted,
-    planTurnValid
-  });
   const sessionCommands = sessionCommandsReducer(
     state.sessionCommands,
     intent,
@@ -280,10 +222,6 @@ export function rootEngineReducer(
       settingsResultValidation
     }
   );
-  const goalControl = sessionGoalControlReducer(state.goalControl, intent, {
-    deletedSessionIds: sessionLifecycle.state.deletedSessionIds,
-    sessionsById: sessionLifecycle.state.sessionsById
-  });
   const promptExecutions = promptExecutionReducer(
     state.promptExecutions,
     intent,
@@ -292,7 +230,6 @@ export function rootEngineReducer(
   const promptQueue = promptQueueReducer(state.promptQueue, intent, {
     deletedSessionIds: sessionLifecycle.state.deletedSessionIds,
     lifecycle: sessionLifecycle.state,
-    planFeedbackAccepted: feedbackAccepted,
     sendResultValidation,
     submitRequestAccepted,
     sendNowStrategy,
@@ -300,16 +237,6 @@ export function rootEngineReducer(
       promptSettingsExecution?.promptCommand.commandId ?? null,
     settingsResultValidation
   });
-  const attentionReadState = attentionReadStateReducer(
-    state.attentionReadState,
-    intent,
-    {
-      previousSessionsById: state.sessionLifecycle.sessionsById,
-      previousTurnsById: state.sessionLifecycle.turnsById,
-      sessionsById: sessionLifecycle.state.sessionsById,
-      turnsById: sessionLifecycle.state.turnsById
-    }
-  );
   const pendingIntents = pendingIntentsReducer(state.pendingIntents, intent, {
     deletedSessionIds: sessionLifecycle.state.deletedSessionIds,
     turnsById: sessionLifecycle.state.turnsById,
@@ -320,7 +247,6 @@ export function rootEngineReducer(
         intent.agentSessionId,
         intent.clientSubmitId
       ),
-    planFeedbackAccepted: feedbackAccepted,
     submitRequestAccepted,
     submitDeliveryIsQueuePending: Boolean(
       expiringSubmit &&
@@ -362,42 +288,28 @@ export function rootEngineReducer(
       sessionsById: sessionLifecycle.state.sessionsById
     }
   );
-  const tuttiModeActivation = tuttiModeActivationReducer(
-    state.tuttiModeActivation,
-    intent,
-    { sessionsById: sessionLifecycle.state.sessionsById }
-  );
   const unchanged =
-    attentionReadState.state === state.attentionReadState &&
     engineRuntime.state === state.engineRuntime &&
-    goalControl.state === state.goalControl &&
     pendingIntents.state === state.pendingIntents &&
-    planDecisions.state === state.planDecisions &&
     promptExecutions.state === state.promptExecutions &&
     promptQueue.state === state.promptQueue &&
     sessionReconcile.state === state.sessionReconcile &&
     sessionCommands.state === state.sessionCommands &&
     sessionLifecycle.state === state.sessionLifecycle &&
-    sessionMessages.state === state.sessionMessages &&
-    tuttiModeActivation.state === state.tuttiModeActivation;
+    sessionMessages.state === state.sessionMessages;
   const nextState = unchanged
     ? state
     : {
-        attentionReadState: attentionReadState.state,
         engineRuntime: engineRuntime.state,
-        goalControl: goalControl.state,
         pendingIntents: pendingIntents.state,
-        planDecisions: planDecisions.state,
         promptExecutions: promptExecutions.state,
         promptQueue: promptQueue.state,
         sessionReconcile: sessionReconcile.state,
         sessionCommands: sessionCommands.state,
         sessionLifecycle: sessionLifecycle.state,
-        sessionMessages: sessionMessages.state,
-        tuttiModeActivation: tuttiModeActivation.state
+        sessionMessages: sessionMessages.state
       };
   const followUpIntents = [
-    ...(goalControl.followUpIntents ?? []),
     ...(sessionReconcile.followUpIntents ?? []),
     ...(sessionLifecycle.followUpIntents ?? []),
     ...(pendingIntents.followUpIntents ?? []),
@@ -406,17 +318,13 @@ export function rootEngineReducer(
   ];
   return {
     commands: [
-      ...attentionReadState.commands,
       ...engineRuntime.commands,
-      ...goalControl.commands,
       ...pendingIntents.commands,
-      ...planDecisions.commands,
       ...promptExecutions.commands,
       ...sessionReconcile.commands,
       ...sessionCommands.commands,
       ...sessionLifecycle.commands,
-      ...promptQueue.commands,
-      ...tuttiModeActivation.commands
+      ...promptQueue.commands
     ],
     ...(followUpIntents.length > 0 ? { followUpIntents } : {}),
     state: nextState

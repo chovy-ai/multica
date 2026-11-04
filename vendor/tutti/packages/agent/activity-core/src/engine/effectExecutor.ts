@@ -187,19 +187,6 @@ function executeCommand(
       )
     );
   }
-  if (command.type === "plan/submitDecision") {
-    return commandPort.executePlanDecision
-      ? commandPort.executePlanDecision(command, {
-          commandId: command.commandId,
-          origin: "engine",
-          signal
-        })
-      : Promise.reject(
-          new Error(
-            "EngineTypedCommandPort.executePlanDecision is not configured"
-          )
-        );
-  }
   const effects = commandPort.effects;
   switch (command.type) {
     case "session/activate":
@@ -208,21 +195,6 @@ function executeCommand(
         origin: "engine",
         signal
       });
-    case "goal/control":
-      return effects.controlGoal
-        ? effects.controlGoal(
-            {
-              action: command.action,
-              agentSessionId: command.agentSessionId,
-              clientSubmitId: command.clientSubmitId,
-              ...(command.objective ? { objective: command.objective } : {}),
-              workspaceId: command.workspaceId
-            },
-            { commandId: command.commandId, origin: "engine", signal }
-          )
-        : Promise.reject(
-            new Error("AgentSessionEffectPort.controlGoal is not configured")
-          );
     case "queue/sendPrompt":
       return effects.sendInput(promptInput(command), {
         commandId: command.commandId,
@@ -253,7 +225,6 @@ function commandResultContract(
   command: EngineExternalCommand
 ): EngineCommandResultContract {
   if (command.type === "session/activate") return "activation-v1";
-  if (command.type === "goal/control") return "goal-control-v1";
   return "opaque";
 }
 
@@ -318,16 +289,6 @@ function activationInput(
         ...shared,
         agentTargetId: command.agentTargetId,
         clientSubmitId: command.clientSubmitId,
-        ...(command.initialGoalControl
-          ? { initialGoalControl: { ...command.initialGoalControl } }
-          : {}),
-        ...(command.initialTuttiModeActivation
-          ? {
-              initialTuttiModeActivation: {
-                ...command.initialTuttiModeActivation
-              }
-            }
-          : {}),
         mode: "new"
       }
     : {

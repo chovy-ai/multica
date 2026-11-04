@@ -427,7 +427,6 @@ function renderNewConversationScenario(input: {
       setIsComposerHome: vi.fn(),
       setIsLoadingMessages: vi.fn(),
       submittedDraftSnapshotsRef,
-      tuttiModeDraftKey: "node-default:codex:local:codex",
       userProjectsRef: { current: input.userProjects },
       workspaceId: "workspace-1"
     });
@@ -443,25 +442,16 @@ function renderNewConversationScenario(input: {
       dataRef,
       draftByScopeKeyRef,
       executePromptRef: { current: vi.fn() },
-      goalControlSupported: true,
       isComposerHomeRef,
       isCurrentConversation: () => false,
       isRespondingToInteraction: false,
       isSessionMarkedNonResumable: () => false,
       persistActiveConversation: vi.fn(),
-      planActionsRef: {
-        current: {
-          feedback: vi.fn(),
-          implement: vi.fn(),
-          skip: vi.fn()
-        }
-      },
       promptImagesSupported: true,
       sessionEngine,
       setActiveConversationId: vi.fn(),
       setDetailError: vi.fn(),
       setDraftByScopeKey,
-      setGoalClearNoticeSequence: vi.fn(),
       setIntent: vi.fn(),
       startConversation,
       submitPromptRef: { current: vi.fn() },

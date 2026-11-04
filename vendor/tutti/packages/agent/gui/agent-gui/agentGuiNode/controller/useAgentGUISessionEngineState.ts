@@ -20,9 +20,7 @@ import {
   selectPendingSubmitsForSession,
   selectSessionHasUnconfirmedSubmit,
   selectSessionHasPendingSubmitStopTarget,
-  selectSessionGoalControlPresentation,
   selectSessionIsSubmitting,
-  sessionGoalControlPresentationsEqual,
   type AgentSessionEngine,
   type EngineQueuedPrompt
 } from "@tutti-os/agent-activity-core";
@@ -98,12 +96,6 @@ export function useAgentGUISessionEngineState(input: {
   );
   const activeEngineSession = useEngineSelector(sessionEngine, (state) =>
     selectEngineSession(state, activeConversationId)
-  );
-  const activeGoalControlPresentation = useEngineSelector(
-    sessionEngine,
-    (state) =>
-      selectSessionGoalControlPresentation(state, activeConversationId),
-    sessionGoalControlPresentationsEqual
   );
   const activeSessionReconcile = useEngineSelector(sessionEngine, (state) =>
     selectEngineSessionReconcile(state, activeConversationId)
@@ -240,7 +232,6 @@ export function useAgentGUISessionEngineState(input: {
     activeEngineSession,
     activeEngineSessionDeleted,
     activeEngineSettingsUpdate,
-    activeGoalControlPresentation,
     activeHasPendingSubmitStopTarget,
     activeLatestPendingSubmit,
     activePendingActivation,

@@ -115,13 +115,7 @@ export function sessionLifecycleReducer(
         intent.commandType === "queue/sendPrompt" &&
         context.sendResultValidation?.kind === "valid"
       ) {
-        const sendResult = context.sendResultValidation.result;
-        if (sendResult.kind === "goalControl") {
-          return result(
-            upsertCanonicalSession(state, sendResult.session, initialOperation)
-          );
-        }
-        const { session, turn } = sendResult;
+        const { session, turn } = context.sendResultValidation.result;
         return result(
           upsertCanonicalTurn(
             upsertCanonicalSession(state, session, initialOperation),

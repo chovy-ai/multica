@@ -56,10 +56,6 @@ import { useAgentGUIProviderCatalogSelection } from "./useAgentGUIProviderCatalo
 import { useAgentGUISessionEngineState } from "./useAgentGUISessionEngineState";
 import { useAgentGUISessionDetailTransport } from "./useAgentGUISessionDetailTransport";
 import { useAgentGUILocalState } from "./useAgentGUILocalState";
-import {
-  resolveAgentGUITuttiModeDraftKey,
-  useAgentGUITuttiModeActivation
-} from "./useAgentGUITuttiModeActivation";
 export {
   normalizePermissionModeSemantic,
   permissionConfigFromComposerOptions,
@@ -116,8 +112,6 @@ export type {
 
 export function useAgentGUINodeController({
   nodeId,
-  isSurfaceActive,
-  isSurfaceVisible,
   workspaceId,
   currentUserId,
   workspacePath,
@@ -231,16 +225,6 @@ export function useAgentGUINodeController({
   const activeAgentActivityDisplayStatus = activeConversationId
     ? (agentActivityDisplayStatuses.get(activeConversationId) ?? null)
     : null;
-  const tuttiModeDraftKey = useMemo(
-    () => resolveAgentGUITuttiModeDraftKey(nodeId),
-    [nodeId]
-  );
-  const tuttiModeActivation = useAgentGUITuttiModeActivation({
-    activeConversationId,
-    draftKey: tuttiModeDraftKey,
-    engine: sessionEngine,
-    workspaceId
-  });
   const conversationList = useAgentGUIConversationListState({
     agentActivityRuntimeOrigin,
     currentUserId,
@@ -250,7 +234,6 @@ export function useAgentGUINodeController({
     workspaceId
   });
   const {
-    attentionReadState,
     conversationFilter,
     conversationListQuery,
     conversationListState,
@@ -318,13 +301,6 @@ export function useAgentGUINodeController({
   const updateComposerSettingsRef = useRef<
     (nextSettings: Partial<AgentSessionComposerSettings>) => void
   >(() => {});
-  // Bridges submitInteractivePrompt (defined earlier) to the client-side plan
-  // decision handlers (defined later); assigned after those callbacks.
-  const planActionsRef = useRef<{
-    implement: () => boolean;
-    feedback: (text: string) => boolean;
-    skip: () => boolean;
-  }>({ implement: () => false, feedback: () => false, skip: () => false });
   const composerCapabilities = useAgentGUIComposerCapabilities({
     activeConversationId,
     activeEngineSession,
@@ -341,7 +317,6 @@ export function useAgentGUINodeController({
     defaultReasoningEffort,
     providerComposerOptions
   } = composerCapabilities;
-  const planImplementationTurnIdRef = useRef<string | null>(null);
   const accountProfilesByUserId = useAccountStore(
     (state) => state.profilesByUserId
   );
@@ -523,7 +498,6 @@ export function useAgentGUINodeController({
     activeSessionReconcileErrorCode:
       sessionEngineState.activeSessionReconcileErrorCode,
     agentActivityRuntime,
-    attentionReadRecordsBySessionId: attentionReadState.recordsBySessionId,
     conversationIdsRef,
     conversationsRef,
     conversationListQuery,
@@ -534,13 +508,10 @@ export function useAgentGUINodeController({
     intent,
     isComposerHomeRef,
     isMountedRef,
-    isSurfaceActive,
-    isSurfaceVisible,
     loadDraftComposerOptions: () => loadDraftComposerOptionsRef.current(),
     loadSelectedConversationMessages,
     loadSessionState,
     markSelectedConversationDetailPending,
-    nodeId,
     onDataChangeRef,
     sessionEngine,
     requestRailReveal,
@@ -694,15 +665,12 @@ export function useAgentGUINodeController({
     reloadComposerOptionsForTarget,
     normalizedExplicitProviderTargets,
     normalizedProviderTargets,
-    planActionsRef,
-    planImplementationTurnIdRef,
     interactionReadinessSource,
     prefillPromptRequest,
     reportActiveConversationCleared: reportAgentGUIActiveConversationCleared,
     sessionEngine,
     setUserProjectsSnapshot,
     transientConversation,
-    tuttiModeDraftKey,
     unactivate: activation.unactivate,
     updateComposerSettingsRef,
     workspaceId
@@ -764,7 +732,6 @@ export function useAgentGUINodeController({
     nodeId,
     operationActions,
     persistActiveConversation,
-    planImplementationTurnIdRef,
     providerRailMode,
     providerReadinessGates,
     targetConnectionSource,
@@ -774,7 +741,6 @@ export function useAgentGUINodeController({
     selectedComposerTargetData,
     sessionEngine,
     transientConversation,
-    tuttiModeActivation,
     unactivate: activation.unactivate,
     updateSelectedProjectPath,
     userProjects,

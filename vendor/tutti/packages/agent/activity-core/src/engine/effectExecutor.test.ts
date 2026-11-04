@@ -33,17 +33,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
         session
       };
     },
-    async controlGoal(input, options) {
-      assert.ok(options);
-      calls.push({
-        commandId: options.commandId,
-        input,
-        kind: "goal",
-        origin: options.origin,
-        signal: options.signal
-      });
-      return { goal: null, session };
-    },
     async sendInput(input, options) {
       calls.push({
         commandId: options.commandId,
@@ -84,13 +73,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     modelExplicit: false,
     initialContent: [{ text: "build it", type: "text" }],
     initialDisplayPrompt: "Build it",
-    initialGoalControl: { action: "set", objective: "ship it" },
-    initialTuttiModeActivation: {
-      effect: 80,
-      source: "slash_command",
-      speed: 60,
-      status: "active"
-    },
     mode: "new",
     railPlacement: {
       kind: "project",
@@ -128,16 +110,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     type: "session/updateSettings",
     workspaceId: "workspace-1"
   });
-  await executeAndWait(port, {
-    action: "set",
-    agentSessionId: "session-1",
-    clientSubmitId: "goal-submit-1",
-    commandId: "goal-1",
-    correlationId: "goal-submit-1",
-    objective: "ship it",
-    type: "goal/control",
-    workspaceId: "workspace-1"
-  });
 
   assert.equal(extensionCalls, 0);
   assert.deepEqual(
@@ -146,7 +118,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
       "activate",
       "send",
       "settings",
-      "goal"
     ]
   );
   assert.deepEqual(
@@ -155,7 +126,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
       "activate-1",
       "send-1",
       "settings-1",
-      "goal-1"
     ]
   );
   assert.deepEqual(calls[0]?.input, {
@@ -169,13 +139,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     modelExplicit: false,
     initialContent: [{ text: "build it", type: "text" }],
     initialDisplayPrompt: "Build it",
-    initialGoalControl: { action: "set", objective: "ship it" },
-    initialTuttiModeActivation: {
-      effect: 80,
-      source: "slash_command",
-      speed: 60,
-      status: "active"
-    },
     mode: "new",
     railPlacement: {
       kind: "project",
@@ -208,56 +171,8 @@ test("projects shared commands onto typed lifecycle effects without host switche
   assert.ok(calls.every((call) => call.signal instanceof AbortSignal));
   assert.deepEqual(
     calls.map((call) => call.origin),
-    ["engine", "engine", "engine", "engine"]
+    ["engine", "engine", "engine"]
   );
-});
-
-test("projects plan decisions with exact Engine provenance", async () => {
-  let receivedOptions: unknown;
-  let receivedSignal: AbortSignal | undefined;
-  const result = await executeAndWait(
-    {
-      ...createTestEngineCommandPort(async () => {
-        throw new Error("unexpected generic execute");
-      }),
-      async executePlanDecision(_command, options) {
-        assert.ok(options);
-        receivedOptions = options;
-        receivedSignal = options.signal;
-        return {
-          operation: {
-            agentSessionId: "session-1",
-            idempotencyKey: "decision-1",
-            operationId: "operation-1",
-            requestId: "request-1",
-            status: "completed",
-            turnId: "turn-1",
-            workspaceId: "workspace-1"
-          }
-        };
-      }
-    },
-    {
-      action: "implement",
-      agentSessionId: "session-1",
-      commandId: "plan-1",
-      correlationId: "plan-1",
-      idempotencyKey: "decision-1",
-      promptKind: "plan-implementation",
-      requestId: "request-1",
-      turnId: "turn-1",
-      type: "plan/submitDecision",
-      workspaceId: "workspace-1"
-    }
-  );
-
-  assert.equal(result.outcome, "succeeded");
-  assert.deepEqual(receivedOptions, {
-    commandId: "plan-1",
-    origin: "engine",
-    signal: receivedSignal
-  });
-  assert.ok(receivedSignal instanceof AbortSignal);
 });
 
 test("rejects prompt settings preconditions that bypass the Engine state machine", async () => {

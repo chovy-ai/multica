@@ -200,14 +200,6 @@ export function selectEngineInteraction(
 }
 
 
-export function selectEngineGoalControl(
-  state: AgentSessionEngineState,
-  agentSessionId: string | null | undefined
-) {
-  const id = agentSessionId?.trim() ?? "";
-  return state.goalControl.presentationsBySessionId[id] ?? null;
-}
-
 export function selectEngineLatestTurn(
   state: AgentSessionEngineStateBase,
   agentSessionId: string | null | undefined

@@ -5,7 +5,6 @@ import type {
 import { extractImageGenerationPreview } from "../../imageGenerationTool";
 import type { AgentConversationVM } from "../contracts/agentConversationVM";
 import type { AgentGeneratedImageRowVM } from "../contracts/agentGeneratedImageRowVM";
-import type { AgentGoalControlRowVM } from "../contracts/agentGoalControlRowVM";
 import type {
   AgentMessageContentVM,
   AgentMessageRowVM
@@ -66,10 +65,9 @@ export function projectAgentConversationVM(
       )
     )
   );
-  const timelineRows = insertGoalControlRows(normalizedRows, detail);
-  const processing = projectAgentProcessingRow(detail, timelineRows);
+  const processing = projectAgentProcessingRow(detail, normalizedRows);
   const projectedRows = projectAgentMessageFinalText(
-    processing ? [...timelineRows, processing] : timelineRows,
+    processing ? [...normalizedRows, processing] : normalizedRows,
     detail
   );
 
@@ -79,40 +77,6 @@ export function projectAgentConversationVM(
     sourceDetail: detail,
     rows: projectedRows
   };
-}
-
-function insertGoalControlRows(
-  rows: readonly AgentTranscriptRowVM[],
-  detail: WorkspaceAgentSessionDetailViewModel
-): AgentTranscriptRowVM[] {
-  const controls = detail.goalControls ?? [];
-  if (controls.length === 0) {
-    return [...rows];
-  }
-  const merged = [...rows];
-  for (const control of controls) {
-    const row: AgentGoalControlRowVM = {
-      kind: "goal-control",
-      id: `goal-control:${control.id}`,
-      turnId: null,
-      action: control.action,
-      body: control.body,
-      occurredAtUnixMs: control.occurredAtUnixMs ?? null,
-      sourceTimelineItems: control.sourceTimelineItems
-    };
-    const insertionIndex = merged.findIndex(
-      (candidate) =>
-        row.occurredAtUnixMs !== null &&
-        candidate.occurredAtUnixMs !== null &&
-        candidate.occurredAtUnixMs > row.occurredAtUnixMs
-    );
-    if (insertionIndex < 0) {
-      merged.push(row);
-    } else {
-      merged.splice(insertionIndex, 0, row);
-    }
-  }
-  return merged;
 }
 
 function dropRedundantCompactFailureEchoRows(
