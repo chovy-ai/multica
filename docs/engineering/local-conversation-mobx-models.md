@@ -1,6 +1,6 @@
 # AI 会话状态迁移到 MobX 方案
 
-日期：2026-11-03。状态：待评审，尚未实现，已合入一轮代码评审的结论。基于 [本地会话客户端模型与去 iframe 方案](./local-conversation-client-store.md)（#122）。
+日期：2026-11-03。状态：实施中，按第 9 节分阶段合入。基于 [本地会话客户端模型与去 iframe 方案](./local-conversation-client-store.md)（#122）。
 
 把 AI 会话模块的状态统一到 MobX：数据是带方法的 `XxxModel`，逻辑在维护它们的 `XxxService`，并替换 Tutti engine。Web 上的 AI 会话页面删除，Tutti GUI 只服务 Desktop 的本地会话，最终由我们自己管理，view 直接读 Model、调 Service。
 
@@ -96,7 +96,7 @@ packages/conversation-client/
 
 - **item 由 `ConversationModel` 持有，不由 Turn 持有。** `open_background_items` 可能指向未加载的轮次，Turn 按 id 引用。
 - **消息从 Turn 派生，不是一个 item 对应一条消息。** 有的 item 不产出消息（`ask_user_question`、无附件图片、未知 kind）；子 item 喂给父 background_task；`turnSettling`、reasoning、compaction 依赖轮次状态；用户消息和交互不来自 item。
-- **Model 实例保持稳定。** refresh 原地重置，不替换实例，否则 observer 继续盯着旧对象，界面不更新也不报错。`conversation-store.ts` 现在每次 refresh 都换新实例，要改。
+- **Model 实例保持稳定。** refresh 原地重置 `ConversationModel`，不替换实例，否则 observer 继续盯着旧对象，界面不更新也不报错。Turn、Item 这些内部实例会换新，它们从 `ConversationModel` 的 observable 映射读取，映射变化时读取方会跟着更新。generation 失效时内容已不属于当前数据库，整个 Model 丢弃重建。
 - **待确认的发送不放在 `ConversationModel`。** 它会被 refresh、generation 失效和 LRU 影响，新建中的会话也还没有 Model。放在 `PromptService`，见第 6 节。
 
 ### observable 规则
@@ -282,6 +282,15 @@ class ItemModel {
 
 每到一个阶段结束，用打点结果重新评估下一阶段的节奏。
 
+### 阶段 2a 的范围说明
+
+- 迁入的是内容部分和 `ConversationService`。`ConversationListModel` 和 Service 的 observable 入口留到阶段 3、3b，那时才有 view 读它们。
+- 消息列表由 Model 派生：Turn 产出 assistant 行，用户消息和交互各自产出自己的行，`ConversationModel.transcript()` 按原有顺序拼起来。按轮次排序和 `(turnIndex, rank)` 位置留到阶段 2b。
+- 派生仍是普通方法，每次调用都重算，和现在的投影开销一样。`computed` 留到阶段 3，那时才有 reaction 观察它。
+- 第 4 节的事件缓冲还没做：现在没有 observer 读 Model，流式更新仍走 runtime 已有的合并。阶段 3 接入 view 时一起做。
+- `observer` 和 React 19 的配合只验证了 host 里的组件测试（批量事件只渲染一次，且只渲染变化的行）。虚拟列表要到阶段 3 才验证。
+
+
 ## 10. 增量提交通道（阶段 2b）
 
 `message/snapshotReceived` 不适合作为主通道：它只能增改、不能删，按字段合并会留下旧值（reasoning 结束时不带 `status`，“思考中”就不会结束），也不更新轮次状态。
@@ -301,7 +310,7 @@ class ItemModel {
 4. **最被低估的部分。** 转录的行投影和 `AgentConversationVM` 这层契约（`shared/agentConversation` 约 1.9 万行）、Side 专用的 runtime 和 controller、`useAgentHostApi` 的第三层转译。
 5. **内存。** LRU 按会话数（100 个）计算，对 item 数没有约束，长会话可能有几千个 `ItemModel`。阶段 1 记录实际数据；如果有问题，已结束的轮次改用轻量对象，等有后台事件时再升级。
 6. **observer 覆盖不全。** 组件漏了 `observer` 不会报错，只是不更新。用约定和 lint 把关，迁移时逐个组件核对。
-7. **MobX 尚未实际验证。** 依赖还没有安装，它和 React 19、虚拟列表的配合来自读代码和文档，阶段 2a 要先验证。
+7. **MobX 和虚拟列表的配合尚未验证。** React 19 下的 `observer` 已在阶段 2a 的组件测试中验证；虚拟列表要到阶段 3 接入转录时才验证。
 
 ## 12. `AGENTS.md` 规则
 
