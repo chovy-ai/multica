@@ -102,7 +102,6 @@ export function normalizeAgentActivitySession(
             : null
         }
       : {}),
-    tuttiModeActivation: source.tuttiModeActivation ?? null,
     imported: source.imported ?? false,
     visible: source.visible ?? true,
     resumable: source.resumable ?? false,

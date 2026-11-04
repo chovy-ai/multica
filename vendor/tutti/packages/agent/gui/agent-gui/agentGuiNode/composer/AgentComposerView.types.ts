@@ -58,14 +58,7 @@ export interface AgentComposerViewProps {
   setHighlightedIndex: Dispatch<SetStateAction<number>>;
   isGoalModeActive: boolean;
   isPlanModeActive: boolean;
-  isTuttiModeActive: boolean;
-  isTuttiModeUpdating: boolean;
-  tuttiModeEffect: number;
-  tuttiModeSpeed: number;
   onClearPlanMode: () => void;
-  onClearTuttiMode: () => void;
-  onTuttiModeEffectChange: (value: number) => void;
-  onTuttiModeSpeedChange: (value: number) => void;
   isPromptTipOverflowing: boolean;
   onHistoryNavigation: (direction: "older" | "newer") => boolean;
   sessionWorktreeLaunch: SessionWorktreeLaunchState;

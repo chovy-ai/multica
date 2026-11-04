@@ -751,8 +751,7 @@ describe("existing-session prompt submission", () => {
         [{ type: "text", text: "Continue with Tutti" }],
         undefined,
         {
-          capabilityRefs: [{ capability: "tutti", source: "slash_command" }],
-          tuttiMode: { active: true, effect: 50, speed: 50 }
+          capabilityRefs: [{ capability: "tutti", source: "slash_command" }]
         }
       )
     );

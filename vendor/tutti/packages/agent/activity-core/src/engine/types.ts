@@ -125,8 +125,7 @@ export type EngineIntent =
   | SessionCommandsIntent
   | SessionLifecycleIntent
   | SessionGoalControlIntent
-  | EditRetryIntent
-  | TuttiModeActivationIntent;
+  | EditRetryIntent;
 
 // ---------------------------------------------------------------------------
 // Commands: descriptions returned by reducers. Internal commands are handled
@@ -200,8 +199,7 @@ export type EngineExternalCommand =
   | SessionMutationCommand
   | SessionGoalControlCommand
   | TurnCancelCommand
-  | EditRetryCommand
-  | TuttiModeActivationCommand;
+  | EditRetryCommand;
 
 type AgentSessionEffectCommand =
   | Extract<
@@ -274,7 +272,6 @@ export interface AgentSessionEngineStateBase {
   sessionCommands: SessionCommandsState;
   sessionLifecycle: SessionLifecycleState;
   sessionMessages: SessionMessagesState;
-  tuttiModeActivation: TuttiModeActivationState;
 }
 
 /**
@@ -350,7 +347,6 @@ export type AgentSessionActivateEffectInput =
       agentTargetId: string;
       clientSubmitId: string;
       initialGoalControl?: Readonly<AgentActivityInitialGoalControl>;
-      initialTuttiModeActivation?: AgentActivityInitialTuttiModeActivation;
       mode: "new";
     })
   | (AgentSessionActivateEffectInputBase & {
@@ -494,19 +490,15 @@ export type AgentSessionActivationInput =
       agentTargetId: string;
       clientSubmitId: string;
       initialGoalControl?: Readonly<AgentActivityInitialGoalControl>;
-      initialTuttiModeActivation?: AgentActivityInitialTuttiModeActivation;
       mode: "new";
       optimisticTitle?: string;
-      tuttiModeDraftKey?: string;
     })
   | (AgentSessionActivationInputBase & {
       agentTargetId?: string | null;
       clientSubmitId?: never;
       initialGoalControl?: never;
-      initialTuttiModeActivation?: never;
       mode: "existing";
       optimisticTitle?: never;
-      tuttiModeDraftKey?: never;
     });
 
 export interface AgentSessionSubmitPromptInput {
@@ -617,11 +609,6 @@ import type {
   SessionMutationsState
 } from "./sessionMutations.types.ts";
 import type {
-  TuttiModeActivationCommand,
-  TuttiModeActivationIntent,
-  TuttiModeActivationState
-} from "./tuttiModeActivation.types.ts";
-import type {
   AgentActivityCancelTurnInput,
   AgentActivityComposerOptions,
   AgentActivityComposerSettings,
@@ -640,10 +627,7 @@ import type {
   AgentPromptContentBlock
 } from "../types.ts";
 import type { AgentActivityRailPlacement } from "../railPlacement.types.ts";
-import type {
-  AgentActivityCapabilityReference,
-  AgentActivityInitialTuttiModeActivation
-} from "../tuttiMode.types.ts";
+import type { AgentActivityCapabilityReference } from "../tuttiMode.types.ts";
 import type {
   EditRetryCommand,
   EditRetryIntent,

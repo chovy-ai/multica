@@ -324,16 +324,6 @@ function requestActivation(
           agentTargetId: agentTargetId!,
           clientSubmitId: clientSubmitId!,
           mode: "new",
-          ...(intent.initialTuttiModeActivation
-            ? {
-                initialTuttiModeActivation: {
-                  ...intent.initialTuttiModeActivation
-                }
-              }
-            : {}),
-          ...(intent.tuttiModeDraftKey?.trim()
-            ? { tuttiModeDraftKey: intent.tuttiModeDraftKey.trim() }
-            : {}),
           ...(optimisticTitle ? { optimisticTitle } : {})
         }
       : {
@@ -381,13 +371,6 @@ function requestActivation(
               ? { submitDiagnostics: { ...intent.submitDiagnostics } }
               : {}),
             mode: "new" as const,
-            ...(intent.initialTuttiModeActivation
-              ? {
-                  initialTuttiModeActivation: {
-                    ...intent.initialTuttiModeActivation
-                  }
-                }
-              : {}),
             ...(intent.settings ? { settings: { ...intent.settings } } : {}),
             timeoutMs: NEW_SESSION_ACTIVATION_COMMAND_TIMEOUT_MS,
             ...(intent.title?.trim() ? { title: intent.title.trim() } : {}),

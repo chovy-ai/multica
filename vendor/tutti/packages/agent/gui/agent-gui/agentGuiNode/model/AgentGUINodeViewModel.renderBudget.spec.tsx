@@ -177,11 +177,6 @@ function createViewModel(): AgentGUINodeViewModel {
         editor: { status: "editable", reason: null },
         submission: { status: "ready", reason: null }
       },
-      isTuttiModeActive: false,
-      isTuttiModeUpdating: false,
-      tuttiModeEffect: 50,
-      tuttiModeSpeed: 50,
-      tuttiModeUpdateStatus: "idle",
       composerSettings:
         {} as AgentGUINodeViewModel["composer"]["composerSettings"],
       queuedPrompts: [],

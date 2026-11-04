@@ -530,7 +530,6 @@ export function createAgentActivityEphemeralConversationProjector(
       forkedFrom: null,
       usage: null,
       goal: null,
-      tuttiModeActivation: null,
       imported: false,
       visible: true,
       resumable: false,

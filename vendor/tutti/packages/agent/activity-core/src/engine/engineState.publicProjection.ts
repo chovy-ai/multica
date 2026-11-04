@@ -44,8 +44,7 @@ export function projectPublicAgentSessionEngineState(
     sessionLifecycle: state.sessionLifecycle,
     sessionMessages: state.sessionMessages,
     sessionMutations: state.sessionMutations,
-    sessionReconcile: state.sessionReconcile,
-    tuttiModeActivation: state.tuttiModeActivation
+    sessionReconcile: state.sessionReconcile
   };
   if (
     previous &&

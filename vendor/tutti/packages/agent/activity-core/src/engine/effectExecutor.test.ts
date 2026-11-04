@@ -138,12 +138,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     initialContent: [{ text: "build it", type: "text" }],
     initialDisplayPrompt: "Build it",
     initialGoalControl: { action: "set", objective: "ship it" },
-    initialTuttiModeActivation: {
-      effect: 80,
-      source: "slash_command",
-      speed: 60,
-      status: "active"
-    },
     mode: "new",
     railPlacement: {
       kind: "project",
@@ -275,12 +269,6 @@ test("projects shared commands onto typed lifecycle effects without host switche
     initialContent: [{ text: "build it", type: "text" }],
     initialDisplayPrompt: "Build it",
     initialGoalControl: { action: "set", objective: "ship it" },
-    initialTuttiModeActivation: {
-      effect: 80,
-      source: "slash_command",
-      speed: 60,
-      status: "active"
-    },
     mode: "new",
     railPlacement: {
       kind: "project",

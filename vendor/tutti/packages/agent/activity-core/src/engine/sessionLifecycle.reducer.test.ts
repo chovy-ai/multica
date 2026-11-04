@@ -210,27 +210,10 @@ test("full session snapshots may authoritatively downgrade a provider Turn bindi
   assert.equal(turn?.providerForkBindingState, "recovery_required");
 });
 
-test("session snapshots preserve monotonic message and TuttiMode revisions", () => {
-  const activation = {
-    agentSessionId: "session-1",
-    createdAtUnixMs: 1,
-    currentRevision: {
-      activationId: "activation-1",
-      createdAtUnixMs: 2,
-      orchestrationIntensity: 50,
-      revision: 2,
-      source: "slash_command" as const,
-      status: "active" as const
-    },
-    id: "activation-1",
-    status: "active" as const,
-    updatedAtUnixMs: 2,
-    workspaceId: "workspace-1"
-  };
+test("session snapshots preserve monotonic message revisions", () => {
   const current = {
     ...session(null, 2),
-    messageVersion: 5,
-    tuttiModeActivation: activation
+    messageVersion: 5
   };
   let state = reduce(createInitialSessionLifecycleState(), {
     type: "session/snapshotReceived",
@@ -242,18 +225,13 @@ test("session snapshots preserve monotonic message and TuttiMode revisions", () 
     sessions: [
       {
         ...current,
-        messageVersion: 4,
-        tuttiModeActivation: {
-          ...activation,
-          currentRevision: { ...activation.currentRevision, revision: 1 }
-        }
+        messageVersion: 4
       }
     ]
   }).state;
 
   const projected = state.sessionsById["session-1"];
   assert.equal(projected?.messageVersion, 5);
-  assert.equal(projected?.tuttiModeActivation?.currentRevision.revision, 2);
 });
 
 test("equal-version sessions still merge changed pending interactions", () => {

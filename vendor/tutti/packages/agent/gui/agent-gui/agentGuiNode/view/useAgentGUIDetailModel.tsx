@@ -28,22 +28,6 @@ interface Input {
   slashStatusLimitsUnavailable: boolean;
   viewModel: AgentGUINodeViewModel;
 }
-export function resolveTuttiModeUpdateInlineNotice(input: {
-  failedMessage: string;
-  status: AgentGUINodeViewModel["composer"]["tuttiModeUpdateStatus"];
-  uncertainMessage: string;
-}): AgentGUIInlineNotice | null {
-  if (input.status !== "failed" && input.status !== "uncertain") return null;
-  const localizedMessage =
-    input.status === "failed" ? input.failedMessage : input.uncertainMessage;
-  return {
-    autoDismissMs: null,
-    id: `agent-gui-tutti-mode-update-${input.status}`,
-    message: localizedMessage,
-    tone: input.status === "failed" ? "error" : "warning"
-  };
-}
-
 export function useAgentGUIDetailModel(input: Input) {
   const {
     labels,
@@ -117,25 +101,11 @@ export function useAgentGUIDetailModel(input: Input) {
     ]
   );
   const slashStatus = useStableSlashStatus(rawSlashStatus);
-  const tuttiModeUpdateNotice = useMemo(
-    () =>
-      resolveTuttiModeUpdateInlineNotice({
-        failedMessage: labels.tuttiModeUpdateFailed,
-        status: viewModel.composer.tuttiModeUpdateStatus,
-        uncertainMessage: labels.tuttiModeUpdateUncertain
-      }),
-    [
-      labels.tuttiModeUpdateFailed,
-      labels.tuttiModeUpdateUncertain,
-      viewModel.composer.tuttiModeUpdateStatus
-    ]
-  );
   const displayedInlineNotice = useMemo(() => {
     if (homeStatusNoticeVisible) {
       return null;
     }
-    const inlineNotice =
-      tuttiModeUpdateNotice ?? viewModel.interaction.inlineNotice;
+    const inlineNotice = viewModel.interaction.inlineNotice;
     const inlineNoticeMessage = inlineNotice?.message.trim() ?? "";
     if (!inlineNotice || inlineNoticeMessage === "") {
       return null;
@@ -161,7 +131,6 @@ export function useAgentGUIDetailModel(input: Input) {
   }, [
     sessionChrome.auth?.message,
     sessionChrome.recovery?.message,
-    tuttiModeUpdateNotice,
     viewModel.rail.activeConversation?.status,
     viewModel.readiness.activeLiveState,
     homeStatusNoticeVisible,
@@ -320,24 +289,6 @@ export function useAgentGUIDetailModel(input: Input) {
       rtkSaverModeDescription: labels.rtkSaverModeDescription,
       normalModeLabel: labels.normalModeLabel,
       normalModeDescription: labels.normalModeDescription,
-      tuttiModeLabel: labels.tuttiModeLabel,
-      tuttiModeDescription: labels.tuttiModeDescription,
-      tuttiModeRemove: labels.tuttiModeRemove,
-      tuttiBudgetTitle: labels.tuttiBudgetTitle,
-      tuttiBudgetEffectLabel: labels.tuttiBudgetEffectLabel,
-      tuttiBudgetSpeedLabel: labels.tuttiBudgetSpeedLabel,
-      tuttiBudgetPreviewHint: labels.tuttiBudgetPreviewHint,
-      tuttiBudgetPreviewCost: labels.tuttiBudgetPreviewCost,
-      tuttiBudgetPreviewBalance: labels.tuttiBudgetPreviewBalance,
-      tuttiBudgetPreviewPowerful: labels.tuttiBudgetPreviewPowerful,
-      tuttiBudgetModelPreferenceLabel: labels.tuttiBudgetModelPreferenceLabel,
-      tuttiBudgetModelPreferenceCost: labels.tuttiBudgetModelPreferenceCost,
-      tuttiBudgetModelPreferenceBalance:
-        labels.tuttiBudgetModelPreferenceBalance,
-      tuttiBudgetModelPreferencePowerful:
-        labels.tuttiBudgetModelPreferencePowerful,
-      tuttiBudgetParallelismLabel: labels.tuttiBudgetParallelismLabel,
-      tuttiBudgetParallelismValue: labels.tuttiBudgetParallelismValue,
       planModeDescription: labels.planModeDescription,
       planModeOnLabel: labels.planModeOnLabel,
       planModeOffLabel: labels.planModeOffLabel,
@@ -525,22 +476,6 @@ export function useAgentGUIDetailModel(input: Input) {
       labels.rtkSaverModeDescription,
       labels.normalModeLabel,
       labels.normalModeDescription,
-      labels.tuttiModeLabel,
-      labels.tuttiModeDescription,
-      labels.tuttiModeRemove,
-      labels.tuttiBudgetTitle,
-      labels.tuttiBudgetEffectLabel,
-      labels.tuttiBudgetSpeedLabel,
-      labels.tuttiBudgetPreviewHint,
-      labels.tuttiBudgetPreviewCost,
-      labels.tuttiBudgetPreviewBalance,
-      labels.tuttiBudgetPreviewPowerful,
-      labels.tuttiBudgetModelPreferenceLabel,
-      labels.tuttiBudgetModelPreferenceCost,
-      labels.tuttiBudgetModelPreferenceBalance,
-      labels.tuttiBudgetModelPreferencePowerful,
-      labels.tuttiBudgetParallelismLabel,
-      labels.tuttiBudgetParallelismValue,
       labels.planModeDescription,
       labels.planModeOffLabel,
       labels.planModeOnLabel,

@@ -1,7 +1,6 @@
 import type {
   AgentActivityCapabilityReference,
   AgentActivityInitialGoalControl,
-  AgentActivityInitialTuttiModeActivation,
   AgentActivityMessage,
   AgentActivitySessionSettings,
   AgentActivitySubmitDiagnostics,
@@ -85,8 +84,6 @@ interface PendingActivationIntentRecordBase {
   snapshotOutcome: PendingActivationSnapshotOutcome;
   title: string | null;
   workspaceId: string;
-  initialTuttiModeActivation?: AgentActivityInitialTuttiModeActivation;
-  tuttiModeDraftKey?: string;
 }
 
 export type PendingActivationIntentRecord =
@@ -166,8 +163,6 @@ interface SessionActivationRequestedIntentBase {
   title?: string;
   visible?: boolean;
   workspaceId: string;
-  initialTuttiModeActivation?: AgentActivityInitialTuttiModeActivation;
-  tuttiModeDraftKey?: string;
 }
 
 export type SessionActivationRequestedIntent =
@@ -229,7 +224,6 @@ interface SessionActivateCommandBase {
   initialGoalControl?: Readonly<AgentActivityInitialGoalControl>;
   isolation?: "worktree";
   modelExplicit?: boolean;
-  initialTuttiModeActivation?: AgentActivityInitialTuttiModeActivation;
   railPlacement?: AgentActivityRailPlacement;
   reasoningEffortExplicit?: boolean;
   submitDiagnostics?: Readonly<AgentActivitySubmitDiagnostics>;

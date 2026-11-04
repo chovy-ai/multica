@@ -59,18 +59,6 @@ export function useAgentGUIControllerActions(
   const retryComposerOptions = useStableControllerEventCallback(
     actions.retryComposerOptions
   );
-  const setTuttiModeActive = useStableControllerEventCallback(
-    actions.setTuttiModeActive
-  );
-  const setTuttiModeEffect = useStableControllerEventCallback(
-    actions.setTuttiModeEffect
-  );
-  const setTuttiModeSpeed = useStableControllerEventCallback(
-    actions.setTuttiModeSpeed
-  );
-  const retryTuttiModeActivation = useStableControllerEventCallback(
-    actions.retryTuttiModeActivation
-  );
   const updatePlanIssueBudgetPreset = useStableControllerEventCallback(
     actions.updatePlanIssueBudgetPreset
   );
@@ -144,10 +132,6 @@ export function useAgentGUIControllerActions(
       updateSelectedProjectPath,
       updateComposerSettings,
       retryComposerOptions,
-      setTuttiModeActive,
-      setTuttiModeEffect,
-      setTuttiModeSpeed,
-      retryTuttiModeActivation,
       updatePlanIssueBudgetPreset,
       sendQueuedPromptNext,
       removeQueuedPrompt,
@@ -201,10 +185,6 @@ export function useAgentGUIControllerActions(
       toggleConversationPinned,
       updateComposerSettings,
       retryComposerOptions,
-      setTuttiModeActive,
-      setTuttiModeEffect,
-      setTuttiModeSpeed,
-      retryTuttiModeActivation,
       updatePlanIssueBudgetPreset,
       updateConversationFilter,
       updateDraftContent,

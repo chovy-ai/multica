@@ -164,13 +164,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
   });
   const submitApproval = useStableEventCallback(actions.submitApprovalOption);
   const retryActivation = useStableEventCallback(actions.retryActivation);
-  const retryTuttiModeActivation = useStableEventCallback(
-    actions.retryTuttiModeActivation
-  );
-  const retryInlineNotice =
-    viewModel.composer.tuttiModeUpdateStatus === "failed"
-      ? retryTuttiModeActivation
-      : retryActivation;
   const continueInNewConversation = useStableEventCallback(
     actions.continueInNewConversation
   );
@@ -187,8 +180,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
   const retryComposerOptions = useStableEventCallback(
     actions.retryComposerOptions
   );
-  const setTuttiModeEffect = useStableEventCallback(actions.setTuttiModeEffect);
-  const setTuttiModeSpeed = useStableEventCallback(actions.setTuttiModeSpeed);
   const updatePlanIssueBudgetPreset = useStableEventCallback(
     actions.updatePlanIssueBudgetPreset
   );
@@ -401,10 +392,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
       presentationEditorDisabled: timelineInteractionLocked,
       disabledReason: composerDisabledReason,
       presentationSubmitDisabled: timelineInteractionLocked,
-      tuttiModeActive: viewModel.composer.isTuttiModeActive,
-      tuttiModeUpdating: viewModel.composer.isTuttiModeUpdating,
-      tuttiModeEffect: viewModel.composer.tuttiModeEffect,
-      tuttiModeSpeed: viewModel.composer.tuttiModeSpeed,
       composerSettings: {
         ...viewModel.composer.composerSettings,
         slashCommandPolicy: sideConversation.slashCommandPolicy
@@ -450,18 +437,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
       onProjectPathChange: updateSelectedProjectPath,
       onSettingsChange: updateComposerSettings,
       onRetryComposerOptions: retryComposerOptions,
-      onTuttiModeChange:
-        capabilityMenuState?.tuttiMode?.enabled === true
-          ? actions.setTuttiModeActive
-          : undefined,
-      onTuttiModeEffectChange:
-        capabilityMenuState?.tuttiMode?.enabled === true
-          ? setTuttiModeEffect
-          : undefined,
-      onTuttiModeSpeedChange:
-        capabilityMenuState?.tuttiMode?.enabled === true
-          ? setTuttiModeSpeed
-          : undefined,
       onPlanIssueBudgetPresetChange: updatePlanIssueBudgetPreset,
       onSubmit: sideConversation.submitMain,
       onSubmitEmpty: composerEmptySubmit?.onSubmit,
@@ -529,8 +504,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
       onSessionLaunchModePreferenceChange,
       stopDisabled,
       slashStatus,
-      setTuttiModeEffect,
-      setTuttiModeSpeed,
       submitInteractivePrompt,
       sideConversation.submitMain,
       sideConversation.slashCommandPolicy,
@@ -558,10 +531,6 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
       viewModel.composer.drainingQueuedPromptId,
       viewModel.detail.hasSentUserMessage,
       viewModel.composer.isInterrupting,
-      viewModel.composer.isTuttiModeActive,
-      viewModel.composer.isTuttiModeUpdating,
-      viewModel.composer.tuttiModeEffect,
-      viewModel.composer.tuttiModeSpeed,
       activePromptResponsePending,
       viewModel.composer.promptImagesSupported,
       viewModel.composer.queueStatus,
@@ -731,7 +700,7 @@ export const AgentGUIDetailPane = memo(function AgentGUIDetailPane({
               promptLabels={interactivePromptLabels}
               onSubmitApprovalOption={submitApproval}
               onRetryActivation={retryActivation}
-              onRetryInlineNotice={retryInlineNotice}
+              onRetryInlineNotice={retryActivation}
               onAuthLogin={authLogin}
               onContinueInNewConversation={continueInNewConversation}
               onSubmitBottomDockInteractivePrompt={

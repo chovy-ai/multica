@@ -646,7 +646,6 @@ function authoritativeSession() {
     settings: {},
     startedAtUnixMs: 1,
     title: "Session",
-    tuttiModeActivation: null,
     updatedAtUnixMs: 2,
     usage: null,
     visible: true,

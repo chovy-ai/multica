@@ -186,7 +186,6 @@ export type AgentActivityRuntimeActivateSessionInput =
       agentTargetId: string;
       clientSubmitId: string;
       initialGoalControl?: AgentActivityCreateSessionInput["initialGoalControl"];
-      initialTuttiModeActivation?: AgentActivityCreateSessionInput["initialTuttiModeActivation"];
       mode: "new";
     })
   | (AgentActivityRuntimeActivateSessionInputBase & {

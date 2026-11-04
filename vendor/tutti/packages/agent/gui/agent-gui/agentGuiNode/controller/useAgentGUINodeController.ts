@@ -54,10 +54,6 @@ import { useAgentGUIProviderCatalogSelection } from "./useAgentGUIProviderCatalo
 import { useAgentGUISessionEngineState } from "./useAgentGUISessionEngineState";
 import { useAgentGUISessionDetailTransport } from "./useAgentGUISessionDetailTransport";
 import { useAgentGUILocalState } from "./useAgentGUILocalState";
-import {
-  resolveAgentGUITuttiModeDraftKey,
-  useAgentGUITuttiModeActivation
-} from "./useAgentGUITuttiModeActivation";
 export {
   normalizePermissionModeSemantic,
   permissionConfigFromComposerOptions,
@@ -229,16 +225,6 @@ export function useAgentGUINodeController({
   const activeAgentActivityDisplayStatus = activeConversationId
     ? (agentActivityDisplayStatuses.get(activeConversationId) ?? null)
     : null;
-  const tuttiModeDraftKey = useMemo(
-    () => resolveAgentGUITuttiModeDraftKey(nodeId),
-    [nodeId]
-  );
-  const tuttiModeActivation = useAgentGUITuttiModeActivation({
-    activeConversationId,
-    draftKey: tuttiModeDraftKey,
-    engine: sessionEngine,
-    workspaceId
-  });
   const conversationList = useAgentGUIConversationListState({
     agentActivityRuntimeOrigin,
     currentUserId,
@@ -699,7 +685,6 @@ export function useAgentGUINodeController({
     sessionEngine,
     setUserProjectsSnapshot,
     transientConversation,
-    tuttiModeDraftKey,
     unactivate: activation.unactivate,
     updateComposerSettingsRef,
     workspaceId
@@ -771,7 +756,6 @@ export function useAgentGUINodeController({
     selectedComposerTargetData,
     sessionEngine,
     transientConversation,
-    tuttiModeActivation,
     unactivate: activation.unactivate,
     updateSelectedProjectPath,
     userProjects,

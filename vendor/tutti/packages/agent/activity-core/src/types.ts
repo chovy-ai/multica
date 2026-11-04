@@ -11,11 +11,7 @@ import type {
 import type { AgentActivitySessionMessageWindow } from "./messageWindow.types.ts";
 import type { AgentActivityRailPlacement } from "./railPlacement.types.ts";
 import type { AgentActivitySessionCapabilities } from "./sessionCapabilities.types.ts";
-import type {
-  AgentActivityCapabilityReference,
-  AgentActivityInitialTuttiModeActivation,
-  AgentActivityTuttiModeActivation
-} from "./tuttiMode.types.ts";
+import type { AgentActivityCapabilityReference } from "./tuttiMode.types.ts";
 
 export type {
   AgentActivityDurableMessage,
@@ -25,16 +21,7 @@ export type {
   AgentActivityTransientMessage
 } from "./message.types.ts";
 
-export type {
-  AgentActivityCapabilityReference,
-  AgentActivityInitialTuttiModeActivation,
-  AgentActivityTuttiModeActivation,
-  AgentActivityTuttiModeActivationRevision,
-  AgentActivityTuttiModeActivationSource,
-  AgentActivityTuttiModeActivationStatus,
-  AgentActivityUpdateTuttiModeActivationInput,
-  AgentActivityUpdateTuttiModeActivationResult
-} from "./tuttiMode.types.ts";
+export type { AgentActivityCapabilityReference } from "./tuttiMode.types.ts";
 
 export type {
   AgentActivityComposerBehavior,
@@ -121,12 +108,6 @@ export interface AgentActivitySession {
    * failed, or synced assertion.
    */
   goalSyncState?: AgentActivitySessionGoalSyncState | null;
-  /**
-   * Read projection of the independent daemon-owned TuttiModeActivation.
-   * The session does not own this lifecycle; activity-core normalizes it into
-   * its dedicated activation slice.
-   */
-  tuttiModeActivation: AgentActivityTuttiModeActivation | null;
   imported: boolean;
   visible: boolean;
   resumable: boolean;
@@ -386,7 +367,6 @@ export interface AgentActivityCreateSessionInput {
   noProject?: boolean | null;
   capabilityRefs?: readonly AgentActivityCapabilityReference[] | null;
   initialGoalControl?: AgentActivityInitialGoalControl | null;
-  initialTuttiModeActivation?: AgentActivityInitialTuttiModeActivation | null;
   railPlacement?: AgentActivityRailPlacement;
   initialContent?: AgentPromptContentBlock[] | null;
   /** 仅展示用的首轮文本(bundle 折叠成一个 chip);initialContent 仍带展开后的文件。 */

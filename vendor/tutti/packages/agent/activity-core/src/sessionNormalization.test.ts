@@ -13,7 +13,6 @@ test("normalizes a transport session into the complete canonical contract", () =
     cwd: "/workspace",
     provider: "codex",
     title: "Session",
-    tuttiModeActivation: null,
     updatedAtUnixMs: 42,
     workspaceId: "workspace-1"
   });
@@ -54,7 +53,6 @@ test("normalizes a transport session into the complete canonical contract", () =
     settings: {},
     startedAtUnixMs: 0,
     title: "Session",
-    tuttiModeActivation: null,
     updatedAtUnixMs: 42,
     usage: null,
     visible: true,

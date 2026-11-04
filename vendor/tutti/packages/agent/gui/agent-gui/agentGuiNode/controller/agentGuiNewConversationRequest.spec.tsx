@@ -424,7 +424,6 @@ function renderNewConversationScenario(input: {
       setIsComposerHome: vi.fn(),
       setIsLoadingMessages: vi.fn(),
       submittedDraftSnapshotsRef,
-      tuttiModeDraftKey: "node-default:codex:local:codex",
       userProjectsRef: { current: input.userProjects },
       workspaceId: "workspace-1"
     });

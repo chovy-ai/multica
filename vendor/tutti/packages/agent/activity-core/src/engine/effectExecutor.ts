@@ -369,13 +369,6 @@ function activationInput(
         ...(command.initialGoalControl
           ? { initialGoalControl: { ...command.initialGoalControl } }
           : {}),
-        ...(command.initialTuttiModeActivation
-          ? {
-              initialTuttiModeActivation: {
-                ...command.initialTuttiModeActivation
-              }
-            }
-          : {}),
         mode: "new"
       }
     : {

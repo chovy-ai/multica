@@ -125,24 +125,6 @@ export interface AgentGUIViewLabels extends AgentGUIProviderReadinessLabels {
   rtkSaverModeDescription: string;
   normalModeLabel?: string;
   normalModeDescription?: string;
-  tuttiModeLabel: string;
-  tuttiModeDescription: string;
-  tuttiModeRemove: string;
-  tuttiBudgetTitle: string;
-  tuttiBudgetEffectLabel: string;
-  tuttiBudgetSpeedLabel: string;
-  tuttiBudgetPreviewHint: string;
-  tuttiBudgetPreviewCost: string;
-  tuttiBudgetPreviewBalance: string;
-  tuttiBudgetPreviewPowerful: string;
-  tuttiBudgetModelPreferenceLabel: string;
-  tuttiBudgetModelPreferenceCost: string;
-  tuttiBudgetModelPreferenceBalance: string;
-  tuttiBudgetModelPreferencePowerful: string;
-  tuttiBudgetParallelismLabel: string;
-  tuttiBudgetParallelismValue: (count: number) => string;
-  tuttiModeUpdateFailed: string;
-  tuttiModeUpdateUncertain: string;
   planModeDescription?: string;
   planModeOnLabel: string;
   planModeOffLabel: string;
@@ -692,10 +674,6 @@ export interface AgentGUINodeViewProps extends AgentGUIComposerExternalPromptPro
     retryComposerOptions: NonNullable<
       AgentComposerProps["onRetryComposerOptions"]
     >;
-    setTuttiModeActive: (active: boolean) => void;
-    setTuttiModeEffect: (value: number) => void;
-    setTuttiModeSpeed: (value: number) => void;
-    retryTuttiModeActivation: () => void;
     updatePlanIssueBudgetPreset: (preset: PlanIssueBudgetPreset) => void;
     selectHomeComposerAgentTarget: (input: {
       provider: AgentGUIProvider;

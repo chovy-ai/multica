@@ -21,7 +21,7 @@ export type AgentSlashCommandProvider = string;
 
 export interface AgentSlashCommandCapability {
   aliases?: readonly string[];
-  capability: AgentCapabilityUse | "tutti";
+  capability: AgentCapabilityUse;
   kind: "capability";
   name: string;
 }
@@ -53,9 +53,6 @@ export type SlashCommandSelectionEffect =
       kind: "enablePlanMode";
     }
   | {
-      kind: "activateTuttiMode";
-    }
-  | {
       kind: "enableBrowserUse";
       draft: string;
     }
@@ -80,7 +77,6 @@ interface ResolveSlashCommandSelectionEffectInput {
 interface ResolveSlashCommandSubmitEffectInput {
   browserSupported?: boolean;
   computerSupported?: boolean;
-  tuttiSupported?: boolean;
   provider: AgentSlashCommandProvider;
   policy?: AgentSlashCommandPolicy | null;
   commands: readonly AgentSlashCommand[];
@@ -114,11 +110,6 @@ const COMPUTER_USE_CAPABILITY_COMMAND: AgentSlashCommandCapability = {
   capability: "computerUse",
   name: "computer",
   aliases: ["电脑"]
-};
-const TUTTI_CAPABILITY_COMMAND: AgentSlashCommandCapability = {
-  kind: "capability",
-  capability: "tutti",
-  name: "tutti"
 };
 const PLAN_MODE_COMMAND: AgentSessionCommand = { name: "plan" };
 
@@ -161,8 +152,7 @@ export function resolveSlashCommandsForProvider({
   compactSupported,
   planSupported = false,
   browserSupported = false,
-  computerSupported = false,
-  tuttiSupported = false
+  computerSupported = false
 }: {
   provider: AgentSlashCommandProvider;
   policy?: AgentSlashCommandPolicy | null;
@@ -177,7 +167,6 @@ export function resolveSlashCommandsForProvider({
   planSupported?: boolean;
   browserSupported?: boolean;
   computerSupported?: boolean;
-  tuttiSupported?: boolean;
 }): AgentSlashCommand[] {
   // Provider-advertised commands are runtime capabilities. Open extension
   // providers do not have a built-in Tutti policy descriptor, but their ACP
@@ -196,15 +185,14 @@ export function resolveSlashCommandsForProvider({
   const localPlanAvailable =
     planSupported &&
     (providerSlashPolicy(policy)?.localPlanCommands.has("plan") ?? false);
-  // `/plan` and `/tutti` are local modifiers, not agent prompts. Drop provider
-  // entries that would shadow their reserved exact names, then re-surface the
-  // local entries when the corresponding host support exists.
+  // `/plan` is a local modifier, not an agent prompt. Drop provider entries
+  // that would shadow its reserved exact name, then re-surface the local entry
+  // when the corresponding host support exists.
   const commandEntries = mergedEntries.filter((entry) => {
     const commandName = normalizedCommandName(entry);
     return (
       !isLocalTogglePlanCommand(commandName, policy) &&
       (!localPlanAvailable || !slashCommandMatchesInvocation(entry, "plan")) &&
-      (!tuttiSupported || !slashCommandMatchesInvocation(entry, "tutti")) &&
       isSlashPaletteCommandVisible(commandName, policy)
     );
   });
@@ -215,9 +203,6 @@ export function resolveSlashCommandsForProvider({
   }
   if (computerSupported) {
     capabilityEntries.push(COMPUTER_USE_CAPABILITY_COMMAND);
-  }
-  if (tuttiSupported) {
-    capabilityEntries.push(TUTTI_CAPABILITY_COMMAND);
   }
   return [...commandEntries, ...planEntries, ...capabilityEntries];
 }
@@ -239,9 +224,6 @@ export function resolveSlashCommandSelectionEffect({
       kind: "enableComputerUse",
       draft: draftForSlashCommand(command, currentDraft)
     };
-  }
-  if (isTuttiCapability(command)) {
-    return { kind: "activateTuttiMode" };
   }
   if (!policy) {
     return {
@@ -281,7 +263,6 @@ export function resolveSlashCommandSelectionEffect({
 export function resolveSlashCommandSubmitEffect({
   browserSupported = false,
   computerSupported = false,
-  tuttiSupported = false,
   provider: _provider,
   policy,
   commands,
@@ -312,11 +293,7 @@ export function resolveSlashCommandSubmitEffect({
     return null;
   }
   if (isAgentSlashCommandCapability(command)) {
-    return tuttiSupported &&
-      isTuttiCapability(command) &&
-      invocation.args.trim() === ""
-      ? { kind: "activateTuttiMode" }
-      : null;
+    return null;
   }
   const commandName = normalizedCommandName(command);
   if (isLocalTogglePlanCommand(commandName, policy)) {
@@ -503,16 +480,6 @@ function isComputerUseCapability(
     "kind" in command &&
     command.kind === "capability" &&
     command.capability === "computerUse"
-  );
-}
-
-function isTuttiCapability(
-  command: AgentSlashCommand
-): command is AgentSlashCommandCapability & { capability: "tutti" } {
-  return (
-    "kind" in command &&
-    command.kind === "capability" &&
-    command.capability === "tutti"
   );
 }
 

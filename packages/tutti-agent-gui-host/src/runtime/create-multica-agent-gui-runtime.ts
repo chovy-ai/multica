@@ -610,7 +610,7 @@ export function createMulticaAgentGuiRuntime(client: AgentGuiRpcClient, init: Ag
     await modelHydration;
     await modelWrites.catch(() => {});
     const agent = assertInvoke(input.agentTargetId);
-    if (input.initialGoalControl || input.initialTuttiModeActivation || input.isolation) unsupported("Goal, Tutti mode and local project activation");
+    if (input.initialGoalControl || input.isolation) unsupported("Goal and local project activation");
     if (input.settings && Object.entries(input.settings).some(([key, value]) => key !== "model" && key !== "reasoningEffort" && value != null && value !== false)) unsupported("Non-model conversation settings");
     let serverId = ledger.serverId(input.agentSessionId);
     if (serverId === input.agentSessionId) {

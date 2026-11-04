@@ -64,14 +64,9 @@ export function useAgentGUIViewModel(
       candidate.composer.isCreatingConversation,
       candidate.composer.isInterrupting,
       candidate.composer.isSubmitting,
-      candidate.composer.isTuttiModeActive,
-      candidate.composer.isTuttiModeUpdating,
       candidate.composer.promptImagesSupported,
       candidate.composer.queueStatus,
-      candidate.composer.queuedPrompts,
-      candidate.composer.tuttiModeEffect,
-      candidate.composer.tuttiModeSpeed,
-      candidate.composer.tuttiModeUpdateStatus
+      candidate.composer.queuedPrompts
     ]
   );
   const interaction = useMemo(

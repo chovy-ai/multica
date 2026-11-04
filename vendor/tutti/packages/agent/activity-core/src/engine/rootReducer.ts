@@ -65,10 +65,6 @@ import {
   sessionMutationsReducer
 } from "./sessionMutations.reducer.ts";
 import {
-  createInitialTuttiModeActivationState,
-  tuttiModeActivationReducer
-} from "./tuttiModeActivation.reducer.ts";
-import {
   createInitialEditRetryState,
   editRetryReducer
 } from "./editRetry.reducer.ts";
@@ -95,8 +91,7 @@ export function createInitialAgentSessionEngineState(): RootAgentSessionEngineSt
     sessionMutations: createInitialSessionMutationsState(),
     sessionCommands: createInitialSessionCommandsState(),
     sessionLifecycle: createInitialSessionLifecycleState(),
-    sessionMessages: createInitialSessionMessagesState(),
-    tuttiModeActivation: createInitialTuttiModeActivationState()
+    sessionMessages: createInitialSessionMessagesState()
   };
 }
 
@@ -454,11 +449,6 @@ export function rootEngineReducer(
       sessionsById: sessionLifecycle.state.sessionsById
     }
   );
-  const tuttiModeActivation = tuttiModeActivationReducer(
-    state.tuttiModeActivation,
-    intent,
-    { sessionsById: sessionLifecycle.state.sessionsById }
-  );
   const unchanged =
     attentionReadState.state === state.attentionReadState &&
     editRetry.state === state.editRetry &&
@@ -472,8 +462,7 @@ export function rootEngineReducer(
     sessionMutations.state === state.sessionMutations &&
     sessionCommands.state === state.sessionCommands &&
     sessionLifecycle.state === state.sessionLifecycle &&
-    sessionMessages.state === state.sessionMessages &&
-    tuttiModeActivation.state === state.tuttiModeActivation;
+    sessionMessages.state === state.sessionMessages;
   const nextState = unchanged
     ? state
     : {
@@ -489,8 +478,7 @@ export function rootEngineReducer(
         sessionMutations: sessionMutations.state,
         sessionCommands: sessionCommands.state,
         sessionLifecycle: sessionLifecycle.state,
-        sessionMessages: sessionMessages.state,
-        tuttiModeActivation: tuttiModeActivation.state
+        sessionMessages: sessionMessages.state
       };
   const followUpIntents = [
     ...(editRetry.followUpIntents ?? []),
@@ -515,8 +503,7 @@ export function rootEngineReducer(
       ...sessionMutations.commands,
       ...sessionCommands.commands,
       ...sessionLifecycle.commands,
-      ...promptQueue.commands,
-      ...tuttiModeActivation.commands
+      ...promptQueue.commands
     ],
     ...(followUpIntents.length > 0 ? { followUpIntents } : {}),
     state: nextState

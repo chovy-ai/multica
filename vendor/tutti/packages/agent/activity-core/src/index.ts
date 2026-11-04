@@ -182,21 +182,6 @@ export type {
   SessionsDeleteRequestedIntent
 } from "./engine/sessionMutations.types.ts";
 export {
-  selectTuttiModeActivationPresentation,
-  selectTuttiModeDraftIsActive,
-  selectTuttiModeDraftOrchestrationIntensity,
-  selectTuttiModeDraftPreferences,
-  tuttiModeActivationPresentationsEqual,
-  type ResolvedTuttiModeActivationPresentation,
-  type TuttiModeActivationPresentation
-} from "./engine/tuttiModeActivation.selectors.ts";
-export type {
-  TuttiModeActivationCommand,
-  TuttiModeActivationIntent,
-  TuttiModeActivationState,
-  TuttiModeActivationUpdateCommand
-} from "./engine/tuttiModeActivation.types.ts";
-export {
   selectAttentionReadState,
   selectSessionAttention
 } from "./engine/attentionReadState.selectors.ts";
@@ -435,13 +420,6 @@ export type {
   AgentActivitySessionKind,
   AgentActivitySessionEventEnvelope,
   AgentActivitySessionList,
-  AgentActivityInitialTuttiModeActivation,
-  AgentActivityTuttiModeActivation,
-  AgentActivityTuttiModeActivationRevision,
-  AgentActivityTuttiModeActivationSource,
-  AgentActivityTuttiModeActivationStatus,
-  AgentActivityUpdateTuttiModeActivationInput,
-  AgentActivityUpdateTuttiModeActivationResult,
   AgentActivitySubmitInteractiveInput,
   AgentActivitySubmitInteractiveResult,
   AgentActivitySnapshot,

@@ -37,7 +37,6 @@ import { useAgentMentionSearchController } from "./composer/useAgentMentionSearc
 import { useAgentQuickPromptLibrary } from "./composer/quickPrompts/useAgentQuickPromptLibrary";
 import { useScopedProjectMissingState } from "./composer/useScopedProjectMissingState";
 import type { AgentComposerProps } from "./composer/AgentComposer.types";
-import { withAgentComposerTuttiModeSnapshot } from "./composer/agentComposerSubmitOptions";
 import {
   agentComposerDraftFiles,
   agentComposerDraftImages,
@@ -77,7 +76,6 @@ export type {
   AgentComposerSlashStatus,
   AgentComposerSlashStatusLimit,
   AgentComposerSubmitOptions,
-  AgentComposerTuttiModeSubmitSnapshot,
   AgentComposerUsage
 } from "./composer/AgentComposer.types";
 import { useSessionWorktreeLaunch } from "./composer/useSessionWorktreeLaunch";
@@ -108,10 +106,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     presentationEditorDisabled,
     disabledReason,
     presentationSubmitDisabled,
-    tuttiModeActive = false,
-    tuttiModeUpdating = false,
-    tuttiModeEffect = 50,
-    tuttiModeSpeed = 50,
     placeholder,
     composerSettings,
     selectedAgentTarget = null,
@@ -143,9 +137,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     labels,
     onDraftContentChange,
     onSettingsChange,
-    onTuttiModeChange = () => {},
-    onTuttiModeEffectChange = () => {},
-    onTuttiModeSpeedChange = () => {},
     capabilityMenuState,
     capabilityControlsReadOnly = false,
     onSubmit,
@@ -219,12 +210,7 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
   > = (content, displayPrompt) => {
     onSubmitGuidance?.(
       content,
-      displayPrompt,
-      tuttiModeActive
-        ? {
-            capabilityRefs: [{ capability: "tutti", source: "slash_command" }]
-          }
-        : undefined
+      displayPrompt
     );
   };
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -272,15 +258,9 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     onSubmit(
       content,
       displayPrompt,
-      withAgentComposerTuttiModeSnapshot({
-        options:
-          sessionWorktreeLaunch.mode === "worktree"
-            ? { ...options, isolation: "worktree" }
-            : options,
-        active: tuttiModeActive,
-        effect: tuttiModeEffect,
-        speed: tuttiModeSpeed
-      })
+      sessionWorktreeLaunch.mode === "worktree"
+        ? { ...options, isolation: "worktree" }
+        : options
     );
   };
   const slashStatusAgentSessionId = slashStatus?.agentSessionId ?? null;
@@ -492,10 +472,8 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     availableSkills,
     composerSettings,
     computerExecutable,
-    // Host-gated product capability: omit or enabled:false must hide /tutti.
     // Fail closed like other unsupported host capabilities — do not treat a
     // missing flag as enabled.
-    tuttiModeSupported: capabilityMenuState?.tuttiMode?.enabled === true,
     capabilityControlsReadOnly,
     onDraftContentChange: handleDraftContentChange,
     onSettingsChange,
@@ -506,7 +484,6 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
     onSlashStatusOpen,
     onPromptImagesUnsupported,
     onRequestGitBranches,
-    onTuttiModeActivate: () => onTuttiModeChange(true),
     draftContent,
     selectedProjectPath,
     slashStatusAgentSessionId,
@@ -774,14 +751,7 @@ export function AgentComposer(props: AgentComposerProps): React.JSX.Element {
       setHighlightedIndex={setHighlightedIndex}
       isGoalModeActive={isGoalModeActive}
       isPlanModeActive={composerSettings.draftSettings.planMode}
-      isTuttiModeActive={tuttiModeActive}
-      isTuttiModeUpdating={tuttiModeUpdating}
-      tuttiModeEffect={tuttiModeEffect}
-      tuttiModeSpeed={tuttiModeSpeed}
       onClearPlanMode={() => onSettingsChange({ planMode: false })}
-      onClearTuttiMode={() => onTuttiModeChange(false)}
-      onTuttiModeEffectChange={onTuttiModeEffectChange}
-      onTuttiModeSpeedChange={onTuttiModeSpeedChange}
       isPromptTipOverflowing={isPromptTipOverflowing}
       onHistoryNavigation={onHistoryNavigation}
       sessionWorktreeLaunch={sessionWorktreeLaunch}

@@ -19,7 +19,6 @@ import { agentGUIUsageStatusLabels } from "./view/agentGUIUsageStatusLabels";
 import { agentQuickPromptLabels } from "./composer/quickPrompts/agentQuickPromptLabels";
 import { agentSlashPaletteLabels } from "./composer/agentSlashPaletteLabels";
 import { agentGUIProjectLaunchLabels } from "./composer/agentGUIProjectLaunchLabels";
-import { agentGUITuttiModeLabels } from "./view/agentGUITuttiModeLabels";
 import { agentGUIConnectorLabels } from "./composer/agentGUIConnectorLabels";
 
 export { buildAgentHomeSuggestions };
@@ -290,7 +289,6 @@ export function useAgentGUIViewLabels(input: {
       rtkSaverModeDescription: t("agentHost.agentGui.rtkSaverModeDescription"),
       normalModeLabel: t("agentHost.agentGui.normalModeLabel"),
       normalModeDescription: t("agentHost.agentGui.normalModeDescription"),
-      ...agentGUITuttiModeLabels(t),
       planModeDescription: t("agentHost.agentGui.planModeDescription"),
       planModeOnLabel: t("agentHost.agentGui.planModeOnLabel"),
       planModeOffLabel: t("agentHost.agentGui.planModeOffLabel"),

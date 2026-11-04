@@ -114,11 +114,6 @@ function optionalSessionFieldsMatch(
     optionalUsage(value.usage) &&
     optionalGoal(value.goal) &&
     optionalGoalSyncState(value.goalSyncState) &&
-    optionalTuttiModeActivation(
-      value.tuttiModeActivation,
-      agentSessionId,
-      workspaceId
-    ) &&
     optionalBoolean(value.imported) &&
     optionalBoolean(value.visible) &&
     optionalBoolean(value.resumable) &&
@@ -292,32 +287,6 @@ function optionalGoal(value: unknown): boolean {
   );
 }
 
-function optionalTuttiModeActivation(
-  value: unknown,
-  agentSessionId: string,
-  workspaceId: string
-): boolean {
-  if (value === undefined || value === null) return true;
-  if (!isRecord(value) || !isRecord(value.currentRevision)) return false;
-  const revision = value.currentRevision;
-  return (
-    Boolean(trimmedString(value.id)) &&
-    trimmedString(value.workspaceId) === workspaceId &&
-    trimmedString(value.agentSessionId) === agentSessionId &&
-    isOneOf(value.status, TUTTI_MODE_STATUSES) &&
-    isFiniteNumber(value.createdAtUnixMs) &&
-    isFiniteNumber(value.updatedAtUnixMs) &&
-    Boolean(trimmedString(revision.activationId)) &&
-    isFiniteNumber(revision.revision) &&
-    isOneOf(revision.status, TUTTI_MODE_STATUSES) &&
-    isOneOf(revision.source, TUTTI_MODE_SOURCES) &&
-    isFiniteNumber(revision.orchestrationIntensity) &&
-    optionalFiniteNumber(revision.effect) &&
-    optionalFiniteNumber(revision.speed) &&
-    isFiniteNumber(revision.createdAtUnixMs)
-  );
-}
-
 function optionalCapabilityReferences(value: unknown): boolean {
   return Boolean(
     value === undefined ||
@@ -483,8 +452,6 @@ const GOAL_SYNC_STATUSES = [
   "unknown",
   "failed"
 ] as const;
-const TUTTI_MODE_STATUSES = ["active", "inactive"] as const;
-const TUTTI_MODE_SOURCES = ["slash_command", "badge_remove"] as const;
 const COMPLETED_COMMAND_KINDS = ["compact", "review", "undo", "goal"] as const;
 const COMPLETED_COMMAND_STATUSES = ["completed", "failed", "canceled"] as const;
 const SESSION_CAPABILITIES = [
