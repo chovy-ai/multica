@@ -293,6 +293,26 @@ export interface AgentGUIComposerOptionsReader {
   status(targetKey: string | null | undefined, section?: "core" | "capabilities" | "connectors"): AgentActivityComposerOptionsLoadStatus | undefined;
 }
 
+/** A conversation's unsettled write of its settings; none once it settles. */
+export interface AgentGUISessionSettingsUpdate {
+  errorCode: string | null;
+  errorMessage: string | null;
+  queuedSettings: Readonly<Record<string, unknown>> | null;
+  settings: Readonly<Record<string, unknown>> | null;
+  status: "failed" | "inFlight" | "unknown" | "waitingForRuntime";
+}
+
+/** Writing a conversation's settings: reads what is unsettled, asks for a change. */
+export interface AgentGUIComposerSettingsLane {
+  settingsUpdate(
+    agentSessionId: string | null | undefined
+  ): AgentGUISessionSettingsUpdate | null;
+  updateSettings(input: {
+    agentSessionId: string;
+    settings: Readonly<Record<string, unknown>>;
+  }): void;
+}
+
 export function composerOptionsForTarget(input: {
   composer: AgentGUIComposerOptionsReader;
   target: AgentGUIComposerTargetData;

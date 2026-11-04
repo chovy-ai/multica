@@ -35,7 +35,6 @@ export interface SessionOperationState {
   runtimeActivityOccurredAtUnixMs: number;
   cancel: SessionCancelState;
   operationError: string | null;
-  settingsUpdate: SessionSettingsUpdateState;
 }
 
 export type SessionRuntimeActivity = "idle" | "running";
@@ -61,32 +60,6 @@ export type SessionRuntimeAvailability =
       reason: "agent_sharing_revoked";
       ownerLabel: string;
     };
-
-export type SessionSettingsUpdateStatus =
-  | "idle"
-  | "inFlight"
-  | "waitingForPromptSend"
-  | "waitingForRuntime"
-  | "failed"
-  | "unknown";
-
-export interface SessionSettingsUpdateState {
-  commandId: string | null;
-  errorCode: string | null;
-  errorMessage: string | null;
-  queuedCommandId: string | null;
-  queuedRequests: readonly {
-    commandId: string;
-    kind: "activation" | "promptPrecondition" | "user";
-    settings: Readonly<Record<string, unknown>>;
-    timeoutMs?: number;
-  }[];
-  queuedSettings: Readonly<Record<string, unknown>> | null;
-  requestKind: "activation" | "promptPrecondition" | "user" | null;
-  settings: Readonly<Record<string, unknown>> | null;
-  status: SessionSettingsUpdateStatus;
-  timeoutMs: number | null;
-}
 
 export type InteractionResponseStatus = "responding" | "failed" | "unknown";
 
@@ -269,40 +242,6 @@ export interface SessionCancelAbandonedIntent {
   agentSessionId: string;
 }
 
-export interface SessionSettingsUpdateRequestedIntent {
-  type: "session/settingsUpdateRequested";
-  agentSessionId: string;
-  commandId: string;
-  settings: Readonly<Record<string, unknown>>;
-  retry?: boolean;
-  timeoutMs?: number;
-  workspaceId: string;
-}
-
-export interface SessionSettingsPreconditionRequestedIntent {
-  type: "session/settingsPreconditionRequested";
-  agentSessionId: string;
-  commandId: string;
-  settings: Readonly<Record<string, unknown>>;
-  timeoutMs?: number;
-  workspaceId: string;
-}
-
-export interface SessionSettingsActivationRequestedIntent {
-  type: "session/settingsActivationRequested";
-  agentSessionId: string;
-  commandId: string;
-  settings: Readonly<Record<string, unknown>>;
-  timeoutMs?: number;
-  workspaceId: string;
-}
-
-export interface SessionSettingsQueueResumeRequestedIntent {
-  type: "session/settingsQueueResumeRequested";
-  agentSessionId: string;
-  settingsCommandId: string;
-}
-
 export interface SessionRuntimeAvailabilityChangedIntent {
   type: "session/runtimeAvailabilityChanged";
   agentSessionId: string;
@@ -330,10 +269,6 @@ export type SessionLifecycleIntent =
   | SessionRestoredIntent
   | SessionRuntimeActivityChangedIntent
   | SessionRuntimeAvailabilityChangedIntent
-  | SessionSettingsActivationRequestedIntent
-  | SessionSettingsPreconditionRequestedIntent
-  | SessionSettingsQueueResumeRequestedIntent
-  | SessionSettingsUpdateRequestedIntent
   | SessionSnapshotReceivedIntent
   | SessionStopRequestedIntent
   | SessionUpsertedIntent

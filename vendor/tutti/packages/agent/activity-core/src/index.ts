@@ -238,7 +238,6 @@ export {
   selectEngineSessionIsRespondingToInteraction,
   selectEngineSessionRuntimeAvailability,
   selectEngineSessionRuntimeActivity,
-  selectEngineSessionSettingsUpdate,
   selectEngineSessionOperationError,
   selectEngineSessionOperation,
   selectEngineSubmitAvailability,
@@ -277,8 +276,6 @@ export type {
   SessionOperationState,
   SessionRuntimeAvailability,
   SessionRuntimeActivity,
-  SessionSettingsUpdateState,
-  SessionSettingsUpdateStatus,
   SessionLifecycleState,
   TurnCancelCommand
 } from "./engine/sessionLifecycle.types.ts";

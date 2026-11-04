@@ -144,39 +144,23 @@ export function rootEngineReducer(
     intent.outcome === "succeeded"
       ? validateScopedSessionResult(intent.value, interactionResponse)
       : null;
-  const settingsEntry =
+  const settingsSessionId =
     intent.type === "engine/commandResult" &&
     intent.commandType === "session/updateSettings"
-      ? Object.entries(state.sessionLifecycle.operationBySessionId).find(
-          ([, operation]) =>
-            operation.settingsUpdate.commandId === intent.commandId
-        )
-      : undefined;
+      ? (intent.correlationId?.trim() ?? "")
+      : "";
   const settingsResultValidation =
     intent.type === "engine/commandResult" &&
     intent.commandType === "session/updateSettings" &&
     intent.outcome === "succeeded"
       ? validateScopedSessionResult(
           intent.value,
-          settingsEntry
-            ? {
-                agentSessionId: settingsEntry[0],
-                workspaceId:
-                  state.sessionLifecycle.sessionsById[settingsEntry[0]]
-                    ?.workspaceId ?? ""
-              }
-            : (() => {
-                const activation =
-                  state.pendingIntents.activationsByRequestId[
-                    intent.correlationId?.trim() ?? ""
-                  ];
-                return activation
-                  ? {
-                      agentSessionId: activation.agentSessionId,
-                      workspaceId: activation.workspaceId
-                    }
-                  : undefined;
-              })(),
+          {
+            agentSessionId: settingsSessionId,
+            workspaceId:
+              state.sessionLifecycle.sessionsById[settingsSessionId]
+                ?.workspaceId ?? ""
+          },
           true
         )
       : null;

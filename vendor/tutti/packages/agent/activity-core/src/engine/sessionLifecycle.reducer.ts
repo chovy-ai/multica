@@ -2,12 +2,6 @@ import type { AgentActivityInteraction } from "../types.ts";
 import type { SendInputResultValidation } from "./commandResult.validation.ts";
 import type { ScopedSessionResultValidation } from "./commandResult.validation.ts";
 import type { CancelResultValidation } from "./commandResult.validation.ts";
-import {
-  requestSettingsUpdate,
-  resumeSettingsQueueAfterPrompt,
-  resumeSettingsUpdateWhenRuntimeAvailable,
-  settleSettingsUpdate
-} from "./sessionSettings.reducer.ts";
 import type {
   EngineCommand,
   EngineIntent,
@@ -171,12 +165,6 @@ export function sessionLifecycleReducer(
       return requestCancel(state, intent);
     case "session/stopRequested":
       return requestCancel(state, intent);
-    case "session/settingsUpdateRequested":
-    case "session/settingsActivationRequested":
-    case "session/settingsPreconditionRequested":
-      return requestSettingsUpdate(state, intent);
-    case "session/settingsQueueResumeRequested":
-      return resumeSettingsQueueAfterPrompt(state, intent);
     case "submit/requested":
       return context.sendNowSubmitRequiresCancel
         ? requestCancel(state, {
@@ -226,18 +214,18 @@ export function sessionLifecycleReducer(
           context.interactionResultValidation ?? null
         );
       }
-      if (intent.commandType === "session/updateSettings")
-        return settleSettingsUpdate(
-          context.settingsResultValidation?.kind === "valid"
-            ? upsertCanonicalSession(
-                state,
-                context.settingsResultValidation.session,
-                initialOperation
-              )
-            : state,
-          intent,
-          context.settingsResultValidation ?? null
-        );
+      if (
+        intent.commandType === "session/updateSettings" &&
+        context.settingsResultValidation?.kind === "valid"
+      )
+        return {
+          commands: [],
+          state: upsertCanonicalSession(
+            state,
+            context.settingsResultValidation.session,
+            initialOperation
+          )
+        };
       if (intent.commandType === "turn/cancel")
         return settleCancel(
           state,
@@ -418,13 +406,10 @@ function changeRuntimeAvailability(
   if (runtimeAvailabilityEquals(current, availability)) {
     return unchanged(state);
   }
-  const changed = updateOperation(state, agentSessionId, (value) => ({
+  return updateOperation(state, agentSessionId, (value) => ({
     ...value,
     runtimeAvailability: availability
   }));
-  return availability.state === "available"
-    ? resumeSettingsUpdateWhenRuntimeAvailable(changed.state, agentSessionId)
-    : changed;
 }
 
 function runtimeAvailabilityEquals(

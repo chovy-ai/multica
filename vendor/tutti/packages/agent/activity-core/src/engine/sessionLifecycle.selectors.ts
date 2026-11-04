@@ -229,16 +229,6 @@ export function selectEngineSessionIsRespondingToInteraction(
   );
 }
 
-export function selectEngineSessionSettingsUpdate(
-  state: AgentSessionEngineStateBase,
-  agentSessionId: string | null | undefined
-) {
-  const id = agentSessionId?.trim() ?? "";
-  return (
-    state.sessionLifecycle.operationBySessionId[id]?.settingsUpdate ?? null
-  );
-}
-
 export function selectEngineGoalControl(
   state: AgentSessionEngineState,
   agentSessionId: string | null | undefined

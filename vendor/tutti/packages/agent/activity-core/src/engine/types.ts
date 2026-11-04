@@ -569,7 +569,6 @@ export interface AgentSessionEngine {
   ): AgentSessionSubmitPromptResult;
   stopSession(input: AgentSessionStopInput): void;
   subscribe(listener: AgentSessionEngineListener): () => void;
-  updateSessionSettings(input: AgentSessionUpdateSettingsInput): void;
 }
 import type {
   PromptQueueIntent,

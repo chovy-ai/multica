@@ -1,4 +1,3 @@
-import { createInitialSettingsUpdate } from "./sessionSettings.reducer.ts";
 import type {
   SessionCancelState,
   SessionLifecycleState,
@@ -11,8 +10,7 @@ export function initialOperation(): SessionOperationState {
     runtimeActivity: "idle",
     runtimeActivityOccurredAtUnixMs: 0,
     cancel: initialCancel(),
-    operationError: null,
-    settingsUpdate: createInitialSettingsUpdate()
+    operationError: null
   };
 }
 

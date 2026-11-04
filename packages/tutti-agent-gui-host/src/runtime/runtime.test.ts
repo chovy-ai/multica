@@ -548,8 +548,7 @@ describe("Multica Agent GUI runtime with the original session engine", () => {
     const data = backend(); data.sessions.push(session);
     const { handle } = await setup(data);
     await handle.runtime.getSession(init.workspaceId, session.id);
-    const engine = handle.runtime.getSessionEngine(init.workspaceId);
-    engine.updateSessionSettings({ agentSessionId: session.id, settings: { model: "runtime-catalog-model" } });
+    handle.runtime.composer.updateSettings({ agentSessionId: session.id, settings: { model: "runtime-catalog-model" } });
     await vi.waitFor(() => expect(handle.getModelSelection(agent.id, session.id)).toBe("runtime-catalog-model"));
     data.emit({ type: "invalidate", scope: "workspace" });
     await vi.waitFor(() => expect(handle.runtime.getSnapshot(init.workspaceId).sessions[0]?.settings.model).toBe("runtime-catalog-model"));

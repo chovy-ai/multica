@@ -32,7 +32,6 @@ import {
 } from "./promptQueue.sendNow.ts";
 import {
   activeTurnIdForSession,
-  isSettingsUpdateBlockingDrain,
   resolveQueueDrainDecision
 } from "./promptQueue.drainDecision.ts";
 import {
@@ -598,8 +597,7 @@ function drainSession(
   const decision = resolveQueueDrainDecision(
     record,
     availability,
-    barrierPending,
-    isSettingsUpdateBlockingDrain(lifecycle, agentSessionId)
+    barrierPending
   );
   if (decision.kind === "blocked") {
     return state === originalState ? unchanged(state) : result(state);

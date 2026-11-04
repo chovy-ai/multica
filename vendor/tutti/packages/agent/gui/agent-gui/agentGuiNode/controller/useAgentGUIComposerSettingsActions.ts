@@ -483,7 +483,7 @@ export function useAgentGUIComposerSettingsActions(
             settings: { ...sessionSettingsPatch }
           });
         } else {
-          sessionEngine.updateSessionSettings({
+          agentActivityRuntime.composer.updateSettings({
             agentSessionId,
             settings: { ...sessionSettingsPatch }
           });
