@@ -5,7 +5,6 @@ import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { localV2SummarySchema } from "@multica/core/local-conversation/v2";
 import { Text } from "@/components/ui/text";
-import { TextField } from "@/components/ui/text-field";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { ConnectionNotice } from "@/components/ai-sessions/connection-notice";
@@ -22,6 +21,7 @@ import { useAIViewPreferences } from "@/data/ai-sessions/preferences";
 import { aiSessionPreview } from "@/data/ai-sessions/preview";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
+import { useNativeSearchBar } from "@/lib/use-native-search-bar";
 
 export default function AISessionList() {
   const { t } = useT("aiSessions");
@@ -29,7 +29,7 @@ export default function AISessionList() {
   const { workspace, device, name } = useLocalSearchParams<{ workspace: string; device: string; name?: string }>();
   const { client, connected } = useAIConnection();
   const qc = useQueryClient();
-  const [search, setSearch] = useState("");
+  const search = useNativeSearchBar(t("search"));
   const [archived, setArchived] = useState(false);
   const scope = useAISessionScope();
   const collapsed = useAIViewPreferences((s) => s.collapsed);
@@ -69,7 +69,6 @@ export default function AISessionList() {
       </Stack.Toolbar.View>
     </Stack.Toolbar>
     <ConnectionNotice connected={connected} />
-    <View className="px-4 py-3"><TextField className="h-auto min-h-10 py-2" value={search} onChangeText={setSearch} placeholder={t("search")} accessibilityLabel={t("search")} /></View>
     {sessions.isError && <View className="px-4 pb-3 gap-2"><Text style={{ lineHeight: undefined }} accessibilityRole="alert" className="text-sm text-destructive">{t("connection_failed")}</Text><Button style={{ height: "auto", minHeight: 40 }} hitSlop={2} variant="outline" disabled={!connected || sessions.isFetching} onPress={() => void sessions.refetch()}><Text style={{ lineHeight: undefined }}>{t("retry")}</Text></Button></View>}
     {sessions.isPending ? connected ? <ActivityIndicator /> : null : <SectionList sections={sections} keyExtractor={(s) => s.conversation_id}
       refreshing={sessions.isRefetching} onRefresh={refresh} stickySectionHeadersEnabled={false}

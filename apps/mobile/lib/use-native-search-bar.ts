@@ -17,21 +17,26 @@
  * the layout. See `apps/mobile/app/(app)/[workspace]/_layout.tsx` for the
  * pattern.
  */
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useNavigation } from "expo-router";
 import type { NativeSyntheticEvent, TextInputFocusEventData } from "react-native";
+import type { SearchBarCommands } from "react-native-screens";
 
 export function useNativeSearchBar(
   placeholder: string,
-  options?: { autoFocus?: boolean },
+  options?: { autoFocus?: boolean; initialQuery?: string },
 ): string {
   const navigation = useNavigation();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(options?.initialQuery ?? "");
+  const searchBar = useRef<SearchBarCommands>(null);
+  const initialized = useRef(false);
+  const initialQuery = options?.initialQuery;
   const autoFocus = options?.autoFocus;
 
   useLayoutEffect(() => {
     navigation.setOptions({
       headerSearchBarOptions: {
+        ref: searchBar,
         placeholder,
         autoCapitalize: "none",
         hideWhenScrolling: false,
@@ -40,12 +45,17 @@ export function useNativeSearchBar(
         // HIG cautions against auto-keyboard for browse-first lists; pass
         // `autoFocus: true` only when the picker is search-first.
         autoFocus,
+        onFocus: () => {
+          if (initialized.current) return;
+          initialized.current = true;
+          if (initialQuery) searchBar.current?.setText(initialQuery);
+        },
         onChangeText: (e: NativeSyntheticEvent<TextInputFocusEventData>) =>
           setQuery(e.nativeEvent.text),
-        onCancelButtonPress: () => setQuery(""),
+        onCancelButtonPress: () => { initialized.current = true; setQuery(""); },
       },
     });
-  }, [navigation, placeholder, autoFocus]);
+  }, [navigation, placeholder, autoFocus, initialQuery]);
 
   return query;
 }

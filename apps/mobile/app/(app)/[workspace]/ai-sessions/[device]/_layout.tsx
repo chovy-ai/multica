@@ -13,13 +13,13 @@ export default function AIComputerLayout() {
     <Stack.Screen name="[session]" options={{ title: t("new") }} />
     <Stack.Screen name="folders" options={SHEET_OPTIONS} />
     <Stack.Screen name="models" options={SHEET_OPTIONS} />
+    <Stack.Screen name="setting" options={({ route }) => ({ ...SHEET_OPTIONS, headerShown: !!route.params && "kind" in route.params && route.params.kind === "model", title: t("model") })} />
     {/* Search and paginated results need the larger detent. */}
-    <Stack.Screen name="references" options={{ ...SHEET_OPTIONS, sheetInitialDetentIndex: 1 }} />
-    {/* The queue owns its content height and must stay flush with the bottom edge on iOS 26. */}
-    <Stack.Screen name="queue" options={{ presentation: "transparentModal", headerShown: false, animation: "fade", gestureEnabled: false, contentStyle: { backgroundColor: "transparent" } }} />
+    <Stack.Screen name="references" options={{ ...SHEET_OPTIONS, sheetInitialDetentIndex: 1, headerShown: true, title: t("references.title") }} />
+    <Stack.Screen name="queue" options={SHEET_OPTIONS} />
     <Stack.Screen name="usage" options={SHEET_OPTIONS} />
     <Stack.Screen name="files" options={{ title: t("files") }} />
     <Stack.Screen name="side" options={{ title: t("side") }} />
-    <Stack.Screen name="side-sessions" options={SHEET_OPTIONS} />
+    <Stack.Screen name="side-sessions" options={{ ...SHEET_OPTIONS, headerShown: true, title: t("side_chat") }} />
   </Stack></AIConnectionProvider>;
 }

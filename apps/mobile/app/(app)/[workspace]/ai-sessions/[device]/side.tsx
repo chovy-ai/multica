@@ -1,6 +1,6 @@
 import { invalidateAISessionLists } from "@/data/ai-sessions/list-queries";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Keyboard, ScrollView, Share, View } from "react-native";
+import { ActivityIndicator, Alert, Keyboard, Share, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -19,7 +19,7 @@ import { Text } from "@/components/ui/text";
 import { TextField } from "@/components/ui/text-field";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScopeButtons } from "@/components/ui/scope-buttons";
 import { useT } from "@/lib/i18n";
 import { createRequestId } from "@/lib/request-id";
 import { useColorScheme } from "@/lib/use-color-scheme";
@@ -94,7 +94,7 @@ export default function AISideWorkspace() {
     <Stack.Screen options={{ title: t("side"), headerBackTitle: t("sessions") }} />
     <Stack.Toolbar placement="left"><Stack.Toolbar.View hidesSharedBackground><IconButton name="chevron-back" hitSlop={4} accessibilityLabel={t("sessions")} onPress={() => router.back()} /></Stack.Toolbar.View></Stack.Toolbar>
     <Text style={{ lineHeight: undefined }} className="text-xs text-muted-foreground text-center py-1">{name || t("device_name")} · {t(connected ? "online" : "offline")}</Text>
-    <View className="px-4 py-2"><Tabs value={selected} onValueChange={(value) => { if (value === "files" || value === "web" || value === "side") setLayout(key, { tab: value }); }}><ScrollView horizontal className="grow-0" contentContainerStyle={{ flexGrow: 1 }} showsHorizontalScrollIndicator={false}><TabsList className="min-w-full mr-0 h-auto min-h-9">{(["files", "web", "side"] as const).map((value) => <TabsTrigger key={value} value={value} className="grow shrink-0 h-auto" hitSlop={{ top: 4, bottom: 4 }}><Text style={{ lineHeight: undefined }} numberOfLines={1}>{t(value === "side" ? "side_chat" : value)}</Text></TabsTrigger>)}</TabsList></ScrollView></Tabs></View>
+    <View className="px-4 py-2"><ScopeButtons options={(["files", "web", "side"] as const).map((value) => ({ value, label: t(value === "side" ? "side_chat" : value) }))} value={selected} onChange={(tab) => setLayout(key, { tab })} /></View>
     <View className="flex-1" style={{ display: selected === "files" ? "flex" : "none" }}><AIFilesContent key={path ?? "root"} initialPath={path} onLocation={onLocation} /></View>
     <View className="flex-1" style={{ display: selected === "web" ? "flex" : "none" }}>
       <View className="flex-row items-center gap-2 px-3 py-2"><View className="flex-1"><TextField className="h-auto min-h-10 py-2" value={entered} onChangeText={setInput} autoCapitalize="none" autoCorrect={false} placeholder={t("web_address")} accessibilityLabel={t("web_address")} onSubmitEditing={openWeb} /></View><IconButton name="arrow-forward" accessibilityLabel={t("open_web")} onPress={openWeb} /></View>

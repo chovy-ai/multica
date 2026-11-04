@@ -9,6 +9,39 @@ const reference = { kind: "agent" as const, id: "agent-1", name: "Reviewer" };
 const request: PendingSend = { requestId: "request-1", text: "Review", attachments: [], prepared: { text: "Review", prompt: "Review", references: [{ kind: "agent", id: "agent-1" }], agents: [{ id: "agent-1", name: "Reviewer" }] } };
 beforeEach(() => useAIDrafts.setState({ drafts: {}, references: {}, attachments: {}, pending: {} }));
 describe("AI reference drafts", () => {
+  it("applies multi-selection immediately and retains it when the picker is dismissed", () => {
+    const store = useAIDrafts.getState();
+    store.toggleReference(key, reference);
+    expect(useAIDrafts.getState().references[key]).toEqual([reference]);
+    store.toggleReference(key, { kind: "issue", id: "issue", name: "MUL-10" });
+    expect(useAIDrafts.getState().references[key]).toHaveLength(2);
+    store.toggleReference(key, reference);
+    expect(useAIDrafts.getState().references[key]).toEqual([{ kind: "issue", id: "issue", name: "MUL-10" }]);
+  });
+  it("consumes only the matching unfinished mention when a selection is applied", () => {
+    const store = useAIDrafts.getState();
+    store.setDraft(key, "Review @abc next");
+    store.toggleReference(key, reference, { query: "abc", start: 7, end: 11 });
+    expect(useAIDrafts.getState().drafts[key]).toBe("Review  next");
+    store.setDraft(key, "Updated text");
+    store.toggleReference(key, reference, { query: "abc", start: 7, end: 11 });
+    expect(useAIDrafts.getState().drafts[key]).toBe("Updated text");
+  });
+  it("retains an unfinished token without a selection and rejects selection while sending", () => {
+    const store = useAIDrafts.getState();
+    store.setDraft(key, "@abc");
+    store.setPending(key, request);
+    store.toggleReference(key, reference, { query: "abc", start: 0, end: 4 });
+    expect(useAIDrafts.getState().drafts[key]).toBe("@abc");
+    expect(useAIDrafts.getState().references[key]).toBeUndefined();
+  });
+  it("enforces the reference limit across immediate taps and still allows deselection", () => {
+    const store = useAIDrafts.getState();
+    for (let i = 0; i < 6; i++) store.toggleReference(key, { ...reference, id: String(i) });
+    expect(useAIDrafts.getState().references[key]).toHaveLength(5);
+    store.toggleReference(key, { ...reference, id: "0" });
+    expect(useAIDrafts.getState().references[key]).toHaveLength(4);
+  });
   it("persists prepared references together with uploaded attachments while dropping unfinished transfers", () => {
     const store = useAIDrafts.getState();
     store.setDraft(key, "Review");

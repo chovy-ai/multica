@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import * as SecureStore from "expo-secure-store";
 import type { SessionScope } from "./client";
-import { EMPTY_REFERENCES, type AIReference, type PreparedAIMessage } from "./references";
+import { EMPTY_REFERENCES, toggleReference, type AIReference, type PreparedAIMessage } from "./references";
 
 export function aiDraftKey(scope: SessionScope, id: string) { return JSON.stringify([scope.userId, scope.workspaceId, scope.deviceId, id]); }
 
@@ -10,10 +10,13 @@ export interface PendingSend { requestId: string; text: string; attachments: str
 export interface DraftAttachment { id: string; name: string; status: "uploading" | "uploaded" | "failed" }
 export const EMPTY_DRAFT_ATTACHMENTS: DraftAttachment[] = [];
 
+export interface ReferenceToken { query: string; start: number; end: number }
+
 interface AIDrafts {
   drafts: Record<string, string>; setDraft(key: string, text: string): void;
   references: Record<string, AIReference[]>;
   setReferences(key: string, references: AIReference[]): void;
+  toggleReference(key: string, reference: AIReference, token?: ReferenceToken): void;
   attachments: Record<string, DraftAttachment[]>;
   setAttachments(key: string, value: DraftAttachment[] | ((files: DraftAttachment[]) => DraftAttachment[])): void;
   complete(key: string, request: PendingSend): void;
@@ -40,6 +43,19 @@ export const useAIDrafts = create(persist<AIDrafts, [], [], Pick<AIDrafts, "draf
     const references = { ...state.references };
     if (value.length) references[key] = value; else delete references[key];
     return { references };
+  }),
+  toggleReference: (key, reference, token) => set((state) => {
+    if (state.pending[key]) return state;
+    const current = state.references[key] ?? EMPTY_REFERENCES;
+    const selected = toggleReference(current, reference);
+    if (selected === current) return state;
+    const references = { ...state.references };
+    if (selected.length) references[key] = selected; else delete references[key];
+    const text = state.drafts[key] ?? "";
+    if (!token || !Number.isInteger(token.start) || !Number.isInteger(token.end) || token.start < 0 || token.end <= token.start || text.slice(token.start, token.end) !== `@${token.query}`) return { references };
+    const drafts = { ...state.drafts }, remaining = text.slice(0, token.start) + text.slice(token.end);
+    if (remaining) drafts[key] = remaining; else delete drafts[key];
+    return { references, drafts };
   }),
   complete: (key, request) => set((state) => {
     // A late acknowledgement must not clear a newer draft or pending request.
