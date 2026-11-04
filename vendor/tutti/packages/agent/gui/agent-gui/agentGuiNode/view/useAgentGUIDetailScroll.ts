@@ -29,6 +29,8 @@ import {
   setTimelineScrollTopWithUserTransition
 } from "./AgentGUIConversationTimelinePane";
 
+import { useTimelineEndPosition } from "@multica/tutti-agent-gui-host/timeline-end-position";
+
 const AGENT_GUI_TOP_HISTORY_PREFETCH_THRESHOLD_PX = 240;
 const AGENT_GUI_TOP_MASK_SCROLL_EPSILON_PX = 1;
 const AGENT_GUI_REACHED_END_EPSILON_PX = 1;
@@ -777,9 +779,10 @@ export function useAgentGUIDetailScroll(input: AgentGUIDetailScrollInput) {
     writeTimelineScrollAnchor
   ]);
 
+  const isTimelineScrolledToBottom = useTimelineEndPosition(input, virtualScrollControllerRevision);
   return {
     followEndMode,
-    isTimelineScrolledToBottom: followEndMode === "following",
+    isTimelineScrolledToBottom,
     isTimelineScrolledToTop,
     setVirtualScrollController,
     scrollTimelineToBottom

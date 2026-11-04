@@ -25,6 +25,7 @@ import type {
   AgentActivitySnapshotListener,
   AgentSessionEngine
 } from "@tutti-os/agent-activity-core";
+import type { AgentComposerDraft } from "./agent-gui/agentGuiNode/model/agentGuiNodeTypes";
 import type { AgentHostAgentSessionComposerSettings } from "./shared/contracts/dto";
 import type {
   AgentConversationRailDeleteSessionsBatchInput,
@@ -312,6 +313,10 @@ export interface AgentActivityRuntimePromptAsset {
  * that remain host-owned.
  */
 export interface AgentGUIRuntime {
+  /** Reads an attachment as a URL; preferred over readSessionAttachment when present. */
+  readSessionAttachmentSource?: (input: { workspaceId: string; attachmentId: string }) => Promise<{ attachmentId: string; url: string }>;
+  /** The composer dropped attachments between these two drafts. */
+  promptAttachmentsRemoved?: (before: AgentComposerDraft, after: AgentComposerDraft) => void;
   /**
    * Stable identity of this runtime instance (e.g. a local origin vs a
    * shared/room origin). The runtime owns one session engine per workspace and

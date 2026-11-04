@@ -263,8 +263,8 @@ Store 中一个会话就是一个 `V2Conversation`，它保存：
 这是其他改动的前提。Next 不运行 Vite 插件，不落地的话 Web 上这些定制全部失效。
 
 1. 把 `hostPresentationAdaptations` 全部写入 `vendor/tutti`，删除插件。
-2. 14 个 `@multica-*` 别名改为 host 的正式 `exports`，vendor 依赖 host 包。这会形成工作区循环依赖，由于共享包都是导出 TS 源码，不影响构建。
-3. `virtual:multica-html-libraries` 改为两个 bundler 都能用的加载方式。
+2. 14 个 `@multica-*` 别名改为 host 的正式 `exports`。vendor 从仓库根的 `node_modules` 解析 host，依赖声明在根 `package.json`，不写在 vendor 包里：写在 vendor 包里会形成 `node_modules` 符号链接环，webpack 遍历目录时停不下来（`RangeError: Invalid array length`）。
+3. `virtual:multica-html-libraries` 改为 `scripts/prepare.mjs` 生成的 TS 模块。
 
 ### 第二步：可挂载
 
@@ -276,17 +276,19 @@ Store 中一个会话就是一个 `V2Conversation`，它保存：
 
 ### 第三步：样式和依赖
 
-1. 合并为一份 Tailwind 输出，Tutti 的全局样式和 token 限定在实例根节点内。
-2. 统一 React（host 和 vendor 19.2.6，主应用 19.2.3）和 Tiptap（host 3.23.6，views 3.31.3）的版本。
-3. host 的 `minify: false` 注释说 Rolldown minifier 会破坏这个 GUI，需要给合并后的 chunk 做决定，并用打包产物验证。
-4. Web：`next.config.ts` 的 `transpilePackages` 补 host 和 `@tutti-os/*`，并处理 `.ts` 后缀导入（`extensionAlias`）。
+1. GUI 保留自己的 Tailwind 输出。`scripts/prepare.mjs` 用 PostCSS 把所有规则限定到 `.multica-agent-gui`，`html`、`body`、`:root` 改写为这个根元素，生成 `src/agent-gui.generated.css`，随懒加载 chunk 加载。这样不必合并两套 token，GUI 和主应用互不影响。
+2. overlay 通过 `getPortalContainer()` 进入带主题的容器，不再直接挂到 `body`。主题不能写在 `<html>` 上，主应用的 token 也响应 `data-theme`。
+3. React 和 Tiptap 各自保留版本，由各 app 的 dedupe 和 `catalog` 决定；Desktop 渲染构建本来不压缩，不受 Rolldown minifier 问题影响。
+4. Web：`next.config.ts` 补 `transpilePackages`；vendor 的图片按 URL 导入，要绕开 `next-image-loader`，规则的 `test` 用函数，否则 Next 会停止处理所有 `.svg`。服务端编译把挂载模块别名为空，GUI 只在客户端 effect 之后渲染。
 
 ### 第四步：删除和替换
 
-- 删除：握手、`AgentGuiPreviewHost`、MessagePort RPC、`frame-messaging`、`build.mjs` 和 `publish.mjs`、`public/tutti-agent-gui` 输出，以及 `apps/web/package.json` 和 `electron.vite.config.ts` 的调用。
+- 删除：Panel 的 iframe 和握手、`AgentGuiPreviewHost`、`build.mjs` 和 `publish.mjs`。两个 app 改为调用 `prepare.mjs`。
+- e2e 用例靠 MessagePort 喂假数据，所以 `rpc-client`、`frame-messaging` 和入口移到 `packages/tutti-agent-gui-host/e2e-harness/`，由 `build-e2e-harness.mjs` 构建到 `apps/web/public/tutti-agent-gui`（不提交）。这只是测试台，两个 app 都不加载。
 - 删除：`sync.mjs`、`patches/`、`source-manifest.json`、`desktop-smoke.yml` 的 `--verify`。
 - 保留并发布：Tutti 的 `LICENSE`、`NOTICE`，ui-system 的 `NOTICE`，Chart.js 和 D3 的许可证。现在由 `build.mjs` 写入产物，要改到 Desktop 和 Web 的发布产物中。
-- 替换：`desktop-smoke.yml` 的 packaged `file://` 验证改为检查 GUI 懒加载成功；`e2e/` 中引用 frame 的用例迁移。
+- 替换：`desktop-smoke.yml` 检查 Desktop 产物含 GUI chunk 和许可证，并用测试台在真实 Electron 的 `file://` 页面验证渲染。
+- 新增：`e2e/agent-gui-direct-mount.spec.ts` 在同一 document 中放主应用 CSS 和两个 GUI 实例，验证样式互不影响、实例状态独立、overlay 有样式。
 
 ### iframe 去掉后要自行处理的问题
 
