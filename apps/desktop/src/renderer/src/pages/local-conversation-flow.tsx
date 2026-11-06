@@ -110,7 +110,7 @@ import {
   sessionEntry,
   type LocalSessionEntry
 } from "../platform/local-conversation-projects";
-import { LocalConversationImportButton } from "./local-conversation-import";
+import { LocalConversationListMenu } from "./local-conversation-import";
 import {
   LocalSideWorkspace,
   type SideWorkspaceHandle
@@ -613,7 +613,7 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
             move: "关联工作区项目",
             noWorkspaceProject: "不关联工作区项目",
             create: "新建项目会话",
-            new: "新建项目",
+            new: t(($) => $.desktop.local_conversation.add_directory),
             empty: "暂无会话",
             loadFailed: "项目加载失败",
             folderLoadFailed: "本地项目加载失败",
@@ -631,7 +631,7 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
             move: "Link workspace project",
             noWorkspaceProject: "No workspace project",
             create: "New conversation in project",
-            new: "New project",
+            new: t(($) => $.desktop.local_conversation.add_directory),
             empty: "No conversations",
             loadFailed: "Could not load projects",
             folderLoadFailed: "Could not load local projects",
@@ -642,7 +642,7 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
             removedNotice: "Project removed from list",
             undo: "Undo"
           },
-    [chinese]
+    [chinese, t]
   );
   const folderRestartMessage = chinese
     ? "本地项目功能已更新，请重启桌面应用"
@@ -1045,7 +1045,12 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
                 {labels.sessions}
               </h1>
               <div className="flex shrink-0 items-center gap-1">
-                <LocalConversationImportButtonBinding14
+                <IconButtonBinding15
+                  projectLabels={projectLabels}
+                  addingProject={addingProject}
+                  addProject={addProjectCallback}
+                />
+                <LocalConversationListMenuBinding14
                   key={`${scope.userId}:${scope.workspaceId}`}
                   scope={scope}
                   transport={transport}
@@ -1053,18 +1058,8 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
                   chinese={chinese}
                   qc={qc}
                   device={device}
-                />
-                <IconButtonBinding15
-                  projectLabels={projectLabels}
-                  addingProject={addingProject}
-                  addProject={addProjectCallback}
-                />
-                <IconButtonBinding16
-                  labels={labels}
-                  canCreate={canCreate}
-                  createDisabledReason={createDisabledReason}
-                  providers={providers}
-                  create={createCallback}
+                  archived={archived}
+                  onToggleArchive={() => setArchived((value) => !value)}
                 />
               </div>
             </div>
@@ -1231,11 +1226,6 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
             )}
             <div className="flex items-center justify-between px-4 py-3 text-caption text-muted-foreground">
               <span className="font-normal">{labels.storage}</span>
-              <ButtonBinding28
-                setArchived={setArchived}
-                archived={archived}
-                labels={labels}
-              />
             </div>
           </div>
         </ResizablePanel>
@@ -1929,14 +1919,16 @@ const ButtonBinding13 = observer(function ButtonBinding13({
   );
 });
 
-const LocalConversationImportButtonBinding14 = observer(
-  function LocalConversationImportButtonBinding14({
+const LocalConversationListMenuBinding14 = observer(
+  function LocalConversationListMenuBinding14({
     scope,
     transport,
     projects,
     chinese,
     qc,
-    device
+    device,
+    archived,
+    onToggleArchive
   }: {
     scope: { userId: string; workspaceId: string };
     transport: import("../platform/local-v2-transport").DirectLocalV2Transport;
@@ -1944,10 +1936,12 @@ const LocalConversationImportButtonBinding14 = observer(
     chinese: boolean;
     qc: import("@tanstack/react-query").QueryClient;
     device: LocalDevice;
+    archived: boolean;
+    onToggleArchive(): void;
   }) {
     const onImportedProp17 = usePersistCallback<
       NonNullable<
-        React.ComponentProps<typeof LocalConversationImportButton>["onImported"]
+        React.ComponentProps<typeof LocalConversationListMenu>["onImported"]
       >
     >(() => {
       void qc.invalidateQueries({
@@ -1955,13 +1949,15 @@ const LocalConversationImportButtonBinding14 = observer(
       });
     });
     return (
-      <LocalConversationImportButton
+      <LocalConversationListMenu
         key={`${scope.userId}:${scope.workspaceId}`}
         scope={scope}
         client={transport}
         projects={projects}
         chinese={chinese}
         onImported={onImportedProp17}
+        archived={archived}
+        onToggleArchive={onToggleArchive}
       />
     );
   }
@@ -2006,61 +2002,6 @@ const IconButtonBinding15 = observer(function IconButtonBinding15({
       onClick={onClickProp18}
     >
       {addingProject ? <Loader2 className="animate-spin" /> : <FolderPlus />}
-    </IconButton>
-  );
-});
-
-const IconButtonBinding16 = observer(function IconButtonBinding16({
-  labels,
-  canCreate,
-  createDisabledReason,
-  providers,
-  create
-}: {
-  labels: {
-    sessions: string;
-    new: string;
-    search: string;
-    empty: string;
-    noResults: string;
-    retry: string;
-    loading: string;
-    archive: string;
-    history: string;
-    pinned: string;
-    unpin: string;
-    directory: string;
-    newTitle: string;
-    storage: string;
-    directoryLocked: string;
-    unavailable: string;
-    failed: string;
-    fork: string;
-    forking: string;
-    forkHint: string;
-    forkWaiting: string;
-    forkEmpty: string;
-  };
-  canCreate: boolean;
-  createDisabledReason: string;
-  providers: import("@tanstack/react-query").UseQueryResult<
-    { id: LocalProviderId; name: string; available: boolean }[],
-    Error
-  >;
-  create: (folderProjectId?: string | null) => void;
-}) {
-  const onClickProp19 = usePersistCallback<
-    NonNullable<React.ComponentProps<typeof IconButton>["onClick"]>
-  >(() => create());
-  return (
-    <IconButton
-      label={labels.new}
-      disabled={!canCreate}
-      disabledReason={createDisabledReason}
-      aria-busy={providers.isFetching || undefined}
-      onClick={onClickProp19}
-    >
-      <Plus />
     </IconButton>
   );
 });
@@ -2905,85 +2846,6 @@ const DropdownMenuItemBinding27 = observer(function DropdownMenuItemBinding27({
         <FolderPlus />
         <span className="truncate">{title}</span>
       </DropdownMenuItem>
-    </Slot.Root>
-  );
-});
-
-const ButtonBinding28 = observer(function ButtonBinding28({
-  setArchived,
-  archived,
-  labels,
-  ...slotProps
-}: {
-  setArchived: import("react").Dispatch<
-    import("react").SetStateAction<boolean>
-  >;
-  archived: boolean;
-  labels: {
-    sessions: string;
-    new: string;
-    search: string;
-    empty: string;
-    noResults: string;
-    retry: string;
-    loading: string;
-    archive: string;
-    history: string;
-    pinned: string;
-    unpin: string;
-    directory: string;
-    newTitle: string;
-    storage: string;
-    directoryLocked: string;
-    unavailable: string;
-    failed: string;
-    fork: string;
-    forking: string;
-    forkHint: string;
-    forkWaiting: string;
-    forkEmpty: string;
-  };
-} & Omit<
-  React.ComponentProps<typeof Slot.Root>,
-  keyof {
-    setArchived: import("react").Dispatch<
-      import("react").SetStateAction<boolean>
-    >;
-    archived: boolean;
-    labels: {
-      sessions: string;
-      new: string;
-      search: string;
-      empty: string;
-      noResults: string;
-      retry: string;
-      loading: string;
-      archive: string;
-      history: string;
-      pinned: string;
-      unpin: string;
-      directory: string;
-      newTitle: string;
-      storage: string;
-      directoryLocked: string;
-      unavailable: string;
-      failed: string;
-      fork: string;
-      forking: string;
-      forkHint: string;
-      forkWaiting: string;
-      forkEmpty: string;
-    };
-  }
->) {
-  const onClickProp34 = usePersistCallback<
-    NonNullable<React.ComponentProps<typeof Button>["onClick"]>
-  >(() => setArchived((value) => !value));
-  return (
-    <Slot.Root {...slotProps}>
-      <Button variant="ghost" size="sm" onClick={onClickProp34}>
-        {archived ? labels.history : labels.archive}
-      </Button>
     </Slot.Root>
   );
 });
