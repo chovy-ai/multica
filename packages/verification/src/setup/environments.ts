@@ -1300,11 +1300,22 @@ export class Environments {
     const components: RunningProcess[] = [];
     this.processes.set(id, components);
     try {
-      if (environment.dataMode !== "liveReadOnly")
+      if (environment.dataMode !== "liveReadOnly") {
+        environment.components = {
+          ...environment.components,
+          database: await this.startDatabase(
+            id,
+            environment.checkout,
+            tools.env,
+            context.signal,
+          ),
+        };
+        await this.save(environment);
         await run("make", ["up", "C=api,web"], {
           cwd: environment.checkout,
           env: {
             ...tools.env,
+            ...this.managedEnvironment(id),
             GOFLAGS: `${tools.env.GOFLAGS ?? ""} -tags=verificationdev`,
             MULTICA_VERIFICATION_BACKEND: id,
             MULTICA_VERIFICATION_DIRECTORY: directory,
@@ -1315,6 +1326,7 @@ export class Environments {
           log: join(directory, "backend.log"),
           signal: context.signal,
         });
+      }
       if (environment.dataMode !== "liveReadOnly") {
         const configuration = await readFile(
           join(environment.checkout, ".env.worktree"),
@@ -1741,6 +1753,11 @@ export class Environments {
             );
         await run("make", ["down"], {
           cwd: environment.checkout,
+          env: { ...tools.env, ...this.managedEnvironment(id) },
+          log: join(this.directory(id), "stop.log"),
+        });
+        await removeContainer(databaseContainer(id), {
+          cwd: environment.checkout,
           env: tools.env,
           log: join(this.directory(id), "stop.log"),
         });
@@ -1781,6 +1798,80 @@ export class Environments {
     if (environment.state === "stopped")
       await this.deviceLease.releaseConfirmed(id);
     return environment;
+  }
+  /**
+   * The managed environment script keeps its registry, profiles and scratch
+   * space inside this environment, so its garbage collection never sees the
+   * user's other development environments.
+   */
+  private managedEnvironment(id: string): Record<string, string> {
+    const root = join(this.directory(id), "managed");
+    return {
+      MULTICA_DEV_HOME: root,
+      MULTICA_DEV_PROFILES_HOME: join(root, "profiles"),
+      MULTICA_DEV_TMPDIR: join(root, "tmp"),
+      MULTICA_DEV_WORKSPACES_PARENT: root,
+      MULTICA_DEV_DESKTOP_APP_DATA: join(root, "app-data"),
+      MULTICA_DEV_POSTGRES_CONTAINER: databaseContainer(id),
+    };
+  }
+  /** Starts this environment's own PostgreSQL on a free port and points the worktree at it. */
+  private async startDatabase(
+    id: string,
+    checkout: string,
+    env: NodeJS.ProcessEnv,
+    signal: AbortSignal,
+  ) {
+    const file = join(checkout, ".env.worktree"),
+      text = await readFile(file, "utf8"),
+      value = (key: string) =>
+        new RegExp(`^${key}=(.*)$`, "m").exec(text)?.[1]?.trim(),
+      user = value("POSTGRES_USER") || "multica",
+      password = value("POSTGRES_PASSWORD") || "multica",
+      databaseUrl = value("DATABASE_URL"),
+      port = await freePort(),
+      container = databaseContainer(id);
+    if (!databaseUrl)
+      throw new VerificationError(
+        problem(
+          "identityMismatch",
+          "The managed environment has no DATABASE_URL",
+        ),
+      );
+    const url = new URL(databaseUrl);
+    url.hostname = "127.0.0.1";
+    url.port = String(port);
+    await writeFile(
+      file,
+      text
+        .replace(/^POSTGRES_PORT=.*$/m, `POSTGRES_PORT=${port}`)
+        .replace(/^DATABASE_URL=.*$/m, `DATABASE_URL=${url.toString()}`),
+      { mode: 0o600 },
+    );
+    const log = join(this.directory(id), "backend.log");
+    await removeContainer(container, { cwd: checkout, env, log, signal });
+    await run(
+      "docker",
+      [
+        "run",
+        "--detach",
+        "--name",
+        container,
+        "--label",
+        `multica.verification.environment=${id}`,
+        "--env",
+        `POSTGRES_USER=${user}`,
+        "--env",
+        `POSTGRES_PASSWORD=${password}`,
+        "--env",
+        "POSTGRES_DB=postgres",
+        "--publish",
+        `127.0.0.1:${port}:5432`,
+        "pgvector/pgvector:pg17",
+      ],
+      { cwd: checkout, env, log, signal },
+    );
+    return { container, port };
   }
   /** Stops the environment if the installed Multica's runtime files change while it runs. */
   private guardProductionRuntime(id: string, expected: string) {
@@ -1863,4 +1954,23 @@ export async function writeDevCli(
     { mode: 0o700 },
   );
   return command;
+}
+
+function databaseContainer(id: string) {
+  return `multica-verification-${id}`;
+}
+
+/** Removes a container by name; a container that does not exist counts as removed. */
+async function removeContainer(
+  name: string,
+  options: Parameters<typeof run>[2],
+): Promise<void> {
+  try {
+    await run("docker", ["rm", "--force", name], options);
+  } catch (error) {
+    const exists = await run("docker", ["container", "inspect", name], options)
+      .then(() => true)
+      .catch(() => false);
+    if (exists) throw error;
+  }
 }

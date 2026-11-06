@@ -117,7 +117,7 @@ interface Problem {
 
 ## 8. 与既有代码的接入点
 
-- [托管开发环境](../../scripts/dev-env.sh)处理 checkout 环境；`env.start` 使用 worktree 的 `make worktree-env` 和 `make up C=api,web`。
+- [托管开发环境](../../scripts/dev-env.sh)处理 checkout 环境；`env.start` 使用 worktree 的 `make worktree-env` 和 `make up C=api,web`，并通过 `MULTICA_DEV_HOME` 等变量把登记表、profile 和临时目录放在环境目录内，通过 `MULTICA_DEV_POSTGRES_CONTAINER` 在环境专属的 PostgreSQL 容器里建库，不启动共享容器。
 - [Desktop 构建配置](../../apps/desktop/electron.vite.config.ts)、[CLI 构建](../../apps/desktop/scripts/bundle-cli.mjs)和 [dev 启动](../../apps/desktop/scripts/dev.mjs)提供开发构建；[发行流程](../../apps/desktop/scripts/package.mjs)排除诊断产物。
 - [Local API](../../server/internal/daemon/localhost/v2.go) 的 verification 路由提供事件分页、导入和 fake provider；诊断来源仍遵循账号、workspace 和 owner 校验。
 - Desktop main 的[诊断服务](../../apps/desktop/src/main/verification-dev/index.ts)提供 `/capabilities`、`/snapshot`、`/events`、`/connection`。

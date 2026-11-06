@@ -12,6 +12,7 @@
 | 固定版本与构建复用 | `setup/source-identity.ts`、`build-cache.ts` | SHA/工作变更、锁文件/工具/构建环境缓存键、同键互斥、原子工件清单与校验；启动前拒绝源码漂移 |
 | 设备互斥与中断 | `setup/device-lease.ts`、`environments.ts`、`read-only-web.ts` | 跨项目设备锁；宿主重启后环境和任务标为 interrupted；清理未确认时保留占用 |
 | 与已安装 Multica 并存 | `setup/environments.ts`、`production-guard.ts` | 运行时进程树使用私有 HOME 和独立健康端口；环境自带 `multica-dev` 命令；已安装运行时文件变化即停止验证环境 |
+| 与其他开发环境隔离 | `setup/environments.ts`、`scripts/dev-env.sh` | 专属 PostgreSQL 容器和空闲端口；`make up`/`make down` 使用环境内私有登记表，不回收其他环境 |
 | 真实数据与模板 | `data/service.ts`、`workspace.ts`、`manifest.ts`，Go `verificationworkspace`、`handler/verification_dev.go` | 选定会话/项目内容导出、关系和附件清单、按命名空间幂等导入、ID 映射；两个版本化模板 |
 | 事件读取 | Go `daemon/localhost/verification_dev.go`、Desktop `main/verification-dev` | 按 cursor 分页，原样返回 generation、cursor、保留范围；无推送通道 |
 | 页面操作 | `page/service.ts`、`read-only.ts` | 定位器或坐标，多匹配要求 index；只读页面拦截写请求、WebSocket 和外部网络 |
@@ -26,6 +27,7 @@
 | `test:integration` | 8 项中 7 项通过，覆盖真实 Go service/SQLite/Local API、受控 provider 和 Chromium 页面操作。会话历史复制用例失败：SQLite 导出器只识别 schema 4、5，而会话库已升级到 7；未修改的 origin/main 上同样失败 |
 | Go `verificationdev` 测试（`internal/daemon/localhost`） | 通过 |
 | Desktop `typecheck:node` | 通过 |
+| `scripts/dev-env.test.sh` | 通过，含在调用方容器内建库且不启动共享容器 |
 | `test:desktop` | 未运行；与已安装 Multica 并存的完整 Electron 链路尚无实测 |
 
 ## 正式交付仍需的实测
