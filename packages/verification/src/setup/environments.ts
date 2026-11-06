@@ -679,7 +679,8 @@ export class Environments {
           execFile(
             "go",
             ["version"],
-            { cwd: checkout, env: tools.env },
+            // Same environment as launch/run: Go needs HOME for its module cache.
+            { cwd: checkout, env: { ...process.env, ...tools.env } },
             (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
           ),
         ),
