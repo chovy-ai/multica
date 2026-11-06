@@ -116,7 +116,9 @@ claude mcp add --scope user --transport http multica-verification http://127.0.0
 
 ## 数据副本
 
-`data_restore` 每次导入一份新副本：会话历史冻结，运行中的轮次转为取消，队列暂停，工作目录重新绑定，云端引用移除。workspace 副本恢复状态、工作流、项目、事项、父子关系、标签、评论和附件；人员执行身份和自动工作流执行不随内容复制。含执行 source context、自定义属性定义或项目执行资源的选择明确返回不支持。
+`data_restore` 每次导入一份新副本：会话历史冻结，运行中的轮次转为取消，队列暂停，工作目录重新绑定，云端引用移除。未完成的提交状态随副本保留：排队项连同暂停原因保留；"需要确认"的提交保持该状态和原因；复制时正在发送的提交转为"需要确认"。
+
+SQLite 导出不按 schema 版本号判断，而是核对它读取的表和列是否存在；会话库 schema 6 起额外导出未完成的提交状态，与 Local API 快照的格式一致。缺少所需列时返回 `unsupportedVersion` 并指明缺失的列。workspace 副本恢复状态、工作流、项目、事项、父子关系、标签、评论和附件；人员执行身份和自动工作流执行不随内容复制。含执行 source context、自定义属性定义或项目执行资源的选择明确返回不支持。
 
 导入响应丢失时 job 为 `unknown`，`resourceRefs` 中保留副本的 datasetId；可以用 `state_read` 查看副本是否存在，再决定是否导入另一份。
 
@@ -155,7 +157,3 @@ node scripts/verification/check-production.mjs
 (cd server && go test -race -tags=verificationdev ./internal/verificationworkspace ./internal/handler -run '^TestVerification|^TestValidateGraphBeforeImport$|^TestAttachmentIntegrityBeforeMutation$' -count=1)
 (cd server && go test -race ./internal/handler -run '^TestVerificationProductionRoutesStayAbsent$' -count=1)
 ```
-
-## 已知限制
-
-SQLite 导出器只识别会话库 schema 4 和 5。会话库升级到 schema 7 后，配置 `databaseFile` 的来源会返回 `unsupportedVersion`，`test:integration` 中依赖该路径的用例同样失败；不配置 `databaseFile` 时走 Local API 导出。
