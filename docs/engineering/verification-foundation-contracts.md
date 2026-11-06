@@ -111,7 +111,8 @@ interface Problem {
 
 - 来源由宿主启动参数绑定（`--bindings-file`），工具输入不接收 token、任意路径或 SQL。
 - 只读来源（`access: readOnly`）拒绝写请求；导入和 fake provider 控制只作用于宿主自己启动的测试环境。
-- 设备锁保证同一台设备只运行一个完整 Desktop 环境；检测到日常 Desktop 运行时拒绝启动，不接管未知进程。
+- 设备锁保证同一台设备只运行一个完整 Desktop 验证环境，不接管未知进程。
+- 验证运行时与已安装的 Multica 并存：开发 Electron、bundled daemon 和环境的 `multica-dev` 命令使用环境私有 HOME 和独立健康端口（`MULTICA_DEV_ISOLATED`、`MULTICA_DEV_HEALTH_PORT`），并剔除模型提供方凭据环境变量。宿主持续核对已安装 Multica 的 `launch.json`、`daemon.pid`、CLI 链接、`desktop-runtime` profile 配置和 Codex 配置，发生变化即停止验证环境。
 - 生产 Electron 构建移除 main/preload/renderer 验证实现；Go 端由 `verificationdev` 标签控制，设置环境变量不能在生产构建中重新打开。
 
 ## 8. 与既有代码的接入点

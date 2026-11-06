@@ -57,11 +57,11 @@ export async function inspectDevice(
   }
   add(
     "desktopRuntime",
-    occupied ? "blocked" : "ready",
+    "ready",
     occupied
-      ? "Another Desktop runtime is present"
-      : "No active normal Desktop runtime was found",
-    "Use a dedicated clean Mac; this tool does not stop unrelated applications",
+      ? "The installed Desktop runtime is running; verification runtimes use their own home and health port and stop if its files change"
+      : "No active installed Desktop runtime was found",
+    "No action is required",
   );
   const disk = await statfs(projectRoot);
   const availableBytes = disk.bavail * disk.bsize;

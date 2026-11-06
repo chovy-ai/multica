@@ -37,6 +37,7 @@ import { probeTool } from "./inspect.js";
 import { DeviceLease } from "./device-lease.js";
 import { prepareToolchain } from "./toolchain.js";
 import { launch, run, type RunningProcess } from "./process.js";
+import { productionRuntimeDigest } from "./production-guard.js";
 import type { Bindings } from "../sources/bindings.js";
 
 export const prepareInput = z
@@ -120,6 +121,7 @@ export class Environments {
   private readonly readOnlyPages = new Map<string, ReadOnlyPageRuntime>();
   private readonly processes = new Map<string, RunningProcess[]>();
   private readonly tools = new Map<string, Tools>();
+  private readonly guards = new Map<string, ReturnType<typeof setInterval>>();
   private lifecycle: Promise<unknown> = Promise.resolve();
   constructor(
     private readonly storage: HostStorage,
@@ -1269,41 +1271,6 @@ export class Environments {
         }
       }
     }
-    try {
-      const registered = JSON.parse(
-        await readFile(
-          join(homedir(), ".multica/desktop-runtime/runtime.json"),
-          "utf8",
-        ),
-      ) as { pid?: number };
-      if (registered.pid) {
-        try {
-          process.kill(registered.pid, 0);
-          throw new VerificationError(
-            problem(
-              "instanceBusy",
-              "Another Desktop runtime is still present; use the dedicated test Mac",
-              "userAction",
-            ),
-          );
-        } catch (error) {
-          if (
-            error instanceof VerificationError ||
-            !(
-              error instanceof Error &&
-              "code" in error &&
-              error.code === "ESRCH"
-            )
-          )
-            throw error;
-        }
-      }
-    } catch (error) {
-      if (
-        !(error instanceof Error && "code" in error && error.code === "ENOENT")
-      )
-        throw error;
-    }
     await awaitPrerequisites(
       environment.checkout,
       environment.mode,
@@ -1370,6 +1337,39 @@ export class Environments {
         await writeFile(sessionFile, JSON.stringify(session), { mode: 0o600 });
         await this.save(environment);
       }
+      const session = sessionSchema.parse(
+          JSON.parse(await readFile(join(directory, "session.json"), "utf8")),
+        ),
+        runtimeHome = join(directory, "runtime-home"),
+        healthPort = await freePort(),
+        productionDigest = await productionRuntimeDigest(homedir());
+      await mkdir(runtimeHome, { recursive: true, mode: 0o700 });
+      const cliCommand = await writeDevCli(
+        directory,
+        runtimeHome,
+        healthPort,
+        join(environment.checkout, "apps/desktop/resources/bin/multica"),
+      );
+      const runtimeEnv: Record<string, string | undefined> = {
+        ...withoutProviderCredentials(tools.env),
+        // The whole runtime tree gets its own home so it never shares the
+        // installed Multica's registry, CLI link, prefs, health port or agent configs.
+        HOME: runtimeHome,
+        USERPROFILE: runtimeHome,
+        XDG_CONFIG_HOME: join(runtimeHome, ".config"),
+        CODEX_HOME: join(runtimeHome, ".codex"),
+        MULTICA_DEV_ISOLATED: "1",
+        MULTICA_DEV_USER_DATA: session.profileDir,
+        MULTICA_DEV_HEALTH_PORT: String(healthPort),
+      };
+      environment.components = {
+        ...environment.components,
+        runtimeHome,
+        healthPort,
+        cliCommand,
+        productionRuntimeDigest: productionDigest,
+      };
+      await this.save(environment);
       const child = await launch(
         tools.node,
         [
@@ -1383,17 +1383,13 @@ export class Environments {
         {
           cwd: environment.checkout,
           env: {
-            ...tools.env,
+            ...runtimeEnv,
             MULTICA_VERIFICATION_SESSION: join(directory, "session.json"),
             MULTICA_VERIFICATION_MODE: "1",
-            MULTICA_VERIFICATION_HOME: join(directory, "runtime-home"),
-            MULTICA_WORKSPACES_ROOT: join(directory, "runtime-home/workspaces"),
+            MULTICA_VERIFICATION_HOME: runtimeHome,
+            MULTICA_WORKSPACES_ROOT: join(runtimeHome, "workspaces"),
             DESKTOP_RENDERER_PORT: String(await freePort()),
-            MULTICA_VERIFICATION_TOKEN: sessionSchema.parse(
-              JSON.parse(
-                await readFile(join(directory, "session.json"), "utf8"),
-              ),
-            ).token,
+            MULTICA_VERIFICATION_TOKEN: session.token,
             VITE_API_URL: environment.apiOrigin,
             VITE_WS_URL: environment.apiOrigin.replace(/^http/, "ws") + "/ws",
             DESKTOP_APP_SUFFIX: `verification-${id.slice(0, 8)}`,
@@ -1443,6 +1439,7 @@ export class Environments {
             },
           };
           await this.save(environment);
+          this.guardProductionRuntime(id, productionDigest);
           return this.readiness(environment);
         } catch {
           await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1569,6 +1566,7 @@ export class Environments {
     id: string,
     _context?: OperationContext,
   ): Promise<Environment> {
+    this.unguard(id);
     let environment = await this.get(id);
     if (environment.dataMode === "liveReadOnly") {
       const pages = this.readOnlyPages.get(id);
@@ -1784,7 +1782,45 @@ export class Environments {
       await this.deviceLease.releaseConfirmed(id);
     return environment;
   }
+  /** Stops the environment if the installed Multica's runtime files change while it runs. */
+  private guardProductionRuntime(id: string, expected: string) {
+    this.unguard(id);
+    let checking = false;
+    const timer = setInterval(() => {
+      if (checking) return;
+      checking = true;
+      void productionRuntimeDigest(homedir())
+        .then(async (current) => {
+          if (current === expected) return;
+          this.unguard(id);
+          await this.serializeLifecycle(() => this.stop(id)).catch(
+            () => undefined,
+          );
+          const stopped = await this.get(id);
+          await this.save({
+            ...stopped,
+            problem: problem(
+              "identityMismatch",
+              "The installed Multica runtime files changed while this environment ran; the environment was stopped",
+              "inspect",
+            ),
+          });
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          checking = false;
+        });
+    }, 1000);
+    timer.unref();
+    this.guards.set(id, timer);
+  }
+  private unguard(id: string) {
+    const timer = this.guards.get(id);
+    if (timer) clearInterval(timer);
+    this.guards.delete(id);
+  }
   async close(): Promise<void> {
+    for (const id of [...this.guards.keys()]) this.unguard(id);
     for (const id of this.processes.keys())
       await this.serializeLifecycle(() => this.stop(id)).catch(() => undefined);
   }
@@ -1793,4 +1829,38 @@ export class Environments {
     this.lifecycle = next;
     return next;
   }
+}
+
+function withoutProviderCredentials(env: NodeJS.ProcessEnv) {
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      ([key]) => !/^(ANTHROPIC_|OPENAI_|CLAUDE_|CODEX_)/.test(key),
+    ),
+  );
+}
+
+/** Writes the environment's `multica-dev` command; it never touches the user's PATH. */
+export async function writeDevCli(
+  directory: string,
+  runtimeHome: string,
+  healthPort: number,
+  cliPath: string,
+): Promise<string> {
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  const bin = join(directory, "bin"),
+    command = join(bin, "multica-dev");
+  await mkdir(bin, { recursive: true, mode: 0o700 });
+  await writeFile(
+    command,
+    [
+      "#!/bin/sh",
+      `export HOME=${quote(runtimeHome)}`,
+      "export MULTICA_DEV_ISOLATED=1",
+      `export MULTICA_DEV_HEALTH_PORT=${healthPort}`,
+      `exec ${quote(cliPath)} --profile desktop-runtime "$@"`,
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  return command;
 }

@@ -59,7 +59,9 @@ node packages/verification/dist/mcp/stdio.js --project /absolute/path/to/checkou
 - `fixture` 和 `realSnapshot` 使用该 worktree 的 `make up C=api,web`，再启动开发 Electron，由它启动同构建的 bundled daemon。
 - `liveReadOnly` 要求 `mode=renderer` 和 backend 来源，启动独立 Chromium 页面显示真实 API 数据；写请求、WebSocket 和其他外部请求被拦截。
 - `includeWorkingChanges` 只能覆盖当前 HEAD，并记录源码摘要。目标版本必须已有开发验证接点，否则返回 `unsupportedVersion`。
-- 同一台设备同时只运行一个完整 Desktop 环境；设备锁在 `~/.multica/verification-device.lock`。检测到日常 Desktop 运行时拒绝启动。
+- 同一台设备同时只运行一个完整 Desktop 验证环境；设备锁在 `~/.multica/verification-device.lock`。
+- 验证环境可以和已安装的 Multica 同时运行：开发 Electron、bundled daemon 和 CLI 使用环境私有的 HOME（`<环境目录>/runtime-home`）和独立的 daemon 健康端口，不读写已安装 Multica 的运行时注册、CLI 链接、偏好设置和 Codex 配置，并剔除 `ANTHROPIC_`、`OPENAI_`、`CLAUDE_`、`CODEX_` 开头的环境变量。宿主每秒核对已安装 Multica 的运行时文件，发生变化就停止该验证环境。
+- `env_status` 的 `components.cliCommand` 是该环境的 `multica-dev` 命令，绑定环境的 HOME 和健康端口，可直接操作环境内的 CLI 和 daemon；它不安装到用户 PATH。
 
 构建缓存以源码、锁文件、工具/OS/架构版本和构建环境为键，复用 CLI 和原生 helper；Electron/Next 开发服务按本轮源码编译。
 
