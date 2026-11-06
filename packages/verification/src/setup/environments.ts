@@ -26,7 +26,12 @@ import type { HostStorage } from "../host/storage.js";
 import { redactLogText } from "../host/redact.js";
 import { digest } from "../host/storage.js";
 import type { JobService, OperationContext } from "../host/jobs.js";
-import { problem, toProblem, VerificationError } from "../host/problem.js";
+import {
+  isMissing,
+  problem,
+  toProblem,
+  VerificationError,
+} from "../host/problem.js";
 import {
   launchReadOnlyPages,
   type ReadOnlyPageRuntime,
@@ -129,6 +134,10 @@ export class Environments {
     jobs: JobService,
     readonly bindings: Bindings,
     private readonly deviceLease: DeviceLease,
+    /** Project-level directory shared by every host: toolchains and the build cache. */
+    private readonly sharedRoot: string,
+    /** Runs before taking the device lease so a crashed host's environment cannot hold it. */
+    private readonly beforeLease: () => Promise<void> = async () => {},
   ) {
     jobs.register("env.start", {
       input: prepareInput,
@@ -574,7 +583,7 @@ export class Environments {
       await context.progress("toolchain");
       const tools = await prepareToolchain(
         checkout,
-        join(this.storage.root, "tools"),
+        join(this.sharedRoot, "tools"),
         context.signal,
       );
       this.tools.set(id, tools);
@@ -694,7 +703,7 @@ export class Environments {
           ),
         ).version;
       const build = await new BuildCache(
-        join(this.storage.root, "build-cache"),
+        join(this.sharedRoot, "build-cache"),
       ).materialize(
         checkout,
         {
@@ -1085,7 +1094,7 @@ export class Environments {
       this.tools.get(id) ??
       (await prepareToolchain(
         environment.checkout,
-        join(this.storage.root, "tools"),
+        join(this.sharedRoot, "tools"),
         context.signal,
       ));
     const webPort = await freePort(),
@@ -1285,6 +1294,7 @@ export class Environments {
         await this.save(environment);
       },
     );
+    await this.beforeLease();
     await this.deviceLease.acquire(id);
     environment = {
       ...environment,
@@ -1297,7 +1307,7 @@ export class Environments {
         this.tools.get(id) ??
         (await prepareToolchain(
           environment.checkout,
-          join(this.storage.root, "tools"),
+          join(this.sharedRoot, "tools"),
           context.signal,
         ));
     this.tools.set(id, tools);
@@ -1456,6 +1466,7 @@ export class Environments {
           };
           await this.save(environment);
           this.guardProductionRuntime(id, productionDigest);
+          if (!snapshot.userId) await this.signIn(environment);
           return this.readiness(environment);
         } catch {
           await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1816,6 +1827,88 @@ export class Environments {
       await this.deviceLease.releaseConfirmed(id);
     return environment;
   }
+  /**
+   * Signs the test application in without a person: the local test backend
+   * accepts its development verification code, and the token reaches the
+   * renderer through the same handoff a browser login uses.
+   */
+  private async signIn(environment: Environment): Promise<void> {
+    const text = await readFile(
+        join(environment.checkout, ".env.worktree"),
+        "utf8",
+      ),
+      code =
+        /^MULTICA_DEV_VERIFICATION_CODE=(\d{6})$/m.exec(text)?.[1] ?? "888888",
+      email = "verification@localhost",
+      slug = "verification";
+    const call = async (
+      path: string,
+      init: {
+        method?: string;
+        body?: unknown;
+        token?: string;
+        workspace?: string;
+      },
+    ) => {
+      const response = await fetch(`${environment.apiOrigin}${path}`, {
+        method: init.method ?? (init.body === undefined ? "GET" : "POST"),
+        headers: {
+          "Content-Type": "application/json",
+          ...(init.token ? { Authorization: `Bearer ${init.token}` } : {}),
+          ...(init.workspace ? { "X-Workspace-ID": init.workspace } : {}),
+        },
+        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+        signal: AbortSignal.timeout(10000),
+        redirect: "error",
+      });
+      return {
+        ok: response.ok,
+        value: (await response.json().catch(() => null)) as unknown,
+      };
+    };
+    const signInFailed = () =>
+      new VerificationError(
+        problem(
+          "dependencyMissing",
+          "The test backend did not accept the development sign-in",
+          "inspect",
+        ),
+      );
+    if (!(await call("/auth/send-code", { body: { email } })).ok)
+      throw signInFailed();
+    const verified = await call("/auth/verify-code", { body: { email, code } });
+    const token = z
+      .object({ token: z.string().min(1) })
+      .safeParse(verified.value);
+    if (!verified.ok || !token.success) throw signInFailed();
+    const jwt = token.data.token;
+    const workspaceSchema = z.object({ id: z.string(), slug: z.string() });
+    const created = await call("/api/workspaces", {
+      body: { name: "Verification", slug },
+      token: jwt,
+    });
+    const workspace = created.ok
+      ? workspaceSchema.parse(created.value)
+      : z
+          .array(workspaceSchema.passthrough())
+          .parse((await call("/api/workspaces", { token: jwt })).value)
+          .find((item) => item.slug === slug);
+    if (!workspace) throw signInFailed();
+    // A new account is otherwise routed to onboarding instead of the workspace.
+    await call("/api/me/onboarding/complete", {
+      body: { exit: "existing" },
+      token: jwt,
+      workspace: workspace.id,
+    });
+    await this.desktopRequest(environment.environmentId, "/login", {
+      token: jwt,
+    });
+    environment.components = {
+      ...environment.components,
+      signedIn: { email, workspaceSlug: slug },
+    };
+    await this.save(environment);
+  }
   /** Keeps the original failure in the environment's private log; tool results stay generic. */
   private async recordFailure(
     id: string,
@@ -1941,10 +2034,48 @@ export class Environments {
     if (timer) clearInterval(timer);
     this.guards.delete(id);
   }
-  async close(): Promise<void> {
+  /**
+   * Stops every environment this host owns and removes its worktree and
+   * branch. Returns false when any cleanup is unconfirmed, so the host
+   * directory is kept for the next host to retry.
+   */
+  async close(): Promise<boolean> {
     for (const id of [...this.guards.keys()]) this.unguard(id);
-    for (const id of this.processes.keys())
-      await this.serializeLifecycle(() => this.stop(id)).catch(() => undefined);
+    let clean = true;
+    for (const name of await this.storage.list("environments")) {
+      const environment = await this.storage.read(
+        `environments/${name}`,
+        environmentSchema,
+      );
+      if (!environment) continue;
+      const id = environment.environmentId;
+      if (environment.state !== "stopped") {
+        const stopped = await this.serializeLifecycle(() =>
+          this.stop(id),
+        ).catch(() => null);
+        if (stopped?.state !== "stopped") {
+          clean = false;
+          continue;
+        }
+      }
+      try {
+        await lstat(environment.checkout);
+        await git(this.storage.projectRoot, [
+          "worktree",
+          "remove",
+          "--force",
+          environment.checkout,
+        ]);
+      } catch (error) {
+        if (!isMissing(error)) clean = false;
+      }
+      await git(this.storage.projectRoot, [
+        "branch",
+        "-D",
+        `codex/verification-${id.slice(0, 8)}`,
+      ]).catch(() => undefined);
+    }
+    return clean;
   }
   private serializeLifecycle<T>(run: () => Promise<T>): Promise<T> {
     const next = this.lifecycle.catch(() => undefined).then(run);

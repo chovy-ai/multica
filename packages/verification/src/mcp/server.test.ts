@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,7 +117,7 @@ describe("verification MCP transport", () => {
     expect(unsupported.isError).toBe(true);
   });
 
-  it("runs over real stdio and reuses a job receipt after reconnect", async () => {
+  it("runs over real stdio with a host per session", async () => {
     const root = await directory();
     const first = await stdio(root);
     const receipt = acceptedSchema.parse(
@@ -136,12 +136,10 @@ describe("verification MCP transport", () => {
         ),
       );
     expect(job.value.jobId).toBe(receipt.jobId);
-    await first.close();
-    const second = await stdio(root);
-    expect(await snapshotRestore(second, "stdio-restore")).toMatchObject({
+    expect(await snapshotRestore(first, "stdio-restore")).toMatchObject({
       receiptId: receipt.receiptId,
     });
-    const conflict = await second.callTool({
+    const conflict = await first.callTool({
       name: "data_restore",
       arguments: {
         environmentId: "00000000-0000-4000-8000-000000000000",
@@ -153,5 +151,22 @@ describe("verification MCP transport", () => {
       kind: "error",
       problem: { code: "requestConflict" },
     });
+    const second = await stdio(root);
+    expect(
+      payload(
+        await second.callTool({
+          name: "job_query",
+          arguments: {
+            target: { kind: "request", requestId: "stdio-restore" },
+          },
+        }),
+      ),
+    ).toMatchObject({ kind: "error", problem: { code: "notFound" } });
+    await first.close();
+    for (let i = 0; i < 100; i++) {
+      if ((await readdir(join(root, "state", "hosts"))).length === 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(await readdir(join(root, "state", "hosts"))).toHaveLength(1);
   });
 });

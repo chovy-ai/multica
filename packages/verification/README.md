@@ -11,7 +11,7 @@
 | 工具 | 方式 | 说明 |
 | --- | --- | --- |
 | `env_inspect` | 同步 | 本机工具链、磁盘、图形会话、构建依赖、数据库目标、端口和 CU 前提 |
-| `env_start` | 异步 | 从指定 commit 准备 worktree、构建，并启动后端和开发 Electron；`liveReadOnly` 启动只读 Web 页面。job 的 `resourceRefs` 在准备开始后即包含 environmentId；等待登录时 job 为 `awaitingUser` |
+| `env_start` | 异步 | 从指定 commit 准备 worktree、构建，并启动后端和开发 Electron；`liveReadOnly` 启动只读 Web 页面。job 的 `resourceRefs` 在准备开始后即包含 environmentId；应用启动后宿主自动登录测试账号 `verification@localhost` 并进入 `verification` 工作区，无需人工操作 |
 | `env_stop` | 异步 | 停止该环境自己的进程和 daemon，数据保留 |
 | `env_status` | 同步 | 环境记录及当前观察到的应用、daemon、后端身份 |
 | `env_log_read` | 同步 | 分页读取 prepare/backend/desktop/stop 日志，凭据样式文本会脱敏 |
@@ -50,9 +50,13 @@ pnpm --filter @multica/verification build:manual
 node packages/verification/dist/mcp/stdio.js --project /absolute/path/to/checkout
 ```
 
-最后一条是等待 stdin 协议消息的 MCP 服务；stdout 只输出协议，错误到 stderr。MCP 客户端也可配置 `bash /absolute/path/to/scripts/verification/mcp.sh`，wrapper 已绑定其 checkout，可追加 `--state-root`、`--bindings-file`。同一状态目录同时只允许一个宿主；上一个宿主被强制结束留下的锁，在其进程已不存在时由下一个宿主自动接管。
+最后一条是等待 stdin 协议消息的 MCP 服务；stdout 只输出协议，错误到 stderr。MCP 客户端也可配置 `bash /absolute/path/to/scripts/verification/mcp.sh`，wrapper 已绑定其 checkout，可追加 `--state-root`、`--bindings-file`。
+
+每个 MCP 会话启动自己的宿主，状态放在 `<state-root>/hosts/<宿主 ID>/`，多个会话可以同时运行；工具链和构建缓存在 `<state-root>/` 下共享。宿主关闭时停止自己的环境、删除对应 worktree 和分支，再删除自己的状态目录。宿主启动时以及取得设备锁之前，会清理进程已不存在的其他宿主留下的环境和目录。完整 Desktop 环境仍然每台设备同时只有一个，另一个会话此时调用 `env_start` 会得到 `instanceBusy`。
 
 ## 环境
+
+`fixture` 和 `realSnapshot` 环境的登录全自动：宿主用本地测试后端的开发验证码（`.env.worktree` 中的 `MULTICA_DEV_VERIFICATION_CODE`）为 `verification@localhost` 换取令牌，创建 `verification` 工作区并完成引导，再通过开发 Electron 诊断接口的 `/login` 把令牌交给渲染进程，与浏览器登录走同一条 `auth:token` 路径。
 
 `env_start` 的参数是 `gitRef`、`mode`（`desktop` 或 `renderer`）、`dataMode`（`fixture`、`realSnapshot` 或 `liveReadOnly`）、`includeWorkingChanges` 和可选的 `sourceRef`。
 
@@ -130,7 +134,7 @@ node scripts/verification/check-production.mjs
 
 `test:integration` 构建临时 Go harness，使用真实 SQLite、service、Local API 和 fake provider，并启动受控 Chromium 测试页面适配器；缺少浏览器缓存时先运行 `pnpm --filter @multica/verification exec playwright install chromium`。它不能代替完整 Electron GUI 的验收。
 
-`test:desktop` 是显式原生验收入口，默认不执行。它启动真实 Electron/bundled daemon，等待测试应用完成正常登录和工作区选择，再发送 A/B、检查队列和导航边界、保存截图并停止环境，结果写到本轮状态目录的 `desktop-acceptance.json`。判断逻辑在这个脚本里，宿主只提供操作和数据。
+`test:desktop` 是显式原生验收入口，默认不执行。它启动真实 Electron/bundled daemon，由宿主自动登录并进入工作区，再发送 A/B、检查队列和导航边界、保存截图并停止环境，结果写到本轮状态目录的 `desktop-acceptance.json`。判断逻辑在这个脚本里，宿主只提供操作和数据。
 
 后端 workspace 导入的检查需先用本 checkout 的托管环境准备数据库：
 

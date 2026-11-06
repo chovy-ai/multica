@@ -57,7 +57,8 @@ interface Problem {
 | `data.restore` | environmentId、content（snapshot / conversationTemplate / workspaceTemplate） | 副本：datasetId、映射、转换列表 |
 
 - job 的 `resourceRefs` 在创建资源时立即写入。`env.start` 在准备开始时写入 environmentId，调用方无需等任务完成即可读环境状态和日志。
-- `env.start` 需要登录时进入 `awaitingUser`，登录完成后继续；`env.stop` 会取消同一环境未完成的 `env.start`。
+- `env.start` 在应用启动后自动登录本地测试账号并进入 `verification` 工作区，不需要人工操作；`env.stop` 会取消同一环境未完成的 `env.start`。
+- 宿主按会话创建，各自拥有 `<state-root>/hosts/<宿主 ID>/`；关闭时停止环境、删除 worktree 与分支和自身目录。启动时和取得设备锁前，回收进程已不存在的宿主遗留的环境和目录。任务和收据只在所属宿主会话内有效。
 - 宿主重启后，未完成的任务标为 `interrupted`，不自动重放。响应丢失时按原 requestId 查询，不换 ID 重放。
 - `job_cancel` 请求协作取消，不撤销已产生的资源。
 

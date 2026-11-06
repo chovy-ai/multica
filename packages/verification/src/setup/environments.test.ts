@@ -4,15 +4,28 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { createVerificationHost } from "../host/host.js";
+import { HostStorage } from "../host/storage.js";
+import { JobService } from "../host/jobs.js";
+import { Bindings } from "../sources/bindings.js";
+import { DeviceLease } from "./device-lease.js";
+import { Environments } from "./environments.js";
 import { environmentSchema } from "../contracts/resources.js";
 
 it("reads bounded, redacted environment logs and reports truncation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "verification-log-read-"));
-  const host = await createVerificationHost({
+  const storage = await HostStorage.open({
     projectRoot: directory,
     stateRoot: join(directory, "state"),
   });
+  const jobs = await JobService.open(storage);
+  const environments = new Environments(
+    storage,
+    jobs,
+    new Bindings(),
+    new DeviceLease(join(directory, "device.lock"), storage.root),
+    directory,
+  );
+  const host = { projectRef: storage.projectRef, environments };
   try {
     const environmentId = randomUUID(),
       folder = join(directory, "state/environments", environmentId);
@@ -53,7 +66,8 @@ it("reads bounded, redacted environment logs and reports truncation", async () =
       host.environments.readLog(environmentId, "../session" as "prepare"),
     ).rejects.toThrow();
   } finally {
-    await host.close();
+    await jobs.close();
+    await storage.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
