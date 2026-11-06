@@ -59,6 +59,23 @@ export function createVerificationMcpServer(host: VerificationHost): McpServer {
         "Operate dev-only Multica environments and read their data. Every tool is independent. Asynchronous tools return a job; read it with job_query. Tools report what they did and observed; deciding whether behaviour is correct is the caller's job.",
     },
   );
+  // Any call naming an environment counts as use, so the daemon does not
+  // reclaim an environment an agent is still working with.
+  const register = server.registerTool.bind(server);
+  server.registerTool = ((
+    name: string,
+    config: unknown,
+    callback: (args: { environmentId?: unknown }, extra: unknown) => unknown,
+  ) =>
+    register(
+      name,
+      config as never,
+      ((args: { environmentId?: unknown }, extra: unknown) => {
+        if (typeof args?.environmentId === "string")
+          host.environments.touch(args.environmentId);
+        return callback(args, extra);
+      }) as never,
+    )) as typeof server.registerTool;
 
   server.registerTool(
     "env_inspect",

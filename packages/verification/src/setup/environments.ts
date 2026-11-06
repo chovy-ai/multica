@@ -1,16 +1,14 @@
 import { execFile } from "node:child_process";
-import { randomBytes, randomUUID, createHash } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import {
   appendFile,
-  copyFile,
   lstat,
   mkdir,
   readFile,
-  realpath,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -40,7 +38,6 @@ import { sourceIdentity } from "./source-identity.js";
 import { awaitPrerequisites } from "./prerequisites.js";
 import { BuildCache, manifestSchema, verifyBuildFiles } from "./build-cache.js";
 import { probeTool } from "./inspect.js";
-import { DeviceLease } from "./device-lease.js";
 import { prepareToolchain } from "./toolchain.js";
 import {
   inheritedEnvironment,
@@ -53,14 +50,41 @@ import type { Bindings } from "../sources/bindings.js";
 
 export const prepareInput = z
   .object({
-    gitRef: z.string().min(1).max(200),
+    /** A branch on the daemon's remote, or a commit SHA reachable from it. */
+    branch: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+$/),
     mode: z.enum(["renderer", "desktop"]),
     dataMode: z.enum(["liveReadOnly", "realSnapshot", "fixture"]),
     apiOrigin: z.url().optional(),
     sourceRef: z.string().optional(),
-    includeWorkingChanges: z.boolean().default(false),
+    /** Who the environment is for; shown in the console. */
+    owner: z.string().max(200).optional(),
+    /** Reclaim the environment after this long without MCP calls naming it. */
+    idleTimeoutMinutes: z.number().int().min(1).max(10080).optional(),
   })
   .strict();
+
+export type EnvironmentPolicy = {
+  /** Project-level directory shared by every host: toolchains, build cache, repository mirror. */
+  sharedRoot: string;
+  /** Remote the repository mirror fetches branches from. */
+  repositoryUrl: string;
+  maxEnvironments: number;
+  defaultIdleMinutes: number;
+  /** Runs before admitting a start so a crashed host's environments do not hold capacity. */
+  beforeStart?: () => Promise<void>;
+};
+/** States that occupy one of the daemon's environment slots. */
+export const slotStates = new Set([
+  "preparing",
+  "starting",
+  "awaitingUser",
+  "ready",
+  "stopping",
+]);
 const sessionSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -89,7 +113,12 @@ export const descriptorSchema = z
 export type Descriptor = z.infer<typeof descriptorSchema>;
 type Tools = Awaited<ReturnType<typeof prepareToolchain>>;
 
-export const git = (cwd: string, args: string[], raw = false) =>
+export const git = (
+  cwd: string,
+  args: string[],
+  raw = false,
+  timeout = 30_000,
+) =>
   new Promise<string>((resolve, reject) =>
     execFile(
       "git",
@@ -97,7 +126,7 @@ export const git = (cwd: string, args: string[], raw = false) =>
       {
         cwd,
         maxBuffer: 32 * 1024 * 1024,
-        timeout: 30_000,
+        timeout,
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       },
       (error, stdout) =>
@@ -133,22 +162,21 @@ export class Environments {
   private readonly processes = new Map<string, RunningProcess[]>();
   private readonly tools = new Map<string, Tools>();
   private readonly guards = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly activity = new Map<string, number>();
   private lifecycle: Promise<unknown> = Promise.resolve();
   constructor(
     private readonly storage: HostStorage,
     jobs: JobService,
     readonly bindings: Bindings,
-    private readonly deviceLease: DeviceLease,
-    /** Project-level directory shared by every host: toolchains and the build cache. */
-    private readonly sharedRoot: string,
-    /** Runs before taking the device lease so a crashed host's environment cannot hold it. */
-    private readonly beforeLease: () => Promise<void> = async () => {},
+    private readonly policy: EnvironmentPolicy,
   ) {
     jobs.register("env.start", {
       input: prepareInput,
       output: jsonSchema,
       outputSchema: "environment/v1",
       run: async (input, context) => {
+        await this.policy.beforeStart?.();
+        await this.assertCapacity();
         const prepared = await this.prepare(prepareInput.parse(input), context);
         const id = prepared.environmentId;
         let result = await this.serializeLifecycle(async () => {
@@ -171,6 +199,7 @@ export class Environments {
             );
           result = await this.readiness(retained);
         }
+        this.touch(id);
         return toJson(result);
       },
     });
@@ -201,6 +230,107 @@ export class Environments {
         );
       },
     });
+  }
+  private repository() {
+    return join(this.policy.sharedRoot, "repository.git");
+  }
+  private repositoryLock: Promise<unknown> = Promise.resolve();
+  /**
+   * Fetches a branch (or reachable commit) from the remote into the daemon's
+   * own partial mirror and pins the commit; nobody's working copy is used.
+   */
+  fetchCommit(branch: string): Promise<string> {
+    const next = this.repositoryLock
+      .catch(() => undefined)
+      .then(async () => {
+        const repository = this.repository();
+        try {
+          await lstat(join(repository, "HEAD"));
+        } catch {
+          await mkdir(this.policy.sharedRoot, { recursive: true, mode: 0o700 });
+          await git(
+            this.policy.sharedRoot,
+            [
+              "clone",
+              "--bare",
+              "--filter=blob:none",
+              "--",
+              this.policy.repositoryUrl,
+              repository,
+            ],
+            false,
+            900_000,
+          );
+        }
+        try {
+          await git(
+            repository,
+            ["fetch", "--no-tags", "origin", branch],
+            false,
+            600_000,
+          );
+        } catch {
+          throw new VerificationError(
+            problem(
+              "invalidInput",
+              `The branch or commit ${branch} could not be fetched from ${this.policy.repositoryUrl}`,
+            ),
+          );
+        }
+        const commit = await git(repository, [
+          "rev-parse",
+          "--verify",
+          "FETCH_HEAD^{commit}",
+        ]);
+        if (!/^[a-f0-9]{40}$/.test(commit))
+          throw new VerificationError(
+            problem("invalidInput", "The fetched ref is not a commit"),
+          );
+        return commit;
+      });
+    this.repositoryLock = next;
+    return next;
+  }
+  /** Fails when the configured number of environments is already running. */
+  private async assertCapacity(except?: string): Promise<void> {
+    const running = (await this.list()).filter(
+      (item) =>
+        item.environmentId !== except &&
+        slotStates.has(item.state) &&
+        item.components.referenceOnly !== true,
+    );
+    if (running.length >= this.policy.maxEnvironments)
+      throw new VerificationError(
+        problem(
+          "instanceBusy",
+          `All ${this.policy.maxEnvironments} verification environment slots are in use (${running
+            .map(
+              (item) =>
+                `${item.environmentId.slice(0, 8)}${item.components.owner ? ` for ${String(item.components.owner)}` : ""}`,
+            )
+            .join(", ")}); stop one or wait for its idle timeout`,
+          "inspect",
+          running.map((item) => item.environmentId),
+        ),
+      );
+  }
+  /** Records use by a caller; idle environments are reclaimed by the daemon. */
+  touch(id: string): void {
+    this.activity.set(id, Date.now());
+  }
+  lastActivity(id: string): number | undefined {
+    return this.activity.get(id);
+  }
+  async list(): Promise<Environment[]> {
+    const environments: Environment[] = [];
+    for (const name of await this.storage.list("environments")) {
+      const environment = await this.storage.read(
+        `environments/${name}`,
+        environmentSchema,
+      );
+      if (environment) environments.push(environment);
+    }
+    return environments;
   }
   async get(id: string): Promise<Environment> {
     resourceIdSchema.parse(id);
@@ -397,21 +527,6 @@ export class Environments {
     context: OperationContext,
   ): Promise<Environment> {
     await this.assertTaskBoundary();
-    const commit = await git(this.storage.projectRoot, [
-      "rev-parse",
-      "--verify",
-      "--end-of-options",
-      `${input.gitRef}^{commit}`,
-    ]);
-    if (!/^[a-f0-9]{40}$/.test(commit))
-      throw new VerificationError(
-        problem("invalidInput", "A full commit is required"),
-      );
-    const id = randomUUID();
-    await context.addResource(id);
-    const checkout = join(this.storage.root, "worktrees", id),
-      directory = this.directory(id);
-    await mkdir(directory, { mode: 0o700 });
     const source = input.sourceRef
       ? this.bindings.get(input.sourceRef)
       : undefined;
@@ -432,6 +547,13 @@ export class Environments {
           "Read-only application pages require renderer mode and an authorized backend binding; daemon data remains readable through source snapshots",
         ),
       );
+    await context.progress("fetch");
+    const commit = await this.fetchCommit(input.branch);
+    const id = randomUUID();
+    await context.addResource(id);
+    const checkout = join(this.storage.root, "worktrees", id),
+      directory = this.directory(id);
+    await mkdir(directory, { mode: 0o700 });
     const apiOrigin =
       source?.scope.apiOrigin ??
       input.apiOrigin ??
@@ -446,6 +568,12 @@ export class Environments {
           "Copies and fixtures require a local test backend",
         ),
       );
+    const identity = {
+      branch: input.branch,
+      owner: input.owner ?? null,
+      idleTimeoutMinutes:
+        input.idleTimeoutMinutes ?? this.policy.defaultIdleMinutes,
+    };
     let environment: Environment = {
       schemaVersion: 1,
       environmentId: id,
@@ -457,7 +585,7 @@ export class Environments {
       state: "preparing",
       apiOrigin,
       ...(input.sourceRef ? { sourceRef: input.sourceRef } : {}),
-      components: { runtimeAttempted: false },
+      components: { ...identity, runtimeAttempted: false },
     };
     await this.save(environment);
     try {
@@ -472,87 +600,19 @@ export class Environments {
         },
       );
       await context.progress("checkout");
-      await git(this.storage.projectRoot, [
-        "worktree",
-        "add",
-        "-b",
-        `codex/verification-${id.slice(0, 8)}`,
-        checkout,
-        commit,
-      ]);
-      let overlay = "";
-      if (input.includeWorkingChanges) {
-        if (
-          commit !==
-          (await git(this.storage.projectRoot, ["rev-parse", "HEAD"]))
-        )
-          throw new VerificationError(
-            problem(
-              "invalidInput",
-              "Working changes can only overlay the current HEAD",
-            ),
-          );
-        const patch = await git(
-          this.storage.projectRoot,
-          [
-            "diff",
-            "--binary",
-            "HEAD",
-            "--",
-            ".",
-            ":(exclude).env*",
-            ":(exclude)**/.env*",
-            ":(exclude)**/*.pem",
-            ":(exclude)**/*.key",
-            ":(exclude)**/*.token",
-          ],
-          true,
-        );
-        if (patch) {
-          const path = join(directory, "source.patch");
-          await writeFile(path, patch, { mode: 0o600 });
-          await git(checkout, ["apply", path]);
-        }
-        overlay = patch;
-        const untracked = (
-          await git(
-            this.storage.projectRoot,
-            ["ls-files", "--others", "--exclude-standard", "-z"],
-            true,
-          )
-        )
-          .split("\0")
-          .filter(Boolean)
-          .sort();
-        for (const path of untracked) {
-          if (
-            !/^(apps|packages|server|scripts|verification|docs)\//.test(path) ||
-            path
-              .split("/")
-              .some(
-                (part) => part.startsWith(".env") || part === "node_modules",
-              )
-          )
-            continue;
-          const from = join(this.storage.projectRoot, path),
-            resolved = await realpath(from),
-            rel = relative(this.storage.projectRoot, resolved);
-          if (
-            rel.startsWith("..") ||
-            isAbsolute(rel) ||
-            !(await lstat(from)).isFile()
-          )
-            throw new VerificationError(
-              problem("forbidden", "A working source file escapes the project"),
-            );
-          const to = join(checkout, path);
-          await mkdir(dirname(to), { recursive: true });
-          await copyFile(from, to);
-          overlay += `${path}:${createHash("sha256")
-            .update(await readFile(from))
-            .digest("hex")}\n`;
-        }
-      }
+      await git(
+        this.repository(),
+        [
+          "worktree",
+          "add",
+          "-b",
+          `codex/verification-${id.slice(0, 8)}`,
+          checkout,
+          commit,
+        ],
+        false,
+        600_000,
+      );
       try {
         await lstat(
           join(checkout, "apps/desktop/src/main/verification-dev/index.ts"),
@@ -561,11 +621,11 @@ export class Environments {
         throw new VerificationError(
           problem(
             "unsupportedVersion",
-            "This source version predates the dev verification protocol; select an instrumented version or explicitly overlay the current implementation",
+            "This branch predates the dev verification protocol; verify a branch that contains it",
           ),
         );
       }
-      const sourceDigest = digest(commit + overlay);
+      const sourceDigest = digest(commit);
       const sourceTreeDigest = await sourceIdentity(checkout);
       const session = sessionSchema.parse({
         schemaVersion: 1,
@@ -588,7 +648,7 @@ export class Environments {
       await context.progress("toolchain");
       const tools = await prepareToolchain(
         checkout,
-        join(this.sharedRoot, "tools"),
+        join(this.policy.sharedRoot, "tools"),
         context.signal,
       );
       this.tools.set(id, tools);
@@ -641,6 +701,7 @@ export class Environments {
           ...environment,
           state: "prepared",
           components: {
+            ...identity,
             runtimeAttempted: false,
             sourceDigest,
             sourceTreeDigest,
@@ -708,7 +769,7 @@ export class Environments {
           ),
         ).version;
       const build = await new BuildCache(
-        join(this.sharedRoot, "build-cache"),
+        join(this.policy.sharedRoot, "build-cache"),
       ).materialize(
         checkout,
         {
@@ -782,6 +843,7 @@ export class Environments {
         ...environment,
         state: "prepared",
         components: {
+          ...identity,
           runtimeAttempted: false,
           sourceDigest,
           sourceTreeDigest,
@@ -1099,7 +1161,7 @@ export class Environments {
       this.tools.get(id) ??
       (await prepareToolchain(
         environment.checkout,
-        join(this.sharedRoot, "tools"),
+        join(this.policy.sharedRoot, "tools"),
         context.signal,
       ));
     const webPort = await freePort(),
@@ -1299,8 +1361,8 @@ export class Environments {
         await this.save(environment);
       },
     );
-    await this.beforeLease();
-    await this.deviceLease.acquire(id);
+    await this.policy.beforeStart?.();
+    await this.assertCapacity(id);
     environment = {
       ...environment,
       state: "starting",
@@ -1312,7 +1374,7 @@ export class Environments {
         this.tools.get(id) ??
         (await prepareToolchain(
           environment.checkout,
-          join(this.sharedRoot, "tools"),
+          join(this.policy.sharedRoot, "tools"),
           context.signal,
         ));
     this.tools.set(id, tools);
@@ -1375,12 +1437,6 @@ export class Environments {
         healthPort = await freePort(),
         productionDigest = await productionRuntimeDigest(homedir());
       await mkdir(runtimeHome, { recursive: true, mode: 0o700 });
-      const cliCommand = await writeDevCli(
-        directory,
-        runtimeHome,
-        healthPort,
-        join(environment.checkout, "apps/desktop/resources/bin/multica"),
-      );
       const runtimeEnv: Record<string, string | undefined> = {
         ...tools.env,
         // The whole runtime tree gets its own home so it never shares the
@@ -1397,7 +1453,6 @@ export class Environments {
         ...environment.components,
         runtimeHome,
         healthPort,
-        cliCommand,
         productionRuntimeDigest: productionDigest,
       };
       await this.save(environment);
@@ -1644,10 +1699,7 @@ export class Environments {
       await this.save(environment);
       return environment;
     }
-    if (environment.state === "stopped") {
-      await this.deviceLease.releaseConfirmed(id);
-      return environment;
-    }
+    if (environment.state === "stopped") return environment;
     if (
       environment.state === "prepared" ||
       environment.components.referenceOnly === true
@@ -1832,8 +1884,6 @@ export class Environments {
           }),
     };
     await this.save(environment);
-    if (environment.state === "stopped")
-      await this.deviceLease.releaseConfirmed(id);
     return environment;
   }
   /**
@@ -2087,7 +2137,7 @@ export class Environments {
       }
       try {
         await lstat(environment.checkout);
-        await git(this.storage.projectRoot, [
+        await git(this.repository(), [
           "worktree",
           "remove",
           "--force",
@@ -2096,7 +2146,7 @@ export class Environments {
       } catch (error) {
         if (!isMissing(error)) clean = false;
       }
-      await git(this.storage.projectRoot, [
+      await git(this.repository(), [
         "branch",
         "-D",
         `codex/verification-${id.slice(0, 8)}`,
@@ -2109,32 +2159,6 @@ export class Environments {
     this.lifecycle = next;
     return next;
   }
-}
-
-/** Writes the environment's `multica-dev` command; it never touches the user's PATH. */
-export async function writeDevCli(
-  directory: string,
-  runtimeHome: string,
-  healthPort: number,
-  cliPath: string,
-): Promise<string> {
-  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-  const bin = join(directory, "bin"),
-    command = join(bin, "multica-dev");
-  await mkdir(bin, { recursive: true, mode: 0o700 });
-  await writeFile(
-    command,
-    [
-      "#!/bin/sh",
-      `export HOME=${quote(runtimeHome)}`,
-      "export MULTICA_DEV_ISOLATED=1",
-      `export MULTICA_DEV_HEALTH_PORT=${healthPort}`,
-      `exec ${quote(cliPath)} --profile desktop-runtime "$@"`,
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  return command;
 }
 
 function databaseContainer(id: string) {

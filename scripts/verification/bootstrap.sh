@@ -31,4 +31,4 @@ fi
 export npm_config_manage_package_manager_versions=false
 node "$verify_tools_root/pnpm/node_modules/pnpm/bin/pnpm.cjs" --dir "$verify_repo_root" install --filter @multica/verification... --frozen-lockfile
 node "$verify_tools_root/pnpm/node_modules/pnpm/bin/pnpm.cjs" --dir "$verify_repo_root" --filter @multica/verification build:manual
-echo "Verification tools prepared. Configure scripts/verification/mcp.sh as a stdio MCP command."
+echo "Verification tools prepared. Run scripts/verification/install-daemon.sh to start the daemon."

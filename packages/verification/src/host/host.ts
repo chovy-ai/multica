@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -14,7 +15,6 @@ import { HostStorage, digest } from "./storage.js";
 import { JobService } from "./jobs.js";
 import { SetupInspector, type Probe } from "../setup/inspect.js";
 import { Bindings } from "../sources/bindings.js";
-import { DeviceLease } from "../setup/device-lease.js";
 import { Environments } from "../setup/environments.js";
 import { State } from "../state/service.js";
 import { Pages } from "../page/service.js";
@@ -26,7 +26,10 @@ export interface HostOptions {
   projectRoot: string;
   /** Project-level directory; each host keeps its own state under `hosts/`. */
   stateRoot?: string;
-  deviceLeaseRoot?: string;
+  /** Remote branches are fetched from; defaults to the project checkout's origin. */
+  repositoryUrl?: string;
+  maxEnvironments?: number;
+  defaultIdleMinutes?: number;
   probe?: Probe;
   bindings?: SourceBinding[];
 }
@@ -70,18 +73,14 @@ async function openHost(
     );
     const jobs = await JobService.open(storage);
     const bindings = new Bindings(options.bindings);
-    const environments = new Environments(
-      storage,
-      jobs,
-      bindings,
-      new DeviceLease(
-        options.deviceLeaseRoot ??
-          join(homedir(), ".multica", "verification-device.lock"),
-        storage.root,
-      ),
+    const environments = new Environments(storage, jobs, bindings, {
       sharedRoot,
-      () => collectAbandonedHosts(options, projectRoot, sharedRoot, hostRoot),
-    );
+      repositoryUrl: options.repositoryUrl ?? (await originUrl(projectRoot)),
+      maxEnvironments: options.maxEnvironments ?? 2,
+      defaultIdleMinutes: options.defaultIdleMinutes ?? 120,
+      beforeStart: () =>
+        collectAbandonedHosts(options, projectRoot, sharedRoot, hostRoot),
+    });
     await environments.recover();
     const state = new State(environments);
     const pages = new Pages(environments);
@@ -90,6 +89,8 @@ async function openHost(
     let closing: Promise<void> | undefined;
     return {
       projectRef: storage.projectRef,
+      /** This host's own state directory under `<stateRoot>/hosts/`. */
+      stateDirectory: storage.root,
       setup: new SetupInspector(projectRoot, options.probe),
       jobs,
       environments,
@@ -161,3 +162,14 @@ async function abandoned(hostRoot: string): Promise<boolean> {
 export type VerificationHost = Awaited<
   ReturnType<typeof createVerificationHost>
 >;
+
+function originUrl(projectRoot: string): Promise<string> {
+  return new Promise((resolve) =>
+    execFile(
+      "git",
+      ["remote", "get-url", "origin"],
+      { cwd: projectRoot },
+      (error, stdout) => resolve(error ? projectRoot : stdout.trim()),
+    ),
+  );
+}
