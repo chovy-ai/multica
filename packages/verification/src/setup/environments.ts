@@ -42,7 +42,12 @@ import { BuildCache, manifestSchema, verifyBuildFiles } from "./build-cache.js";
 import { probeTool } from "./inspect.js";
 import { DeviceLease } from "./device-lease.js";
 import { prepareToolchain } from "./toolchain.js";
-import { launch, run, type RunningProcess } from "./process.js";
+import {
+  inheritedEnvironment,
+  launch,
+  run,
+  type RunningProcess,
+} from "./process.js";
 import { productionRuntimeDigest } from "./production-guard.js";
 import type { Bindings } from "../sources/bindings.js";
 
@@ -690,7 +695,7 @@ export class Environments {
             "go",
             ["version"],
             // Same environment as launch/run: Go needs HOME for its module cache.
-            { cwd: checkout, env: { ...process.env, ...tools.env } },
+            { cwd: checkout, env: { ...inheritedEnvironment(), ...tools.env } },
             (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
           ),
         ),
@@ -1377,7 +1382,7 @@ export class Environments {
         join(environment.checkout, "apps/desktop/resources/bin/multica"),
       );
       const runtimeEnv: Record<string, string | undefined> = {
-        ...withoutProviderCredentials(tools.env),
+        ...tools.env,
         // The whole runtime tree gets its own home so it never shares the
         // installed Multica's registry, CLI link, prefs, health port or agent configs.
         HOME: runtimeHome,
@@ -2086,14 +2091,6 @@ export class Environments {
     this.lifecycle = next;
     return next;
   }
-}
-
-function withoutProviderCredentials(env: NodeJS.ProcessEnv) {
-  return Object.fromEntries(
-    Object.entries(env).filter(
-      ([key]) => !/^(ANTHROPIC_|OPENAI_|CLAUDE_|CODEX_)/.test(key),
-    ),
-  );
 }
 
 /** Writes the environment's `multica-dev` command; it never touches the user's PATH. */
