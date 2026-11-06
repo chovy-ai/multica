@@ -60,7 +60,7 @@ function renderDevice(o) {
     ["磁盘可用", (d.diskFreeBytes / 1024 ** 3).toFixed(1) + " GB", d.diskFreeBytes > 8 * 1024 ** 3 ? "ok" : "bad"],
     ["Docker", d.docker.status === "up" ? esc(d.docker.detail) : "不可用", tone(d.docker.status)],
     ["已安装的 Multica", d.installedMultica.running ? "运行中（pid " + d.installedMultica.pid + "）" : "未运行", "muted"],
-    ["设备锁", d.deviceLease ? "环境 " + short(d.deviceLease.environmentId) + " 持有" : "空闲", d.deviceLease ? "warn" : "ok"],
+    ["环境名额", d.capacity.running + " / " + d.capacity.max + " 运行中", d.capacity.running >= d.capacity.max ? "bad" : "ok"],
   ] : [["设备", "采样中…", "muted"]];
   $("device").innerHTML = cards.map(([k, v, t]) => '<div class="card"><div class="muted">' + k + '</div><div class="v ' + t + '">' + v + '</div></div>').join("");
 }
@@ -70,7 +70,7 @@ function renderEnvironments(o) {
     const bars = e.health.map((h) => '<i class="' + tone(h.status) + '" style="background:currentColor" title="' + esc(time(h.at) + " " + h.status) + '"></i>').join("");
     const chips = last ? Object.entries(last.components).map(([k, v]) => '<span class="' + tone(v.status) + '" title="' + esc(v.detail || "") + '">' + esc(k) + (v.latencyMs != null ? " " + v.latencyMs + "ms" : "") + '</span>').join("") : '<span class="muted">—</span>';
     const stop = ["stopped", "failed"].includes(env.state) ? "" : '<button data-stop="' + esc(env.environmentId) + '">停止</button>';
-    return "<tr><td><code>" + short(env.environmentId) + "</code><div class=muted>" + esc(env.mode + " · " + env.dataMode + " · " + env.commit.slice(0, 9)) + "</div><div class=muted>" + esc(env.apiOrigin) + "</div></td>"
+    return "<tr><td><code>" + short(env.environmentId) + "</code>" + (env.owner ? " " + esc(env.owner) : "") + "<div class=muted>" + esc((env.branch || "") + " @ " + env.commit.slice(0, 9)) + "</div><div class=muted>" + esc(env.mode + " · " + env.dataMode + " · " + env.apiOrigin) + "</div></td>"
       + "<td>" + pill(env.state) + (env.readiness ? "<div class=muted>" + esc(env.readiness) + "</div>" : "") + (env.problem ? '<div class="bad">' + esc(env.problem.message) + "</div>" : "") + "</td>"
       + '<td><div class="bars">' + (bars || '<span class="muted">—</span>') + "</div>" + (last ? pill(last.status) : "") + "</td>"
       + '<td class="chips">' + chips + "</td><td>" + duration(e.idleRemainingMs) + "</td><td>" + stop + "</td></tr>";
