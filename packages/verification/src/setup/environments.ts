@@ -1909,14 +1909,32 @@ export class Environments {
       token: jwt,
       workspace: workspace.id,
     });
-    await this.desktopRequest(environment.environmentId, "/login", {
-      token: jwt,
-    });
+    // The dev renderer can still reload (Vite re-optimizes dependencies on
+    // first start) and drop a token delivered too early, so hand it off until
+    // the application reports the signed-in user.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await this.desktopRequest(environment.environmentId, "/login", {
+        token: jwt,
+      });
+      if (await this.signedInWithin(environment.environmentId, 5000)) break;
+    }
     environment.components = {
       ...environment.components,
       signedIn: { email, workspaceSlug: slug },
     };
     await this.save(environment);
+  }
+  private async signedInWithin(id: string, timeoutMs: number) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const status = z
+        .object({ userId: z.string().nullable() })
+        .passthrough()
+        .parse(await this.desktopRequest(id, "/capabilities"));
+      if (status.userId) return true;
+    }
+    return false;
   }
   /** Keeps the original failure in the environment's private log; tool results stay generic. */
   private async recordFailure(
