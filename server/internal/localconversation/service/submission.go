@@ -116,6 +116,10 @@ func (s *Service) Submit(ctx context.Context, scopeID int64, id string, raw json
 		return SubmissionResult{}, ErrQueueFull
 	}
 	change := store.QueueChange{Revision: state.Revision + 1, Paused: state.Paused, Error: state.Error, Append: &store.QueueItem{RequestID: item.RequestID, Item: raw, OriginPeerID: origin.PeerID, OriginClientKind: origin.ClientKind}}
+	// A fresh send resumes a user pause; failed or restored queues still need explicit recovery.
+	if state.Error == "" {
+		change.Paused = false
+	}
 	batch := s.queueBatch(id, state, change, len(state.Items)+1, "enqueued")
 	var claim *store.SubmissionAttempt
 	busy, err := s.executionBusy(ctx, id)
@@ -123,7 +127,7 @@ func (s *Service) Submit(ctx context.Context, scopeID int64, id string, raw json
 		unlock()
 		return SubmissionResult{}, err
 	}
-	if !busy && s.acceptTurn() == nil && !state.Paused && state.Error == "" && len(state.Items) == 0 {
+	if !busy && s.acceptTurn() == nil && !change.Paused && change.Error == "" && len(state.Items) == 0 {
 		claim, err = s.newClaim(ctx, conv, item)
 		if err != nil {
 			unlock()
@@ -145,6 +149,8 @@ func (s *Service) Submit(ctx context.Context, scopeID int64, id string, raw json
 	unlock()
 	if claim != nil {
 		s.goBackground(func() { s.runSubmission(runCtx, conv, item, raw, *claim, origin) })
+	} else {
+		s.goBackground(func() { s.dispatchQueue(id) })
 	}
 	return result, err
 }

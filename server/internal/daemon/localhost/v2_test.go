@@ -772,11 +772,11 @@ func TestV2SubmissionLifecycleAcrossLocalAndPhoneTransport(t *testing.T) {
 	}
 	validateLocalV2(t, "submission_result", body)
 	value := body["submission"].(map[string]any)
-	if value["state"] != "queued" {
-		t.Fatalf("pause not preserved: %+v", body)
+	if value["state"] != "starting" || body["queue"].(map[string]any)["paused"] != false {
+		t.Fatalf("fresh submit did not resume: %+v", body)
 	}
 	status, replay := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-submission/commands", command, headers)
-	if status != http.StatusAccepted || replay["submission"].(map[string]any)["revision"] != value["revision"] {
+	if status != http.StatusAccepted || replay["submission"].(map[string]any)["attempt"].(map[string]any)["attempt_id"] != value["attempt"].(map[string]any)["attempt_id"] {
 		t.Fatalf("cross-transport replay=%d %+v", status, replay)
 	}
 	status, states := v2Do(t, phone, http.MethodPost, "/local/v2/sessions/conv-submission/queue/status", map[string]any{"request_ids": []string{"phone-message"}}, remoteHeaders("phone-client"))
