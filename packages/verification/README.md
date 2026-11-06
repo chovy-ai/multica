@@ -93,7 +93,7 @@ node packages/verification/dist/mcp/stdio.js --project /absolute/path/to/checkou
 }
 ```
 
-不要把 token 内容粘贴进对话。`data_snapshot` 的 `sourceRef` 就是这里的 `ref`。配置 `databaseFile` 后使用只读 SQLite 事务导出；否则通过来源的 Local API 分页导出历史和附件。backend 附件下载跳转到对象存储时，在 binding 中用 `attachmentOrigins` 显式声明允许的来源。
+不要把 token 内容粘贴进对话。`data_snapshot` 的 `sourceRef` 就是这里的 `ref`。快照只存在系统临时目录里本次宿主进程私有的子目录中，宿主关闭时删除；宿主重启后需要重新导出。配置 `databaseFile` 后使用只读 SQLite 事务导出；否则通过来源的 Local API 分页导出历史和附件。backend 附件下载跳转到对象存储时，在 binding 中用 `attachmentOrigins` 显式声明允许的来源。
 
 ## 数据副本
 

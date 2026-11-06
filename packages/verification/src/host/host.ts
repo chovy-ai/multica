@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { homedir } from "node:os";
-import { realpath } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { HostStorage, digest } from "./storage.js";
 import { JobService } from "./jobs.js";
 import { SetupInspector, type Probe } from "../setup/inspect.js";
@@ -31,7 +31,15 @@ export async function createVerificationHost(options: HostOptions) {
       options.stateRoot ??
       join(homedir(), ".multica", "verification", digest(projectRoot)),
   });
+  let snapshotRoot: string | undefined;
+  const removeSnapshots = async () => {
+    if (snapshotRoot) await rm(snapshotRoot, { recursive: true, force: true });
+  };
   try {
+    // Snapshots hold real business content; keep them only for this host session.
+    snapshotRoot = await mkdtemp(
+      join(tmpdir(), "multica-verification-snapshots-"),
+    );
     const jobs = await JobService.open(storage);
     const bindings = new Bindings(options.bindings);
     const environments = new Environments(
@@ -47,7 +55,7 @@ export async function createVerificationHost(options: HostOptions) {
     await environments.recover();
     const state = new State(environments);
     const pages = new Pages(environments);
-    const data = new DataService(storage, environments);
+    const data = new DataService(snapshotRoot, environments);
     registerOperations(jobs, data);
     let closing: Promise<void> | undefined;
     return {
@@ -63,12 +71,14 @@ export async function createVerificationHost(options: HostOptions) {
           await jobs.close();
           await pages.close();
           await environments.close();
+          await removeSnapshots();
           await storage.close();
         })();
         return closing;
       },
     };
   } catch (error) {
+    await removeSnapshots();
     await storage.close();
     throw error;
   }

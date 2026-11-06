@@ -14,7 +14,7 @@ import {
   type DataSnapshot,
   type Dataset,
 } from "../contracts/resources.js";
-import { canonicalJson, digest, type HostStorage } from "../host/storage.js";
+import { canonicalJson, digest } from "../host/storage.js";
 import { problem, VerificationError } from "../host/problem.js";
 import type { OperationContext } from "../host/jobs.js";
 import type { Environments } from "../setup/environments.js";
@@ -96,7 +96,8 @@ const assertSize = (bytes: number) => {
 
 export class DataService {
   constructor(
-    private readonly storage: HostStorage,
+    /** Private temporary directory owned by this host; removed on close. */
+    private readonly snapshotRoot: string,
     private readonly environments: Environments,
   ) {}
   async snapshot(
@@ -333,43 +334,51 @@ export class DataService {
         z.object({ data: z.string() }).parse(value).data,
         "base64",
       );
-      const directory = `data-snapshots/${snapshot.dataSnapshotId}.files`;
-      await mkdir(join(this.storage.root, directory), {
+      const directory = `${snapshot.dataSnapshotId}.files`;
+      await mkdir(join(this.snapshotRoot, directory), {
         recursive: true,
         mode: 0o700,
       });
       attachment.relativePath = `${directory}/${digest(attachment.originalId)}`;
-      await writeFile(join(this.storage.root, attachment.relativePath), bytes, {
+      await writeFile(join(this.snapshotRoot, attachment.relativePath), bytes, {
         mode: 0o600,
         flag: "wx",
       });
     }
-    await this.storage.write(
-      `data-snapshots/${snapshot.dataSnapshotId}.json`,
-      snapshot,
+    await writeFile(
+      join(this.snapshotRoot, `${snapshot.dataSnapshotId}.json`),
+      JSON.stringify(snapshot),
+      { mode: 0o600, flag: "wx" },
     );
     return snapshot;
   }
   async getSnapshot(id: string) {
-    const snapshot = await this.storage.read(
-      `data-snapshots/${resourceIdSchema.parse(id)}.json`,
-      dataSnapshotSchema,
-    );
-    if (!snapshot)
-      throw new VerificationError(
-        problem("notFound", "The data snapshot does not exist"),
+    let raw: string;
+    try {
+      raw = await readFile(
+        join(this.snapshotRoot, `${resourceIdSchema.parse(id)}.json`),
+        "utf8",
       );
+    } catch {
+      throw new VerificationError(
+        problem(
+          "notFound",
+          "The data snapshot does not exist in this host session",
+        ),
+      );
+    }
+    const snapshot = dataSnapshotSchema.parse(JSON.parse(raw));
     if (digest(canonicalJson(snapshot.content)) !== snapshot.sha256)
       throw new VerificationError(
         problem("identityMismatch", "The data snapshot checksum changed"),
       );
     for (const attachment of snapshot.attachments) {
-      const expected = `data-snapshots/${snapshot.dataSnapshotId}.files/${digest(attachment.originalId)}`;
+      const expected = `${snapshot.dataSnapshotId}.files/${digest(attachment.originalId)}`;
       if (attachment.relativePath !== expected)
         throw new VerificationError(
           problem("identityMismatch", "The snapshot attachment path changed"),
         );
-      const bytes = await readFile(join(this.storage.root, expected));
+      const bytes = await readFile(join(this.snapshotRoot, expected));
       if (
         bytes.length !== attachment.bytes ||
         createHash("sha256").update(bytes).digest("hex") !== attachment.sha256

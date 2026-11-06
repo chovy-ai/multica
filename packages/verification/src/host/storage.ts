@@ -187,7 +187,6 @@ export class HostStorage {
         "receipts",
         "jobs",
         "environments",
-        "data-snapshots",
         "worktrees",
       ])
         await mkdir(join(root, directory), { recursive: true, mode: 0o700 });

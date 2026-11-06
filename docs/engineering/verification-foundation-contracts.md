@@ -92,7 +92,9 @@ interface Problem {
 
 事件页原样包含来源的 `generation`、`cursor`，以及 `highWater`（daemon）或 `earliestCursor`（main、page）。daemon 不再要求调用方传 generation，`after` 超过 highWater 时返回空页。调用方据此判断数据库是否被替换、事件是否连续或已被缓冲淘汰。
 
-### 6.2 数据副本
+### 6.2 快照与数据副本
+
+快照保存在系统临时目录下本次宿主私有的子目录（权限 0700），宿主关闭时删除，不写入状态目录。宿主重启后旧的 dataSnapshotId 不再可用。
 
 每次 `data.restore` 生成新的 datasetId 作为导入命名空间，副本 ID 由命名空间和原始 ID 派生。同一命名空间重复导入不会产生第二份。导入策略：历史冻结，运行中轮次转为取消，队列暂停，工作目录重新绑定，云端引用移除，provider 原生会话不恢复。
 
