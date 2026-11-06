@@ -307,7 +307,7 @@ GROUP BY CAST(COALESCE(f.id, '') AS TEXT);
 
 -- name: BrowseSessionPage :many
 WITH recency AS (
-    SELECT c.id, CAST(COALESCE((
+    SELECT c.id, c.created_at, CAST(COALESCE((
     SELECT m.created_at FROM message m
     WHERE m.conversation_id = c.id AND m.role = 'user' AND m.steered = 0
       AND m.turn_id = (
@@ -319,10 +319,17 @@ WITH recency AS (
     ORDER BY m.created_at, m.id LIMIT 1
 ), '') AS TEXT) AS last_turn_sent_at FROM conversation AS c
     WHERE c.scope_id = sqlc.arg(scope_id)
+), sort_keys AS (
+    -- Stored instants are UTC RFC3339Nano. Fixed-width fractions preserve
+    -- nanoseconds in TEXT comparisons, including whole-second timestamps.
+    SELECT id, last_turn_sent_at,
+        substr(COALESCE(NULLIF(last_turn_sent_at, ''), created_at), 1, 19) || '.' ||
+        substr(rtrim(replace(substr(COALESCE(NULLIF(last_turn_sent_at, ''), created_at), 20), '.', ''), 'Z') || '000000000', 1, 9) || 'Z' AS sort_at
+    FROM recency
 )
 SELECT sqlc.embed(c), CAST(r.last_turn_sent_at AS TEXT) AS last_turn_sent_at
 FROM conversation AS c
-JOIN recency AS r ON r.id = c.id
+JOIN sort_keys AS r ON r.id = c.id
 LEFT JOIN folder_project AS f ON f.scope_id = c.scope_id
   AND rtrim(f.path, '/\') = rtrim(c.cwd, '/\')
   AND (rtrim(f.path, '/\') <> '' OR f.path = c.cwd)
@@ -336,9 +343,9 @@ WHERE c.scope_id = sqlc.arg(scope_id) AND c.archived = sqlc.arg(archived)
     OR instr(lower(COALESCE(f.title, '')), lower(sqlc.arg(search))) > 0
     OR instr(lower(COALESCE(f.path, '')), lower(sqlc.arg(search))) > 0)
   AND (sqlc.arg(cursor_id) = '' OR c.pinned < sqlc.arg(cursor_pinned)
-    OR (c.pinned = sqlc.arg(cursor_pinned) AND COALESCE(NULLIF(r.last_turn_sent_at, ''), c.created_at) < CAST(sqlc.arg(cursor_sort_at) AS TEXT))
-    OR (c.pinned = sqlc.arg(cursor_pinned) AND COALESCE(NULLIF(r.last_turn_sent_at, ''), c.created_at) = CAST(sqlc.arg(cursor_sort_at) AS TEXT) AND c.id > sqlc.arg(cursor_id)))
-ORDER BY c.pinned DESC, COALESCE(NULLIF(r.last_turn_sent_at, ''), c.created_at) DESC, c.id
+    OR (c.pinned = sqlc.arg(cursor_pinned) AND r.sort_at < CAST(sqlc.arg(cursor_sort_at) AS TEXT))
+    OR (c.pinned = sqlc.arg(cursor_pinned) AND r.sort_at = CAST(sqlc.arg(cursor_sort_at) AS TEXT) AND c.id > sqlc.arg(cursor_id)))
+ORDER BY c.pinned DESC, r.sort_at DESC, c.id
 LIMIT sqlc.arg(row_limit);
 
 -- name: ListTurnItemStarts :many

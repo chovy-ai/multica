@@ -40,7 +40,7 @@ func (q *Queries) AdvanceTurnSeq(ctx context.Context, arg AdvanceTurnSeqParams) 
 
 const browseSessionPage = `-- name: BrowseSessionPage :many
 WITH recency AS (
-    SELECT c.id, CAST(COALESCE((
+    SELECT c.id, c.created_at, CAST(COALESCE((
     SELECT m.created_at FROM message m
     WHERE m.conversation_id = c.id AND m.role = 'user' AND m.steered = 0
       AND m.turn_id = (
@@ -52,10 +52,17 @@ WITH recency AS (
     ORDER BY m.created_at, m.id LIMIT 1
 ), '') AS TEXT) AS last_turn_sent_at FROM conversation AS c
     WHERE c.scope_id = ?1
+), sort_keys AS (
+    -- Stored instants are UTC RFC3339Nano. Fixed-width fractions preserve
+    -- nanoseconds in TEXT comparisons, including whole-second timestamps.
+    SELECT id, last_turn_sent_at,
+        substr(COALESCE(NULLIF(last_turn_sent_at, ''), created_at), 1, 19) || '.' ||
+        substr(rtrim(replace(substr(COALESCE(NULLIF(last_turn_sent_at, ''), created_at), 20), '.', ''), 'Z') || '000000000', 1, 9) || 'Z' AS sort_at
+    FROM recency
 )
 SELECT c.id, c.scope_id, c.provider, c.provider_session_id, c.title, c.title_mode, c.title_generation, c.cwd, c.model, c.reasoning_effort, c.permission_mode, c.project_id, c.side_source_id, c.side, c.forked_from_id, c.forked_from_turn_id, c.imported_from_session_id, c.pinned, c.archived, c.status, c.last_seq, c.turn_count, c.summary_seq, c.last_message_preview, c.pending_interactions, c.queue_count, c.created_at, c.updated_at, c.background_tasks, CAST(r.last_turn_sent_at AS TEXT) AS last_turn_sent_at
 FROM conversation AS c
-JOIN recency AS r ON r.id = c.id
+JOIN sort_keys AS r ON r.id = c.id
 LEFT JOIN folder_project AS f ON f.scope_id = c.scope_id
   AND rtrim(f.path, '/\') = rtrim(c.cwd, '/\')
   AND (rtrim(f.path, '/\') <> '' OR f.path = c.cwd)
@@ -69,9 +76,9 @@ WHERE c.scope_id = ?1 AND c.archived = ?2
     OR instr(lower(COALESCE(f.title, '')), lower(?7)) > 0
     OR instr(lower(COALESCE(f.path, '')), lower(?7)) > 0)
   AND (?8 = '' OR c.pinned < ?9
-    OR (c.pinned = ?9 AND COALESCE(NULLIF(r.last_turn_sent_at, ''), c.created_at) < CAST(?10 AS TEXT))
-    OR (c.pinned = ?9 AND COALESCE(NULLIF(r.last_turn_sent_at, ''), c.created_at) = CAST(?10 AS TEXT) AND c.id > ?8))
-ORDER BY c.pinned DESC, COALESCE(NULLIF(r.last_turn_sent_at, ''), c.created_at) DESC, c.id
+    OR (c.pinned = ?9 AND r.sort_at < CAST(?10 AS TEXT))
+    OR (c.pinned = ?9 AND r.sort_at = CAST(?10 AS TEXT) AND c.id > ?8))
+ORDER BY c.pinned DESC, r.sort_at DESC, c.id
 LIMIT ?11
 `
 

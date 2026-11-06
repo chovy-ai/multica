@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 )
@@ -86,6 +87,10 @@ func (v *V2) browseSessions(w http.ResponseWriter, r *http.Request, scopeID int6
 		data, err := base64.RawURLEncoding.DecodeString(raw)
 		var cursor sessionBrowseCursor
 		if err != nil || json.Unmarshal(data, &cursor) != nil || cursor.Version != 2 || cursor.Generation != v.svc.Generation() || cursor.ScopeID != scopeID || !sameSessionFilter(cursor.Filter, filter) || cursor.Position.ID == "" || (cursor.Position.Pinned != 0 && cursor.Position.Pinned != 1) || cursor.Position.SortAt == "" {
+			writeV2Error(w, AppError("invalid_request", "Invalid session cursor"))
+			return
+		}
+		if _, err := time.Parse(time.RFC3339Nano, cursor.Position.SortAt); err != nil {
 			writeV2Error(w, AppError("invalid_request", "Invalid session cursor"))
 			return
 		}

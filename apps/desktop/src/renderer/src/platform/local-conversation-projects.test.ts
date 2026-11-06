@@ -43,6 +43,18 @@ describe("local conversation folder grouping", () => {
     ];
     expect(rows.sort(compareLocalConversations).map((entry) => entry.id)).toEqual(["b", "c", "a"]);
   });
+  it("preserves nanosecond send order within a millisecond", () => {
+    const rows = [
+      { ...session("a"), lastTurnSentAt: "2026-11-06T09:00:00Z" },
+      { ...session("b"), lastTurnSentAt: "2026-11-06T09:00:00.000000001Z" },
+      { ...session("c"), lastTurnSentAt: "2026-11-06T09:00:00.000000100Z" },
+    ];
+    expect(rows.sort(compareLocalConversations).map((entry) => entry.id)).toEqual(["c", "b", "a"]);
+    expect(compareLocalConversations(
+      { ...session("a"), lastTurnSentAt: "2026-11-06T09:00:00.1Z" },
+      { ...session("b"), lastTurnSentAt: "2026-11-06T10:00:00.100000000+01:00" },
+    )).toBeLessThan(0);
+  });
   it("uses activity time only for older daemons and creation time for an explicit empty user history", () => {
     const summary = localV2SummarySchema.parse({ conversation_id: "c", summary_seq: 1, provider: "claude", title: "", status: "idle", pinned: false, archived: false,
       created_at: "2026-11-01T00:00:00Z", updated_at: "2026-11-03T00:00:00Z" });

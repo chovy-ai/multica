@@ -248,6 +248,15 @@ func TestV2SessionBrowseKeepsLateOutputBehindTheSendTimeCursor(t *testing.T) {
 			if status, _ := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/browse?cursor="+base64.RawURLEncoding.EncodeToString(data), nil, h); status != http.StatusBadRequest {
 				t.Fatalf("activity-based cursor accepted: %d", status)
 			}
+			old.Version = 2
+			old.Position.SortAt = "not-a-timestamp"
+			data, err = json.Marshal(old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status, _ := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/browse?cursor="+base64.RawURLEncoding.EncodeToString(data), nil, h); status != http.StatusBadRequest {
+				t.Fatalf("malformed cursor time accepted: %d", status)
+			}
 			_, err = w.Submit(ctx, store.Batch{ConversationID: "a", CompleteTurn: &store.TurnCompletion{TurnID: "a-turn", Status: "completed", CompletedAt: at.Add(time.Hour)}, Summary: &store.SummaryPatch{UpdatedAt: at.Add(time.Hour)}})
 			if err != nil {
 				t.Fatal(err)

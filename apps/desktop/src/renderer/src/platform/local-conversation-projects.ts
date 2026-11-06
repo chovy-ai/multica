@@ -35,7 +35,13 @@ export function sessionEntry(summary: LocalV2Summary): LocalSessionEntry {
 export function compareLocalConversations(a: LocalSessionEntry, b: LocalSessionEntry): number {
   return Number(b.pinned) - Number(a.pinned)
     || Date.parse(b.lastTurnSentAt) - Date.parse(a.lastTurnSentAt)
+    // Date.parse discards sub-millisecond precision; retain the daemon's nanoseconds.
+    || fractionalSecond(b.lastTurnSentAt).localeCompare(fractionalSecond(a.lastTurnSentAt))
     || a.id.localeCompare(b.id);
+}
+
+function fractionalSecond(value: string): string {
+  return (value.match(/\.(\d+)/)?.[1] ?? "").replace(/0+$/, "").padEnd(9, "0");
 }
 
 export interface LocalConversationProjectGroup {
