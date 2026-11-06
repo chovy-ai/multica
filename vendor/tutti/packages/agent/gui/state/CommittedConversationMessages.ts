@@ -159,7 +159,7 @@ export class CommittedConversationMessages {
       if (typeof block.attachmentId !== "string") return block;
       const attachment = metadata?.[index];
       const image = attachment?.mimeType.toLowerCase().startsWith("image/") ?? false;
-      return { ...block, ...attachment, type: image ? "image" : "file", ...(image ? { url: undefined } : {}) };
+      return { ...block, ...attachment, type: image ? "image" : "file", ...(!attachment ? { metadataUnavailable: true } : {}), ...(image ? { url: undefined } : {}) };
     });
     // Old receipts are consulted only while migrating messages without a native request id.
     const clientSubmitId =
