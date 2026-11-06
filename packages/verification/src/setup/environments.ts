@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { createServer } from "node:net";
 import {
+  appendFile,
   copyFile,
   lstat,
   mkdir,
@@ -778,6 +779,7 @@ export class Environments {
       await this.save(environment);
       return environment;
     } catch (error) {
+      await this.recordFailure(id, "prepare", error);
       await this.save({
         ...environment,
         state: "failed",
@@ -1168,6 +1170,7 @@ export class Environments {
       await this.save(environment);
       return environment;
     } catch (error) {
+      await this.recordFailure(id, "desktop", error);
       await child.stop();
       this.processes.delete(id);
       await this.save({
@@ -1466,6 +1469,7 @@ export class Environments {
         ),
       );
     } catch (error) {
+      await this.recordFailure(id, "desktop", error);
       await Promise.allSettled(components.map((child) => child.stop()));
       await this.save({
         ...environment,
@@ -1799,6 +1803,20 @@ export class Environments {
     if (environment.state === "stopped")
       await this.deviceLease.releaseConfirmed(id);
     return environment;
+  }
+  /** Keeps the original failure in the environment's private log; tool results stay generic. */
+  private async recordFailure(
+    id: string,
+    log: "prepare" | "desktop",
+    error: unknown,
+  ) {
+    const detail =
+      error instanceof Error ? (error.stack ?? error.message) : String(error);
+    await appendFile(
+      join(this.directory(id), `${log}.log`),
+      `\n[verification host] ${detail}\n`,
+      { mode: 0o600 },
+    ).catch(() => undefined);
   }
   /**
    * The managed environment script keeps its registry, profiles and scratch
