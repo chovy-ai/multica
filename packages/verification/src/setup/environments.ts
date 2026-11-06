@@ -1514,7 +1514,12 @@ export class Environments {
             })
             .passthrough()
             .parse(await response.json());
-          if (!response.ok || health.commit !== environment.commit)
+          // The backend reports an abbreviated commit.
+          if (
+            !response.ok ||
+            health.commit.length < 7 ||
+            !environment.commit.startsWith(health.commit)
+          )
             throw new VerificationError(
               problem(
                 "identityMismatch",
