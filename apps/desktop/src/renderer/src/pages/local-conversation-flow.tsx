@@ -374,6 +374,10 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
       ),
     [hiddenProjectPreferences, folderProjects]
   );
+  const searchProjects = useMemo(
+    () => folderProjects.filter((project) => !hiddenProjectIds.includes(project.id)),
+    [folderProjects, hiddenProjectIds]
+  );
   const selectedId = searchParams.get("session");
   const sessions = useLocalConversationPages(
     transport,
@@ -1042,7 +1046,7 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
                 <LocalConversationSearch
                   key={`${scope.userId}:${scope.workspaceId}:${device.id}`}
                   sessions={sessions.data}
-                  projects={folderProjects.filter((project) => !hiddenProjectIds.includes(project.id))}
+                  projects={searchProjects}
                   archived={archived}
                   pending={sessions.isPending}
                   error={sessions.error}
