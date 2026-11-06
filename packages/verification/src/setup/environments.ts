@@ -1737,15 +1737,22 @@ export class Environments {
           applicationAbsent = true;
       }
     }
-    if (daemonPid) {
-      try {
-        process.kill(daemonPid, 0);
-        daemonAbsent = false;
-      } catch (error) {
-        daemonAbsent =
-          error instanceof Error && "code" in error && error.code === "ESRCH";
+    if (daemonPid && !(await processGone(daemonPid))) {
+      // Without its Desktop the daemon's Local API is unreachable; terminate it
+      // only when its executable belongs to this environment's checkout.
+      if (
+        (await processCommand(daemonPid)).startsWith(
+          join(environment.checkout, "apps/desktop/resources/bin/"),
+        )
+      ) {
+        process.kill(daemonPid, "SIGTERM");
+        for (let attempt = 0; attempt < 50; attempt++) {
+          if (await processGone(daemonPid)) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
       }
     }
+    if (daemonPid) daemonAbsent = await processGone(daemonPid);
     if (environment.dataMode !== "liveReadOnly") {
       try {
         const tools =
@@ -1997,4 +2004,21 @@ async function removeContainer(
       .catch(() => false);
     if (exists) throw error;
   }
+}
+
+async function processGone(pid: number): Promise<boolean> {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ESRCH";
+  }
+}
+
+function processCommand(pid: number): Promise<string> {
+  return new Promise((resolve) =>
+    execFile("ps", ["-p", String(pid), "-o", "command="], (error, stdout) =>
+      resolve(error ? "" : stdout.trim()),
+    ),
+  );
 }
