@@ -1681,7 +1681,8 @@ export class Environments {
         redirect: "error",
       });
       if (!shutdown.ok) throw new Error("Owned daemon shutdown failed");
-      for (let i = 0; i < 50; i++) {
+      // Graceful daemon and Electron shutdowns can take several seconds.
+      for (let i = 0; i < 150; i++) {
         try {
           process.kill(health.pid, 0);
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1716,7 +1717,7 @@ export class Environments {
     try {
       const descriptor = await this.descriptor(id);
       await this.desktopRequest(id, "/shutdown", {});
-      for (let attempt = 0; attempt < 50; attempt++) {
+      for (let attempt = 0; attempt < 150; attempt++) {
         try {
           process.kill(descriptor.pid, 0);
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1742,10 +1743,13 @@ export class Environments {
     if (!applicationAbsent) {
       try {
         const descriptor = await this.descriptor(id);
-        process.kill(descriptor.pid, 0);
-      } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ESRCH")
-          applicationAbsent = true;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          applicationAbsent = await processGone(descriptor.pid);
+          if (applicationAbsent) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      } catch {
+        /* Without a readable descriptor the application cannot be confirmed gone. */
       }
     }
     if (daemonPid && !(await processGone(daemonPid))) {
@@ -1757,7 +1761,7 @@ export class Environments {
         )
       ) {
         process.kill(daemonPid, "SIGTERM");
-        for (let attempt = 0; attempt < 50; attempt++) {
+        for (let attempt = 0; attempt < 150; attempt++) {
           if (await processGone(daemonPid)) break;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
