@@ -119,7 +119,7 @@ function ResourceMarkdownLinkRender({
   const resource =
     context && href ? resolveResourceReference(href, context.scope) : null;
   if (!context || !resource) {
-    if (href && isRelativeResourceHref(href)) return <>{children}</>;
+    if (previewEnabled && href && isRelativeResourceHref(href)) return <span>{children}</span>;
     const preview = previewEnabled && href ? previewResourceHref(href) : null;
     return preview ? (
       <a href={preview} data-multica-preview-link="true">
