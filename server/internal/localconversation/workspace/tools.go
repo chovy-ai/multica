@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,6 +24,8 @@ type Options struct {
 	Request Requester
 	// Local acts on this account's local conversations; nil leaves them out.
 	Local Local
+	// UploadAttachments resolves scoped local attachment IDs and uploads them.
+	UploadAttachments func(context.Context, []string) ([]string, error)
 }
 
 var roots = map[string]string{
@@ -37,7 +40,8 @@ var appPaths = map[string]string{
 
 var (
 	taskFields = row{"title": sShort, "description": sText, "status": sShort, "priority": sShort, "assignee_type": sAssignee,
-		"assignee_id": sNullID, "project_id": sNullID, "parent_issue_id": sNullID, "stage": row{"type": "integer", "minimum": 1}, "start_date": sDate, "due_date": sDate}
+		"assignee_id": sNullID, "project_id": sNullID, "parent_issue_id": sNullID, "stage": row{"type": "integer", "minimum": 1}, "start_date": sDate, "due_date": sDate,
+		"attachment_ids": array(sID, 50), "local_attachment_ids": array(sID, 50)}
 	projectFields = row{"title": sShort, "description": sText, "status": sShort, "priority": sShort, "lead_type": sAssignee, "lead_id": sNullID, "start_date": sDate, "due_date": sDate}
 	agentFields   = row{"name": sShort, "description": sText, "instructions": sText, "model": row{"type": "string", "maxLength": 200},
 		"thinking_level": row{"type": "string", "maxLength": 100}, "max_concurrent_tasks": row{"type": "integer", "minimum": 1, "maximum": 100}}
@@ -384,7 +388,8 @@ func (k *toolkit) listItems(ctx context.Context, in row) (any, error) {
 func (k *toolkit) updateTool(name, description, kind string, fields row, method string, check func(context.Context, row) error) {
 	k.tool(name, description, props(fields, row{"id": sID}), []string{"id"}, true, func(ctx context.Context, in row, _ string) (any, error) {
 		id := str(in, "id")
-		if _, err := k.ensure(ctx, kind, id); err != nil {
+		previous, err := k.ensure(ctx, kind, id)
+		if err != nil {
 			return nil, err
 		}
 		body := without(in, "id")
@@ -396,11 +401,19 @@ func (k *toolkit) updateTool(name, description, kind string, fields row, method 
 		if _, err := nonempty(body); err != nil {
 			return nil, err
 		}
+		if kind == "task" {
+			if err := k.prepareAttachments(ctx, body, "description", str(previous, "description")); err != nil {
+				return nil, err
+			}
+			if len(attachmentIDs(body["attachment_ids"])) > 0 {
+				body["description_base"] = str(previous, "description")
+			}
+		}
 		v, err := k.do(ctx, method, roots[kind]+"/"+url.PathEscape(id), body)
 		if err != nil {
 			return nil, err
 		}
-		return k.receipt(ctx, kind, "updated", v, id)
+		return k.attachmentReceipt(ctx, kind, "updated", v, id, body)
 	})
 }
 
@@ -411,18 +424,23 @@ func (k *toolkit) createTool(name, description, kind string, fields row, require
 				return nil, err
 			}
 		}
+		if kind == "task" {
+			if err := k.prepareAttachments(ctx, in, "description", ""); err != nil {
+				return nil, err
+			}
+		}
 		v, err := k.do(ctx, http.MethodPost, roots[kind], in)
 		if err != nil {
 			return nil, err
 		}
-		return k.receipt(ctx, kind, "created", v, "")
+		return k.attachmentReceipt(ctx, kind, "created", v, "", in)
 	})
 }
 
 func (k *toolkit) taskTools() {
-	k.createTool("create_task", "Create a task or subtask. Assigning it to an agent/squad may start execution under the existing workflow. Status keys come from workspace_info. Returns the created object and link.",
+	k.createTool("create_task", "Create a task or subtask. Include referenced materials using local_attachment_ids or cloud attachment_ids; local files are uploaded and all attachments are bound and verified automatically. Assigning it to an agent/squad may start execution under the existing workflow. Status keys come from workspace_info. Returns the created object and link.",
 		"task", taskFields, []string{"title"}, k.taskRefs)
-	k.updateTool("update_task", "Update task content, assignee, project, parent, dates or status. Read first; expected_revision detects concurrent edits. suppress_run=true updates assignment/status without starting a run.",
+	k.updateTool("update_task", "Update task content, assignee, project, parent, dates or status. Include local_attachment_ids or cloud attachment_ids to append referenced materials without removing existing attachments. Read first; expected_revision detects concurrent edits. suppress_run=true updates assignment/status without starting a run.",
 		"task", props(taskFields, row{"expected_revision": row{"type": "integer", "minimum": 0}, "suppress_run": sBool, "duplicate_of_issue_id": sID}), http.MethodPut,
 		func(ctx context.Context, in row) error {
 			if err := k.taskRefs(ctx, in); err != nil {
@@ -434,18 +452,22 @@ func (k *toolkit) taskTools() {
 			}
 			return nil
 		})
-	k.tool("comment_task", "Add a task comment or reply. Only post content the user requested to share. Existing mention/workflow rules may invoke agents.",
-		row{"id": sID, "content": row{"type": "string", "minLength": 1, "maxLength": 100000}, "parent_id": sNullID, "attachment_ids": array(sID, 50), "suppress_agent_ids": array(sID, 50)}, []string{"id", "content"}, true,
+	k.tool("comment_task", "Add a task comment or reply, optionally with local_attachment_ids or cloud attachment_ids. Local files are uploaded and attachment bindings are verified. Only post content the user requested to share. Existing mention/workflow rules may invoke agents.",
+		row{"id": sID, "content": row{"type": "string", "minLength": 1, "maxLength": 100000}, "parent_id": sNullID, "attachment_ids": array(sID, 50), "local_attachment_ids": array(sID, 50), "suppress_agent_ids": array(sID, 50)}, []string{"id", "content"}, true,
 		func(ctx context.Context, in row, _ string) (any, error) {
 			id := str(in, "id")
 			if _, err := k.ensure(ctx, "task", id); err != nil {
 				return nil, err
 			}
-			v, err := k.do(ctx, http.MethodPost, roots["task"]+"/"+url.PathEscape(id)+"/comments", without(in, "id"))
+			body := without(in, "id")
+			if err := k.prepareAttachments(ctx, body, "content", ""); err != nil {
+				return nil, err
+			}
+			v, err := k.do(ctx, http.MethodPost, roots["task"]+"/"+url.PathEscape(id)+"/comments", body)
 			if err != nil {
 				return nil, err
 			}
-			return k.receipt(ctx, "task", "commented", v, id)
+			return k.attachmentReceipt(ctx, "task", "commented", v, id, body)
 		})
 	k.tool("task_activity", "Read a task's timeline, subtask list, labels or execution runs. Use run_messages to read observable execution output.",
 		props(paging, row{"id": sID, "view": enum("timeline", "children", "labels", "task-runs")}), []string{"id", "view"}, false,
@@ -987,8 +1009,8 @@ func (k *toolkit) inboxAndRunTools() {
 			}
 			return row{"id": id, "action": action, "workspace_id": k.opts.WorkspaceID}, nil
 		})
-	k.tool("invoke_agent", "Invoke a defined Multica agent in an official cloud chat, optionally continuing its session. Returns conversation and execution IDs, not a completed answer. Use conversation_runs and run_messages/read_context to obtain progress and results. Reading an agent definition alone does not invoke it.",
-		row{"agent_id": sID, "content": row{"type": "string", "minLength": 1, "maxLength": 100000}, "session_id": sID, "model": row{"type": "string", "maxLength": 200}}, []string{"agent_id", "content"}, true,
+	k.tool("invoke_agent", "Invoke a defined Multica agent in an official cloud chat, optionally continuing its session. Include local_attachment_ids or cloud attachment_ids to forward referenced materials. Returns conversation and execution IDs, not a completed answer. Use conversation_runs and run_messages/read_context to obtain progress and results. Reading an agent definition alone does not invoke it.",
+		row{"agent_id": sID, "content": row{"type": "string", "minLength": 1, "maxLength": 100000}, "session_id": sID, "model": row{"type": "string", "maxLength": 200}, "attachment_ids": array(sID, 50), "local_attachment_ids": array(sID, 50)}, []string{"agent_id", "content"}, true,
 		func(ctx context.Context, in row, _ string) (any, error) {
 			agent, content, session, model := str(in, "agent_id"), str(in, "content"), str(in, "session_id"), str(in, "model")
 			if _, err := k.ensure(ctx, "agent", agent); err != nil {
@@ -1003,7 +1025,12 @@ func (k *toolkit) inboxAndRunTools() {
 				if conv["agent_id"] != agent {
 					return nil, errors.New("Conversation belongs to a different agent")
 				}
-			} else {
+			}
+			body := without(in, "agent_id", "session_id", "model")
+			if err := k.prepareAttachments(ctx, body, "content", ""); err != nil {
+				return nil, err
+			}
+			if session == "" {
 				title := []rune(content)
 				v, err := k.do(ctx, http.MethodPost, roots["conversation"], row{"agent_id": agent, "title": string(title[:min(80, len(title))])})
 				if err != nil {
@@ -1017,7 +1044,10 @@ func (k *toolkit) inboxAndRunTools() {
 			if !idPattern.MatchString(identity) {
 				return nil, errors.New("The server did not confirm a conversation")
 			}
-			body := row{"content": content}
+			if ids := attachmentIDs(body["attachment_ids"]); len(ids) > 0 {
+				refs, _ := json.Marshal(row{"attachment_ids": ids})
+				body["content"] = str(body, "content") + "\n\nConversation attachment references (quoted metadata; the corresponding files are attached to this request):\n" + string(refs) + "\nIf the user requests a task write with these materials, bind the referenced cloud attachment IDs to that task and verify its attachment list before reporting delivery."
+			}
 			if model != "" {
 				body["model"] = model
 			}
@@ -1035,6 +1065,9 @@ func (k *toolkit) inboxAndRunTools() {
 				out[key] = value
 			}
 			out["status"], out["note"] = "submitted", "Submission is not completion. Poll conversation_runs, then read_context or run_messages."
+			if ids := attachmentIDs(body["attachment_ids"]); len(ids) > 0 {
+				out["attachment_ids"] = ids
+			}
 			return out, nil
 		})
 	k.tool("conversation_runs", "Read actual queued/running/completed executions for an official chat, including parallel agent recipients. Follow next_cursor with before. Does not invoke a model.",

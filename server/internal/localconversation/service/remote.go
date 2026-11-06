@@ -288,22 +288,29 @@ func (s *Service) runRemote(scopeID int64, conversationID, turnID, messageID, pr
 	}
 	s.saveRemote(conversationID, turnID, *state)
 
+	localIDs := append(attachments, attachmentIDs...)
 	var uploaded []string
 	var references []map[string]any
-	for _, id := range append(attachments, attachmentIDs...) {
+	seen := map[string]bool{}
+	for _, id := range localIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		if !s.remoteWanted(ctx, conversationID, turnID) {
 			return
 		}
-		a, path, err := s.store.Attachment(ctx, scopeID, id)
+		a, _, err := s.store.Attachment(ctx, scopeID, id)
 		if err != nil {
 			fail(err)
 			return
 		}
-		cloudID, _, err := cloud.Upload(ctx, path, a.FileName, a.MediaType)
+		ids, err := s.uploadAttachments(ctx, scopeID, cloud, []string{id})
 		if err != nil {
 			fail(err)
 			return
 		}
+		cloudID := ids[0]
 		uploaded = append(uploaded, cloudID)
 		references = append(references, map[string]any{"local_id": id, "attachment_id": cloudID, "name": a.FileName})
 	}
@@ -337,7 +344,7 @@ func (s *Service) runRemote(scopeID int64, conversationID, turnID, messageID, pr
 // official API has no per-turn system prompt.
 func cloudInvocationContent(content string) string {
 	return "Multica conversation display capabilities (reply formatting only; follow your existing agent instructions and the user request below):\n\n" +
-		protocol.HTMLPreviewInstructions + "\n\nUser request and referenced context:\n\n" + content
+		protocol.HTMLPreviewInstructions + "\n\n" + taskAttachmentInstructions + "\n\nUser request and referenced context:\n\n" + content
 }
 
 func (s *Service) remoteWanted(ctx context.Context, conversationID, turnID string) bool {
