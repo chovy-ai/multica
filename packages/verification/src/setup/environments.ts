@@ -344,28 +344,56 @@ export class Environments {
       );
     return environment;
   }
-  async recover(): Promise<void> {
-    for (const name of await this.storage.list("environments")) {
-      const environment = await this.storage.read(
-        `environments/${name}`,
-        environmentSchema,
-      );
+  /**
+   * Reconciles environments left by a previous process of this host. With
+   * `adopt`, running Desktop environments whose application still answers
+   * are kept and guarded again; everything that was mid-transition, or whose
+   * runtime died with the old process, is stopped and cleaned up.
+   */
+  async recover(options: { adopt?: boolean } = {}): Promise<void> {
+    const reclaim: string[] = [];
+    for (const environment of await this.list()) {
+      const id = environment.environmentId;
       if (
-        environment &&
-        ["preparing", "starting", "ready", "awaitingUser", "stopping"].includes(
-          environment.state,
-        )
+        ![
+          "preparing",
+          "starting",
+          "ready",
+          "awaitingUser",
+          "stopping",
+        ].includes(environment.state)
       )
-        await this.save({
-          ...environment,
-          state: "interrupted",
-          problem: problem(
-            "interrupted",
-            "The host restarted; inspect component identities and explicitly stop retained resources",
-            "inspect",
-          ),
-        });
+        continue;
+      if (
+        options.adopt &&
+        ["ready", "awaitingUser"].includes(environment.state) &&
+        environment.dataMode !== "liveReadOnly"
+      ) {
+        try {
+          await this.descriptor(id);
+          await this.desktopRequest(id, "/capabilities");
+          const digest = environment.components.productionRuntimeDigest;
+          if (typeof digest === "string")
+            this.guardProductionRuntime(id, digest);
+          this.touch(id);
+          continue;
+        } catch {
+          /* The application did not survive; reclaim it below. */
+        }
+      }
+      await this.save({
+        ...environment,
+        state: "interrupted",
+        problem: problem(
+          "interrupted",
+          "The host restarted; inspect component identities and explicitly stop retained resources",
+          "inspect",
+        ),
+      });
+      if (options.adopt) reclaim.push(id);
     }
+    for (const id of reclaim)
+      await this.serializeLifecycle(() => this.stop(id)).catch(() => undefined);
   }
   async status(id: string): Promise<Environment> {
     let environment = await this.get(id);
@@ -1488,6 +1516,12 @@ export class Environments {
         },
       );
       components.push(child);
+      // Recorded so a restarted host can stop the dev server's process group.
+      environment.components = {
+        ...environment.components,
+        launcherPid: child.pid,
+      };
+      await this.save(environment);
       let exited = false;
       void child.exited.then(() => {
         exited = true;
@@ -1796,6 +1830,24 @@ export class Environments {
     await Promise.allSettled(
       (this.processes.get(id) ?? []).map((child) => child.stop()),
     );
+    const launcherPid = environment.components.launcherPid;
+    if (
+      !this.processes.has(id) &&
+      typeof launcherPid === "number" &&
+      !(await processGone(launcherPid)) &&
+      (await processDirectory(launcherPid)) === environment.checkout
+    ) {
+      // Adopted after a restart: no handle remains, so end the recorded group.
+      try {
+        process.kill(-launcherPid, "SIGTERM");
+      } catch {
+        /* The group already exited. */
+      }
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (await processGone(launcherPid)) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
     this.processes.delete(id);
     if (!applicationAbsent) {
       try {
@@ -2116,8 +2168,9 @@ export class Environments {
    * branch. Returns false when any cleanup is unconfirmed, so the host
    * directory is kept for the next host to retry.
    */
-  async close(): Promise<boolean> {
+  async close(options: { keepEnvironments?: boolean } = {}): Promise<boolean> {
     for (const id of [...this.guards.keys()]) this.unguard(id);
+    if (options.keepEnvironments) return false;
     let clean = true;
     for (const name of await this.storage.list("environments")) {
       const environment = await this.storage.read(
@@ -2193,6 +2246,25 @@ function processCommand(pid: number): Promise<string> {
   return new Promise((resolve) =>
     execFile("ps", ["-p", String(pid), "-o", "command="], (error, stdout) =>
       resolve(error ? "" : stdout.trim()),
+    ),
+  );
+}
+
+/** A process's working directory, used to confirm it belongs to an environment checkout. */
+function processDirectory(pid: number): Promise<string> {
+  return new Promise((resolve) =>
+    execFile(
+      "lsof",
+      ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+      (error, stdout) =>
+        resolve(
+          error
+            ? ""
+            : (stdout
+                .split("\n")
+                .find((line) => line.startsWith("n"))
+                ?.slice(1) ?? ""),
+        ),
     ),
   );
 }

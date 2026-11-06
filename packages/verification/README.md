@@ -57,13 +57,13 @@ bash scripts/verification/install-daemon.sh
 claude mcp add --scope user --transport http multica-verification http://127.0.0.1:47311/mcp
 ```
 
-`scripts/verification/uninstall-daemon.sh` 停止守护进程（它会停止并清理所有环境）并移除 launchd 服务；工具链、构建缓存和仓库镜像保留。
+`scripts/verification/uninstall-daemon.sh` 先通过管理台停止所有环境，再停止守护进程并移除 launchd 服务；工具链、构建缓存和仓库镜像保留。
 
 ## 守护进程与环境生命周期
 
 - 守护进程是唯一的验证宿主。所有 MCP 会话共用它的环境、任务和数据快照，会话断开不影响环境；`job_query` 能查到其他会话提交的任务。
 - 环境属于守护进程，直到有人调用 `env_stop`、在管理台停止，或者超过空闲时间。任何带 `environmentId` 的工具调用都会刷新最近使用时间。
-- 守护进程重启时会回收上一个进程留下的环境；被强制结束时，下一次启动同样回收。
+- 守护进程重启（包括崩溃后被 launchd 拉起）时保留环境：重新探测仍在运行的 Desktop 环境并继续管理和守护，最近使用时间从重启时刻重新计算；正在准备、启动或停止的环境，以及 `liveReadOnly` 环境（浏览器随守护进程退出）会被停止并清理。
 - 管理台每 10 秒采样一次：磁盘、Docker、已安装的 Multica、环境名额，以及每个环境的应用、daemon、后端、数据库容器是否存活和探测延迟，保留约 15 分钟历史；也可以查看任务、日志末尾和停止环境。
 
 ## 环境

@@ -63,7 +63,7 @@ interface Problem {
 - `branch` 是远端分支名或可达 commit。守护进程在自己的部分克隆 `<state-root>/repository.git` 中拉取并固定 commit，再建独立 worktree；只验证已推送的代码。
 - 守护进程是唯一宿主，所有 MCP 会话共享环境、任务和快照。环境持续到 `env_stop`、管理台停止或空闲超时（默认 120 分钟无 MCP 调用，`idleTimeoutMinutes` 可覆盖）；任何带 `environmentId` 的调用都刷新使用时间。
 - 同时运行的环境数有上限（默认 2）。满额时 `env.start` 失败为 `instanceBusy`，并列出占用环境及其 owner；启动阶段按顺序执行。
-- 守护进程重启或被强制结束后，下一次启动回收上一个进程遗留的环境、worktree 和分支。
+- 守护进程使用固定的宿主目录。重启或被强制结束后，下一次启动接管该目录：仍在运行的 Desktop 环境继续保留，过渡中的环境和 `liveReadOnly` 环境被停止并清理。
 - 宿主重启后，未完成的任务标为 `interrupted`，不自动重放。响应丢失时按原 requestId 查询，不换 ID 重放。
 - `job_cancel` 请求协作取消，不撤销已产生的资源。
 
