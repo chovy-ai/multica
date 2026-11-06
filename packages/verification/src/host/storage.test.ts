@@ -25,16 +25,13 @@ async function kill(child: ChildProcess) {
 }
 
 describe("host ownership and crash recovery", () => {
-  it("refuses live owners even with recovery, and rejects another project's binding", async () => {
+  it("refuses a live owner and rejects another project's binding", async () => {
     const options = await fixture();
     const first = await createVerificationHost(options);
     cleanups.push(() => first.close());
     await expect(createVerificationHost(options)).rejects.toMatchObject({
       problem: { code: "instanceBusy" },
     });
-    await expect(
-      createVerificationHost({ ...options, recoverLock: true }),
-    ).rejects.toMatchObject({ problem: { code: "instanceBusy" } });
     await first.close();
     const other = await fixture();
     await expect(
@@ -44,7 +41,7 @@ describe("host ownership and crash recovery", () => {
     cleanups.push(() => reopened.close());
   });
 
-  it("retains crash resources and receipts, admits one recovery owner, and never replays the operation", async () => {
+  it("takes over a killed host's lock once, retains its receipts, and never replays the operation", async () => {
     const options = await fixture();
     const builtEntry = new URL("../../dist/index.js", import.meta.url).href;
     const childPath = join(options.root, "crash.mjs");
@@ -88,12 +85,9 @@ setInterval(() => {}, 1000);
       lines.close();
     }
     await kill(child);
-    await expect(createVerificationHost(options)).rejects.toMatchObject({
-      problem: { code: "instanceBusy" },
-    });
     const attempts = await Promise.allSettled([
-      createVerificationHost({ ...options, recoverLock: true }),
-      createVerificationHost({ ...options, recoverLock: true }),
+      createVerificationHost(options),
+      createVerificationHost(options),
     ]);
     const owners = attempts.filter((result) => result.status === "fulfilled");
     expect(owners).toHaveLength(1);

@@ -50,7 +50,7 @@ pnpm --filter @multica/verification build:manual
 node packages/verification/dist/mcp/stdio.js --project /absolute/path/to/checkout
 ```
 
-最后一条是等待 stdin 协议消息的 MCP 服务；stdout 只输出协议，错误到 stderr。MCP 客户端也可配置 `bash /absolute/path/to/scripts/verification/mcp.sh`，wrapper 已绑定其 checkout，可追加 `--state-root`、`--bindings-file`、`--recover-lock`。
+最后一条是等待 stdin 协议消息的 MCP 服务；stdout 只输出协议，错误到 stderr。MCP 客户端也可配置 `bash /absolute/path/to/scripts/verification/mcp.sh`，wrapper 已绑定其 checkout，可追加 `--state-root`、`--bindings-file`。同一状态目录同时只允许一个宿主；上一个宿主被强制结束留下的锁，在其进程已不存在时由下一个宿主自动接管。
 
 ## 环境
 

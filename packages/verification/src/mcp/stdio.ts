@@ -8,17 +8,12 @@ import { readBindings } from "../sources/bindings.js";
 function argumentsFrom(argv: string[]) {
   let projectRoot: string | undefined;
   let stateRoot: string | undefined;
-  let recoverLock = false;
   let bindingsFile: string | undefined;
   const seen = new Set<string>();
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
     if (seen.has(flag)) throw new Error("Duplicate argument");
     seen.add(flag);
-    if (flag === "--recover-lock") {
-      recoverLock = true;
-      continue;
-    }
     if (!["--project", "--state-root", "--bindings-file"].includes(flag))
       throw new Error("Unknown argument");
     const value = argv[++i];
@@ -29,7 +24,7 @@ function argumentsFrom(argv: string[]) {
     else bindingsFile = value;
   }
   if (!projectRoot) throw new Error("--project is required");
-  return { projectRoot, stateRoot, recoverLock, bindingsFile };
+  return { projectRoot, stateRoot, bindingsFile };
 }
 
 async function main() {
@@ -38,7 +33,7 @@ async function main() {
     options = argumentsFrom(process.argv.slice(2));
   } catch {
     process.stderr.write(
-      "usage: multica verification --project <checkout> [--state-root <private-directory>] [--bindings-file <private-json>] [--recover-lock]\n",
+      "usage: multica verification --project <checkout> [--state-root <private-directory>] [--bindings-file <private-json>]\n",
     );
     process.exitCode = 2;
     return;

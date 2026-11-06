@@ -17,7 +17,6 @@ export interface HostOptions {
   projectRoot: string;
   stateRoot?: string;
   deviceLeaseRoot?: string;
-  recoverLock?: boolean;
   probe?: Probe;
   bindings?: SourceBinding[];
 }
