@@ -4,14 +4,11 @@ import { realpath } from "node:fs/promises";
 import { HostStorage, digest } from "./storage.js";
 import { JobService } from "./jobs.js";
 import { SetupInspector, type Probe } from "../setup/inspect.js";
-import { VerificationRecords } from "../evidence/records.js";
 import { Bindings } from "../sources/bindings.js";
 import { DeviceLease } from "../setup/device-lease.js";
 import { Environments } from "../setup/environments.js";
-import { EvidenceStore } from "../evidence/store.js";
-import { Sources } from "../sources/service.js";
+import { State } from "../state/service.js";
 import { Pages } from "../page/service.js";
-import { Checks } from "../checks/service.js";
 import { DataService } from "../data/service.js";
 import { registerOperations } from "./operations.js";
 import type { SourceBinding } from "../contracts/resources.js";
@@ -23,8 +20,6 @@ export interface HostOptions {
   recoverLock?: boolean;
   probe?: Probe;
   bindings?: SourceBinding[];
-  attachmentRoots?: string[];
-  userWaiverRefs?: string[];
 }
 
 export async function createVerificationHost(options: HostOptions) {
@@ -38,7 +33,6 @@ export async function createVerificationHost(options: HostOptions) {
   });
   try {
     const jobs = await JobService.open(storage);
-    const records = new VerificationRecords(storage, jobs);
     const bindings = new Bindings(options.bindings);
     const environments = new Environments(
       storage,
@@ -51,41 +45,22 @@ export async function createVerificationHost(options: HostOptions) {
       ),
     );
     await environments.recover();
-    const evidence = new EvidenceStore(
-      storage,
-      records,
-      options.attachmentRoots,
-      new Set(options.userWaiverRefs),
-      (options.bindings ?? []).flatMap((binding) => [
-        binding.tokenFile,
-        ...(binding.verificationTokenFile
-          ? [binding.verificationTokenFile]
-          : []),
-        ...(binding.databaseFile ? [binding.databaseFile] : []),
-      ]),
-    );
-    const sources = new Sources(storage, environments, evidence, records);
-    await sources.recover();
-    const pages = new Pages(environments, evidence, sources);
-    const checks = new Checks(storage, sources, pages, evidence);
+    const state = new State(environments);
+    const pages = new Pages(environments);
     const data = new DataService(storage, environments);
-    registerOperations(jobs, { data, sources, evidence, checks, pages });
+    registerOperations(jobs, data);
     let closing: Promise<void> | undefined;
     return {
       projectRef: storage.projectRef,
       setup: new SetupInspector(projectRoot, options.probe),
       jobs,
-      records,
       environments,
       data,
-      sources,
-      checks,
-      evidence,
+      state,
       pages,
       close(): Promise<void> {
         closing ??= (async () => {
           await jobs.close();
-          await sources.close();
           await pages.close();
           await environments.close();
           await storage.close();
