@@ -222,12 +222,14 @@ export class Environments {
           )
             await jobs.cancel(pending.jobId, `stop.${id}.${pending.jobId}`);
         }
-        return toJson(
-          await this.serializeLifecycle(async () => {
-            context.signal.throwIfAborted();
-            return this.stop(id, context);
-          }),
-        );
+        const stopped = await this.serializeLifecycle(async () => {
+          context.signal.throwIfAborted();
+          return this.stop(id, context);
+        });
+        // A resident daemon keeps stopped environments' records and logs,
+        // but not their worktrees.
+        if (stopped.state === "stopped") await this.removeCheckout(stopped);
+        return toJson(stopped);
       },
     });
   }
@@ -2188,24 +2190,30 @@ export class Environments {
           continue;
         }
       }
-      try {
-        await lstat(environment.checkout);
-        await git(this.repository(), [
-          "worktree",
-          "remove",
-          "--force",
-          environment.checkout,
-        ]);
-      } catch (error) {
-        if (!isMissing(error)) clean = false;
-      }
-      await git(this.repository(), [
-        "branch",
-        "-D",
-        `codex/verification-${id.slice(0, 8)}`,
-      ]).catch(() => undefined);
+      if (!(await this.removeCheckout(environment))) clean = false;
     }
     return clean;
+  }
+  /** Removes a stopped environment's worktree and branch from the mirror. */
+  private async removeCheckout(environment: Environment): Promise<boolean> {
+    let removed = true;
+    try {
+      await lstat(environment.checkout);
+      await git(this.repository(), [
+        "worktree",
+        "remove",
+        "--force",
+        environment.checkout,
+      ]);
+    } catch (error) {
+      if (!isMissing(error)) removed = false;
+    }
+    await git(this.repository(), [
+      "branch",
+      "-D",
+      `codex/verification-${environment.environmentId.slice(0, 8)}`,
+    ]).catch(() => undefined);
+    return removed;
   }
   private serializeLifecycle<T>(run: () => Promise<T>): Promise<T> {
     const next = this.lifecycle.catch(() => undefined).then(run);
