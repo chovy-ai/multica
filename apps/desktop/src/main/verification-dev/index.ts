@@ -324,7 +324,12 @@ export const verificationDev = {
           return;
         }
         response.writeHead(404).end();
-      } catch {
+      } catch (error) {
+        // The private desktop log is the only place this cause is visible.
+        console.error(
+          `[verification-dev] ${request.method} ${request.url} failed:`,
+          error instanceof Error ? error.message : error,
+        );
         response
           .writeHead(503)
           .end(JSON.stringify({ error: "source_unavailable" }));
