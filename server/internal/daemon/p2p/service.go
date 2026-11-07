@@ -102,6 +102,10 @@ type Config struct {
 	Logger      *slog.Logger
 	// Marks records connection state changes; nil records nothing.
 	Marks *timing.Marks
+	// Tailnet, with TailnetDir, runs an embedded Tailscale node beside the
+	// libp2p host; nil keeps the link on libp2p.
+	Tailnet    TailnetFunc
+	TailnetDir string
 
 	// Tests replace the operating system's view of the network; nil uses it.
 	route     func(net.IP) (pathRoute, error)
@@ -168,6 +172,12 @@ type Service struct {
 	relayReserved bool
 	relayExpires  time.Time
 	relayCancel   context.CancelFunc
+
+	tailnet *tailnet
+
+	watchMu  sync.Mutex
+	onDirect []func(peer.ID)
+	watchers map[peer.ID]map[chan struct{}]struct{}
 }
 
 // Start builds the libp2p host, starts LAN discovery and the allowlist
@@ -218,6 +228,7 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		localIPs:   cfg.localIPs,
 		tunnelIPs:  cfg.tunnelIPs,
 		health:     map[string]*connHealth{},
+		watchers:   map[peer.ID]map[chan struct{}]struct{}{},
 	}
 	if s.interval <= 0 {
 		s.interval = defaultRefreshInterval
@@ -281,6 +292,14 @@ func Start(ctx context.Context, cfg Config) (*Service, error) {
 		go func() {
 			defer s.wg.Done()
 			s.relayLoop()
+		}()
+	}
+	if cfg.Tailnet != nil && cfg.TailnetDir != "" {
+		s.tailnet = newTailnet(s, cfg.TailnetDir, cfg.Tailnet, logger)
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.tailnet.run(ctx)
 		}()
 	}
 	logger.Info("p2p: host started", "peer_id", self.String(), "addrs", h.Addrs())
@@ -371,7 +390,7 @@ func (s *Service) addDiscovered(info peer.AddrInfo) {
 		return
 	}
 	// connect treats a relayed device as connected, so a nearby one needs this.
-	if s.Connection(info.ID) == ConnectionRelayed {
+	if s.libp2pConnection(info.ID) == ConnectionRelayed {
 		s.directRetries.reset(info.ID)
 		s.dialDirect(p)
 		return
@@ -718,7 +737,7 @@ func (s *Service) NetworkChanged() {
 	}
 	s.wakeDials()
 	for _, p := range s.allow.list() {
-		if s.Connection(p.ID) == ConnectionRelayed {
+		if s.libp2pConnection(p.ID) == ConnectionRelayed {
 			s.dialDirect(p)
 		}
 	}
@@ -860,7 +879,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 	for _, p := range peers {
 		if previous, ok := s.allow.get(p.ID); ok && !slices.EqualFunc(previous.RegisteredAddrs, p.RegisteredAddrs, func(a, b ma.Multiaddr) bool { return a.Equal(b) }) {
 			changed = append(changed, p.ID)
-			if s.Connection(p.ID) == ConnectionRelayed {
+			if s.libp2pConnection(p.ID) == ConnectionRelayed {
 				s.directRetries.resetIfNew(p.ID, p.RegisteredAddrs)
 				s.dialDirect(p)
 			}
@@ -948,7 +967,7 @@ func (s *Service) dialDirect(p Peer) {
 // without any address changing, as when a firewall rule or VPN route appears.
 func (s *Service) retryRelayed(now time.Time) {
 	for _, p := range s.allow.list() {
-		if s.Connection(p.ID) == ConnectionRelayed {
+		if s.libp2pConnection(p.ID) == ConnectionRelayed {
 			s.dialDirect(p)
 		} else {
 			s.directRetries.reset(p.ID)
@@ -961,7 +980,7 @@ func (s *Service) retryRelayed(now time.Time) {
 // device stays reachable through the relay if the direct path later fails.
 func (s *Service) closeIdleCircuits() {
 	for _, p := range s.allow.list() {
-		if s.Connection(p.ID) != ConnectionDirect {
+		if s.libp2pConnection(p.ID) != ConnectionDirect {
 			continue
 		}
 		for _, conn := range s.host.Network().ConnsToPeer(p.ID) {
@@ -1296,17 +1315,8 @@ func (s *Service) Peers() []PeerStatus {
 	list := s.allow.list()
 	out := make([]PeerStatus, 0, len(list))
 	for _, p := range list {
-		ps := PeerStatus{Peer: p, Addrs: []string{}}
-		ps.Connected = s.host.Network().Connectedness(p.ID) == network.Connected
-		for _, c := range s.host.Network().ConnsToPeer(p.ID) {
-			if isCircuit(c.RemoteMultiaddr()) {
-				if ps.Connection == "" {
-					ps.Connection = ConnectionRelayed
-				}
-			} else {
-				ps.Connection = ConnectionDirect
-			}
-		}
+		ps := PeerStatus{Peer: p, Addrs: []string{}, Connection: s.Connection(p.ID)}
+		ps.Connected = ps.Connection != ""
 		for _, a := range s.host.Peerstore().Addrs(p.ID) {
 			ps.Addrs = append(ps.Addrs, a.String())
 		}
