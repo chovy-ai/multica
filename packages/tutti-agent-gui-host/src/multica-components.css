@@ -530,9 +530,7 @@ html.multica-agent-gui .multica-model-choice:has(input:disabled) { cursor: defau
 html.multica-agent-gui .multica-model-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 html.multica-agent-gui .multica-model-choice > svg { flex-shrink: 0; }
 html.multica-agent-gui :is(.multica-model-shortcut, .multica-model-default) { flex-shrink: 0; color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--text-caption--line-height); }
-html.multica-agent-gui .multica-model-shortcut { padding: var(--spacing); border-radius: var(--radius-sm); background: var(--muted); white-space: nowrap; }
-html.multica-agent-gui .multica-model-favorite { color: var(--muted-foreground); }
-html.multica-agent-gui .multica-model-favorite[aria-pressed="true"] { color: var(--foreground); }
+html.multica-agent-gui .multica-model-shortcut { display: inline-flex; align-items: center; gap: var(--spacing); padding: var(--spacing); border-radius: var(--radius-sm); background: var(--muted); white-space: nowrap; }
 html.multica-agent-gui .multica-model-show-more { margin-top: var(--spacing); color: var(--muted-foreground); }
 html.multica-agent-gui :is(.multica-model-message, .multica-model-error) { margin: 0; padding: calc(var(--spacing) * 2); color: var(--muted-foreground); overflow-wrap: anywhere; font-size: var(--text-caption); line-height: var(--text-caption--line-height); }
 html.multica-agent-gui .multica-model-error { color: var(--destructive); }

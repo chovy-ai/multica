@@ -568,8 +568,6 @@ function ComposerFooterControlsRender({
         >
           <ModelReasoningPanel
             key={`${snapshot.userId}:${snapshot.workspaceId}:${agentId}`}
-            client={client}
-            storageKey={`multica:model-favorites:${snapshot.userId}:${snapshot.workspaceId}:${agentId}`}
             chinese={chinese}
             catalog={catalog}
             selected={selected}

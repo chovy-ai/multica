@@ -1,24 +1,15 @@
-import {
-  useEffect,
-  useId,
-  useState,
-  type ChangeEvent,
-  type KeyboardEvent,
-  type MouseEvent
-} from "react";
+import { useId, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { observer } from "mobx-react-lite";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
-import { Bot, Check, Search, Star } from "lucide-react";
+import { Bot, Check, Command, Search } from "lucide-react";
+import { activateModelPickerShortcut } from "./model-picker-shortcut";
 import { Button } from "@multica/ui/components/ui/button";
 import type {
   RuntimeModelsResult,
   RuntimeModelThinkingLevel
 } from "@multica/core/types";
-import type { AgentGuiHostServices } from "./protocol";
 
 interface Props {
-  client: AgentGuiHostServices;
-  storageKey: string;
   chinese: boolean;
   catalog: RuntimeModelsResult | null;
   selected: string | null;
@@ -53,8 +44,6 @@ interface Props {
 export const ModelReasoningPanel = observer(ModelReasoningPanelRender);
 
 function ModelReasoningPanelRender({
-  client,
-  storageKey,
   chinese,
   catalog,
   selected,
@@ -77,11 +66,7 @@ function ModelReasoningPanelRender({
   const id = useId();
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>([]);
-  const [favoritesReady, setFavoritesReady] = useState(false);
-  const [favoriteSaving, setFavoriteSaving] = useState(false);
-  const [favoriteError, setFavoriteError] = useState<string | null>(null);
-  const [readAttempt, setReadAttempt] = useState(0);
+  const apple = /Mac|iPhone|iPad/.test(navigator.platform);
   const copy = chinese
     ? {
         search: "搜索模型...",
@@ -91,11 +76,7 @@ function ModelReasoningPanelRender({
         reasoning: "推理强度",
         inherit: "沿用 CLI 设置",
         builtIn: "CLI 内置默认",
-        builtInHelp: "CLI 配置可能覆盖此内置默认值。",
-        favorite: "收藏",
-        unfavorite: "取消收藏",
-        favoriteFailed: "无法保存收藏",
-        favoriteReadFailed: "无法加载收藏"
+        builtInHelp: "CLI 配置可能覆盖此内置默认值。"
       }
     : {
         search: "Search models...",
@@ -105,71 +86,15 @@ function ModelReasoningPanelRender({
         reasoning: "Reasoning",
         inherit: "Use CLI settings",
         builtIn: "CLI default",
-        builtInHelp: "Local CLI settings may override this built-in default.",
-        favorite: "Favorite",
-        unfavorite: "Unfavorite",
-        favoriteFailed: "Could not save favorites",
-        favoriteReadFailed: "Could not load favorites"
+        builtInHelp: "Local CLI settings may override this built-in default."
       };
-  useEffect(() => {
-    let current = true;
-    setFavoritesReady(false);
-    setFavoriteError(null);
-    client.storage
-      .read({ key: storageKey })
-      .then((raw) => {
-        if (!current) return;
-        const value: unknown = raw ? JSON.parse(raw) : [];
-        setFavorites(
-          Array.isArray(value)
-            ? value.filter(
-                (entry): entry is string => typeof entry === "string"
-              )
-            : []
-        );
-        setFavoritesReady(true);
-      })
-      .catch(() => {
-        if (current) setFavoriteError(copy.favoriteReadFailed);
-      });
-    return () => {
-      current = false;
-    };
-  }, [client, storageKey, readAttempt, copy.favoriteReadFailed]);
-
-  const toggleFavorite = async (model: string) => {
-    if (!favoritesReady || favoriteSaving) return;
-    const next = favorites.includes(model)
-      ? favorites.filter((entry) => entry !== model)
-      : [...favorites, model];
-    setFavoriteSaving(true);
-    setFavoriteError(null);
-    try {
-      await client.storage.write({
-        key: storageKey,
-        value: JSON.stringify(next)
-      });
-      setFavorites(next);
-    } catch {
-      setFavoriteError(copy.favoriteFailed);
-    } finally {
-      setFavoriteSaving(false);
-    }
-  };
-
   const models = catalog?.supported === false ? [] : (catalog?.models ?? []);
   const search = query.trim().toLocaleLowerCase();
   const matches = models.filter((model) =>
     `${model.label ?? ""} ${model.id}`.toLocaleLowerCase().includes(search)
   );
-  // Keep catalog order stable so starring a row never changes its shortcut.
   const visible = matches.filter(
-    (model, index) =>
-      search ||
-      expanded ||
-      index < 4 ||
-      favorites.includes(model.id) ||
-      model.id === configured
+    (model, index) => search || expanded || index < 4 || model.id === configured
   );
   const effective = models.find((model) =>
     configured ? model.id === configured : model.default || model.isDefault
@@ -184,19 +109,16 @@ function ModelReasoningPanelRender({
   const handleShortcut = usePersistCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
       if (
-        !event.altKey ||
-        event.metaKey ||
-        event.ctrlKey ||
+        !(apple ? event.metaKey : event.ctrlKey) ||
+        event.altKey ||
         event.shiftKey ||
         event.repeat
       )
         return;
-      const index = Number(/^Digit([1-4])$/.exec(event.code)?.[1]) - 1;
-      const model = visible[index];
-      if (!model) return;
+      const key = Number(/^Digit([1-4])$/.exec(event.code)?.[1]);
+      if (!activateModelPickerShortcut(key)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (!disabled) void onModelChange(model.id);
     }
   );
   const handleSearch = usePersistCallback(
@@ -210,17 +132,14 @@ function ModelReasoningPanelRender({
     (event: ChangeEvent<HTMLInputElement>) =>
       void onEffortChange(event.target.value)
   );
-  const handleFavorite = usePersistCallback(
-    (event: MouseEvent<HTMLButtonElement>) =>
-      void toggleFavorite(event.currentTarget.dataset.model!)
-  );
   const toggleExpanded = usePersistCallback(() => setExpanded(!expanded));
   const reload = usePersistCallback(() => void onReload(true));
-  const retryFavorites = usePersistCallback(() =>
-    setReadAttempt(readAttempt + 1)
-  );
   return (
-    <div className="multica-model-panel" onKeyDownCapture={handleShortcut}>
+    <div
+      className="multica-model-panel"
+      data-model-picker-shortcuts
+      onKeyDownCapture={handleShortcut}
+    >
       <div className="multica-model-panel-columns">
         <section className="multica-model-column" aria-label={labels.model}>
           <label className="multica-model-search">
@@ -275,8 +194,11 @@ function ModelReasoningPanelRender({
                     value={model.id}
                     onChange={handleModel}
                     aria-keyshortcuts={
-                      index < 4 ? `Alt+${index + 1}` : undefined
+                      index < 4
+                        ? `${apple ? "Meta" : "Control"}+${index + 1}`
+                        : undefined
                     }
+                    data-model-shortcut={index < 4 ? index + 1 : undefined}
                   />
                   <Bot aria-hidden="true" className="size-4" />
                   <span
@@ -289,27 +211,10 @@ function ModelReasoningPanelRender({
                     <Check aria-hidden="true" className="size-4" />
                   )}
                 </label>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="multica-model-favorite"
-                  aria-label={`${favorites.includes(model.id) ? copy.unfavorite : copy.favorite} ${model.label || model.id}`}
-                  aria-pressed={favorites.includes(model.id)}
-                  disabled={!favoritesReady || favoriteSaving}
-                  data-model={model.id}
-                  onClick={handleFavorite}
-                >
-                  <Star
-                    aria-hidden="true"
-                    className="size-3.5"
-                    fill={
-                      favorites.includes(model.id) ? "currentColor" : "none"
-                    }
-                  />
-                </Button>
                 {index < 4 && (
                   <kbd className="multica-model-shortcut" aria-hidden="true">
-                    Alt {index + 1}
+                    {apple ? <Command className="size-3" /> : "Ctrl"}
+                    {index + 1}
                   </kbd>
                 )}
               </div>
@@ -436,16 +341,11 @@ function ModelReasoningPanelRender({
           </div>
         </section>
       </div>
-      {(error || favoriteError || remote) && (
+      {(error || remote) && (
         <div className="multica-model-panel-footer">
           {error && (
             <p role="alert" className="multica-model-error">
               {error}
-            </p>
-          )}
-          {favoriteError && (
-            <p role="alert" className="multica-model-error">
-              {favoriteError}
             </p>
           )}
           {(error || remote) && (
@@ -456,11 +356,6 @@ function ModelReasoningPanelRender({
               onClick={reload}
             >
               {error ? labels.retry : labels.refresh}
-            </Button>
-          )}
-          {favoriteError && !favoritesReady && (
-            <Button variant="ghost" size="sm" onClick={retryFavorites}>
-              {labels.retry}
             </Button>
           )}
           {remote && (

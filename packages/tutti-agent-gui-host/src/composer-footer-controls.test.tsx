@@ -455,11 +455,7 @@ it("keeps the saved model and reasoning after a failed save, and disables open c
   expect(handle.getReasoningSelection(target.id)).toBeNull();
   expect(document.querySelector('[role="alert"]')).toBeNull();
   expect(document.querySelector('.multica-model-panel')).not.toBeNull();
-  rejectWrites = true;
-  await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Favorite Plain"]')!.click());
-  expect(document.querySelector('[role="alert"]')?.textContent).toBe("Could not save favorites");
-  expect(document.querySelector('button[aria-label="Favorite Plain"]')?.getAttribute("aria-pressed")).toBe("false");
-  expect(handle.getModelSelection(target.id)).toBe("plain");
+  expect(document.querySelector(".multica-model-favorite")).toBeNull();
   await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   await render(false, true);
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));

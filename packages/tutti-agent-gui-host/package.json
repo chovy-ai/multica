@@ -6,6 +6,7 @@
   "exports": {
     "./agent-mention-usage": "./src/agent-mention-usage.ts",
     "./local-projects": "./src/local-projects.ts",
+    "./model-picker-shortcut": "./src/model-picker-shortcut.ts",
     "./message-resource-links": "./src/message-resource-links.ts",
     "./resource-reference": "./src/resource-reference.ts",
     "./protocol": "./src/protocol.ts",

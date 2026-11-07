@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
 import type { TabSelectionShortcutKey } from "../../../shared/main-renderer-messages";
 import { useTabStore, type TabSession } from "@/stores/tab-store";
@@ -74,6 +74,10 @@ function stubDesktopAPI(kind: "main" | "issue") {
 }
 
 describe("selectTabByShortcut", () => {
+  afterEach(() => {
+    document.querySelectorAll("[data-model-picker-shortcuts]").forEach((element) => element.remove());
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     seedTabs(10);
     useWindowOverlayStore.setState({ overlay: null });
@@ -125,6 +129,49 @@ describe("selectTabByShortcut", () => {
     useWindowOverlayStore.setState({ overlay: { type: "onboarding" } });
     selectTabByShortcut(5);
     expect(activeTabId()).toBe("t1");
+  });
+
+  function focusModelPanel(disabled = false) {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const panel = document.createElement("div");
+    panel.dataset.modelPickerShortcuts = "";
+    const search = document.createElement("input");
+    const choice = document.createElement("input");
+    choice.type = "radio";
+    choice.dataset.modelShortcut = "2";
+    choice.disabled = disabled;
+    const clicked = vi.fn();
+    choice.addEventListener("click", clicked);
+    panel.append(search, choice);
+    document.body.append(panel);
+    search.focus();
+    return { panel, clicked };
+  }
+
+  it("selects a model instead of a tab while its panel has focus, then restores tab shortcuts when closed", () => {
+    const { panel, clicked } = focusModelPanel();
+    selectTabByShortcut(2);
+    expect(clicked).toHaveBeenCalledOnce();
+    expect(activeTabId()).toBe("t1");
+    panel.remove();
+    selectTabByShortcut(2);
+    expect(activeTabId()).toBe("t2");
+  });
+
+  it("keeps disabled and missing model choices from switching tabs", () => {
+    const { clicked } = focusModelPanel(true);
+    selectTabByShortcut(2);
+    selectTabByShortcut(4);
+    expect(clicked).not.toHaveBeenCalled();
+    expect(activeTabId()).toBe("t1");
+  });
+
+  it("keeps normal tab behavior when another window has focus", () => {
+    const { clicked } = focusModelPanel();
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    selectTabByShortcut(2);
+    expect(clicked).not.toHaveBeenCalled();
+    expect(activeTabId()).toBe("t2");
   });
 });
 
