@@ -254,6 +254,9 @@ func (b *Batcher) flushLoop(id string, c *conversationBatch) {
 func merge(dst *store.Batch, part store.Batch) {
 	dst.FileObservations = append(dst.FileObservations, part.FileObservations...)
 	dst.FileCollections = append(dst.FileCollections, part.FileCollections...)
+	if part.ReadCompletion != nil {
+		dst.ReadCompletion = part.ReadCompletion
+	}
 	if part.StartTurn != nil {
 		dst.StartTurn = part.StartTurn
 	}
@@ -319,7 +322,7 @@ func mergeSummary(dst, src *store.SummaryPatch) {
 }
 
 func isEmpty(b store.Batch) bool {
-	return len(b.FileCollections) == 0 && len(b.FileObservations) == 0 && b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil && b.Settings == nil && len(b.Interactions) == 0 && len(b.Resolutions) == 0 && b.Metadata == nil && b.Queue == nil && len(b.Remotes) == 0 && b.Operation == nil && len(b.Submissions) == 0
+	return len(b.FileCollections) == 0 && len(b.FileObservations) == 0 && b.ReadCompletion == nil && b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil && b.Settings == nil && len(b.Interactions) == 0 && len(b.Resolutions) == 0 && b.Metadata == nil && b.Queue == nil && len(b.Remotes) == 0 && b.Operation == nil && len(b.Submissions) == 0
 }
 
 // batchBytes estimates a part's size for the batch and backlog budgets.
@@ -350,7 +353,7 @@ func batchBytes(b store.Batch) int {
 	for _, r := range b.Resolutions {
 		n += len(r.Answer) + 128
 	}
-	if b.StartTurn != nil || b.CompleteTurn != nil || b.Summary != nil {
+	if b.ReadCompletion != nil || b.StartTurn != nil || b.CompleteTurn != nil || b.Summary != nil {
 		n += 128
 	}
 	return n

@@ -9,7 +9,7 @@ import { LOCAL_V2_FOCUS_CAPABILITY, LocalV2FocusTracker } from "@multica/core/lo
 import { ConversationListModel, ConversationModel } from "../models";
 import { ConversationNavigation } from "./conversation-navigation";
 import { ConversationResourcesService } from "./conversation-resources-service";
-import { CompletionReadService, type CompletionReadStorage } from "./completion-read-service";
+import { CompletionReadService } from "./completion-read-service";
 
 /** Conversations of other devices as last read, shown while the current state travels. */
 export interface ConversationSnapshotStore {
@@ -63,7 +63,6 @@ interface ContentEntry {
 }
 
 export interface ConversationServiceOptions {
-  completionStorage?: CompletionReadStorage;
   /** Told each store generation the daemon reports. */
   onGeneration(generation: string): void;
   /** Told a conversation's content is in use, to retain it. */
@@ -112,15 +111,15 @@ export class ConversationService {
   });
 
   constructor(private transport: LocalV2Transport, readonly scope: LocalV2Scope, private options: ConversationServiceOptions) {
-    if (options.completionStorage) this.completions = new CompletionReadService(this.list.completions, {
-      storage: options.completionStorage,
+    this.completions = new CompletionReadService(this.list.completions, {
       generation: async () => {
         const generation = await this.transport.storeGeneration?.() ?? this.lastGeneration;
         if (!this.disposed) this.noteGeneration(generation);
         return generation;
       },
-      snapshot: (id) => this.snapshot(id, 5),
-      history: (id, before) => this.request("GET", `/sessions/${encodeURIComponent(id)}/history?before_index=${before}&turn_limit=20`),
+      read: (id, position) => this.request("POST", `/sessions/${encodeURIComponent(id)}/completion-read`, {
+        store_generation: position.generation, turn_id: position.completedTurnId, turn_index: position.completedTurnIndex, completion_seq: position.completedSeq,
+      }),
     });
   }
 

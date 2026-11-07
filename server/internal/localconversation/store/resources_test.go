@@ -164,6 +164,52 @@ func TestResourceRenameIdentitySurvivesSourceRecreationAndReturn(t *testing.T) {
 	}
 }
 
+func TestResourcesUpgradeV8PreservesCompletionReadAndDoesNotBackfill(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "completion.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions, err := schemaVersions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range versions[:8] {
+		ddl, err := schemaFS.ReadFile(version.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Exec(string(ddl)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy := &Store{path: path, write: db, read: db}
+	createConversation(t, legacy, "history")
+	if _, err = db.Exec(`UPDATE conversation SET turn_count=1, completed_turn_id='old-turn', completed_turn_index=0, completion_seq=7, read_turn_index=0, read_completion_seq=7 WHERE id='history'; PRAGMA user_version=8;`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = os.Stat(path + ".v8.bak"); err != nil {
+		t.Fatal("upgrade backup missing", err)
+	}
+	c, err := s.Conversation(ctx, "history")
+	if err != nil || c.CompletedTurnID != "old-turn" || c.CompletedTurnIndex != 0 || c.ReadTurnIndex != 0 || c.CompletionSeq != 7 || c.ReadCompletionSeq != 7 {
+		t.Fatalf("resource migration changed completion state: %+v, %v", c, err)
+	}
+	p, err := s.ResourcePage(ctx, "history", "")
+	if err != nil || p.Coverage != "missing_baseline" || len(p.Files) != 0 {
+		t.Fatalf("backfilled v8 history: %+v, %v", p, err)
+	}
+}
+
 func TestResourcesUpgradeV7AndSurviveReopenWithoutBackfillingHistory(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy.sqlite")
@@ -184,9 +230,8 @@ func TestResourcesUpgradeV7AndSurviveReopenWithoutBackfillingHistory(t *testing.
 			t.Fatal(err)
 		}
 	}
-	legacy := &Store{path: path, write: db, read: db}
-	createConversation(t, legacy, "history")
-	if _, err = db.Exec("UPDATE conversation SET turn_count=2 WHERE id='history'"); err != nil {
+	if _, err = db.Exec(`INSERT INTO scope (id, api_origin, user_id, workspace_id) VALUES (1, 'api', 'user', 'workspace');
+INSERT INTO conversation (id, scope_id, provider, turn_count, created_at, updated_at) VALUES ('history', 1, 'claude', 2, 'now', 'now');`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec("PRAGMA user_version=7"); err != nil {

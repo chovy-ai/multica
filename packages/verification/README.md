@@ -40,7 +40,7 @@ await app.selectWindow(target.windowId);       // "<pid>:<CGWindowID>"
 let state = await app.observe();
 ```
 
-宿主为每个 Desktop 环境设置专属 bundle ID `ai.multica.verification.<环境 ID>`，Multica Computer Use 对它不显示授权框，`getApp` 能唯一定位这个环境。Computer Use 的 `app.scroll` 对 Electron 窗口返回 `background_unavailable`，请改用 `page_action`。
+宿主为每个 Desktop 环境设置专属 bundle ID `ai.multica.verification.<环境 ID>`，Multica Computer Use 对它不显示授权框，`getApp` 能唯一定位这个环境。Computer Use 的 `app.scroll` 对 Electron 窗口返回 `background_unavailable`，请改用 `page_action`。拖拽使用 Computer Use 的 `app.drag`：宿主启动开发 Electron 时以随机端口打开主进程 inspector（`V8_INSPECTOR_PORT=127.0.0.1:0`），cua-driver 经它在后台完成拖拽，多个环境不争用同一端口。
 
 异步工具的 requestId 用于去重：同一 requestId 只对应一种输入，响应丢失时用 `job_query` 按 requestId 查询原任务，不要换 ID 重放。同步工具不经过任务账本。
 
@@ -57,7 +57,7 @@ bash scripts/verification/install-daemon.sh
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
 | `MULTICA_VERIFICATION_PORT` | `47311` | 固定端口；被占用时守护进程启动失败，不会换端口 |
-| `MULTICA_VERIFICATION_MAX_ENVIRONMENTS` | `2` | 同时运行的环境上限，满额时 `env_start` 返回 `instanceBusy` 并列出占用者 |
+| `MULTICA_VERIFICATION_MAX_ENVIRONMENTS` | `10` | 同时运行的环境上限，满额时 `env_start` 返回 `instanceBusy` 并列出占用者 |
 | `MULTICA_VERIFICATION_IDLE_MINUTES` | `120` | 环境连续这么久没有 MCP 调用就自动停止并清理；`env_start` 可按环境覆盖 |
 | `MULTICA_VERIFICATION_BINDINGS_FILE` | 无 | 真实数据来源绑定文件，见下文 |
 
