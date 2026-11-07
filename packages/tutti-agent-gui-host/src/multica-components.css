@@ -593,12 +593,6 @@ html.multica-agent-gui img[src$="#multica-agent-avatar"] {
   background: var(--muted);
 }
 
-html.multica-agent-gui .multica-model-speed {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: calc(var(--spacing) * 2);
-}
-
 html.multica-agent-gui .multica-reasoning-column { overflow-y: auto; }
 html.multica-agent-gui .multica-reasoning-column > * { flex-shrink: 0; }
 html.multica-agent-gui .multica-reasoning-column > .multica-model-options { overflow-y: visible; }

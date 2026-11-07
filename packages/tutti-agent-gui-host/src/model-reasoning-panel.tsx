@@ -1,8 +1,7 @@
 import { useId, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { observer } from "mobx-react-lite";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
-import { Bot, Check, Command, Search, Zap } from "lucide-react";
-import { localServiceTiers } from "@multica/core/local-conversation/protocol";
+import { Bot, Check, Command, Search } from "lucide-react";
 import { activateModelPickerShortcut } from "./model-picker-shortcut";
 import { Button } from "@multica/ui/components/ui/button";
 import type {
@@ -16,8 +15,6 @@ interface Props {
   selected: string | null;
   configured: string | null;
   selectedEffort: string | null;
-  selectedTier: string | null;
-  onTierChange(value: string): Promise<void>;
   modelLabel: string;
   defaultModel?: string;
   levels: RuntimeModelThinkingLevel[];
@@ -52,8 +49,6 @@ function ModelReasoningPanelRender({
   selected,
   configured,
   selectedEffort,
-  selectedTier,
-  onTierChange,
   modelLabel,
   defaultModel,
   levels,
@@ -105,12 +100,6 @@ function ModelReasoningPanelRender({
     configured ? model.id === configured : model.default || model.isDefault
   );
   const defaultLevel = effective?.thinking?.default_level;
-  const tiers = remote ? [] : localServiceTiers(models, configured);
-  const fast = selectedTier === "priority";
-  const toggleFast = usePersistCallback(() => {
-    if (disabled || !tiers.includes("priority") || !tiers.includes("default")) return;
-    void onTierChange(fast ? "default" : "priority");
-  });
   const known = models.some((model) => model.id === configured);
   const unavailable =
     catalog?.unavailableModels?.filter((model) =>
@@ -350,26 +339,6 @@ function ModelReasoningPanelRender({
               <p className="multica-model-message">{noReasoningOptions}</p>
             )}
           </div>
-          {tiers.includes("priority") && (
-            <div className="multica-model-speed">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Fast"
-                aria-pressed={fast}
-                disabled={disabled || !tiers.includes("default")}
-                title={!tiers.includes("default")
-                  ? (chinese ? "更新 CLI 后可切换 Fast" : "Update the CLI to toggle Fast")
-                  : fast
-                    ? (chinese ? "关闭 Fast" : "Turn off Fast")
-                    : (chinese ? "开启 Fast" : "Turn on Fast")}
-                onClick={toggleFast}
-              >
-                <Zap aria-hidden="true" className="size-4" fill={fast ? "currentColor" : "none"} />
-              </Button>
-            </div>
-          )}
         </section>
       </div>
       {(error || remote) && (

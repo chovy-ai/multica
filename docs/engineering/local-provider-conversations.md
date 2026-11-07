@@ -388,7 +388,7 @@ pnpm --filter @multica/desktop build
 
 ## 本机会话速度档位
 
-模型面板使用单个闪电按钮切换速度：空心为未启用 Fast，实心为 Fast；点击开启写入 `priority`，再次点击关闭写入显式普通档位 `default`。按钮使用 `aria-pressed` 暴露选中状态。速度能力来自运行器目录：`priority` 对应 Fast；仅当目录声明 `supports_explicit_standard_service_tier` 时提供显式普通档位 `default`。未选择或清除档位表示沿用 CLI，不等价于普通。未报告能力的模型不显示速度选项。
+模型面板暂不提供 Fast 按钮或速度选项；保留速度配置、保存与执行链路。速度能力来自运行器目录：`priority` 对应 Fast；仅当目录声明 `supports_explicit_standard_service_tier` 时允许显式普通档位 `default`。未选择或清除档位表示沿用 CLI，不等价于普通。打开模型面板或调整推理强度不会清除已保存的速度选择。
 
 速度偏好按运行器、模型和会话保存；新会话继承草稿，旁支和分叉继承来源后独立修改。发送前将档位冻结到持久化提交，重试沿用该提交的设置。本机 V2 `settings.service_tier`、队列 `serviceTier` 和 SQLite schema 9 保存此值；旧记录升级为 null，不覆盖 CLI。Codex 在 thread/start、thread/resume 和 turn/start 的顶层传 `serviceTier`。切换档位重新加载原生配置；显式普通覆盖 Fast，清除时显式传递重新读取的 CLI 档位或 null，避免 thread/resume 恢复线程历史保存的 Fast。
 

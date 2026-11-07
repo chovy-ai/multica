@@ -188,7 +188,6 @@ function ComposerFooterControlsRender({
   const selected = agentId
     ? handle.getModelSelection(agentId, sessionId)
     : null;
-  const selectedTier = agentId ? handle.getServiceTierSelection(agentId, sessionId) : null;
   const selectedEffort = agentId
     ? handle.getReasoningSelection(agentId, sessionId)
     : null;
@@ -419,17 +418,6 @@ function ComposerFooterControlsRender({
   });
   const changeModelCallback = usePersistCallback(changeModel);
   const changeEffortCallback = usePersistCallback(changeEffort);
-  const changeTierCallback = usePersistCallback(async (value: string) => {
-    if (!agentId || busy || saving || unavailable) return;
-    setSaving(true);
-    setError(null);
-    try { await handle.setServiceTierSelection(agentId, sessionId, value || null); }
-    catch (failure) {
-      const message = failure instanceof Error ? failure.message : String(failure);
-      setError(message);
-      void client.hostApi.showMessage({ message, tone: "error" }).catch(() => undefined);
-    } finally { setSaving(false); }
-  });
   const handleModelMenuOpenAutoFocus = usePersistCallback<
     NonNullable<React.ComponentProps<typeof PopoverContent>["onOpenAutoFocus"]>
   >((event) => {
@@ -585,8 +573,6 @@ function ComposerFooterControlsRender({
             selected={selected}
             configured={configured}
             selectedEffort={selectedEffort}
-            selectedTier={selectedTier}
-            onTierChange={changeTierCallback}
             modelLabel={known?.label || configured || defaultModel || labels.defaultModel}
             defaultModel={defaultModel}
             levels={levels}

@@ -231,20 +231,10 @@ it.each([
       [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')]
         .find((entry) => entry.getAttribute("aria-label") === label)!;
     await open();
+    expect(document.querySelector('button[aria-label="Fast"]')).toBeNull();
     if (provider === "codex") {
-      const fast = document.querySelector<HTMLButtonElement>('button[aria-label="Fast"]');
-      expect(fast).not.toBeNull();
-      expect(fast!.getAttribute("aria-pressed")).toBe("false");
-      expect(fast!.querySelector("svg")?.getAttribute("fill")).toBe("none");
-      await act(async () => fast!.click());
+      await act(async () => handle.setServiceTierSelection(target.id, null, "priority"));
       expect(handle.getServiceTierSelection(target.id)).toBe("priority");
-      expect(fast!.getAttribute("aria-pressed")).toBe("true");
-      expect(fast!.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
-      await act(async () => fast!.click());
-      expect(handle.getServiceTierSelection(target.id)).toBe("default");
-      expect(fast!.getAttribute("aria-pressed")).toBe("false");
-      expect(fast!.querySelector("svg")?.getAttribute("fill")).toBe("none");
-    } else {
       expect(document.querySelector('button[aria-label="Fast"]')).toBeNull();
     }
     if (followDefault) {
@@ -253,6 +243,7 @@ it.each([
     expect(document.querySelector(".multica-reasoning-column")).not.toBeNull();
     await act(async () => option("High").click());
     expect(handle.getReasoningSelection(target.id)).toBe("high");
+    if (provider === "codex") expect(handle.getServiceTierSelection(target.id)).toBe("priority");
     expect(handle.getModelSelection(target.id)).toBe(followDefault ? null : "reasoning");
     expect(
       container.querySelector('[data-testid="multica-model-picker"]')

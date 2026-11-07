@@ -73,16 +73,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(opener).toContainText("高");
       await expect(high).toBeChecked();
       const fast = gui.getByRole("button", { name: "Fast", exact: true });
-      await expect(fast).toHaveCount(1);
-      await expect(fast).toHaveAttribute("aria-pressed", "false");
-      await expect(fast.locator("svg")).toHaveAttribute("fill", "none");
-      await fast.click();
-      await expect(fast).toHaveAttribute("aria-pressed", "true");
-      await expect(fast.locator("svg")).toHaveAttribute("fill", "currentColor");
-      await page.screenshot({ path: `.tmp/model-menu/fast-${theme}-${viewport.width}.png`, animations: "disabled" });
-      await fast.click();
-      await expect(fast).toHaveAttribute("aria-pressed", "false");
-      await expect(fast.locator("svg")).toHaveAttribute("fill", "none");
+      await expect(fast).toHaveCount(0);
       await expect(gui.getByRole("radiogroup", { name: "速度", exact: true })).toHaveCount(0);
       await page.screenshot({ path: `.tmp/model-menu/after-${theme}-${viewport.width}.png`, animations: "disabled" });
       const bounds = (await menu.boundingBox())!;
