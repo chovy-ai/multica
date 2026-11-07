@@ -18,6 +18,7 @@ import {
   ScrollView,
   TextInput,
   View,
+  type ViewToken,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
@@ -54,6 +55,7 @@ import {
   useAISubscriptionRejected,
 } from "@/data/ai-sessions/hooks";
 import { draftUploads } from "@/data/ai-sessions/uploads";
+import { shownCompletion } from "@/data/ai-sessions/completion-read";
 import { useStoredSnapshot } from "@/data/ai-sessions/snapshot-store";
 import {
   useAIDrafts,
@@ -246,6 +248,21 @@ export function AISessionContent({
     ? history.hasNextPage
     : snapshot?.has_older_turns;
   const [readingHistory, setReadingHistory] = useState(false);
+  const [visibleResultTurns, setVisibleResultTurns] = useState<string[]>([]);
+  const acknowledged = useRef(new Set<string>());
+  const onVisibleResults = useCallback(({ viewableItems }: { viewableItems: ViewToken<ConversationRow>[] }) => {
+    const ids = [...new Set(viewableItems.flatMap(({ item, isViewable }) => isViewable && item.role === "assistant" && item.content.trim() && item.turnId ? [item.turnId] : []))].sort();
+    setVisibleResultTurns((previous) => previous.join(",") === ids.join(",") ? previous : ids);
+  }, []);
+  useEffect(() => {
+    const position = shownCompletion(snapshot, visibleResultTurns, !!client?.completionReadSupported && connected && focused && active && !query.isError);
+    if (!position || !client || position.store_generation !== client.storeGeneration) return;
+    const key = JSON.stringify([session, position]);
+    if (acknowledged.current.has(key)) return;
+    acknowledged.current.add(key);
+    void client.readCompletion(session, position.store_generation, position.turn_id, position.turn_index, position.completion_seq).catch(() => { acknowledged.current.delete(key); });
+  }, [client, connected, focused, active, query.isError, visibleResultTurns, session, snapshot]);
+
   const stopTarget=submissionStopTarget(outbox,snapshot,client?.submissionLifecycle===true);
   const running=stopTarget!==null;
   const submissionView = submissionPresentation(outbox, snapshot);
@@ -938,6 +955,7 @@ export function AISessionContent({
             <FlashList
               ref={list}
               data={allRows}
+              onViewableItemsChanged={onVisibleResults}
               keyExtractor={(item) => item.id}
               maintainVisibleContentPosition={{
                 startRenderingFromBottom: true,

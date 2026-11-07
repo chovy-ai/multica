@@ -159,5 +159,11 @@
   "web_back": "后退",
   "web_forward": "前进",
   "activity_count_other": "{{count}} 项执行过程",
-  "load_more_sessions": "加载更多"
+  "load_more_sessions": "加载更多",
+  "unread_group": "含已完成未读会话",
+  "unread_result": "已完成，未读",
+  "new_in_group": "在 {{name}} 中新建会话",
+  "unread_requires_update": "更新该设备上的 Multica 后可同步未读结果。",
+  "directories": "目录",
+  "search_results": "搜索结果"
 }
