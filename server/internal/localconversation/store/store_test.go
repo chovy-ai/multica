@@ -484,7 +484,7 @@ func TestServiceTierMigrationPreservesHistoryAndSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, version := range versions[:7] {
+	for _, version := range versions[:8] {
 		ddl, err := schemaFS.ReadFile(version.file)
 		if err != nil {
 			t.Fatal(err)
@@ -494,7 +494,7 @@ func TestServiceTierMigrationPreservesHistoryAndSettings(t *testing.T) {
 		}
 	}
 	for _, stmt := range []string{
-		"PRAGMA user_version = 7",
+		"PRAGMA user_version = 8",
 		"INSERT INTO scope (id, api_origin, user_id, workspace_id) VALUES (1, 'https://test', 'u', 'w')",
 		"INSERT INTO conversation (id, scope_id, provider, model, created_at, updated_at) VALUES ('old', 1, 'codex', 'm', '2026-11-07T00:00:00Z', '2026-11-07T00:00:00Z')",
 	} {

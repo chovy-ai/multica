@@ -89,6 +89,9 @@ func (s *Store) ImportConversation(ctx context.Context, c NewConversation, histo
 			return 0, err
 		}
 	}
+	if err := q.EstablishCompletionBaseline(ctx, c.ID); err != nil {
+		return 0, err
+	}
 	return scopeSeq, tx.Commit()
 }
 
