@@ -1162,8 +1162,9 @@ func TestCodexServiceTierSwitchAndReset(t *testing.T) {
 	}
 	codexSend(t, f.runner, "t3")
 	for _, method := range []string{"thread/resume", "turn/start"} {
-		if got := f.server(2).paramsOf(method)["serviceTier"]; got != nil {
-			t.Fatalf("%s retained Fast: %v", method, got)
+		got, present := f.server(2).paramsOf(method)["serviceTier"]
+		if !present || got != nil {
+			t.Fatalf("%s must explicitly clear the saved tier: %v, present=%v", method, got, present)
 		}
 	}
 }
@@ -1182,7 +1183,7 @@ func TestCodexServiceTierInheritsCLIConfiguration(t *testing.T) {
 	if got := server.paramsOf("turn/start")["serviceTier"]; got != "priority" {
 		t.Fatalf("CLI tier lost: %v", got)
 	}
-	if got := server.paramsOf("thread/start")["serviceTier"]; got != nil {
-		t.Fatalf("inherited thread config overridden: %v", got)
+	if got := server.paramsOf("thread/start")["serviceTier"]; got != "priority" {
+		t.Fatalf("inherited thread config lost: %v", got)
 	}
 }

@@ -390,6 +390,6 @@ pnpm --filter @multica/desktop build
 
 模型面板的速度选项来自运行器目录：`priority` 对应 Fast；仅当目录声明 `supports_explicit_standard_service_tier` 时提供显式普通档位 `default`。未选择或清除档位表示沿用 CLI，不等价于普通。未报告能力的模型不显示速度选项。
 
-速度偏好按运行器、模型和会话保存；新会话继承草稿，旁支和分叉继承来源后独立修改。发送前将档位冻结到持久化提交，重试沿用该提交的设置。本机 V2 `settings.service_tier`、队列 `serviceTier` 和 SQLite schema 9 保存此值；旧记录升级为 null，不覆盖 CLI。Codex 在 thread/start、thread/resume 和 turn/start 的顶层传 `serviceTier`。切换档位重新加载原生配置；显式普通覆盖 Fast，清除恢复 CLI 配置。
+速度偏好按运行器、模型和会话保存；新会话继承草稿，旁支和分叉继承来源后独立修改。发送前将档位冻结到持久化提交，重试沿用该提交的设置。本机 V2 `settings.service_tier`、队列 `serviceTier` 和 SQLite schema 9 保存此值；旧记录升级为 null，不覆盖 CLI。Codex 在 thread/start、thread/resume 和 turn/start 的顶层传 `serviceTier`。切换档位重新加载原生配置；显式普通覆盖 Fast，清除时显式传递重新读取的 CLI 档位或 null，避免 thread/resume 恢复线程历史保存的 Fast。
 
 默认测试使用假 Codex 请求和临时 SQLite；不调用真实模型。验证入口为配置服务、GUI footer/runtime、`e2e/local-model-menu.spec.ts`、Go 本机会话 store/service 与 localhost 契约测试。

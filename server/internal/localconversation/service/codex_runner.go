@@ -266,7 +266,7 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		effortParam = effort
 	}
 	params := map[string]any{
-		"threadId": threadID, "effort": effortParam,
+		"threadId": threadID, "effort": effortParam, "serviceTier": nil,
 		"input": []map[string]any{{"type": "text", "text": req.prompt(), "text_elements": []any{}}},
 	}
 	if tier != "" {
@@ -820,8 +820,13 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 		config["model_reasoning_effort"] = *session.ReasoningEffort
 	}
 	params := map[string]any{"cwd": session.Cwd, "config": config}
+	// Omitting the field on resume restores the thread's saved tier. Explicitly
+	// resolve the CLI choice, including null, when the conversation inherits it.
+	params["serviceTier"] = nil
 	if session.ServiceTier != nil {
 		params["serviceTier"] = *session.ServiceTier
+	} else if native.ServiceTier != "" {
+		params["serviceTier"] = native.ServiceTier
 	}
 	if model != "" {
 		params["model"] = model
