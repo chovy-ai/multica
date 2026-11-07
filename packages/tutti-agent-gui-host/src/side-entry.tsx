@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { Button } from "@multica/ui/components/ui/button";
 import { DropdownMenuItem } from "@tutti-os/ui-system";
+import { QueuedPromptMenuActionContext } from "@tutti-os/agent-gui/queued-prompt-menu";
 import { Copy, MessagesSquare, PanelRightOpen, TextQuote } from "lucide-react";
 import {
   createContext,
@@ -249,7 +250,7 @@ function SideEntryProviderRender({
       cancelled = true;
       release();
     };
-  }, [entry.client]);
+  }, [entry.client, root]);
   useEffect(() => {
     setSelection(null);
   }, [entry.sessionId]);
@@ -311,7 +312,9 @@ function SideEntryProviderRender({
   const startCallback = usePersistCallback(start);
   return (
     <SideEntryContext.Provider value={entry}>
-      {children}
+      <QueuedPromptMenuActionContext.Provider value={SideQueueAction}>
+        {children}
+      </QueuedPromptMenuActionContext.Provider>
       {selection && (
         <DivBinding1
           toolbar={toolbar}
