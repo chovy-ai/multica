@@ -213,6 +213,34 @@ afterEach(() => {
 });
 
 describe("local conversation parent service over v2", () => {
+  it("preserves Side and turn send metadata without removing Side sessions", async () => {
+    routes.unshift((_method, path) => path.startsWith("/sessions?") ? {
+      scope_seq: 4,
+      summaries: [
+        summary("side", { side_source_id: "main", last_turn_sent_at: at }),
+        summary("empty", { last_turn_sent_at: null }),
+        summary("older-daemon")
+      ],
+      has_more: false
+    } : undefined);
+    const { service } = setup();
+    const state = await service.load();
+    expect(state.sessions.map(({ id, localConversation }) => ({ id, localConversation }))).toEqual([
+      { id: "side", localConversation: { sideSourceId: "main", lastTurnSentAt: at } },
+      { id: "empty", localConversation: { sideSourceId: undefined, lastTurnSentAt: null } },
+      { id: "older-daemon", localConversation: { sideSourceId: undefined, lastTurnSentAt: undefined } }
+    ]);
+  });
+
+  it("reads attachment metadata without downloading content and rejects malformed responses", async () => {
+    const { service } = setup();
+    let response: unknown = { name: "clip.mp4", mime_type: "video/mp4", size: 123 };
+    routes.unshift((_method, path) => path === "/attachments/video/metadata" ? response : undefined);
+    expect(await service.attachment.metadata({ attachmentId: "video" })).toMatchObject({ name: "clip.mp4", mimeType: "video/mp4", sizeBytes: 123 });
+    expect(requests.some((request) => request.path === "/attachments/video")).toBe(false);
+    response = { name: "bad", mime_type: 42, size: -1 };
+    await expect(service.attachment.metadata({ attachmentId: "video" })).rejects.toThrow("Invalid attachment metadata");
+  });
   it("publishes connection changes of its own scope and refreshes the workspace on return", async () => {
     const { service } = setup();
     const events: unknown[] = [];

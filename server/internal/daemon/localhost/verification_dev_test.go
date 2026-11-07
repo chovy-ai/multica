@@ -7,7 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -129,11 +131,137 @@ func TestVerificationFakeProviderDrivesTheNormalQueue(t *testing.T) {
 	}
 }
 
+func TestVerificationStopThenSubmitResumesQueue(t *testing.T) {
+	verificationEnv(t)
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending=%t", pending), func(t *testing.T) {
+			server, _ := newV2Server(t)
+			headers := v2Headers("user-1")
+			base := "/local/v2/sessions/stop-resume"
+			status, body := v2Do(t, server, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "stop-resume", "provider": "claude"}, headers)
+			if status != http.StatusCreated {
+				t.Fatalf("create: %d %v", status, body)
+			}
+			item := func(id string) map[string]any {
+				return map[string]any{"requestId": id, "content": id, "display": map[string]any{"id": id}}
+			}
+			command := func(body map[string]any) map[string]any {
+				t.Helper()
+				status, result := v2Do(t, server, http.MethodPost, base+"/commands", body, headers)
+				if status != http.StatusOK && status != http.StatusAccepted {
+					t.Fatalf("command: %d %v", status, result)
+				}
+				return result
+			}
+			waitReceived := func(want []any) {
+				t.Helper()
+				eventuallyV2(t, func() bool {
+					_, stats := v2Do(t, server, http.MethodGet, "/local/v2/verification/fixture?conversationId=stop-resume", nil, headers)
+					return reflect.DeepEqual(stats["received"], want) && stats["pending"] == true
+				})
+			}
+			release := func(id string) {
+				t.Helper()
+				status, result := v2Do(t, server, http.MethodPost, "/local/v2/verification/fixture", map[string]any{"conversationId": "stop-resume", "action": "release", "text": "done " + id, "expectedRequestId": id}, headers)
+				if status != http.StatusOK {
+					t.Fatalf("release %s: %d %v", id, status, result)
+				}
+			}
+			command(map[string]any{"type": "submit", "item": item("first")})
+			waitReceived([]any{"first"})
+			if pending {
+				command(map[string]any{"type": "queue_enqueue", "item": item("old"), "paused": true})
+			}
+			command(map[string]any{"type": "queue_update", "action": "stop", "operation_id": "stop-first"})
+			result := command(map[string]any{"type": "submit", "item": item("new")})
+			if result["queue"].(map[string]any)["paused"] != false {
+				t.Fatalf("submit did not resume: %v", result)
+			}
+			want := []any{"first", "new"}
+			if pending {
+				want = []any{"first", "old"}
+			}
+			waitReceived(want)
+			_, snapshot := v2Do(t, server, http.MethodGet, base+"/snapshot", nil, headers)
+			turns := snapshot["turns"].([]any)
+			if len(turns) != 2 || turns[0].(map[string]any)["status"] != "cancelled" || turns[1].(map[string]any)["status"] != "running" {
+				t.Fatalf("stopped turn did not hand off execution: %v", snapshot)
+			}
+			if pending {
+				release("old")
+				want = []any{"first", "old", "new"}
+				waitReceived(want)
+			}
+			release("new")
+			eventuallyV2(t, func() bool {
+				_, snapshot = v2Do(t, server, http.MethodGet, base+"/snapshot", nil, headers)
+				turns := snapshot["turns"].([]any)
+				return len(turns) == len(want) && turns[len(turns)-1].(map[string]any)["status"] == "completed" && len(snapshot["submissions"].([]any)) == 0
+			})
+		})
+	}
+}
+
 func TestVerificationDevRoutesRequireExplicitLaunch(t *testing.T) {
 	t.Setenv("MULTICA_VERIFICATION_MODE", "")
 	server, _ := newV2Server(t)
 	status, _ := v2Do(t, server, http.MethodGet, "/local/v2/verification/capabilities", nil, v2Headers("user-1"))
 	if status != http.StatusNotFound {
 		t.Fatal(status)
+	}
+}
+
+func TestVerificationImportKeepsSubmissionsThatNeedReview(t *testing.T) {
+	verificationEnv(t)
+	server, _ := newV2Server(t)
+	headers := v2Headers("user-1")
+	item := func(id, text string) map[string]any {
+		return map[string]any{"requestId": id, "content": text, "display": map[string]any{"id": id}}
+	}
+	body := map[string]any{"schemaVersion": 1, "restoreId": "restore-submissions-01", "conversations": []any{map[string]any{
+		"originalId": "source",
+		"snapshot": map[string]any{
+			"conversation": map[string]any{"conversation_id": "source", "provider": "claude", "title": "Submissions"},
+			"turns":        []any{},
+			// The Local API queue view also lists items that need review.
+			"queue": map[string]any{"items": []any{item("queued-a", "A"), item("review-b", "B")}},
+			"submissions": []any{
+				map[string]any{"request_id": "queued-a", "state": "queued", "item": item("queued-a", "A"), "blocked_reason": "Paused by restart"},
+				map[string]any{"request_id": "review-b", "state": "recovery_required", "item": item("review-b", "B"), "blocked_reason": "Delivery unknown"},
+				map[string]any{"request_id": "sending-c", "state": "starting", "item": item("sending-c", "C")},
+			},
+		},
+		"attachments": []any{},
+	}}}
+	status, result := v2Do(t, server, http.MethodPost, "/local/v2/verification/import", body, headers)
+	if status != http.StatusOK {
+		t.Fatalf("import: %d %v", status, result)
+	}
+	mapping := result["mapping"].(map[string]any)
+	_, copy := v2Do(t, server, http.MethodGet, "/local/v2/sessions/"+mapping["source"].(string)+"/snapshot", nil, headers)
+	states := map[string]string{}
+	reasons := map[string]string{}
+	for _, raw := range copy["submissions"].([]any) {
+		submission := raw.(map[string]any)
+		id := submission["request_id"].(string)
+		states[id], _ = submission["state"].(string)
+		reasons[id], _ = submission["blocked_reason"].(string)
+	}
+	queued, review, sending := mapping["queued-a"].(string), mapping["review-b"].(string), mapping["sending-c"].(string)
+	if states[queued] != "queued" || reasons[queued] != "Paused by restart" {
+		t.Fatalf("queued submission: %v %v", states, reasons)
+	}
+	if states[review] != "recovery_required" || reasons[review] != "Delivery unknown" {
+		t.Fatalf("review submission: %v %v", states, reasons)
+	}
+	if states[sending] != "recovery_required" || reasons[sending] == "" {
+		t.Fatalf("in-flight submission: %v %v", states, reasons)
+	}
+	ids := []string{}
+	for _, raw := range copy["queue"].(map[string]any)["items"].([]any) {
+		ids = append(ids, raw.(map[string]any)["requestId"].(string))
+	}
+	if len(ids) != 3 || ids[0] != queued {
+		t.Fatalf("queue view: %v", ids)
 	}
 }

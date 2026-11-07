@@ -81,6 +81,10 @@ export function projectLocalSession(
     has_unread: false,
     pinned: summary.pinned,
     project_id: summary.project_id,
+    localConversation: {
+      sideSourceId: summary.side_source_id,
+      lastTurnSentAt: summary.last_turn_sent_at
+    },
     last_message: summary.last_message_preview
       ? {
           content: summary.last_message_preview,
@@ -200,6 +204,7 @@ export function localConversationSource(
         store.deviceId,
       ]),
     ),
+    completions: store.completions,
     submissionContext: () => store.submissionContext(),
     async inspectSubmissions(id, requestIds) {
       if (!(await store.submissionContext()).lifecycle) return null;
@@ -869,6 +874,13 @@ export function createLocalConversationParentService(
       tasks: cloud.context.tasks
     },
     attachment: {
+      metadata: async (params) => {
+        assertCurrent();
+        const path = `/attachments/${encodeURIComponent(params.attachmentId)}`;
+        const metadata = parseWithFallback<{ name: string; mime_type: string; size: number } | null>(await client.request("GET", `${path}/metadata`), z.object({ name: z.string(), mime_type: z.string(), size: z.number().nonnegative() }), null, { endpoint: "local-v2.attachment.metadata" });
+        if (!metadata) throw new Error("invalid_response: Invalid attachment metadata");
+        return { name: metadata.name, mimeType: metadata.mime_type, sizeBytes: metadata.size, url: fileLocation(path) };
+      },
       upload: async (params) => {
         assertCurrent();
 

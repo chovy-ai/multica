@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -309,6 +310,7 @@ func TestV2ScopeSubscriptionStreamsSummaries(t *testing.T) {
 
 	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
 	seen := map[string]bool{}
+	var sentAt string
 	for !seen["idle"] || !seen["running"] {
 		var raw json.RawMessage
 		if err := ws.ReadJSON(&raw); err != nil {
@@ -320,13 +322,24 @@ func TestV2ScopeSubscriptionStreamsSummaries(t *testing.T) {
 		}
 		var msg struct {
 			Summaries []struct {
-				Status string `json:"status"`
+				Status         string `json:"status"`
+				TurnCount      int64  `json:"turn_count"`
+				LastTurnSentAt string `json:"last_turn_sent_at"`
 			} `json:"summaries"`
 		}
 		_ = json.Unmarshal(raw, &msg)
 		for _, s := range msg.Summaries {
+			if s.TurnCount > 0 {
+				if s.LastTurnSentAt == "" || (sentAt != "" && sentAt != s.LastTurnSentAt) {
+					t.Fatalf("scope stream changed send time: %q -> %q", sentAt, s.LastTurnSentAt)
+				}
+				sentAt = s.LastTurnSentAt
+			}
 			seen[s.Status] = true
 		}
+	}
+	if sentAt == "" {
+		t.Fatal("scope stream omitted the user turn send time")
 	}
 }
 
@@ -416,7 +429,7 @@ func TestV2ManagesConversationsAndFolderProjects(t *testing.T) {
 		t.Fatalf("add folder = %d %v", status, project)
 	}
 	_, list := v2Do(t, srv, http.MethodGet, "/local/v2/folder-projects", nil, h)
-	if len(list["projects"].([]any)) != 1 {
+	if len(list["projects"].([]any)) != 2 {
 		t.Fatalf("folder projects = %v", list)
 	}
 	status, created := v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-1", "provider": "claude", "folder_project_id": project["id"]}, h)
@@ -441,6 +454,31 @@ func TestV2ManagesConversationsAndFolderProjects(t *testing.T) {
 	}
 	if status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "conv-2", "provider": "gemini"}, h); status != http.StatusBadRequest {
 		t.Fatalf("unknown provider = %d %v", status, body)
+	}
+}
+
+func TestV2InitializesDefaultFolderBeforeAnyConversation(t *testing.T) {
+	t.Parallel()
+	srv, _ := newV2Server(t)
+	h := v2Headers("user-1")
+	status, list := v2Do(t, srv, http.MethodGet, "/local/v2/folder-projects", nil, h)
+	if status != http.StatusOK || len(list["projects"].([]any)) != 1 {
+		t.Fatalf("fresh folder projects = %d %v", status, list)
+	}
+	project := list["projects"].([]any)[0].(map[string]any)
+	if project["title"] != "未分配项目" {
+		t.Fatalf("default title = %v", project)
+	}
+	if info, err := os.Stat(project["path"].(string)); err != nil || !info.IsDir() {
+		t.Fatalf("default directory unavailable: %v, %v", project, err)
+	}
+	_, again := v2Do(t, srv, http.MethodGet, "/local/v2/folder-projects", nil, h)
+	if !reflect.DeepEqual(list, again) {
+		t.Fatalf("default initialization is not idempotent: %v / %v", list, again)
+	}
+	status, created := v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "default-conv", "provider": "claude"}, h)
+	if status != http.StatusCreated || created["cwd"] != project["path"] {
+		t.Fatalf("default create = %d %v", status, created)
 	}
 }
 
@@ -746,21 +784,31 @@ func TestV2SubmissionLifecycleAcrossLocalAndPhoneTransport(t *testing.T) {
 	}
 	validateLocalV2(t, "submission_result", body)
 	value := body["submission"].(map[string]any)
-	if value["state"] != "queued" {
-		t.Fatalf("pause not preserved: %+v", body)
+	if value["state"] != "starting" || body["queue"].(map[string]any)["paused"] != false {
+		t.Fatalf("fresh submit did not resume: %+v", body)
 	}
 	status, replay := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/conv-submission/commands", command, headers)
-	if status != http.StatusAccepted || replay["submission"].(map[string]any)["revision"] != value["revision"] {
+	if status != http.StatusAccepted || replay["submission"].(map[string]any)["attempt"].(map[string]any)["attempt_id"] != value["attempt"].(map[string]any)["attempt_id"] {
 		t.Fatalf("cross-transport replay=%d %+v", status, replay)
+	}
+	var snapshot map[string]any
+	eventuallyV2(t, func() bool {
+		_, snapshot = v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-submission/snapshot", nil, headers)
+		turns := snapshot["turns"].([]any)
+		return len(turns) == 1 && turns[0].(map[string]any)["status"] == "completed" && len(snapshot["submissions"].([]any)) == 0
+	})
+	messages := snapshot["turns"].([]any)[0].(map[string]any)["messages"].([]any)
+	if len(messages) != 2 || messages[0].(map[string]any)["content"] != "Persist me" || messages[1].(map[string]any)["content"] != "done" {
+		t.Fatalf("completed snapshot lost messages: %+v", snapshot)
 	}
 	status, states := v2Do(t, phone, http.MethodPost, "/local/v2/sessions/conv-submission/queue/status", map[string]any{"request_ids": []string{"phone-message"}}, remoteHeaders("phone-client"))
 	if status != http.StatusOK {
 		t.Fatalf("status=%d %+v", status, states)
 	}
 	validateLocalV2(t, "submission_statuses", states)
-	_, snapshot := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/conv-submission/snapshot", nil, headers)
-	if len(snapshot["submissions"].([]any)) != 1 {
-		t.Fatalf("snapshot lost submission: %+v", snapshot)
+	known := states["submissions"].([]any)
+	if len(known) != 1 || known[0].(map[string]any)["state"] != "attached" || known[0].(map[string]any)["attempt"].(map[string]any)["attempt_id"] != value["attempt"].(map[string]any)["attempt_id"] {
+		t.Fatalf("completed submission identity changed: %+v", states)
 	}
 }
 

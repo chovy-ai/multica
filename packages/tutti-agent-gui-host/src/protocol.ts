@@ -63,6 +63,11 @@ export function executionTargets(
 
 export interface AgentGuiSession extends ChatSession {
   localDirectory?: { cwd: string; projectPath: string | null };
+  localConversation?: {
+    sideSourceId?: string;
+    /** Latest user turn's send time; null for no turns, absent on older daemons. */
+    lastTurnSentAt?: string | null;
+  };
 }
 
 export interface AgentGuiWorkspaceState {
@@ -271,6 +276,10 @@ export interface AgentGuiOperations {
     params: { attachmentId: string };
     result: { url: string };
   };
+  "attachment.metadata": {
+    params: { attachmentId: string };
+    result: { name: string; mimeType: string; sizeBytes: number; url: string };
+  };
   "attachment.read": {
     params: { attachmentId: string };
     result: { data: string; mimeType: string; name: string };
@@ -377,6 +386,7 @@ export type AgentGuiHostEvent =
  * conversations outlive the GUI, which projects them while it is mounted.
  */
 export interface LocalConversationSource {
+  completions?: import("@multica/conversation-client/services").CompletionReadService;
   submissionStorage?: import("@multica/core/local-conversation/submission-storage").SubmissionStorage;
   submissionContext?(): Promise<{ generation: string; lifecycle: boolean }>;
   inspectSubmissions?(
@@ -502,6 +512,10 @@ export interface AgentGuiHostServices {
     ): Promise<AgentGuiOperations["context.tasks"]["result"]>;
   };
   attachment: {
+    metadata(
+      params: AgentGuiOperations["attachment.metadata"]["params"],
+      options?: AgentGuiCallOptions
+    ): Promise<AgentGuiOperations["attachment.metadata"]["result"]>;
     upload(
       params: AgentGuiOperations["attachment.upload"]["params"],
       options?: AgentGuiCallOptions

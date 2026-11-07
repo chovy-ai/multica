@@ -306,18 +306,25 @@ function LocalConversationListMenuRender({
   >(() => {
     void startImport();
   });
+  const onMenuPointerDown = usePersistCallback<
+    NonNullable<React.ComponentProps<typeof DropdownMenuTrigger>["onPointerDown"]>
+  >((event) => event.preventBaseUIHandler());
+  const onMenuMouseDown = usePersistCallback<
+    NonNullable<React.ComponentProps<typeof DropdownMenuTrigger>["onMouseDown"]>
+  >((event) => event.preventBaseUIHandler());
+  const openImport = usePersistCallback(() => setOpen(true));
   return (
     <Dialog open={open} onOpenChange={onOpenChangeProp1}>
       <DropdownMenu>
         <DropdownMenuTrigger
-          onPointerDown={(event) => event.preventBaseUIHandler()}
-          onMouseDown={(event) => event.preventBaseUIHandler()}
+          onPointerDown={onMenuPointerDown}
+          onMouseDown={onMenuMouseDown}
           render={<IconButton ref={menuTrigger} label={tCommon(($) => $.more_actions)} />}
         >
           <MoreHorizontal />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => setOpen(true)}>
+          <DropdownMenuItem onClick={openImport}>
             <FileInput />{t(($) => $.desktop.local_conversation.import)}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={onToggleArchive}>
