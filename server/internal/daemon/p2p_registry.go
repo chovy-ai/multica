@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/daemon/p2p"
 )
 
 // p2pDevice is one device profile of the daemon's account as listed by the
@@ -123,6 +125,29 @@ func (c *p2pRegistryClient) relay(ctx context.Context) (*p2pRelayInfo, error) {
 		return nil, err
 	}
 	return resp.Relay, nil
+}
+
+// tailnet asks for credentials that register this device's tailnet node.
+// A registry without a control server answers 404.
+func (c *p2pRegistryClient) tailnet(ctx context.Context, peerID string) (p2p.TailnetCredentials, error) {
+	body, err := json.Marshal(map[string]string{"peer_id": peerID})
+	if err != nil {
+		return p2p.TailnetCredentials{}, err
+	}
+	var resp struct {
+		ControlURL string `json:"control_url"`
+		AuthKey    string `json:"auth_key"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/tailnet", body, &resp); err != nil {
+		if errors.Is(err, errP2PNotFound) {
+			return p2p.TailnetCredentials{}, p2p.ErrTailnetUnavailable
+		}
+		return p2p.TailnetCredentials{}, err
+	}
+	if resp.ControlURL == "" || resp.AuthKey == "" {
+		return p2p.TailnetCredentials{}, errors.New("p2p registry: incomplete tailnet credentials")
+	}
+	return p2p.TailnetCredentials{ControlURL: resp.ControlURL, AuthKey: resp.AuthKey}, nil
 }
 
 // remove deletes a device of this account from the registry.

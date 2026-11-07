@@ -25,6 +25,7 @@ const (
 	// p2pKeyFileName lives in the profile directory: profiles on one machine
 	// may be signed in to different accounts, so each is its own device.
 	p2pKeyFileName        = "p2p.key"
+	p2pTailnetDirName     = "p2p-tailnet"
 	p2pReregisterInterval = 6 * time.Hour
 )
 
@@ -87,8 +88,16 @@ func (d *Daemon) startP2P(ctx context.Context) error {
 			default:
 			}
 		},
-		Logger: d.logger,
-		Marks:  marks,
+		Tailnet: func(ctx context.Context) (p2p.TailnetCredentials, error) {
+			self, err := peer.IDFromPrivateKey(key)
+			if err != nil {
+				return p2p.TailnetCredentials{}, err
+			}
+			return registry.tailnet(ctx, self.String())
+		},
+		TailnetDir: filepath.Join(dir, p2pTailnetDirName),
+		Logger:     d.logger,
+		Marks:      marks,
 	})
 	if err != nil {
 		return err
