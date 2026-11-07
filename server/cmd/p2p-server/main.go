@@ -96,6 +96,14 @@ func run(logger *slog.Logger) error {
 		Relay:  relay,
 		Logger: logger,
 	}
+	tailnet, err := startTailnet(publicIP, logger)
+	if err != nil {
+		return err
+	}
+	if tailnet != nil {
+		defer tailnet.DERP.Close()
+		srv.Tailnet = tailnet
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go srv.RunPurge(ctx, time.Hour)
@@ -132,4 +140,47 @@ func intEnv(key string, fallback int) (int, error) {
 		return fallback, nil
 	}
 	return strconv.Atoi(v)
+}
+
+// startTailnet runs the tailnet relay when a control server is configured.
+func startTailnet(publicIP net.IP, logger *slog.Logger) (*p2pserver.Tailnet, error) {
+	headscaleURL := strings.TrimSpace(os.Getenv("MULTICA_P2P_HEADSCALE_URL"))
+	if headscaleURL == "" {
+		logger.Info("tailnet disabled: MULTICA_P2P_HEADSCALE_URL is unset")
+		return nil, nil
+	}
+	// Headscale reads the DERP map from this process before its API key can
+	// be created, so the relay starts without the key. Until it is set,
+	// credentials and relay admission fail closed.
+	apiKey := strings.TrimSpace(os.Getenv("MULTICA_P2P_HEADSCALE_API_KEY"))
+	if apiKey == "" {
+		logger.Warn("tailnet credentials unavailable: MULTICA_P2P_HEADSCALE_API_KEY is unset")
+	}
+	derpPort, err := intEnv("MULTICA_P2P_DERP_PORT", 8443)
+	if err != nil || derpPort < 1 || derpPort > 65535 {
+		return nil, fmt.Errorf("MULTICA_P2P_DERP_PORT: invalid port")
+	}
+	stunPort, err := intEnv("MULTICA_P2P_STUN_PORT", 3478)
+	if err != nil || stunPort < 1 || stunPort > 65535 {
+		return nil, fmt.Errorf("MULTICA_P2P_STUN_PORT: invalid port")
+	}
+	headscale := &p2pserver.Headscale{BaseURL: headscaleURL, APIKey: apiKey}
+	tailnet := &p2pserver.Tailnet{
+		Headscale:  headscale,
+		ControlURL: envOr("MULTICA_P2P_TAILNET_CONTROL_URL", "http://"+net.JoinHostPort(publicIP.String(), "8091")),
+	}
+	derp, err := p2pserver.StartDERP(p2pserver.DERPConfig{
+		PublicIP:   publicIP,
+		Listen:     ":" + strconv.Itoa(derpPort),
+		STUNListen: ":" + strconv.Itoa(stunPort),
+		KeyPath:    envOr("MULTICA_P2P_DERP_KEY", "derp.key"),
+		CertPath:   envOr("MULTICA_P2P_DERP_CERT", "derp.pem"),
+		Admit:      tailnet.Admit,
+		Logger:     logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	tailnet.DERP = derp
+	return tailnet, nil
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"github.com/multica-ai/multica/server/internal/daemon/p2p"
 	"github.com/multica-ai/multica/server/internal/p2pserver"
 )
 
@@ -295,5 +297,40 @@ func TestFetchP2PRelayWithoutRelay(t *testing.T) {
 	info, err := fetchP2PRelay(context.Background(), newP2PRegistryClient(srv.URL, func() string { return "tok" }))
 	if err != nil || info != nil {
 		t.Fatalf("relay = %+v, %v; want nil, nil", info, err)
+	}
+}
+
+func TestP2PRegistryTailnetCredentials(t *testing.T) {
+	configured := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/sessions":
+			json.NewEncoder(w).Encode(map[string]any{"session_token": "sess", "expires_at": time.Now().Add(24 * time.Hour)})
+		case "/v1/tailnet":
+			if !configured {
+				http.Error(w, "tailnet is not configured", http.StatusNotFound)
+				return
+			}
+			var req struct {
+				PeerID string `json:"peer_id"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer sess" || req.PeerID != "12D3KooWpeer" {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"control_url": "http://control:8091", "auth_key": "hskey", "hostname": "mabc"})
+		}
+	}))
+	defer srv.Close()
+	c := newP2PRegistryClient(srv.URL, func() string { return "tok" })
+
+	creds, err := c.tailnet(context.Background(), "12D3KooWpeer")
+	if err != nil || creds != (p2p.TailnetCredentials{ControlURL: "http://control:8091", AuthKey: "hskey"}) {
+		t.Fatalf("credentials = %+v, %v", creds, err)
+	}
+	configured = false
+	if _, err := c.tailnet(context.Background(), "12D3KooWpeer"); !errors.Is(err, p2p.ErrTailnetUnavailable) {
+		t.Fatalf("without a control server: %v, want ErrTailnetUnavailable", err)
 	}
 }
