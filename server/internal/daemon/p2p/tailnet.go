@@ -292,7 +292,10 @@ func (t *tailnet) update(srv *tsnet.Server, lc *local.Client, st *ipnstate.Statu
 		if len(ps.TailscaleIPs) == 0 {
 			continue
 		}
-		next[ps.HostName] = tailnetPeer{addr: ps.TailscaleIPs[0], online: ps.Online, direct: ps.CurAddr != ""}
+		// The control server reports a node online before it has a home DERP;
+		// a handshake sent then is dropped and retried only five seconds later.
+		reachable := ps.Online && (ps.Relay != "" || ps.CurAddr != "" || ps.PeerRelay != "")
+		next[ps.HostName] = tailnetPeer{addr: ps.TailscaleIPs[0], online: reachable, direct: ps.CurAddr != ""}
 	}
 	t.mu.Lock()
 	if t.srv != srv {
