@@ -18,6 +18,10 @@ const maxSideTabs = 20
 // SideTab is one tab of a conversation's Side workspace, as the renderer
 // reports it.
 type SideTab struct {
+	FileID       string `json:"fileId,omitempty"`
+	AttachmentID string `json:"attachmentId,omitempty"`
+	Name         string `json:"name,omitempty"`
+	MimeType     string `json:"mimeType,omitempty"`
 	ID           string `json:"id"`
 	Kind         string `json:"kind"`
 	URL          string `json:"url,omitempty"`
@@ -78,7 +82,11 @@ func (w SideWorkspace) validate() error {
 			if t.Root == "" || t.Path == "" || len(t.Root) > 4096 || len(t.Path) > 4096 || (t.FileKind != "file" && t.FileKind != "directory") {
 				return fmt.Errorf("%w: invalid file tab", ErrInvalidRequest)
 			}
-		case "side":
+		case "attachment":
+			if !validSideID(t.AttachmentID) || !validSideID(t.SessionID) || len(t.Name) > 4096 || len(t.MimeType) > 200 {
+				return fmt.Errorf("%w: invalid attachment tab", ErrInvalidRequest)
+			}
+		case "changes", "side":
 			if !validSideID(t.SessionID) {
 				return fmt.Errorf("%w: invalid Side conversation tab", ErrInvalidRequest)
 			}

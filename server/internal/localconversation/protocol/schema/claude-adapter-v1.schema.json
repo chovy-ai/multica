@@ -48,6 +48,7 @@
       "properties": {
         "version": true, "id": true,
         "type": { "const": "start" },
+        "capture_files": { "type": "boolean" },
         "executable": { "type": "string", "description": "Absolute path of the claude CLI; the adapter never searches PATH." },
         "cwd": { "type": "string" },
         "resume": { "type": "string", "description": "Native session to resume. Forks are created beforehand with fork_session." },
@@ -70,6 +71,7 @@
       "properties": {
         "version": true, "id": true,
         "type": { "const": "prewarm" },
+        "capture_files": { "type": "boolean" },
         "executable": { "type": "string" },
         "allowed_tools": { "type": "array", "items": { "type": "string" } },
         "settings": { "type": "object" },
@@ -214,7 +216,8 @@
         { "$ref": "#/$defs/result" },
         { "$ref": "#/$defs/error_message" },
         { "$ref": "#/$defs/sdk_message" },
-        { "$ref": "#/$defs/interaction_request" }
+        { "$ref": "#/$defs/interaction_request" },
+        { "$ref": "#/$defs/file_capture" }
       ]
     },
     "ready": {
@@ -277,6 +280,86 @@
         "interaction_id": { "$ref": "#/$defs/id" },
         "kind": { "enum": ["permission", "question"] },
         "request": { "type": "object", "description": "Tool name and input for permission; questions for question." }
+      }
+    },
+    "file_capture": {
+      "type": "object",
+      "required": [
+        "version",
+        "type",
+        "query_generation",
+        "message"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "type": {
+          "const": "file_capture"
+        },
+        "query_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "message": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "tool_id",
+            "path",
+            "before",
+            "after",
+            "reason"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string"
+            },
+            "tool_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "before": {
+              "$ref": "#/$defs/file_snapshot"
+            },
+            "after": {
+              "$ref": "#/$defs/file_snapshot"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "file_snapshot": {
+      "type": "object",
+      "required": [
+        "exists",
+        "content",
+        "hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "exists": {
+          "type": "boolean"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "hash": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
       }
     }
   }

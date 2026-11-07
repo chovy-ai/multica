@@ -11,3 +11,5 @@ export { TranscriptModel } from "./transcript-model";
 export { TurnModel, type TurnError, type TurnStatus } from "./turn-model";
 export { UserMessageModel } from "./user-message-model";
 export { CompletionReadModel, completionReadRecordSchema, type CompletionReadRecord, type CompletionPosition } from "./completion-read-model";
+
+export * from "./conversation-resources-model";

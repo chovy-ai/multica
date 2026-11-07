@@ -15,6 +15,10 @@ A Side inherits its source provider (Codex or Claude Code), working directory an
 
 Browser tasks prefer the built-in Side browser, especially for a page already open on the right or its existing login session. This is a recommendation: external browsers and automation tools may be used when the user requests them or they better fit the task, under the selected tool's permissions and confirmation requirements. Side tools remain scoped to the current conversation's open Side tabs; other browsers may use different login sessions.
 
+## Conversation resources
+
+The header’s sliders button opens a resource popover without changing the panel layout. Verified file changes open one read-only Changes tab per source conversation in the existing workspace. Outputs and committed attachments reuse file previews. See [conversation resources](conversation-resources.md) for evidence, limits and recovery.
+
 ## Quote into the current composer
 
 The selected-text toolbar offers **Copy → Add to input → Ask in side**. Adding a reference keeps the current question and attachments, clears the transcript selection and focuses the end of the question. Each conversation draft holds one selected reference; adding another replaces it. The card shows the source author, clamps long text to two lines and offers bounded expansion and removal. Removing it preserves the question and returns focus to the editor.

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/filechanges"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 )
 
@@ -228,6 +229,8 @@ func (b *Batcher) flushLoop(id string, c *conversationBatch) {
 		c.queue = c.queue[1:]
 		b.mu.Unlock()
 
+		next.batch.FileObservations = append(next.batch.FileObservations, filechanges.Collect(next.batch.FileCollections)...)
+		next.batch.FileCollections = nil
 		committed, err := b.committer.Submit(context.Background(), next.batch)
 
 		b.mu.Lock()
@@ -249,6 +252,8 @@ func (b *Batcher) flushLoop(id string, c *conversationBatch) {
 }
 
 func merge(dst *store.Batch, part store.Batch) {
+	dst.FileObservations = append(dst.FileObservations, part.FileObservations...)
+	dst.FileCollections = append(dst.FileCollections, part.FileCollections...)
 	if part.StartTurn != nil {
 		dst.StartTurn = part.StartTurn
 	}
@@ -314,12 +319,21 @@ func mergeSummary(dst, src *store.SummaryPatch) {
 }
 
 func isEmpty(b store.Batch) bool {
-	return b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil && b.Settings == nil && len(b.Interactions) == 0 && len(b.Resolutions) == 0 && b.Metadata == nil && b.Queue == nil && len(b.Remotes) == 0 && b.Operation == nil && len(b.Submissions) == 0
+	return len(b.FileCollections) == 0 && len(b.FileObservations) == 0 && b.StartTurn == nil && len(b.Events) == 0 && len(b.Messages) == 0 && b.CompleteTurn == nil && b.Summary == nil && b.ProviderSessionID == nil && len(b.Attachments) == 0 && b.Receipt == nil && b.Settings == nil && len(b.Interactions) == 0 && len(b.Resolutions) == 0 && b.Metadata == nil && b.Queue == nil && len(b.Remotes) == 0 && b.Operation == nil && len(b.Submissions) == 0
 }
 
 // batchBytes estimates a part's size for the batch and backlog budgets.
 func batchBytes(b store.Batch) int {
-	n := 0
+	n := 256 * len(b.FileCollections)
+	for _, collection := range b.FileCollections {
+		n += collection.Bytes
+		for _, change := range collection.Native {
+			n += len(change.Patch) + len(change.Path) + len(change.MovePath)
+		}
+	}
+	for _, o := range b.FileObservations {
+		n += len(o.Before.Content) + len(o.After.Content) + 512
+	}
 	for _, c := range b.Submissions {
 		n += len(c.Item) + 256
 	}

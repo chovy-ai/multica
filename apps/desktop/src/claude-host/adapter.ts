@@ -1,6 +1,8 @@
 import type { Options, Query, SDKUserMessage, SpareProcess } from "@anthropic-ai/claude-agent-sdk";
 import { AdapterError, CLAUDE_ADAPTER_PROTOCOL_VERSION, type AdapterMessage, type DaemonMessage, type DaemonRequest } from "./protocol";
 
+import { FileCapture } from "./file-capture";
+
 type Sdk = typeof import("@anthropic-ai/claude-agent-sdk");
 /** The SDK calls the adapter makes; tests inject a fake. */
 export type ClaudeSdk = Pick<Sdk, "query" | "forkSession" | "listSessions" | "getSessionMessages" | "getSessionInfo" | "prewarm">;
@@ -34,6 +36,8 @@ class PromptQueue implements AsyncIterable<SDKUserMessage> {
  * storage, MCP and event normalization stay in the daemon.
  */
 export class ClaudeAdapter {
+  private captureEnabled = false;
+  private capture = new FileCapture((message) => this.output.write({ version: V, type: "file_capture", query_generation: this.generation, message }));
   private query?: Query;
   private prompts?: PromptQueue;
   private controller?: AbortController;
@@ -98,6 +102,7 @@ export class ClaudeAdapter {
     this.controller = new AbortController();
     this.sessionId = message.resume;
     const options: Options = {
+      ...(message.capture_files ? { hooks: this.capture.hooks } : {}),
       pathToClaudeCodeExecutable: message.executable, cwd: message.cwd, abortController: this.controller,
       includePartialMessages: true, settingSources: ["user", "project", "local"], plugins: [], strictMcpConfig: true,
       // Only unlocks switching to bypassPermissions, including mid-session; permissionMode decides what applies.
@@ -112,6 +117,8 @@ export class ClaudeAdapter {
       mcpServers: (message.mcp_servers ?? {}) as Options["mcpServers"],
       ...(message.allowed_tools ? { allowedTools: message.allowed_tools } : {}),
     };
+    this.captureEnabled = message.capture_files === true;
+    this.capture.configure(message.cwd);
     this.query = sdk.query({ prompt: this.prompts, options });
     this.generation++;
     this.pump = this.consume(this.query, this.generation);
@@ -130,6 +137,7 @@ export class ClaudeAdapter {
     const sdkLoadMs = performance.now() - loading;
     if (typeof sdk.prewarm !== "function") throw new AdapterError("prewarm_unsupported", "this Agent SDK cannot prewarm");
     const options: Options = {
+      ...(message.capture_files ? { hooks: this.capture.hooks } : {}),
       pathToClaudeCodeExecutable: message.executable, includePartialMessages: true, settingSources: ["user", "project", "local"],
       plugins: [], strictMcpConfig: true, mcpServers: {}, allowDangerouslySkipPermissions: true,
       systemPrompt: { type: "preset", preset: "claude_code", snapshot: false },
@@ -138,6 +146,7 @@ export class ClaudeAdapter {
       ...(message.allowed_tools ? { allowedTools: message.allowed_tools } : {}),
     };
     const warming = performance.now();
+    this.captureEnabled = message.capture_files === true;
     let spare: SpareProcess;
     try { spare = await sdk.prewarm({ options }); }
     catch (error) {
@@ -166,6 +175,7 @@ export class ClaudeAdapter {
     this.claiming = new Promise((resolve) => { settle = resolve; });
     const claimingAt = performance.now();
     try {
+      this.capture.configure(message.cwd);
       const query = spare.claim({ prompt: prompts, options: {
         cwd: message.cwd,
         ...(message.model ? { model: message.model } : {}),
@@ -195,6 +205,7 @@ export class ClaudeAdapter {
 
   private send(message: DaemonRequest<"send">): undefined {
     if (!this.query || !this.prompts || this.closing) throw new AdapterError("not_started", "start the conversation before sending", "not_dispatched");
+    if (this.captureEnabled) this.capture.begin(message.request_id);
     this.prompts.push({
       type: "user", uuid: message.request_id as SDKUserMessage["uuid"], session_id: this.sessionId ?? "",
       parent_tool_use_id: null, message: { role: "user", content: message.content as never },
@@ -227,6 +238,7 @@ export class ClaudeAdapter {
 
   /** Ends the prompt stream so Claude Code persists its transcript, then stops the Query. */
   async close(): Promise<void> {
+    this.capture.clear();
     if (this.closing) return;
     this.closing = true;
     this.prompts?.end();

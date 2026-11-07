@@ -92,6 +92,16 @@ describe("Claude host", () => {
     expect(ready.capabilities).toEqual(expect.arrayContaining(["prewarm", "claim"]));
   });
 
+  it.each(["start", "prewarm"])("installs file observation hooks before %s creates its SDK session", async (type) => {
+    const h = harness();
+    h.send({ id: "r1", executable: start.executable, ...(type === "start" ? { cwd: start.cwd } : {}), type, capture_files: true });
+    await h.waitFor(f => f.id === "r1");
+    const options = (type === "start" ? h.sdk.query : h.sdk.prewarm).mock.calls[0]![0].options;
+    expect(options.hooks).toMatchObject({ PreToolUse: expect.any(Array), PostToolUse: expect.any(Array), PostToolUseFailure: expect.any(Array), SubagentStart: expect.any(Array) });
+    expect((await h.waitFor(f => f.type === "ready")).capabilities).toContain("file-capture-v1");
+    h.send({ id: "close", type: "close" });
+  });
+
   it("prewarms with the options a session cannot change later and no MCP", async () => {
     const h = harness();
     h.send({ id: "p", type: "prewarm", executable: "/bin/claude", allowed_tools: ["mcp__multica__*"], settings: { enabledPlugins: {} }, env: { A: "1" } });

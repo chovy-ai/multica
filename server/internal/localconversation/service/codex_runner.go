@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
+	"github.com/multica-ai/multica/server/internal/localconversation/filechanges"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/timing"
@@ -102,6 +104,7 @@ type CodexRunner struct {
 }
 
 type codexTurn struct {
+	files        atomic.Pointer[filechanges.Capture]
 	id           string
 	compacting   bool
 	compacted    bool
@@ -254,6 +257,19 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 		}
 		return err
 	}
+
+	r.mu.Lock()
+	cwd := r.session.Cwd
+	r.mu.Unlock()
+	turn.files.Store(filechanges.Scan(cwd))
+	if r.stoppedBeforeDispatch(turn) {
+		return nil
+	}
+	init := filechanges.Observation{OperationID: "capture-start:" + turn.id, Cwd: cwd, TurnID: turn.id}
+	if !turn.files.Load().Complete {
+		init.Reason = "scan_limit"
+	}
+	_ = r.batcher.Append(store.Batch{ConversationID: r.rec.conversationID, FileObservations: []filechanges.Observation{init}}, true)
 
 	var effortParam any
 	if effort != "" {
@@ -1054,7 +1070,19 @@ func (r *CodexRunner) appendOutput(turn *codexTurn, events []outputEvent) {
 	if failed || len(events) == 0 {
 		return
 	}
-	if err := r.batcher.Append(r.rec.outputBatch(turn.id, events), false); err != nil {
+	batch := r.rec.outputBatch(turn.id, events)
+	for _, e := range events {
+		if e.Final && (e.Payload["kind"] == "command" || e.Payload["kind"] == "tool_call") {
+			batch.FileObservations = append(batch.FileObservations, filechanges.Observation{OperationID: turn.id + ":" + e.ItemID + ":coverage", TurnID: turn.id, Reason: "untracked_tools"})
+		}
+	}
+	if files := turn.files.Load(); files != nil {
+		collection := codexFileCollection(files, turn.id, events)
+		if len(collection.Native) > 0 {
+			batch.FileCollections = []filechanges.Collection{collection}
+		}
+	}
+	if err := r.batcher.Append(batch, false); err != nil {
 		r.mu.Lock()
 		turn.storageFailed = true
 		server, threadID, nativeTurnID := r.server, turn.threadID, turn.nativeTurnID
@@ -1120,7 +1148,11 @@ func (r *CodexRunner) finish(turn *codexTurn, status string, failure *turnError)
 		finals = append(finals, codexOutput(e))
 	}
 	turn.normMu.Unlock()
-	_ = r.batcher.Append(r.rec.completionBatch(turn.id, nativeTurnID, status, failure, finals), true)
+	batch := r.rec.completionBatch(turn.id, nativeTurnID, status, failure, finals)
+	if files := turn.files.Load(); files != nil {
+		batch.FileCollections = []filechanges.Collection{{Capture: files, TurnID: turn.id, Unknown: true}}
+	}
+	_ = r.batcher.Append(batch, true)
 	finishTrace(turn.trace, status, failure)
 	if r.onTurnEnd != nil {
 		r.onTurnEnd(turn.id)

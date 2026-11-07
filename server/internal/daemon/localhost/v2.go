@@ -211,7 +211,7 @@ func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 		if v.servicePreview != nil {
 			capabilities = append(capabilities, "remote-service-preview-v1")
 		}
-		capabilities = append(capabilities, ConversationFocusCapability, AttachmentReserveCapability, PromptStatusCapability, NavigationCapability, service.SubmissionLifecycleCapability)
+		capabilities = append(capabilities, service.ConversationResourcesCapability, ConversationFocusCapability, AttachmentReserveCapability, PromptStatusCapability, NavigationCapability, service.SubmissionLifecycleCapability)
 		if v.reports != nil && c.kind == callerRemote {
 			capabilities = append(capabilities, TimingReportCapability)
 		}
@@ -269,6 +269,10 @@ func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 		return
 	}
 	switch {
+	case len(parts) == 3 && parts[0] == "sessions" && parts[2] == "resources" && r.Method == http.MethodGet:
+		v.resources(w, r, scopeID, parts[1])
+	case len(parts) == 4 && parts[0] == "sessions" && parts[2] == "changes" && r.Method == http.MethodGet:
+		v.changeDetail(w, r, scopeID, parts[1], parts[3])
 	case path == "/preview/services" || strings.HasPrefix(path, "/preview/services/"):
 		if v.servicePreview == nil {
 			http.NotFound(w, r)

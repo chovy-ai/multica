@@ -197,7 +197,8 @@
             "interaction.resolved",
             "usage.updated",
             "conversation.updated",
-            "queue.updated"
+            "queue.updated",
+            "conversation.resources_changed"
           ]
         },
         "final": {
@@ -467,6 +468,32 @@
               },
               "payload": {
                 "$ref": "#/$defs/queue_state"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "conversation.resources_changed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "revision"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
               }
             }
           }

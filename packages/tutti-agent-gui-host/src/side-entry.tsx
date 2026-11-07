@@ -46,6 +46,21 @@ export function useCanPreviewResources(): boolean {
   return useContext(SideEntryContext)?.enabled === true;
 }
 
+export const FileChangeAction = observer(function FileChangeAction({ call }: { call: { statusKind: string | null; rendererKind: string; input: Record<string, unknown> | null; output?: Record<string, unknown> | null } }) {
+  const entry = useContext(SideEntryContext);
+  const click = usePersistCallback(() => {
+    if (!entry?.sessionId) return;
+    const changes = call.input?.changes ?? call.output?.changes;
+    const first = Array.isArray(changes) ? changes[0] as { path?: unknown } | undefined : undefined;
+    const path = typeof call.input?.file_path === "string" ? call.input.file_path : typeof first?.path === "string" ? first.path : "";
+    void entry.client.hostApi.openResource({ sessionId: entry.sessionId, url: `multica:changes?path=${encodeURIComponent(path)}` }).catch((error: unknown) => {
+      void entry.client.hostApi.showMessage({ message: error instanceof Error ? error.message : String(error), tone: "error" });
+    });
+  });
+  if (!entry?.enabled || call.statusKind !== "completed" || !["edit", "write"].includes(call.rendererKind)) return null;
+  return <Button size="xs" variant="link" onClick={click}>{entry.chinese ? "查看变更" : "View changes"}</Button>;
+});
+
 function SideEntryProviderRender({
   children,
   root,
