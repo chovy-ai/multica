@@ -9,7 +9,7 @@ import { fakeHostServices } from "../e2e-harness/fake-host-services";
 import { createMulticaContextMentions } from "./context-mentions";
 import type { AgentGuiHostServices,AgentGuiWorkspaceState } from "./protocol";
 
-it("renders the workspace agent avatar in a sent message whose target directory contains only local Codex", async () => {
+it.each(["agent-target", "workspace-member"])("renders the %s avatar and name in sent messages", async (providerId) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const iconUrl = "https://example.test/bug-hunter.png";
   const state = {
@@ -22,6 +22,7 @@ it("renders the workspace agent avatar in a sent message whose target directory 
         runtimeBound: true
       }
     ],
+    members: [{ userId: "bug-hunter", name: "Bug hunter", iconUrl }],
     sessions: []
   } as unknown as AgentGuiWorkspaceState;
   const service = createMulticaContextMentions(
@@ -36,7 +37,7 @@ it("renders the workspace agent avatar in a sent message whose target directory 
   document.body.append(container);
   const root = createRoot(container);
   try {
-    const provider = service.getProvider("agent-target")!;
+    const provider = service.getProvider(providerId)!;
     const items = await provider.query({
       keyword: "",
       trigger: "@",
@@ -44,7 +45,7 @@ it("renders the workspace agent avatar in a sent message whose target directory 
     });
     const inserted = provider.toInsertResult(items[0]);
     if (inserted.kind !== "mention") throw new Error("Expected a reference");
-    const content = `${createRichTextMentionMarkdown({ providerId: "agent-target", ...inserted.mention })} Please record this bug`;
+    const content = `${createRichTextMentionMarkdown({ providerId, ...inserted.mention })} Please record this bug`;
     await act(async () =>
       root.render(
         <RichTextMentionServiceProvider service={service}>
@@ -63,9 +64,10 @@ it("renders the workspace agent avatar in a sent message whose target directory 
       )
     );
     const mention = container.querySelector(
-      '[data-agent-mention-kind="agent-target"]'
+      `[data-agent-mention-kind="${providerId}"]`
     );
-    expect(mention?.textContent).toContain("Bug hunter");
+    expect(mention?.textContent).toBe("Bug hunter");
+    expect(mention?.textContent).not.toContain("bug-hunter");
     expect(mention?.querySelector("img")?.getAttribute("src")).toBe(iconUrl);
   } finally {
     await act(async () => root.unmount());

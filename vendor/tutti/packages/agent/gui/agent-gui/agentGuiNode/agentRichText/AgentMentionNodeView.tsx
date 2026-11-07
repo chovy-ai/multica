@@ -59,6 +59,7 @@ export const AgentMentionNodeView = observer(AgentMentionNodeViewRender);
 
 type AgentMentionNodeViewKind =
   | "file"
+  | "workspace-member"
   | "agent-target"
   | "session"
   | "workspace-app"
@@ -143,6 +144,7 @@ function normalizeKind(value: string): AgentMentionNodeViewKind {
   if (value === "workspace-app-factory") {
     return "workspace-app-factory";
   }
+  if (value === "workspace-member") return "workspace-member";
   if (value === "agent-target") {
     return "agent-target";
   }
@@ -244,6 +246,10 @@ function mentionViewModel(
     };
   }
 
+  if (kind === "workspace-member") {
+    return { ariaLabel: displayName, directoryPath: "", entryKind: "", href, kind, label: displayName,
+      iconUrl: resolvedPresentation?.iconUrl ?? (attrString(attrs, "iconUrl").trim() || undefined) };
+  }
   if (kind === "agent-target") {
     const agentProviderId =
       resolvedPresentation?.agentProviderId ??
@@ -544,6 +550,7 @@ function AgentMentionPresentationViewRender({
   }
 
   if (
+    mention.kind === "workspace-member" ||
     mention.kind === "workspace-app" ||
     mention.kind === "workspace-reference" ||
     mention.kind === "agent-target"

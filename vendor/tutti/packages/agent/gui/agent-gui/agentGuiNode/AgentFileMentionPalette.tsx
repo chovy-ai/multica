@@ -601,6 +601,9 @@ function agentMentionItemToRowItem(
     };
   }
 
+  if (item.kind === "workspace-member") {
+    return { kind: "app", name: item.name, description: null, iconUrl: item.iconUrl ?? null };
+  }
   if (item.kind === "agent-target") {
     return {
       kind: "app",
@@ -763,6 +766,8 @@ function mentionStatusTone(
 
 function browseHintForFilter(filter: AgentMentionFilterId): string {
   switch (filter) {
+    case "member":
+      return "";
     case "agent":
       return translate("agentHost.agentGui.contextPickerBrowseAgentHint");
     case "app":
