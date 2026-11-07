@@ -41,7 +41,6 @@ import {
   activateMarkdownLinkFromKey,
   activateMarkdownLinkFromPointer,
   hasOpenPotentialMermaidFence,
-  hashMarkdownProfilerContent,
   isLikelyLongerThanLineLimit,
   resolveMarkdownAnchorHref,
   splitStreamingMarkdownBlocks
@@ -72,7 +71,10 @@ import {
 } from "./AgentMessageMarkdownRenderers";
 import { MarkdownTable } from "@multica/tutti-agent-gui-host/markdown-table";
 import { MarkdownMedia } from "./AgentMessageMarkdownMedia";
-import { MarkdownPre } from "@multica/tutti-agent-gui-host/html-preview-pre";
+import {
+  MarkdownPre,
+  MarkdownSourceProvider
+} from "@multica/tutti-agent-gui-host/html-preview-pre";
 import { remarkLiteralAutolinkBoundary } from "./remarkLiteralAutolinkBoundary";
 import { cachedMarkdownParser } from "./cachedMarkdownParser";
 import {
@@ -217,12 +219,27 @@ function AgentMessageMarkdownRender({
     maxCharsPerSecond: STREAMING_MARKDOWN_MAX_CHARS_PER_SECOND,
     trailingFlushChars: STREAMING_MARKDOWN_TAIL_FLUSH_CHARS
   });
-  const stabilizedContent = useMemo(
+  const normalizedSource = useMemo(
+    () => {
+      const source = visibleContent.replace(/\r\n?/g, "\n");
+      return normalizeLocalPathMarkdownLinks(
+        normalizeMentionMarkdownLinks(
+          normalizePlainIssueMentionTitle
+            ? normalizePlainIssueMentionTitleContent(
+                normalizePlainSessionMentionTitle(source)
+              )
+            : normalizePlainSessionMentionTitle(source)
+        )
+      );
+    },
+    [normalizePlainIssueMentionTitle, visibleContent]
+  );
+  const normalizedContent = useMemo(
     () =>
-      stabilizeStreamingMarkdownTail(visibleContent, {
+      stabilizeStreamingMarkdownTail(normalizedSource, {
         streaming
       }).content,
-    [streaming, visibleContent]
+    [streaming, normalizedSource]
   );
   const mermaidStreaming =
     streaming || hasOpenPotentialMermaidFence(visibleContent);
@@ -233,22 +250,9 @@ function AgentMessageMarkdownRender({
   const resolvedExpandLabel =
     expandLabel ?? t("agentHost.workspaceAgentMessageExpand");
   const shouldCollapse =
-    collapsible && isLikelyLongerThanLineLimit(stabilizedContent);
+    collapsible && isLikelyLongerThanLineLimit(normalizedContent);
   const isCollapsed = shouldCollapse && !isExpanded;
   const ContainerTag = inline ? "span" : "div";
-  const normalizedContent = useMemo(
-    () =>
-      normalizeLocalPathMarkdownLinks(
-        normalizeMentionMarkdownLinks(
-          normalizePlainIssueMentionTitle
-            ? normalizePlainIssueMentionTitleContent(
-                normalizePlainSessionMentionTitle(stabilizedContent)
-              )
-            : normalizePlainSessionMentionTitle(stabilizedContent)
-        )
-      ),
-    [normalizePlainIssueMentionTitle, stabilizedContent]
-  );
   const settledRemarkPlugins = useMemo<ReactMarkdownRemarkPlugins>(
     () => [
       remarkGfm,
@@ -396,14 +400,17 @@ function AgentMessageMarkdownRender({
         {streaming ? (
           <StreamingMarkdownBlocks
             content={normalizedContent}
+            source={normalizedSource}
             components={markdownComponents}
           />
         ) : (
-          <ReactMarkdownBinding1
-            settledRemarkPlugins={settledRemarkPlugins}
-            markdownComponents={markdownComponents}
-            normalizedContent={normalizedContent}
-          />
+          <MarkdownSourceProvider value={normalizedSource}>
+            <ReactMarkdownBinding1
+              settledRemarkPlugins={settledRemarkPlugins}
+              markdownComponents={markdownComponents}
+              normalizedContent={normalizedContent}
+            />
+          </MarkdownSourceProvider>
         )}
       </ContainerTag>
       {shouldCollapse && !isExpanded ? (
@@ -418,21 +425,27 @@ function AgentMessageMarkdownRender({
 
 function StreamingMarkdownBlocksRender({
   content,
+  source,
   components
 }: {
   content: string;
+  source: string;
   components: ReactMarkdownComponents;
 }): JSX.Element {
   const blocks = useMemo(
-    () => splitStreamingMarkdownBlocks(content),
-    [content]
+    () => splitStreamingMarkdownBlocks(content).map((block) => ({
+      ...block,
+      source: source.slice(block.sourceStart, block.sourceStart + block.content.length)
+    })),
+    [content, source]
   );
   return (
     <>
-      {blocks.map((block, index) => (
+      {blocks.map((block) => (
         <MemoizedMarkdownBlock
-          key={`${index}:${hashMarkdownProfilerContent(block.initialKeyContent)}`}
+          key={block.sourceStart}
           content={block.content}
+          source={block.source}
           components={components}
         />
       ))}
@@ -442,9 +455,11 @@ function StreamingMarkdownBlocksRender({
 
 const MemoizedMarkdownBlock = observer(function MemoizedMarkdownBlock({
   content,
+  source,
   components
 }: {
   content: string;
+  source: string;
   components: ReactMarkdownComponents;
 }): JSX.Element {
   const remarkPluginsProp1 = useMemo<
@@ -472,14 +487,16 @@ const MemoizedMarkdownBlock = observer(function MemoizedMarkdownBlock({
     ]
   );
   return (
-    <ReactMarkdown
-      remarkPlugins={remarkPluginsProp1}
-      rehypePlugins={rehypePluginsProp2}
-      urlTransform={markdownUrlTransform}
-      components={components}
-    >
-      {content}
-    </ReactMarkdown>
+    <MarkdownSourceProvider value={source}>
+      <ReactMarkdown
+        remarkPlugins={remarkPluginsProp1}
+        rehypePlugins={rehypePluginsProp2}
+        urlTransform={markdownUrlTransform}
+        components={components}
+      >
+        {content}
+      </ReactMarkdown>
+    </MarkdownSourceProvider>
   );
 });
 

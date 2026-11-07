@@ -14,7 +14,7 @@
 
 SVG 路径在沙箱内解析 XML、确认根节点和命名空间，再通过 SVG image context 渲染，原 SVG 节点不进入宿主 DOM。缺少默认 SVG 命名空间时自动补齐；根节点 `title` 用作图像的无障碍标签。主题变量注入图像自身的样式，内部渐变、marker 和 use 引用保留。独立 SVG 不加载 Chart.js/D3；图像中的脚本和外部资源不可用，需要脚本交互时应使用 HTML 块内的 SVG。机制参考 [SVG as an image](https://developer.mozilla.org/en-US/docs/Web/SVG/Guides/SVG_as_an_image)。
 
-`vite.config.ts` 在已有宿主适配机制中替换 `MarkdownPre` 的导入；源码快照保持不变，固定锚点变化时构建直接失败。普通代码、行内代码和 Mermaid 继续使用原渲染器。流式回复只展示等待状态，完成后才创建可执行的预览，避免每次文本更新都重置交互。
+Markdown 渲染器通过宿主的 `MarkdownPre` 适配器展示预览。普通代码、行内代码和 Mermaid 继续使用原渲染器。SVG 根据稳定化前原文中的真实围栏闭合状态独立显示，后续文字、思考或工具调用不阻塞已完成代码块；稳定化函数补出的结束标记不算真实闭合。流式分块以原文起始位置保持组件身份，后续文字追加不重载已显示的 SVG。HTML 和 Mermaid 仍等待整轮回复完成，避免增量更新重置可执行文档的交互。
 
 工具栏使用 Multica Button 和语义样式；预览文档获得当前主题的 `--background`、`--foreground`、`--muted`、`--muted-foreground`、`--border`、`--brand`。Chart.js 的默认文字与坐标轴也随主题变化，不覆盖其数据系列配色。切换源码保留 iframe 的交互状态；重新运行或切换主题会重新创建预览。
 
