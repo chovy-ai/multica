@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { AgentGuiInitSnapshot } from "../packages/tutti-agent-gui-host/src/protocol";
 
 for (const theme of ["light", "dark"] as const) {
-  for (const viewport of [{ width: 1280, height: 900 }, { width: 600, height: 420 }]) {
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 600, height: 420 }, { width: 390, height: 640 }]) {
     test(`keeps model and thinking controls reachable in ${theme} at ${viewport.width}`, async ({ page }) => {
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
@@ -17,7 +17,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.evaluate((snapshot) => {
         const storage = new Map<string, string>();
         const models = ["Default (recommended)", "Opus 5.5", "Fable 5.1", "Sonnet 5.5", "Haiku 5.5", "Haiku 4.5", "Sonnet 5", "Opus 5", "Fable 5", "Opus 4.8", "Opus 4.7", "Opus 4.6", "Sonnet 4.6", "Plain"]
-          .map((label) => ({ id: label.toLowerCase().replaceAll(" ", "-"), label, ...(label !== "Plain" ? { thinking: { supported_levels: [{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" }, { value: "max", label: "Max" }] } } : {}) }));
+          .map((label) => ({ id: label.toLowerCase().replaceAll(" ", "-"), label, ...(label !== "Plain" ? { thinking: { default_level: "medium", supported_levels: [{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" }, { value: "max", label: "Max" }] } } : {}) }));
         const frame = document.querySelector("iframe")!;
         window.addEventListener("message", (event) => {
           if (event.source !== frame.contentWindow || event.origin !== location.origin || event.data?.type !== "multica:agent-gui:ready") return;
@@ -47,56 +47,46 @@ for (const theme of ["light", "dark"] as const) {
       const opener = gui.getByTestId("multica-model-picker");
       await expect(opener).toBeEnabled({ timeout: 30_000 });
       await opener.click();
-      await expect(gui.getByRole("menuitemradio", { name: "Opus 5.5", exact: true })).toBeVisible();
-      await page.screenshot({ path: `.tmp/model-menu/${process.env.MODEL_MENU_CAPTURE ?? "after"}-${theme}-${viewport.width}.png`, animations: "disabled" });
-      const menu = gui.locator(".multica-model-picker-menu").first();
-      const list = gui.locator(".multica-model-picker-list");
-      const effort = gui.getByRole("menuitem", { name: "思考强度 默认" });
-      await expect(effort).toBeVisible();
-      await expect(menu.getByRole("menuitem", { name: "刷新模型", exact: true })).toHaveCount(0);
-      await expect(menu.locator(".multica-composer-footer-help")).toHaveCount(0);
-      await expect(menu.getByRole("separator")).toHaveCount(1);
-      expect(await menu.evaluate((element) => element.lastElementChild?.matches(".multica-model-picker-effort"))).toBe(true);
+      const menu = gui.getByRole("dialog", { name: "模型", exact: true });
+      const search = gui.getByRole("searchbox", { name: "搜索模型..." });
+      const reasoning = gui.getByRole("radiogroup", { name: "推理强度", exact: true });
+      await expect(search).toBeFocused();
+      await expect(gui.getByRole("radio", { name: "Opus 5.5", exact: true })).toBeVisible();
+      await expect(reasoning.getByText("CLI 内置默认")).toBeVisible();
+      await expect(gui.getByRole("radio", { name: "Plain", exact: true })).toHaveCount(0);
+      await search.fill("plain");
+      await expect(gui.getByRole("radio", { name: "Plain", exact: true })).toBeVisible();
+      await search.fill("missing model");
+      await expect(gui.getByText("没有匹配的模型", { exact: true })).toBeVisible();
+      await search.fill("");
+      await gui.getByRole("button", { name: "显示更多", exact: true }).click();
+      await gui.getByRole("button", { name: "收藏 Plain", exact: true }).click();
+      await gui.getByRole("button", { name: "收起", exact: true }).click();
+      await expect(gui.getByRole("radio", { name: "Plain", exact: true })).toBeVisible();
+      await search.focus();
+      await search.press("Alt+2");
+      await expect(gui.getByRole("radio", { name: "Opus 5.5", exact: true })).toBeChecked();
+      await expect(menu).toBeVisible();
+      const high = reasoning.getByRole("radio", { name: "高", exact: true });
+      await high.check();
+      await expect(opener).toContainText("高");
+      await expect(high).toBeChecked();
+      await page.screenshot({ path: `.tmp/model-menu/after-${theme}-${viewport.width}.png`, animations: "disabled" });
       const bounds = (await menu.boundingBox())!;
       expect(bounds.x).toBeGreaterThanOrEqual(0);
       expect(bounds.y).toBeGreaterThanOrEqual(0);
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
       expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
-      expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-      const effortBefore = await effort.boundingBox();
-      await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-      expect(Math.abs((await effort.boundingBox())!.y - effortBefore!.y)).toBeLessThan(1);
-      await expect(gui.getByRole("menuitemradio", { name: "Plain", exact: true })).toBeVisible();
-      await effort.focus();
-      await page.keyboard.press("ArrowRight");
-      const high = gui.getByRole("menuitemradio", { name: "高", exact: true });
-      await expect(high).toBeVisible();
-      await high.focus();
-      await page.keyboard.press("Enter");
-      await expect(opener).toContainText("高");
-      await page.keyboard.press("Escape");
-      await expect(menu).toBeHidden();
-      await opener.press("ArrowDown");
-      await gui.getByRole("menuitem", { name: "思考强度 高" }).hover();
-      await expect(high).toBeChecked();
-      const submenu = (await gui.locator(".multica-model-picker-effort-menu").boundingBox())!;
-      expect(submenu.x).toBeGreaterThanOrEqual(0);
-      expect(submenu.y).toBeGreaterThanOrEqual(0);
-      expect(submenu.x + submenu.width).toBeLessThanOrEqual(viewport.width);
-      expect(submenu.y + submenu.height).toBeLessThanOrEqual(viewport.height);
-      await page.screenshot({ path: `.tmp/model-menu/${theme}-${viewport.width}-effort.png`, animations: "disabled" });
-      await page.keyboard.press("Escape");
-      await expect(menu).toBeHidden();
-      await opener.press("ArrowDown");
-      await gui.getByRole("menuitemradio", { name: "Plain", exact: true }).click();
+      await gui.getByRole("radio", { name: "Plain", exact: true }).check();
       await expect(opener).toContainText("Plain");
       await expect(opener).not.toContainText("高");
-      await page.keyboard.press("Escape");
-      await expect(menu).toBeHidden();
-      await opener.press("ArrowDown");
       await expect(gui.getByText("此模型未提供可用强度", { exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
+      await expect(menu).toBeHidden();
       await expect(opener).toBeFocused();
+      await opener.press("Enter");
+      await expect(gui.getByRole("button", { name: "取消收藏 Plain", exact: true })).toHaveAttribute("aria-pressed", "true");
+      await page.keyboard.press("Escape");
       expect(errors).toEqual([]);
     });
   }

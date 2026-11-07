@@ -223,30 +223,17 @@ it.each([
     );
     const open = () =>
       act(async () => {
-        container
-          .querySelector('[data-testid="multica-model-picker"]')!
-          .dispatchEvent(
-            new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })
-          );
+        const trigger = container.querySelector<HTMLButtonElement>('[data-testid="multica-model-picker"]')!;
+        if (trigger.getAttribute("aria-expanded") !== "true") trigger.click();
       });
     const option = (label: string) =>
-      [
-        ...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
-      ].find((entry) => entry.textContent === label)!;
-    const openEffort = () =>
-      act(async () => {
-        document
-          .querySelector(".multica-model-picker-effort")!
-          .dispatchEvent(
-            new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })
-          );
-      });
+      [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')]
+        .find((entry) => entry.getAttribute("aria-label") === label)!;
     await open();
     if (followDefault) {
       expect(container.querySelector('[data-testid="multica-model-picker"]')?.textContent).toContain("Default · Reasoning");
     }
-    expect(document.body.textContent).toContain("Thinking effort");
-    await openEffort();
+    expect(document.querySelector(".multica-reasoning-column")).not.toBeNull();
     await act(async () => option("High").click());
     expect(handle.getReasoningSelection(target.id)).toBe("high");
     expect(handle.getModelSelection(target.id)).toBe(followDefault ? null : "reasoning");
@@ -255,8 +242,7 @@ it.each([
         ?.textContent
     ).toContain("High");
     await open();
-    await openEffort();
-    expect(option("High").getAttribute("aria-checked")).toBe("true");
+    expect(String(option("High").checked)).toBe("true");
     await act(async () => option("Plain").click());
     expect(handle.getReasoningSelection(target.id)).toBeNull();
     await open();
@@ -338,14 +324,11 @@ it.each([{ locale: "en" }, { locale: "zh-CN" }] as const)(
     );
     const open = () =>
       act(async () => {
-        container
-          .querySelector('[data-testid="multica-model-picker"]')!
-          .dispatchEvent(
-            new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })
-          );
+        const trigger = container.querySelector<HTMLButtonElement>('[data-testid="multica-model-picker"]')!;
+        if (trigger.getAttribute("aria-expanded") !== "true") trigger.click();
       });
     const item = (label: string) =>
-      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      [...document.querySelectorAll<HTMLElement>("button")].find(
         (entry) => entry.textContent === label
       );
     const retry = locale === "zh-CN" ? "重试" : "Retry";
@@ -375,14 +358,14 @@ it.each([{ locale: "en" }, { locale: "zh-CN" }] as const)(
         .lastElementChild?.getAttribute("role")
     ).not.toBe("separator");
     const model = [
-      ...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
-    ].find((entry) => entry.textContent === "Reasoning")!;
+      ...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')
+    ].find((entry) => entry.getAttribute("aria-label") === "Reasoning")!;
     await act(async () => model.click());
     expect(handle.getModelSelection(target.id)).toBe("reasoning");
     await open();
     expect(attempts).toBe(2);
     expect(
-      document.querySelector(".multica-model-picker-effort")
+      document.querySelector(".multica-reasoning-column")
     ).not.toBeNull();
   }
 );
@@ -420,4 +403,65 @@ it.each([false, true])("opens a Side without sending a prompt (new source: %s)",
   }
   expect(calls.some(([method]) => method === "session.send")).toBe(false);
   expect(handled).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the saved model and reasoning after a failed save, and disables open choices during a run", async () => {
+  const target = { id: "local:codex", name: "Codex", provider: "codex", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true };
+  const snapshot: AgentGuiInitSnapshot = { workspaceId: "ws", workspaceSlug: "ws", userId: "user", theme: "light", locale: "en", local: true, activeSessionId: null, agents: [], sessions: [], executionTargets: [target] };
+  const storage = new Map<string, string>();
+  let rejectWrites = false;
+  const request = vi.fn(async (method: string, params: Record<string, string>) => {
+    if (method === "workspace.load") return snapshot;
+    if (method === "storage.read") return storage.get(params.key!) ?? null;
+    if (method === "storage.write") {
+      if (rejectWrites) throw new Error("Settings unavailable");
+      storage.set(params.key!, params.value!);
+      return;
+    }
+    if (method === "models.list") return { supported: true, models: [
+      { id: "reasoning", label: "Reasoning", thinking: { supported_levels: [{ value: "high", label: "High" }] } },
+      { id: "plain", label: "Plain" }
+    ] };
+    return null;
+  });
+  const client = fakeHostServices(request as AgentGuiOperationInvoker, () => () => {});
+  handle = createMulticaAgentGuiRuntime(client, snapshot);
+  await handle.initialize();
+  await handle.setModelSelection(target.id, null, "reasoning");
+  await handle.setReasoningSelection(target.id, null, "high");
+  const render = (running = false, reasoningCommand = false) => act(async () => root.render(<ComposerFooterControls
+    context={{ selectedAgentTarget: { agentTargetId: target.id }, isSendingTurn: running, isActive: true } as ComponentProps<typeof ComposerFooterControls>["context"]}
+    commandRequest={reasoningCommand ? { name: "reasoning", sequence: 1, agentSessionId: null } : null}
+    client={client} handle={handle} targets={[target]} snapshot={snapshot}
+    onLeaveSession={vi.fn()} onCancelTargetSwitch={vi.fn()} onSelectAgent={vi.fn()} onReadyForFocus={vi.fn()}
+  />));
+  await render();
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="multica-model-picker"]')!.click());
+  rejectWrites = true;
+  await act(async () => document.querySelector<HTMLInputElement>('input[aria-label="Plain"]')!.click());
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain("Settings unavailable");
+  expect(handle.getModelSelection(target.id)).toBe("reasoning");
+  expect(handle.getReasoningSelection(target.id)).toBe("high");
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Reasoning"]')!.checked).toBe(true);
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="High"]')!.checked).toBe(true);
+  await render(true);
+  expect([...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].every((input) => input.disabled)).toBe(true);
+  await act(async () => document.querySelector<HTMLInputElement>('input[aria-label="Plain"]')!.click());
+  expect(handle.getModelSelection(target.id)).toBe("reasoning");
+  await render();
+  rejectWrites = false;
+  await act(async () => document.querySelector<HTMLInputElement>('input[aria-label="Plain"]')!.click());
+  expect(handle.getModelSelection(target.id)).toBe("plain");
+  expect(handle.getReasoningSelection(target.id)).toBeNull();
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.querySelector('.multica-model-panel')).not.toBeNull();
+  rejectWrites = true;
+  await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Favorite Plain"]')!.click());
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe("Could not save favorites");
+  expect(document.querySelector('button[aria-label="Favorite Plain"]')?.getAttribute("aria-pressed")).toBe("false");
+  expect(handle.getModelSelection(target.id)).toBe("plain");
+  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await render(false, true);
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(document.activeElement?.classList.contains("multica-model-reasoning-heading")).toBe(true);
 });

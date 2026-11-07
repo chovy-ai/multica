@@ -90,7 +90,8 @@ for (const provider of ["codex", "claude"] as const) {
       await expect(project).toHaveText(label);
       await editor.fill("KEEP_DIRECTORY_CONTEXT");
       await gui.getByTestId("multica-model-picker").click();
-      await gui.getByRole("menuitemradio", { name: "Test model", exact: true }).click();
+      await gui.getByRole("radio", { name: "Test model", exact: true }).click();
+      await page.keyboard.press("Escape");
       await expect(project).toHaveText(label);
       await gui.getByTestId("multica-agent-picker").click();
       await gui.getByRole("menuitemradio", { name: target === "codex" ? "Codex" : "Claude Code", exact: true }).click();

@@ -120,8 +120,9 @@ test("restores local provider drafts and reopens references after switching conv
   await expect(gui.getByRole("status").filter({ hasText: "Reconnecting..." })).not.toBeVisible();
   await editor.fill("LOCAL_DRAFT_MUST_SURVIVE_PROVIDER_SWITCH");
   await model.click();
-  await gui.getByRole("menuitemradio", { name: "Test model", exact: true }).click();
+  await gui.getByRole("radio", { name: "Test model", exact: true }).click();
   await expect(model).toContainText("Test model");
+  await page.keyboard.press("Escape");
   await expect(model).toBeFocused();
   await mkdir(".tmp/local-conversations", { recursive: true });
   const usage = gui.getByTestId("multica-usage-trigger");
@@ -221,7 +222,7 @@ test("restores local provider drafts and reopens references after switching conv
   // until the menu resolves its friendly name again.
   await expect(model).toContainText(/test[- ]model/i);
   await model.click();
-  await expect(gui.getByRole("menuitemradio", { name: "Test model", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(gui.getByRole("radio", { name: "Test model", exact: true })).toBeChecked();
   await editor.press("Escape");
   await expect(model).toContainText("Test model");
   await page.screenshot({ path: ".tmp/local-conversations/07-restored-local-draft.png" });
