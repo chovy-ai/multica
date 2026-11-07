@@ -49,6 +49,7 @@ type NewConversation struct {
 	Cwd             string
 	Model           *string
 	ReasoningEffort *string
+	ServiceTier     *string
 	PermissionMode  string
 	ProjectID       *string
 	SideSourceID    string
@@ -121,6 +122,7 @@ func insertConversation(ctx context.Context, q *sqlitedb.Queries, c NewConversat
 		Cwd:                   c.Cwd,
 		Model:                 nullString(c.Model),
 		ReasoningEffort:       nullString(c.ReasoningEffort),
+		ServiceTier:           nullString(c.ServiceTier),
 		PermissionMode:        permission,
 		ProjectID:             nullString(c.ProjectID),
 		SideSourceID:          c.SideSourceID,

@@ -143,10 +143,11 @@ type ConversationMetadata struct {
 }
 
 // ConversationSettings are the provider settings a conversation runs with.
-// A nil Model or ReasoningEffort means the provider default.
+// A nil Model, ReasoningEffort or ServiceTier inherits the provider configuration.
 type ConversationSettings struct {
 	Model           *string
 	ReasoningEffort *string
+	ServiceTier     *string
 	PermissionMode  string
 }
 
@@ -499,7 +500,7 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 
 	if st := b.Settings; st != nil {
 		err := q.UpdateConversationSettings(ctx, sqlitedb.UpdateConversationSettingsParams{
-			Model: nullString(st.Model), ReasoningEffort: nullString(st.ReasoningEffort), PermissionMode: st.PermissionMode, ID: conv.ID,
+			Model: nullString(st.Model), ReasoningEffort: nullString(st.ReasoningEffort), ServiceTier: nullString(st.ServiceTier), PermissionMode: st.PermissionMode, ID: conv.ID,
 		})
 		if err != nil {
 			return Committed{}, err

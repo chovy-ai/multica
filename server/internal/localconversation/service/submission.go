@@ -226,6 +226,20 @@ func (s *Service) newClaim(ctx context.Context, conv sqlitedb.Conversation, item
 			settings.ReasoningEffort = value
 		}
 	}
+	if item.ServiceTier != nil {
+		value, clear, err := rawOptionalString(item.ServiceTier)
+		if err != nil {
+			return nil, err
+		}
+		if clear {
+			settings.ServiceTier = nil
+		} else {
+			settings.ServiceTier = value
+		}
+	}
+	if err := validateServiceTier(conv.Provider, settings.ServiceTier); err != nil {
+		return nil, err
+	}
 	if item.PermissionMode != nil {
 		settings.PermissionMode = *item.PermissionMode
 	}
@@ -337,7 +351,7 @@ func (s *Service) sendClaimed(ctx context.Context, conv sqlitedb.Conversation, i
 	if err := json.Unmarshal(claim.Settings, &settings); err != nil {
 		return err
 	}
-	update := SettingsUpdate{Model: settings.Model, ClearModel: settings.Model == nil, ReasoningEffort: settings.ReasoningEffort, ClearReasoningEffort: settings.ReasoningEffort == nil, PermissionMode: &settings.PermissionMode}
+	update := SettingsUpdate{Model: settings.Model, ClearModel: settings.Model == nil, ReasoningEffort: settings.ReasoningEffort, ClearReasoningEffort: settings.ReasoningEffort == nil, ServiceTier: settings.ServiceTier, ClearServiceTier: settings.ServiceTier == nil, PermissionMode: &settings.PermissionMode}
 	current, err := s.store.Conversation(ctx, conv.ID)
 	if err != nil {
 		return err

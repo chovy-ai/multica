@@ -335,3 +335,57 @@ func TestFailedSubmissionRestoredAtFrontHasOneQueueIdentity(t *testing.T) {
 		t.Fatalf("queue identities=%v", ids)
 	}
 }
+
+func TestServiceTierAttemptCaptureAndSideIsolation(t *testing.T) {
+	f := newServiceFixture(t, filepath.Join(t.TempDir(), "tiers.sqlite"))
+	f.create(t, "source", "codex")
+	ctx := context.Background()
+	fast := "priority"
+	if err := f.svc.UpdateSettings(ctx, f.scopeID, "source", SettingsUpdate{ServiceTier: &fast}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := f.svc.Store().Conversation(ctx, "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := f.svc.CreateSide(ctx, SideCommand{ScopeID: f.scopeID, SourceID: "source", RequestID: "side-tier"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ServiceTier.String != fast {
+		t.Fatalf("side did not inherit tier: %+v", child)
+	}
+	if err := f.svc.UpdateSettings(ctx, f.scopeID, child.ID, SettingsUpdate{ClearServiceTier: true}); err != nil {
+		t.Fatal(err)
+	}
+	parent, _ := f.svc.Store().Conversation(ctx, "source")
+	if parent.ServiceTier.String != fast {
+		t.Fatal("side changed source tier")
+	}
+	item, err := parseQueueItem(json.RawMessage(`{"requestId":"tier-submit","content":"hello","display":{"id":"tier-submit"},"serviceTier":"default"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := f.svc.newClaim(ctx, source, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings store.ConversationSettings
+	if err := json.Unmarshal(attempt.Settings, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.ServiceTier == nil || *settings.ServiceTier != "default" {
+		t.Fatalf("attempt lost explicit Standard: %s", attempt.Settings)
+	}
+	item.ServiceTier = json.RawMessage(`null`)
+	attempt, err = f.svc.newClaim(ctx, source, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(attempt.Settings, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.ServiceTier != nil {
+		t.Fatalf("attempt retained Fast: %s", attempt.Settings)
+	}
+}

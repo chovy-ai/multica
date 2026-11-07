@@ -126,6 +126,9 @@ func (s *Service) CreateSide(ctx context.Context, cmd SideCommand) (sqlitedb.Con
 	if source.ReasoningEffort.Valid {
 		nc.ReasoningEffort = &source.ReasoningEffort.String
 	}
+	if source.ServiceTier.Valid {
+		nc.ServiceTier = &source.ServiceTier.String
+	}
 	if source.ProjectID.Valid {
 		nc.ProjectID = &source.ProjectID.String
 	}

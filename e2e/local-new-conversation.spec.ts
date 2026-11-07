@@ -131,7 +131,8 @@ for (const provider of ["codex", "claude"] as const) for (const rejectAdmission 
       });
       await expect(gui.getByTestId("agent-gui-composer-image-draft")).toBeVisible();
       await gui.getByTestId("multica-model-picker").click();
-      await gui.getByRole("menuitemradio", { name: "Test model", exact: true }).click();
+      await gui.getByRole("radio", { name: "Test model", exact: true }).click();
+      await page.keyboard.press("Escape");
     }
     await gui.getByRole("button", { name: "Send", exact: true }).click();
     if (rejectAdmission) {

@@ -2,13 +2,55 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+// The same response fixture drives composer and queue regressions in TypeScript.
+func TestCodexModelResponseContract(t *testing.T) {
+	t.Parallel()
+	exe, _ := fakeCLI(t, map[string]string{
+		`"method":"initialize"`:  `{"id":1,"result":{}}`,
+		`"method":"config/read"`: `{"id":2,"result":{"config":{"model":"test-model"}}}`,
+	})
+	dir := t.TempDir()
+	cache, err := os.ReadFile("testdata/codex-models-cache.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "models_cache.json"), cache, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := New(finder(map[string]string{"codex": exe}), t.TempDir(), dir)
+	models, err := c.Models(context.Background(), "codex", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := json.Marshal(models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.ReadFile("../../../../packages/core/local-conversation/testdata/codex-models-response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, want any
+	if err := json.Unmarshal(actual, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(expected, &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("model response = %s, want %s", actual, expected)
+	}
+}
 
 // fakeCLI writes a shell script that answers each request line containing
 // a key with the matching reply, and records its arguments.

@@ -1,4 +1,3 @@
-import { Slot } from "radix-ui";
 import { useMemo } from "react";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { localReasoningLevels } from "@multica/core/local-conversation/protocol";
@@ -8,14 +7,13 @@ import {
   Button,
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   DropdownMenuTrigger
 } from "@tutti-os/ui-system/components";
 import { ChevronDownIcon } from "@tutti-os/ui-system/icons";
@@ -27,6 +25,7 @@ import {
   useSyncExternalStore
 } from "react";
 import type { AgentComposerProps } from "../../../vendor/tutti/packages/agent/gui/agent-gui/agentGuiNode/AgentComposer";
+import { ModelReasoningPanel } from "./model-reasoning-panel";
 import { PermissionPicker } from "./permission-picker";
 import type { ComposerCommandRequest } from "./composer-commands";
 import type {
@@ -198,6 +197,7 @@ function ComposerFooterControlsRender({
   const [error, setError] = useState<string | null>(null);
   const [modelMenu, setModelMenu] = useState<"model" | "reasoning" | null>(null);
   const modelMenuFromCommand = useRef(false);
+  const modelPanelRef = useRef<HTMLDivElement>(null);
   const [statusRequest, setStatusRequest] = useState(0);
   const appliedCommand = useRef<number | null>(null);
   const sidePending = useRef(false);
@@ -242,7 +242,7 @@ function ComposerFooterControlsRender({
             model: "模型",
             agent: snapshot.local ? "本机运行器" : "智能体",
             default: "默认",
-            loading: "正在加载模型…",
+            loading: "正在加载模型...",
             retry: "重试",
             refresh: "刷新模型",
             failed: "模型目录加载失败",
@@ -264,7 +264,7 @@ function ComposerFooterControlsRender({
             model: "Model",
             agent: snapshot.local ? "Local provider" : "Agent",
             default: "Default",
-            loading: "Loading models…",
+            loading: "Loading models...",
             retry: "Retry",
             refresh: "Refresh models",
             failed: "Could not load model catalog",
@@ -360,7 +360,7 @@ function ComposerFooterControlsRender({
       setSaving(false);
     }
   };
-  const changeEffortCallback = usePersistCallback(changeEffort);
+
   useEffect(() => {
     if (!commandRequest || appliedCommand.current === commandRequest.sequence)
       return;
@@ -416,6 +416,17 @@ function ComposerFooterControlsRender({
       sidePending.current = false;
     });
   });
+  const changeModelCallback = usePersistCallback(changeModel);
+  const changeEffortCallback = usePersistCallback(changeEffort);
+  const handleModelMenuOpenAutoFocus = usePersistCallback<
+    NonNullable<React.ComponentProps<typeof PopoverContent>["onOpenAutoFocus"]>
+  >((event) => {
+    if (modelMenu !== "reasoning") return;
+    event.preventDefault();
+    modelPanelRef.current
+      ?.querySelector<HTMLElement>(".multica-model-reasoning-heading")
+      ?.focus();
+  });
   const configured = selected ?? agent?.model ?? null;
   const known = catalog?.models.find((entry) => entry.id === configured);
   const defaultModel =
@@ -440,17 +451,6 @@ function ComposerFooterControlsRender({
         }[value] ?? fallback)
       : fallback;
   const effortLabelCallback = usePersistCallback(effortLabel);
-  const reasoningChoices = (
-    <DropdownMenuRadioGroupBinding1
-      selectedEffort={selectedEffort}
-      changeEffort={changeEffortCallback}
-      busy={busy}
-      saving={saving}
-      labels={labels}
-      levels={levels}
-      effortLabel={effortLabelCallback}
-    />
-  );
   const currentLabel = selected
     ? known?.label || selected
     : defaultModel
@@ -458,18 +458,11 @@ function ComposerFooterControlsRender({
       : labels.defaultModel;
 
   const onOpenChangeProp1 = usePersistCallback<
-    NonNullable<React.ComponentProps<typeof DropdownMenu>["onOpenChange"]>
+    NonNullable<React.ComponentProps<typeof Popover>["onOpenChange"]>
   >((open) => {
     if (open) modelMenuFromCommand.current = false;
     setModelMenu(open ? "model" : null);
     if (open && !catalog && !loading) void load();
-  });
-  const onValueChangeProp2 = usePersistCallback<
-    NonNullable<
-      React.ComponentProps<typeof DropdownMenuRadioGroup>["onValueChange"]
-    >
-  >((value) => {
-    void changeModel(value);
   });
   const onValueChangeProp3 = usePersistCallback<
     NonNullable<
@@ -493,7 +486,7 @@ function ComposerFooterControlsRender({
   });
   const returnFocusToComposer = usePersistCallback(() => onReadyForFocus(Date.now()));
   const handleModelMenuCloseAutoFocus = usePersistCallback<
-    NonNullable<React.ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"]>
+    NonNullable<React.ComponentProps<typeof PopoverContent>["onCloseAutoFocus"]>
   >((event) => {
     if (!modelMenuFromCommand.current) return;
     modelMenuFromCommand.current = false;
@@ -539,8 +532,8 @@ function ComposerFooterControlsRender({
           }
         />
       )}
-      <DropdownMenu open={modelMenu !== null} onOpenChange={onOpenChangeProp1}>
-        <DropdownMenuTrigger asChild>
+      <Popover open={modelMenu !== null} onOpenChange={onOpenChangeProp1}>
+        <PopoverTrigger asChild>
           <Button
             variant="ghost"
             size="sm"
@@ -562,128 +555,40 @@ function ComposerFooterControlsRender({
             </span>
             <ChevronDownIcon aria-hidden="true" />
           </Button>
-        </DropdownMenuTrigger>
-        {/* Portals remain React descendants of the source window click-capture guard. */}
-        <DropdownMenuContent
+        </PopoverTrigger>
+        <PopoverContent
           onCloseAutoFocus={handleModelMenuCloseAutoFocus}
-          className="multica-composer-footer-menu multica-model-picker-menu nodrag"
+          ref={modelPanelRef}
+          onOpenAutoFocus={handleModelMenuOpenAutoFocus}
+          className="multica-model-picker-menu nodrag"
+          aria-label={labels.model}
           align="end"
           side="top"
           collisionPadding={16}
         >
-          <DropdownMenuLabel>{modelMenu === "reasoning" ? (chinese ? "推理" : "Reasoning") : labels.model}</DropdownMenuLabel>
-          {modelMenu !== "reasoning" && <div className="multica-model-picker-list">
-            <DropdownMenuRadioGroup
-              value={selected ?? ""}
-              onValueChange={onValueChangeProp2}
-            >
-              <DropdownMenuRadioItem value="" disabled={busy || saving}>
-                {labels.default}
-                {defaultModel ? ` · ${defaultModel}` : ""}
-              </DropdownMenuRadioItem>
-              {catalog?.supported !== false &&
-                catalog?.models.map((model) => (
-                  <DropdownMenuRadioItem
-                    key={model.id}
-                    value={model.id}
-                    disabled={busy || saving}
-                    title={model.id}
-                  >
-                    {model.label || model.id}
-                  </DropdownMenuRadioItem>
-                ))}
-              {configured && catalog && !known && (
-                <DropdownMenuItem disabled>
-                  {configured} · {labels.unknown}
-                </DropdownMenuItem>
-              )}
-              {catalog?.unavailableModels?.map((model) => (
-                <DropdownMenuItem
-                  key={`unavailable:${model.id}`}
-                  disabled
-                  title={model.reason}
-                >
-                  {model.label || model.id}
-                  {model.reason ? ` · ${model.reason}` : ""}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuRadioGroup>
-            {loading && (
-              <DropdownMenuItem disabled>{labels.loading}</DropdownMenuItem>
-            )}
-            {catalog?.supported === false && (
-              <DropdownMenuItem disabled>{labels.unsupported}</DropdownMenuItem>
-            )}
-            {catalog?.supported && catalog.models.length === 0 && (
-              <DropdownMenuItem disabled>{labels.empty}</DropdownMenuItem>
-            )}
-            {error && (
-              <div className="multica-composer-footer-error" role="alert">
-                {labels.failed}: {error}
-              </div>
-            )}
-          </div>}
-          {modelMenu === "reasoning" && <div className="multica-model-picker-list">
-            {reasoningChoices}
-            {loading && <DropdownMenuItem disabled>{labels.loading}</DropdownMenuItem>}
-            {catalog && !levels.length && <DropdownMenuItem disabled>{noReasoningOptions}</DropdownMenuItem>}
-            {error && <div className="multica-composer-footer-error" role="alert">{labels.failed}: {error}</div>}
-          </div>}
-          {modelMenu !== "reasoning" && snapshot.local && catalog && (
-            <>
-              <DropdownMenuSeparator />
-              {levels.length > 0 ? (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger
-                    disabled={busy || saving}
-                    className="multica-model-picker-effort"
-                  >
-                    <span>{chinese ? "思考强度" : "Thinking effort"}</span>
-                    <span className="multica-model-picker-effort-value">
-                      {selectedEffort
-                        ? effortLabel(
-                            selectedEffort,
-                            levels.find(
-                              (level) => level.value === selectedEffort
-                            )?.label ?? selectedEffort
-                          )
-                        : labels.default}
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent
-                    className="multica-composer-footer-menu multica-model-picker-effort-menu nodrag"
-                    collisionPadding={16}
-                  >
-                    <DropdownMenuLabel>
-                      {chinese ? "思考强度" : "Thinking effort"}
-                    </DropdownMenuLabel>
-                    {reasoningChoices}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              ) : (
-                <DropdownMenuItem disabled>
-                  {noReasoningOptions}
-                </DropdownMenuItem>
-              )}
-            </>
-          )}
-          {(!snapshot.local || error) && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItemBinding2
-                loading={loading}
-                busy={busy}
-                load={loadCallback}
-                error={error}
-                labels={labels}
-              />
-            </>
-          )}
-          {!snapshot.local && (
-            <p className="multica-composer-footer-help">{labels.modelScope}</p>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+          <ModelReasoningPanel
+            key={`${snapshot.userId}:${snapshot.workspaceId}:${agentId}`}
+            chinese={chinese}
+            catalog={catalog}
+            selected={selected}
+            configured={configured}
+            selectedEffort={selectedEffort}
+            modelLabel={known?.label || configured || defaultModel || labels.defaultModel}
+            defaultModel={defaultModel}
+            levels={levels}
+            effortLabel={effortLabelCallback}
+            disabled={busy || saving || unavailable}
+            loading={loading}
+            error={error}
+            labels={labels}
+            noReasoningOptions={noReasoningOptions}
+            onModelChange={changeModelCallback}
+            onEffortChange={changeEffortCallback}
+            onReload={loadCallback}
+            remote={!snapshot.local}
+          />
+        </PopoverContent>
+      </Popover>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -754,135 +659,3 @@ function ComposerFooterControlsRender({
     </div>
   );
 }
-
-const DropdownMenuRadioGroupBinding1 = observer(
-  function DropdownMenuRadioGroupBinding1({
-    selectedEffort,
-    changeEffort,
-    busy,
-    saving,
-    labels,
-    levels,
-    effortLabel
-  }: DropdownMenuRadioGroupBinding1Props) {
-    const onValueChangeProp4 = usePersistCallback<
-      NonNullable<
-        React.ComponentProps<typeof DropdownMenuRadioGroup>["onValueChange"]
-      >
-    >((value) => {
-      void changeEffort(value);
-    });
-    return (
-      <DropdownMenuRadioGroup
-        value={selectedEffort ?? ""}
-        onValueChange={onValueChangeProp4}
-      >
-        <DropdownMenuRadioItem value="" disabled={busy || saving}>
-          {labels.default}
-        </DropdownMenuRadioItem>
-        {levels.map((level) => (
-          <DropdownMenuRadioItem
-            key={level.value}
-            value={level.value}
-            disabled={busy || saving}
-            title={level.description}
-          >
-            {effortLabel(level.value, level.label)}
-          </DropdownMenuRadioItem>
-        ))}
-      </DropdownMenuRadioGroup>
-    );
-  }
-);
-
-const DropdownMenuItemBinding2 = observer(function DropdownMenuItemBinding2({
-  loading,
-  busy,
-  load,
-  error,
-  labels,
-  ...slotProps
-}: DropdownMenuItemBinding2Props &
-  Omit<
-    React.ComponentProps<typeof Slot.Root>,
-    keyof DropdownMenuItemBinding2Props
-  >) {
-  const onSelectProp5 = usePersistCallback<
-    NonNullable<React.ComponentProps<typeof DropdownMenuItem>["onSelect"]>
-  >((event) => {
-    event.preventDefault();
-    void load(true);
-  });
-  return (
-    <Slot.Root {...slotProps}>
-      <DropdownMenuItem disabled={loading || busy} onSelect={onSelectProp5}>
-        {error ? labels.retry : labels.refresh}
-      </DropdownMenuItem>
-    </Slot.Root>
-  );
-});
-
-type DropdownMenuRadioGroupBinding1Props = {
-  selectedEffort:
-    | "none"
-    | "max"
-    | "high"
-    | "low"
-    | "minimal"
-    | "medium"
-    | "xhigh"
-    | "ultra"
-    | null;
-  changeEffort: (value: string) => Promise<void>;
-  busy: boolean;
-  saving: boolean;
-  labels: {
-    model: string;
-    agent: string;
-    default: string;
-    loading: string;
-    retry: string;
-    refresh: string;
-    failed: string;
-    empty: string;
-    unsupported: string;
-    unknown: string;
-    running: string;
-    switch: string;
-    runtime: string;
-    denied: string;
-    defaultModel: string;
-    modelScope: string;
-    online: string;
-    offline: string;
-  };
-  levels: import("../../core/types/agent").RuntimeModelThinkingLevel[];
-  effortLabel: (value: string, fallback: string) => string;
-};
-
-type DropdownMenuItemBinding2Props = {
-  loading: boolean;
-  busy: boolean;
-  load: (force?: boolean) => Promise<void>;
-  error: string | null;
-  labels: {
-    model: string;
-    agent: string;
-    default: string;
-    loading: string;
-    retry: string;
-    refresh: string;
-    failed: string;
-    empty: string;
-    unsupported: string;
-    unknown: string;
-    running: string;
-    switch: string;
-    runtime: string;
-    denied: string;
-    defaultModel: string;
-    modelScope: string;
-    online: string;
-    offline: string;
-  };
-};

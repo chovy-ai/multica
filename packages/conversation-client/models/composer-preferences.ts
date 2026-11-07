@@ -1,4 +1,4 @@
-import { isLocalPermissionMode, isLocalReasoningEffort, type LocalPermissionMode, type LocalReasoningEffort } from "@multica/core/local-conversation/protocol";
+import { isLocalServiceTier, type LocalServiceTier, isLocalPermissionMode, isLocalReasoningEffort, type LocalPermissionMode, type LocalReasoningEffort } from "@multica/core/local-conversation/protocol";
 
 function preferenceKey(agentId: string, sessionId?: string | null) {
   return sessionId ? `session:${sessionId}` : `draft:${agentId}`;
@@ -60,6 +60,31 @@ export class ReasoningPreferences {
   get(agentId: string, sessionId?: string | null) { return this.values.get(preferenceKey(agentId, sessionId)); }
   set(agentId: string, sessionId: string | null | undefined, model: string | null, effort: LocalReasoningEffort | null) {
     this.values.set(preferenceKey(agentId, sessionId), { model, effort });
+  }
+  serialize() { return JSON.stringify([...this.values]); }
+}
+
+interface ServiceTierSelection { model: string | null; tier: LocalServiceTier | null }
+
+export class ServiceTierPreferences {
+  private values = new Map<string, ServiceTierSelection>();
+
+  hydrate(raw: string | null) {
+    if (!raw) return;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      for (const entry of parsed) {
+        if (!Array.isArray(entry) || typeof entry[0] !== "string") continue;
+        const value = entry[1];
+        if (value && (value.model === null || typeof value.model === "string") && (value.tier === null || isLocalServiceTier(value.tier))) this.values.set(entry[0], value);
+      }
+    } catch { /* Damaged preferences must not block conversation history. */ }
+  }
+
+  get(agentId: string, sessionId?: string | null) { return this.values.get(preferenceKey(agentId, sessionId)); }
+  set(agentId: string, sessionId: string | null | undefined, model: string | null, tier: LocalServiceTier | null) {
+    this.values.set(preferenceKey(agentId, sessionId), { model, tier });
   }
   serialize() { return JSON.stringify([...this.values]); }
 }
