@@ -78,6 +78,20 @@ for (const theme of ["light", "dark"] as const) {
     expect(sent.content).toContain("userId=user-b");
     expect(sent.content).not.toMatch(/iconUrl|data:image|role=|email=/);
     await expect(editor.locator('[data-agent-mention-kind="workspace-member"]')).toHaveCount(0);
+    await page.evaluate(() => {
+      const frame = document.querySelector("iframe")!;
+      frame.src = frame.src;
+    });
+    const messageMention = gui.locator('.workspace-agents-status-panel__detail-user-message [data-agent-mention-kind="workspace-member"][data-agent-mention-href]');
+    await expect(messageMention).toBeVisible();
+    try {
+      await expect(messageMention.locator("img")).toBeVisible();
+    } finally {
+      await messageMention.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await page.screenshot({ path: `.tmp/member-mentions/message-${theme}.png` });
+    }
+    await expect(messageMention).not.toContainText("user-b");
+    await expect(messageMention).toHaveAttribute("data-agent-mention-href", /workspace-member\/user-b\?/);
     expect(errors).toEqual([]);
   });
 }

@@ -5,11 +5,16 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect,it,vi } from "vitest";
 import { AgentMessageMarkdown } from "../../../vendor/tutti/packages/agent/gui/shared/AgentMessageMarkdown";
+import { AgentRichTextReadonly } from "../../../vendor/tutti/packages/agent/gui/shared/AgentRichTextReadonly";
 import { fakeHostServices } from "../e2e-harness/fake-host-services";
 import { createMulticaContextMentions } from "./context-mentions";
 import type { AgentGuiHostServices,AgentGuiWorkspaceState } from "./protocol";
 
-it.each(["agent-target", "workspace-member"])("renders the %s avatar and name in sent messages", async (providerId) => {
+it.each([
+  ["agent-target", "markdown"],
+  ["workspace-member", "markdown"],
+  ["workspace-member", "readonly"]
+])("renders the %s avatar and name in %s messages", async (providerId, renderer) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const iconUrl = "https://example.test/bug-hunter.png";
   const state = {
@@ -49,7 +54,10 @@ it.each(["agent-target", "workspace-member"])("renders the %s avatar and name in
     await act(async () =>
       root.render(
         <RichTextMentionServiceProvider service={service}>
-          <AgentMessageMarkdown
+          {renderer === "readonly" ? (
+            <AgentRichTextReadonly value={content} />
+          ) : (
+            <AgentMessageMarkdown
             content={content}
             agentTargets={[
               {
@@ -59,7 +67,8 @@ it.each(["agent-target", "workspace-member"])("renders the %s avatar and name in
                 iconUrl: "https://example.test/codex.png"
               }
             ]}
-          />
+            />
+          )}
         </RichTextMentionServiceProvider>
       )
     );

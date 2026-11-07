@@ -677,8 +677,12 @@ function AgentMentionReadonlyViewRender({
   agentTargets?: readonly AgentMessageMarkdownAgentTarget[];
   attrs: Record<string, unknown>;
 }): JSX.Element {
+  const View =
+    normalizeKind(attrString(attrs, "kind")) === "workspace-member"
+      ? AgentMentionView
+      : AgentMentionPresentationView;
   return (
-    <AgentMentionPresentationView
+    <View
       agentTargets={agentTargets}
       attrs={attrs}
       isEditable={false}
