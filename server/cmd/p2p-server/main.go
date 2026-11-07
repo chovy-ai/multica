@@ -145,10 +145,16 @@ func intEnv(key string, fallback int) (int, error) {
 // startTailnet runs the tailnet relay when a control server is configured.
 func startTailnet(publicIP net.IP, logger *slog.Logger) (*p2pserver.Tailnet, error) {
 	headscaleURL := strings.TrimSpace(os.Getenv("MULTICA_P2P_HEADSCALE_URL"))
-	apiKey := strings.TrimSpace(os.Getenv("MULTICA_P2P_HEADSCALE_API_KEY"))
-	if headscaleURL == "" || apiKey == "" {
-		logger.Info("tailnet disabled: MULTICA_P2P_HEADSCALE_URL or MULTICA_P2P_HEADSCALE_API_KEY is unset")
+	if headscaleURL == "" {
+		logger.Info("tailnet disabled: MULTICA_P2P_HEADSCALE_URL is unset")
 		return nil, nil
+	}
+	// Headscale reads the DERP map from this process before its API key can
+	// be created, so the relay starts without the key. Until it is set,
+	// credentials and relay admission fail closed.
+	apiKey := strings.TrimSpace(os.Getenv("MULTICA_P2P_HEADSCALE_API_KEY"))
+	if apiKey == "" {
+		logger.Warn("tailnet credentials unavailable: MULTICA_P2P_HEADSCALE_API_KEY is unset")
 	}
 	derpPort, err := intEnv("MULTICA_P2P_DERP_PORT", 8443)
 	if err != nil || derpPort < 1 || derpPort > 65535 {

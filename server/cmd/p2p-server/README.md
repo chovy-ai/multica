@@ -44,8 +44,8 @@ a domain exists.
 | `MULTICA_P2P_KEY` | `p2p-server.key` | Relay identity key, created on first start; keeps the relay peer ID stable |
 | `MULTICA_P2P_LIBP2P_PORT` | `4001` | Relay TCP and QUIC (UDP) port |
 | `MULTICA_P2P_RELAY_MAX_CIRCUITS_PER_USER` | `8` | Concurrent relayed connections per account |
-| `MULTICA_P2P_HEADSCALE_URL` | — | Headscale API base URL; with the API key, enables the tailnet |
-| `MULTICA_P2P_HEADSCALE_API_KEY` | — | Headscale API key |
+| `MULTICA_P2P_HEADSCALE_URL` | — | Headscale API base URL; enables DERP, STUN and the tailnet endpoints |
+| `MULTICA_P2P_HEADSCALE_API_KEY` | — | Headscale API key; without it, credentials and DERP admission are refused |
 | `MULTICA_P2P_TAILNET_CONTROL_URL` | `http://<public IP>:8091` | Control server URL handed to devices |
 | `MULTICA_P2P_DERP_PORT` | `8443` | DERP TLS port |
 | `MULTICA_P2P_STUN_PORT` | `3478` | STUN UDP port |
