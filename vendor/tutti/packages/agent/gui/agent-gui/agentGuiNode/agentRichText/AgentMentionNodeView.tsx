@@ -757,12 +757,13 @@ const MentionPillBinding1 = observer(function MentionPillBinding1({
   onRemove,
   withTooltipProvider
 }: MentionPillBinding1Props) {
+  const usesSessionIcon = mention.kind === "agent-target" || mention.kind === "workspace-member";
   const iconContainerPropsProp1Value1 =
-    mention.kind === "agent-target" ? undefined : "true";
+    usesSessionIcon ? undefined : "true";
   const iconContainerPropsProp1Value2 =
-    mention.kind === "agent-target" ? "true" : undefined;
+    usesSessionIcon ? "true" : undefined;
   const iconContainerPropsProp1Value3 =
-    mention.kind === "agent-target" ? undefined : "true";
+    usesSessionIcon ? undefined : "true";
   const iconContainerPropsProp1 = useMemo<
     NonNullable<React.ComponentProps<typeof MentionPill>["iconContainerProps"]>
   >(
@@ -791,7 +792,7 @@ const MentionPillBinding1 = observer(function MentionPillBinding1({
       data-agent-mention-kind={mention.kind}
       iconUrl={mention.iconUrl}
       iconContainerProps={iconContainerPropsProp1}
-      kind={mention.kind === "agent-target" ? "session" : "app"}
+      kind={usesSessionIcon ? "session" : "app"}
       label={mention.label}
       removable={isEditable}
       removeButtonProps={isEditable ? removeButtonPropsProp2 : undefined}

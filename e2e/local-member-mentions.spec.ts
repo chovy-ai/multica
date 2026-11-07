@@ -2,6 +2,16 @@ import "./env";
 import { expect, test } from "@playwright/test";
 import type { AgentGuiInitSnapshot } from "../packages/tutti-agent-gui-host/src/protocol";
 
+function mentionStyle(element: HTMLElement) {
+  const root = element.querySelector<HTMLElement>('[data-slot="mention-pill"], .rich-text-at-mention-row--app') ?? element;
+  const text = root.querySelector<HTMLElement>('.rich-text-at-mention-row__app-name') ?? root;
+  const icon = root.querySelector('img')!;
+  const style = getComputedStyle(root);
+  const textStyle = getComputedStyle(text);
+  return { fontSize: textStyle.fontSize, fontWeight: textStyle.fontWeight, color: textStyle.color, gap: style.gap,
+    iconWidth: icon.getBoundingClientRect().width, iconHeight: icon.getBoundingClientRect().height, iconRadius: getComputedStyle(icon).borderRadius };
+}
+
 for (const theme of ["light", "dark"] as const) {
   test(`selects a member by identity and shows only their avatar and name in ${theme}`, async ({ page }) => {
     const at = "2026-11-06T00:00:00Z";
@@ -10,7 +20,8 @@ for (const theme of ["light", "dark"] as const) {
     const snapshot: AgentGuiInitSnapshot = {
       workspaceId: session.workspace_id, workspaceSlug: "members", userId: "viewer", locale: "zh-CN", theme,
       local: true, hostActive: true, hostVisible: true, activeSessionId: session.id, selectedAgentId: session.agent_id,
-      agents: [], sessions: [session], members: [{ userId: "user-a", name: "Alex", iconUrl: avatar }, { userId: "user-b", name: "Alex", iconUrl: avatar }],
+      agents: [{ agent: { id: "guide", name: "Guide" } as AgentGuiInitSnapshot["agents"][number]["agent"], provider: "codex", iconUrl: avatar, canInvoke: true, runtimeBound: true }],
+      sessions: [session], members: [{ userId: "user-a", name: "Alex", iconUrl: avatar }, { userId: "user-b", name: "Alex", iconUrl: avatar }],
       executionTargets: [{ id: "local:codex", name: "Codex", provider: "codex", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true }],
     };
     const errors: string[] = [];
@@ -56,16 +67,28 @@ for (const theme of ["light", "dark"] as const) {
     const editor = gui.getByTestId("agent-gui-composer-editor");
     await expect(editor).toBeVisible();
     await editor.fill("@");
+    await gui.getByRole("tab", { name: "智能体", exact: true }).click();
+    const agentOption = gui.getByRole("option").filter({ hasText: "Guide" });
+    await expect(agentOption.locator("img")).toBeVisible();
+    const agentRowStyle = await agentOption.evaluate(mentionStyle);
+    await page.screenshot({ path: `.tmp/member-mentions/agent-picker-${theme}.png` });
+    await agentOption.click();
+    const agentChip = editor.locator('[data-agent-mention-kind="agent-target"][data-agent-mention-href]');
+    await expect(agentChip.locator("img")).toBeVisible();
+    const agentChipStyle = await agentChip.evaluate(mentionStyle);
+    await editor.fill("@");
     await gui.getByRole("tab", { name: "成员", exact: true }).click();
     const options = gui.getByRole("option").filter({ hasText: "Alex" });
     await expect(options).toHaveCount(2);
     await expect(options.nth(1)).not.toContainText("user-b");
     await expect(options.nth(1).locator("img")).toBeVisible();
+    expect(await options.nth(1).evaluate(mentionStyle)).toEqual(agentRowStyle);
     await page.screenshot({ path: `.tmp/member-mentions/picker-${theme}.png` });
     await options.nth(1).click();
     const chip = editor.locator('[data-agent-mention-kind="workspace-member"][data-agent-mention-href]');
     await expect(chip).toContainText("Alex");
     await expect(chip.locator("img")).toBeVisible();
+    expect(await chip.evaluate(mentionStyle)).toEqual(agentChipStyle);
     await expect(chip).toHaveAttribute("data-agent-mention-href", /workspace-member\/user-b\?/);
     await expect(page.locator("body")).not.toHaveAttribute("data-sent");
     await page.screenshot({ path: `.tmp/member-mentions/composer-${theme}.png` });
@@ -91,6 +114,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.screenshot({ path: `.tmp/member-mentions/message-${theme}.png` });
     }
     await expect(messageMention).not.toContainText("user-b");
+    expect(await messageMention.evaluate(mentionStyle)).toEqual(agentChipStyle);
     await expect(messageMention).toHaveAttribute("data-agent-mention-href", /workspace-member\/user-b\?/);
     expect(errors).toEqual([]);
   });

@@ -58,15 +58,15 @@ it.each([
             <AgentRichTextReadonly value={content} />
           ) : (
             <AgentMessageMarkdown
-            content={content}
-            agentTargets={[
-              {
-                agentTargetId: "local:codex",
-                provider: "codex",
-                name: "Codex",
-                iconUrl: "https://example.test/codex.png"
-              }
-            ]}
+              content={content}
+              agentTargets={[
+                {
+                  agentTargetId: "local:codex",
+                  provider: "codex",
+                  name: "Codex",
+                  iconUrl: "https://example.test/codex.png"
+                }
+              ]}
             />
           )}
         </RichTextMentionServiceProvider>
@@ -78,6 +78,7 @@ it.each([
     expect(mention?.textContent).toBe("Bug hunter");
     expect(mention?.textContent).not.toContain("bug-hunter");
     expect(mention?.querySelector("img")?.getAttribute("src")).toBe(iconUrl);
+    expect(mention?.querySelector<HTMLElement>('[data-slot="mention-pill"]')?.style.color).toBe("var(--rich-text-mention-session)");
   } finally {
     await act(async () => root.unmount());
     container.remove();
