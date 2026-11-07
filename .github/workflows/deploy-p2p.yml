@@ -31,7 +31,8 @@ concurrency:
 
 env:
   REGISTRY: ccr.ccs.tencentyun.com
-  # Headscale is mirrored into TCR so the host never pulls from Docker Hub.
+  # Headscale is mirrored into the p2p-server repository under a
+  # headscale- tag, so the host never pulls from Docker Hub.
   HEADSCALE_VERSION: "0.29.7"
 
 jobs:
@@ -112,7 +113,7 @@ jobs:
       - name: Mirror Headscale
         run: |
           docker buildx imagetools create \
-            --tag "$REGISTRY/$TCR_NAMESPACE/headscale:$HEADSCALE_VERSION" \
+            --tag "$REGISTRY/$TCR_NAMESPACE/p2p-server:headscale-$HEADSCALE_VERSION" \
             "docker.io/headscale/headscale:$HEADSCALE_VERSION"
 
       - name: Install tccli
@@ -127,7 +128,7 @@ jobs:
         run: |
           content=$({
             echo '#!/bin/bash'
-            echo "export P2P_IMAGE='$IMAGE' P2P_TAG='$TAG' P2P_PUBLIC_IP='$PUBLIC_IP' HEADSCALE_IMAGE='$REGISTRY/$TCR_NAMESPACE/headscale:$HEADSCALE_VERSION'"
+            echo "export P2P_IMAGE='$IMAGE' P2P_TAG='$TAG' P2P_PUBLIC_IP='$PUBLIC_IP' HEADSCALE_IMAGE='$REGISTRY/$TCR_NAMESPACE/p2p-server:headscale-$HEADSCALE_VERSION'"
             tail -n +2 deploy/p2p-server/deploy.sh
           } | base64 -w0)
           # The first run installs Docker, so allow it time.

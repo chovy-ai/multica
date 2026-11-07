@@ -234,8 +234,9 @@ if ! grep -q '^MULTICA_P2P_HEADSCALE_API_KEY=.' "$CONF"; then
 fi
 echo "headscale $HEADSCALE_IMAGE is live"
 
-# Keep the newest images, always including the live and previous tags.
-docker image ls "$P2P_IMAGE" --format '{{.Tag}}' | tail -n +$((KEEP + 1)) | while read -r t; do
+# Keep the newest images, always including the live and previous tags. The
+# repository also holds the Headscale image under headscale- tags.
+docker image ls "$P2P_IMAGE" --format '{{.Tag}}' | { grep -v '^headscale-' || true; } | tail -n +$((KEEP + 1)) | while read -r t; do
   [[ "$t" == "$P2P_TAG" || "$t" == "$previous" ]] && continue
   docker image rm "$P2P_IMAGE:$t" >/dev/null 2>&1 || true
 done

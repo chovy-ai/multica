@@ -9,8 +9,8 @@ every push to `main` that touches it, or on demand from the Actions tab:
 
 1. Test, build the image from [Dockerfile](Dockerfile) and push it to Tencent
    Container Registry (TCR) as `ccr.ccs.tencentyun.com/<namespace>/p2p-server:<sha>`,
-   and copy the pinned Headscale image to
-   `ccr.ccs.tencentyun.com/<namespace>/headscale:<version>`.
+   and copy the pinned Headscale image into the same repository as
+   `ccr.ccs.tencentyun.com/<namespace>/p2p-server:headscale-<version>`.
 2. Send [deploy.sh](deploy.sh) to the host through Tencent Cloud Automation
    Tools (TAT) and wait for its result. The workflow never logs in to the host.
 3. Check `http://<public IP>:8090/healthz` from outside (warning only).
@@ -38,8 +38,8 @@ container multica-headscale     same restrictions; listens on TCP 8091
 ### Tencent Cloud
 
 1. **TCR personal edition** (region: Guangzhou, same as the host): create a
-   namespace and repositories named `p2p-server` and `headscale`. Make both
-   repositories **public**: the image only contains the open-source binary, and a public
+   namespace and a repository named `p2p-server`. Make the repository
+   **public**: the image only contains the open-source binary, and a public
    repository lets the host pull without registry credentials. Set the
    registry password; the username is the main account ID.
 
