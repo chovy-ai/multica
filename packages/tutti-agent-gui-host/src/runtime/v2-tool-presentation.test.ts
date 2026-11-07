@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { ConversationModel, TranscriptModel } from "@multica/conversation-client/models";
-import { localV2SnapshotSchema, type LocalV2Event } from "@multica/core/local-conversation/v2";
+import { localV2EventSchema, localV2SnapshotSchema, type LocalV2Event } from "@multica/core/local-conversation/v2";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CommittedConversationMessages } from "../../../../vendor/tutti/packages/agent/gui/state/CommittedConversationMessages";
 import { projectWorkspaceAgentMessagesToTimelineItems } from "../../../../vendor/tutti/packages/agent/gui/shared/agentConversation/projection/workspaceAgentMessageProjection";
@@ -30,6 +31,24 @@ function tools(conversation: ConversationModel) {
 }
 
 describe("v2 tools through the GUI presentation boundary", () => {
+  it.each(["stream", "final snapshot"])("keeps remote tool commands from Go-normalized output-only results in %s", (source) => {
+    // Go's TestRemoteToolEventFixture checks these events against raw cloud
+    // messages whose tool_result supplies no input, including across polls.
+    const fixture = JSON.parse(readFileSync(new URL(
+      "../../../../server/internal/localconversation/service/testdata/remote-tool-events.json", import.meta.url,
+    ), "utf8"));
+    const events = localV2EventSchema.array().parse(fixture.events);
+    const conversation = source === "stream" ? restore([]) : restore(events.filter((event) => event.final));
+    if (source === "stream") {
+      conversation.applyEvents(events.slice(0, 2));
+      expect(tools(conversation).map(({ call }) => getCommandRenderData(call).command)).toEqual(["fixture-inspect", "fixture-second"]);
+      conversation.applyEvents(events.slice(2));
+    }
+    const calls = new Map(tools(conversation).map(({ callId, call }) => [callId, getCommandRenderData(call)]));
+    expect(calls.get("remote-turn-a")).toMatchObject({ command: "fixture-inspect", cwd: "/repo", stdout: "First output\n", status: "completed" });
+    expect(calls.get("remote-turn-b")).toMatchObject({ command: "fixture-second", cwd: "/other", stdout: "Second output\n", status: "completed" });
+  });
+
   it.each(["command", "tool_call"])("renders %s output while streaming and after reopening", (kind) => {
     const input = kind === "command" ? { command: "fixture", cwd: "/repo" } : { tool: "Bash", input: { command: "fixture", cwd: "/repo" } };
     const events = [
