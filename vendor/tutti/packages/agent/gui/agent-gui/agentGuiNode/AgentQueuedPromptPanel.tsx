@@ -14,7 +14,7 @@ import {
   TooltipTrigger,
   useTextOverflow
 } from "@tutti-os/ui-system";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Pencil } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import {
   Component,
@@ -802,6 +802,7 @@ const DropdownMenuItemBinding4 = observer(function DropdownMenuItemBinding4({
         onPointerDown={onPointerDownProp6}
         onSelect={onSelectProp7}
       >
+        <Pencil className="size-4" aria-hidden="true" />
         <span>{labels.editQueuedPrompt}</span>
       </DropdownMenuItem>
     </Slot.Root>

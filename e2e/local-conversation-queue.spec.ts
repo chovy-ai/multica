@@ -156,7 +156,7 @@ for (const provider of ["codex", "claude"] as const) for (const fresh of [false,
 }
 
 for (const locale of ["zh-CN", "en"] as const) for (const theme of ["light", "dark"] as const) {
-  test(`queued prompt menu keeps its label and description readable in ${locale} ${theme}`, async ({ page }) => {
+  test(`queued prompt menu aligns compact actions in ${locale} ${theme}`, async ({ page }) => {
     const at = "2026-10-24T10:00:00Z";
     const session = { id: "queue-menu", workspace_id: "queue-workspace", creator_id: "queue-user", agent_id: "local:codex", title: "Queue menu", status: "active", created_at: at, updated_at: at, has_unread: false } as ChatSession;
     const snapshot: AgentGuiInitSnapshot = { workspaceId: session.workspace_id, workspaceSlug: "test", userId: session.creator_id, locale, theme, local: true, sideWorkspace: true, hostActive: true, hostVisible: true, agents: [], sessions: [session], activeSessionId: session.id, selectedAgentId: session.agent_id,
@@ -183,7 +183,7 @@ for (const locale of ["zh-CN", "en"] as const) for (const theme of ["light", "da
       expect(Math.abs(alignment.right)).toBeLessThanOrEqual(1);
       expect(Math.abs(alignment.textLeft)).toBeLessThanOrEqual(1);
       await more.click();
-      const action = gui.getByRole("menuitem", { name: locale === "en" ? /Run in side/ : /在旁支中执行/ });
+      const action = gui.getByRole("menuitem", { name: locale === "en" ? /Move to side and run/ : /移至旁支执行/ });
       await expect(action).toBeVisible();
       await expect(gui.getByRole("menu")).toHaveCSS("opacity", "1");
       const layout = await action.evaluate((element) => {
@@ -192,15 +192,22 @@ for (const locale of ["zh-CN", "en"] as const) for (const theme of ["light", "da
         let title: Node | null = null;
         while (walker.nextNode()) if (walker.currentNode.textContent?.trim()) { title = walker.currentNode; break; }
         const range = document.createRange(); range.selectNodeContents(title!);
-        const label = range.getBoundingClientRect();
-        const description = element.querySelector(".text-muted-foreground")!.getBoundingClientRect();
+        const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+        const rows = items.map((item) => {
+          const icon = item.querySelector("svg")!.getBoundingClientRect();
+          const text = item.querySelector("span")!.getBoundingClientRect();
+          return { height: item.getBoundingClientRect().height, iconLeft: icon.left, textLeft: text.left };
+        });
         const bounds = menu.getBoundingClientRect();
-        return { lines: range.getClientRects().length, titleBottom: label.bottom, descriptionTop: description.top, width: bounds.width, height: bounds.height, left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, viewportWidth: innerWidth, viewportHeight: innerHeight };
+        return { lines: range.getClientRects().length, rows, width: bounds.width, height: bounds.height, left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, viewportWidth: innerWidth, viewportHeight: innerHeight };
       });
-      expect(layout.width).toBeGreaterThanOrEqual(224);
+      expect(layout.width).toBeLessThan(224);
       expect(layout.lines).toBe(1);
-      expect(layout.descriptionTop).toBeGreaterThanOrEqual(layout.titleBottom);
-      expect(layout.height).toBeLessThanOrEqual(110);
+      expect(layout.rows).toHaveLength(2);
+      expect(Math.abs(layout.rows[0].height - layout.rows[1].height)).toBeLessThanOrEqual(1);
+      expect(layout.rows[0].iconLeft).toBe(layout.rows[1].iconLeft);
+      expect(layout.rows[0].textLeft).toBe(layout.rows[1].textLeft);
+      expect(layout.height).toBeLessThanOrEqual(80);
       expect(layout.left).toBeGreaterThanOrEqual(0);
       expect(layout.right).toBeLessThanOrEqual(layout.viewportWidth);
       expect(layout.top).toBeGreaterThanOrEqual(0);
@@ -227,7 +234,7 @@ for (const provider of ["codex", "claude"] as const) {
     const queue = gui.getByTestId("agent-gui-composer-queued-prompts");
     await expect(queue).toContainText("Move this queued request");
     await queue.getByRole("button", { name: "More queued prompt actions" }).click();
-    await gui.getByRole("menuitem", { name: /Run in side/ }).click();
+    await gui.getByRole("menuitem", { name: /Move to side and run/ }).click();
     await expect(page.locator("body")).toHaveAttribute("data-side-started", "side-session");
     const moved = await page.locator("body").evaluate((body) => JSON.parse(body.dataset.sideRequest || "{}"));
     expect(moved.sessionId).toBe(session.id); expect(moved.pending.content).toBe("Move this queued request");

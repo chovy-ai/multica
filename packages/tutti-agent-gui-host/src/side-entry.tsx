@@ -434,17 +434,8 @@ const DropdownMenuItemBinding3 = observer(function DropdownMenuItemBinding3({
         disabled={disabled || pending}
         onSelect={onSelectProp3}
       >
-        <PanelRightOpen size={16} aria-hidden="true" />
-        <div className="multica-queue-action-copy">
-          <span className="multica-queue-action-title">
-            {entry.chinese ? "在旁支中执行" : "Run in side"}
-          </span>
-          <span className="text-caption text-muted-foreground">
-            {entry.chinese
-              ? "移出主队列，在右侧独立执行"
-              : "Move from this queue and run alongside"}
-          </span>
-        </div>
+        <PanelRightOpen className="size-4" aria-hidden="true" />
+        <span>{entry.chinese ? "移至旁支执行" : "Move to side and run"}</span>
       </DropdownMenuItem>
     </Slot.Root>
   );
