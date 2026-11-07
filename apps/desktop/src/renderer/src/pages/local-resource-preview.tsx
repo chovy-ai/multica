@@ -22,6 +22,7 @@ import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Markdown } from "@multica/ui/markdown/Markdown";
 import { copyText } from "@multica/ui/lib/clipboard";
+import type { ConversationResourceAttachment } from "@multica/core/local-conversation/resources";
 import type {
   LocalConversationScope,
   LocalPreviewLocation
@@ -31,6 +32,7 @@ import type {
   WebPreviewCommand
 } from "../../../shared/resource-preview";
 import { ChromeProfileImport } from "./chrome-profile-import";
+import { conversationService } from "../platform/conversation-services";
 import { localV2Preview } from "../platform/local-v2-preview";
 import { useLocalDevice } from "../platform/local-device";
 import { isServicePreviewUrl } from "../../../shared/service-preview-url";
@@ -175,6 +177,7 @@ function PreviewFolderRender({
 }
 
 function LocalFilePreviewRender({
+  attachment,
   location,
   scope,
   sessionId,
@@ -182,6 +185,7 @@ function LocalFilePreviewRender({
   chinese
 }: {
   location: LocalPreviewLocation;
+  attachment?: ConversationResourceAttachment;
   scope: LocalConversationScope;
   sessionId?: string;
   line?: number;
@@ -194,6 +198,7 @@ function LocalFilePreviewRender({
     scope.workspaceId,
     location.root,
     location.path,
+    attachment?.id,
     line
   ]);
   const [mode, setMode] = useState({ key: previewKey, source: !!line });
@@ -206,10 +211,19 @@ function LocalFilePreviewRender({
       scope.userId,
       scope.workspaceId,
       location.root,
-      location.path
+      location.path,
+      attachment?.id
     ],
-    queryFn: () =>
-      localV2Preview(device.transport, scope).read(location, sessionId)
+    queryFn: async () => {
+      if (!attachment) return localV2Preview(device.transport, scope).read(location, sessionId);
+      const client=conversationService(device.transport,scope);
+      const url=client.fileUrl(`/attachments/${encodeURIComponent(attachment.id)}`);
+      if (attachment.media_type.startsWith("image/") || attachment.media_type==="application/pdf") return {name:attachment.name,path:attachment.name,mimeType:attachment.media_type,size:attachment.size,truncated:false,url};
+      const response=await fetch(url,{headers:{Range:"bytes=0-1048576"}});
+      if (!response.ok) throw new Error(`Attachment request failed (HTTP ${response.status})`);
+      const bytes=new Uint8Array(await response.arrayBuffer());
+      return {name:attachment.name,path:attachment.name,mimeType:attachment.media_type,size:attachment.size,truncated:bytes.length>1048576,text:new TextDecoder("utf-8",{fatal:true}).decode(bytes.subarray(0,1048576))};
+    }
   });
   const highlight = useRef<HTMLSpanElement>(null);
   useEffect(() => {

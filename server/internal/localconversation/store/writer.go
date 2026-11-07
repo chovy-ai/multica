@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/filechanges"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 )
 
@@ -86,13 +87,15 @@ type SummaryPatch struct {
 type QueueOperation struct{ ID, Action, RequestID string }
 
 type Batch struct {
-	Operation      *QueueOperation
-	ConversationID string
-	StartTurn      *NewTurn
-	Events         []NewEvent
-	Messages       []NewMessage
-	CompleteTurn   *TurnCompletion
-	Summary        *SummaryPatch
+	FileObservations []filechanges.Observation
+	FileCollections  []filechanges.Collection
+	Operation        *QueueOperation
+	ConversationID   string
+	StartTurn        *NewTurn
+	Events           []NewEvent
+	Messages         []NewMessage
+	CompleteTurn     *TurnCompletion
+	Summary          *SummaryPatch
 	// ProviderSessionID records the native session the conversation resumes.
 	ProviderSessionID *string
 	// Attachments are files written by WriteAttachmentFile that events in
@@ -410,6 +413,10 @@ func applyBatch(ctx context.Context, q *sqlitedb.Queries, b Batch) (Committed, e
 		}
 	}
 	if err := applySubmissions(ctx, q, &b, started); err != nil {
+		return Committed{}, err
+	}
+
+	if err := applyFileObservations(ctx, q, &b, conv); err != nil {
 		return Committed{}, err
 	}
 

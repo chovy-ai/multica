@@ -307,6 +307,8 @@ export interface LocalProviderUsage {
 const sideId = z.string().min(1).max(160);
 const sidePath = z.string().min(1).max(4096);
 export const sideWorkspaceTabSchema = z.discriminatedUnion("kind", [
+ z.object({id:sideId,kind:z.literal("changes"),sessionId:sideId,fileId:sideId.optional()}).strict(),
+ z.object({id:sideId,kind:z.literal("attachment"),sessionId:sideId,attachmentId:sideId,name:z.string().max(4096),mimeType:z.string().max(200)}).strict(),
   z
     .object({
       id: sideId,

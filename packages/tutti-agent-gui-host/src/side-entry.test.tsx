@@ -8,7 +8,7 @@ AgentGuiHostServices,
 AgentGuiOperationInvoker
 } from "./protocol";
 import { ResourceLinkProvider,ResourceMarkdownLink } from "./resource-link";
-import { SideEntryProvider } from "./side-entry";
+import { FileChangeAction, SideEntryProvider } from "./side-entry";
 
 vi.mock("@tutti-os/ui-system", () => ({ DropdownMenuItem: () => null }));
 vi.mock("@multica/ui/components/ui/button", () => ({
@@ -472,3 +472,13 @@ it.each(["image", "editor"])(
     expect(request).not.toHaveBeenCalled();
   }
 );
+
+it("opens the Codex output file in the source conversation's Changes tab without sending", async () => {
+  await act(async () => root.render(<SideEntryProvider root={container} client={client} handle={handle} sessionId="session-a" chinese={false} enabled>
+    <FileChangeAction call={{ statusKind: "completed", rendererKind: "edit", input: null, output: { changes: [{ path: "src/target.ts" }] } }} />
+  </SideEntryProvider>));
+  const button = container.querySelector("button")!;
+  expect(button.textContent).toBe("View changes");
+  await act(async () => button.click());
+  expect(request).toHaveBeenCalledExactlyOnceWith("host.openResource", { sessionId: "session-a", url: "multica:changes?path=src%2Ftarget.ts" });
+});

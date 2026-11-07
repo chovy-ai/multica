@@ -193,6 +193,7 @@ export function createEnDict(
     label: "FAQ",
     headline: "Questions & answers.",
     items: [
+      { question: "Where can I inspect files changed in a conversation?", answer: "In Desktop, open Conversation resources with the sliders button. Changes open as read-only diffs in the existing right workspace, alongside outputs and attachments. Side tabs and drafts are preserved; older history and writes without verified file evidence are marked incomplete." },
       {
         question: "Can I preview a web service running on another device?",
         answer: "Yes. Desktop can open a linked same-account device’s localhost service through P2P. Enable Device link on the service host. Agents register the actual listening port after starting a requested service; manual port settings remain available. Temporary registrations belong to the source conversation and are removed when the service stops. Both devices need a compatible version.",
