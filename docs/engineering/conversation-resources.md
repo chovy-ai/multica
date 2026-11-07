@@ -2,6 +2,8 @@
 
 Desktop’s sliders button lists the selected conversation’s changes, outputs and committed attachments. It opens a popover without changing the existing Side panel. Selecting a change reuses one Changes tab for that source conversation; Side, file, folder and web tabs keep their own state. Split diff requires the expanded workspace; narrow panes use a file drawer. There are no write, apply or revert controls.
 
+The Changes view measures its own panel, independently of the chat workspace. Below 640 px it replaces the inline tree with the file drawer and renders unified diff, including after a panel resize. The path occupies a separate truncated row; its focusable tooltip exposes the full path without consuming code height.
+
 ## Trace a file change
 
 1. A runner takes a bounded, ignore-aware snapshot of its current working directory before dispatching a turn. Git supplies file names only; HEAD and the index are never baselines.
@@ -42,6 +44,8 @@ The migration runs with the existing SQLite transactional migration mechanism. B
 Run the adjacent filechanges/store/service/localhost Go tests with `-race`; they use temporary SQLite/files and fake runners. Run the core resource-schema, conversation-client resource-service, Claude capture/host and tool-action tests. The Desktop Side/flow suites protect existing drafts, tab limits, previews and focus.
 
 `e2e/conversation-resources.spec.ts` mounts production Desktop workspace/resource components with a fake transport. Serve `packages/tutti-agent-gui-host/vite.config.ts`, then point `PLAYWRIGHT_BASE_URL` at that server. It covers light/dark at 1440/1024/390, popover layout/focus, read-only diff, expanded split mode and the narrow file drawer. No user profile, real agent CLI, model API or PostgreSQL is used.
+
+`e2e/conversation-resources-layout.spec.ts` covers long paths in both themes at all three widths, plus dragging the panel through the inline-tree threshold and restoring an expanded split diff. It asserts that the rendered code starts inside the scroll region and at least 200 px of that region intersects the visible panel and viewport; checking only document overflow misses vertically displaced code.
 
 Dependencies are pinned in manifests/lockfiles. Pierre license/notice files and gotextdiff’s BSD license ship under Desktop renderer `public/licenses/conversation-resources/`. The Vite tool-action adapter adds the button to the pinned upstream GUI at build time and fails if the insertion anchor changes; vendored sources remain untouched.
 

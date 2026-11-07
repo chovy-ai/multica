@@ -17,7 +17,8 @@ setApiInstance(new ApiClient(location.origin));
 const params = new URLSearchParams(location.search);
 const scenario = params.get("scenario") ?? "";
 const proofName = params.get("proof");
-const proof = proofName ? await fetch(new URL(`../../.tmp/chov96-runner/${proofName}.json`, import.meta.url)).then(response => response.json()) : null;
+// Evidence is generated after Vite starts; do not freeze it into an asset glob.
+const proof = proofName ? await fetch(new URL(/* @vite-ignore */ `../../.tmp/chov96-runner/${proofName}.json`, import.meta.url)).then(response => response.json()) : null;
 
 const scope = { userId: "resource-fixture", workspaceId: "resource-fixture" };
 const summary = { conversation_id: "source", summary_seq: 1, provider: "codex", title: "Repair login redirect", cwd: "/project", project_id: null, pinned: false, archived: false, status: "idle", last_message_preview: "Updated redirect validation", turn_count: 1, updated_at: "2026-11-07T10:00:00Z" };
@@ -71,6 +72,7 @@ Object.defineProperty(window, "__resourceFixture", { value: {
 const device = { id: "local", name: "", transport } as LocalDevice;
 Object.defineProperty(window, "desktopAPI", { configurable: true, value: { sideWorkspace: { reconcile: async () => {}, onActivity: () => () => {}, onCommand: () => () => {}, ack: async () => {} }, resourcePreview: (window as unknown as { __resourcePreviewFixture?: unknown }).__resourcePreviewFixture ?? { request: async () => null, subscribe: () => () => {} } } });
 const theme = new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light";
+localStorage.setItem("theme", theme);
 const key = `multica-side-workspace:${scope.userId}:${scope.workspaceId}:session:source`;
 localStorage.setItem(key, JSON.stringify({ tabs: [{ id: "readme", kind: "file", sourceId: "source", location: { root: "/project", path: "/project/README.md", name: "README.md", kind: "file" } }], selected: "readme", open: true }));
 if (scenario === "full") localStorage.setItem(key, JSON.stringify({ tabs: Array.from({ length: 20 }, (_, i) => ({ id: `readme-${i}`, kind: "file", sourceId: "source", location: { root: "/project", path: `/project/README-${i}.md`, name: `README-${i}.md`, kind: "file" } })), selected: "readme-0", open: true }));

@@ -34,6 +34,7 @@ for (const provider of ["codex", "claude"]) {
     for (const name of ["edited.ts", "created.ts"]) await expect(page.getByRole("button", { name: new RegExp(name) })).toBeVisible();
     await page.getByRole("button", { name: /edited.ts/ }).click();
     await expect(page.getByRole("region", { name: "View changes" }).locator("diffs-container")).toContainText("B");
+    await page.getByRole("button", { name: "Choose changed file", exact: true }).click();
     const tree = page.getByRole("treeitem", { name: "created.ts", exact: true }); await tree.focus(); await page.keyboard.press("Enter");
     await expect(page.getByRole("region", { name: "View changes" }).locator("diffs-container")).toContainText("new");
     await expect(page.getByRole("tab", { name: "Changes", exact: true })).toHaveCount(1);
@@ -65,6 +66,7 @@ test("full workspace retains all 20 tabs and reuses Changes after one tab closes
   await page.getByRole("button", { name: /src\/auth\/redirect.test.ts/ }).click();
   await expect(page.getByRole("tab")).toHaveCount(20);
   await expect(page.getByRole("region", { name: "View changes" }).locator("diffs-container")).toContainText("expect");
+  await page.getByRole("button", { name: "Choose changed file", exact: true }).click();
   await expect(page.getByRole("treeitem", { selected: true })).toHaveCount(1);
   await expect(page.getByRole("treeitem", { name: "redirect.test.ts", exact: true })).toHaveAttribute("aria-selected", "true");
 });

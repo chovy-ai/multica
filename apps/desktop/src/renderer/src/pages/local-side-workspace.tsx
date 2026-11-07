@@ -1022,7 +1022,7 @@ export const LocalSideWorkspace = observer(
                             layout={layout}
                           />
                         ) : tab.kind === "changes" ? (
-                          <ChangesTab service={v2.resources(tab.sessionId)} tab={tab} active={sideVisible && owner===key && layout.selected===tab.id} expanded={maximized} narrow={narrow} setLayout={setLayoutCallback} onBack={backToResources} />
+                          <ChangesTab service={v2.resources(tab.sessionId)} tab={tab} active={sideVisible && owner===key && layout.selected===tab.id} expanded={maximized} setLayout={setLayoutCallback} onBack={backToResources} />
                         ) : tab.kind === "attachment" ? (
                           <AttachmentTab tab={tab} scope={props.scope} chinese={props.chinese} />
                         ) : tab.kind === "web" ? (
