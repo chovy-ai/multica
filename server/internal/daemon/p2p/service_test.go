@@ -394,18 +394,18 @@ func TestDirectRetriesBackOffAndResetOnChange(t *testing.T) {
 	var r directRetries
 	_, id := newKey(t)
 	now := time.Now()
-	first, due := r.begin(id, now)
+	first, due := r.begin(id, now, nil)
 	if !first || !due {
 		t.Fatalf("first attempt = %v %v", first, due)
 	}
-	if _, due := r.begin(id, now); due {
+	if _, due := r.begin(id, now, nil); due {
 		t.Fatal("a second dial started during the first")
 	}
 	r.finish(id, false, now)
-	if _, due := r.begin(id, now.Add(directRetryMin-time.Second)); due {
+	if _, due := r.begin(id, now.Add(directRetryMin-time.Second), nil); due {
 		t.Fatal("retried before the delay")
 	}
-	first, due = r.begin(id, now.Add(directRetryMin))
+	first, due = r.begin(id, now.Add(directRetryMin), nil)
 	if first || !due {
 		t.Fatalf("retry = %v %v", first, due)
 	}
@@ -418,18 +418,41 @@ func TestDirectRetriesBackOffAndResetOnChange(t *testing.T) {
 	}
 	r.state[id].dialing = false
 	r.reset(id)
-	if first, due := r.begin(id, now); !first || !due {
+	if first, due := r.begin(id, now, nil); !first || !due {
 		t.Fatalf("after reset = %v %v", first, due)
 	}
 	// A reset during a dial must not be undone by the dial finishing.
 	r.reset(id)
 	r.finish(id, false, now)
-	if _, due := r.begin(id, now); !due {
+	if _, due := r.begin(id, now, nil); !due {
 		t.Fatal("reset lost to a dial in flight")
 	}
 	r.finish(id, true, now)
 	if len(r.state) != 0 {
 		t.Fatalf("state after success = %v", r.state)
+	}
+}
+
+func TestDirectRetriesKeepBackoffWhenTriedAddressesReturn(t *testing.T) {
+	var r directRetries
+	_, id := newKey(t)
+	now := time.Now()
+	lan := ma.StringCast("/ip4/192.168.5.23/udp/4001/quic-v1")
+	observed := ma.StringCast("/ip4/203.0.113.7/tcp/49445")
+	circuit := ma.StringCast("/ip4/198.51.100.1/tcp/4001/p2p/12D3KooWD2cS2JvxqdUaCPQq9tQZ9SsTSGFzwtFspFaSXc9kQXiJ/p2p-circuit")
+	r.begin(id, now, []ma.Multiaddr{lan, observed})
+	r.finish(id, false, now)
+
+	// The observed address left and came back, and the relay address changed.
+	r.resetIfNew(id, []ma.Multiaddr{lan})
+	r.resetIfNew(id, []ma.Multiaddr{lan, observed, circuit})
+	if _, due := r.begin(id, now, nil); due {
+		t.Fatal("re-registering tried addresses reset the backoff")
+	}
+
+	r.resetIfNew(id, []ma.Multiaddr{lan, ma.StringCast("/ip4/203.0.113.7/udp/50828/quic-v1")})
+	if first, due := r.begin(id, now, nil); !first || !due {
+		t.Fatalf("after a new address = %v %v", first, due)
 	}
 }
 

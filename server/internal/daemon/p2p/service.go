@@ -861,7 +861,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 		if previous, ok := s.allow.get(p.ID); ok && !slices.EqualFunc(previous.RegisteredAddrs, p.RegisteredAddrs, func(a, b ma.Multiaddr) bool { return a.Equal(b) }) {
 			changed = append(changed, p.ID)
 			if s.Connection(p.ID) == ConnectionRelayed {
-				s.directRetries.reset(p.ID)
+				s.directRetries.resetIfNew(p.ID, p.RegisteredAddrs)
 				s.dialDirect(p)
 			}
 		}
@@ -911,7 +911,7 @@ func (s *Service) dialDirect(p Peer) {
 	if len(addrs) == 0 {
 		return
 	}
-	first, due := s.directRetries.begin(p.ID, time.Now())
+	first, due := s.directRetries.begin(p.ID, time.Now(), addrs)
 	if !due {
 		return
 	}
@@ -988,10 +988,12 @@ type directRetry struct {
 	delay   time.Duration
 	next    time.Time
 	dialing bool
+	// tried holds the direct addresses this run of attempts has dialed.
+	tried map[string]struct{}
 }
 
-// begin claims a dial if one is due. first is whether it starts a run of attempts.
-func (r *directRetries) begin(id peer.ID, now time.Time) (first, due bool) {
+// begin claims a dial of addrs if one is due. first is whether it starts a run of attempts.
+func (r *directRetries) begin(id peer.ID, now time.Time, addrs []ma.Multiaddr) (first, due bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.state == nil {
@@ -1007,6 +1009,12 @@ func (r *directRetries) begin(id peer.ID, now time.Time) (first, due bool) {
 		return false, false
 	}
 	entry.dialing = true
+	if entry.tried == nil {
+		entry.tried = map[string]struct{}{}
+	}
+	for _, a := range addrs {
+		entry.tried[a.String()] = struct{}{}
+	}
 	return first, true
 }
 
@@ -1032,6 +1040,28 @@ func (r *directRetries) reset(id peer.ID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.state, id)
+}
+
+// resetIfNew resets a device whose registered addresses include a direct one
+// this run has not dialed. Observed public addresses can drop out of and return
+// to a registration every few seconds, as behind a proxy that rewrites ports;
+// re-registering addresses that already failed must not undo the backoff.
+func (r *directRetries) resetIfNew(id peer.ID, addrs []ma.Multiaddr) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry := r.state[id]
+	if entry == nil {
+		return
+	}
+	for _, a := range addrs {
+		if isCircuit(a) {
+			continue
+		}
+		if _, ok := entry.tried[a.String()]; !ok {
+			delete(r.state, id)
+			return
+		}
+	}
 }
 
 func (r *directRetries) clear() {
