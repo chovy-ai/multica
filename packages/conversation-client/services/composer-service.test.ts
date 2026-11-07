@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { autorun } from "mobx";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeModelsResult } from "@multica/core/types";
 import { GLOBAL_EXECUTION_PERMISSION_KEY } from "../models/composer-preferences";
@@ -488,6 +489,26 @@ describe("choices", () => {
 });
 
 describe("native service tier selections", () => {
+  it.each([
+    ["priority", "detail"], ["default", "detail"],
+    ["priority", "preference"], ["default", "preference"],
+  ] as const)("preserves saved %s from %s when the local catalog omits speed capabilities", async (tier, source) => {
+    const data = selections({ stored: new Map(source === "preference" ? [
+      ["service-tier-preferences-v1", JSON.stringify([["session:c", { model: "test-model", tier }]])]
+    ] : []) });
+    data.options.conversation = (id) => id === "c" ? {
+      agentId: "a", detail: { model: "test-model", serviceTier: source === "detail" ? tier : null, untouched: false }
+    } : undefined;
+    // Go's TestCodexModelResponseContract verifies this exact response.
+    data.options.listModels = async () => JSON.parse(readFileSync(new URL("../../core/local-conversation/testdata/codex-models-response.json", import.meta.url), "utf8"));
+    const service = new ComposerService(async () => ({ provider: "codex" }), data.options);
+    await service.hydrated();
+    expect(service.selectedServiceTier("a", "c")).toBe(tier);
+    await service.refreshCatalog("a");
+    await service.setReasoningSelection("a", "c", "high");
+    expect(service.selectedServiceTier("a", "c")).toBe(tier);
+    service.dispose();
+  });
   it("saves Fast, overrides it with Standard, resets to inherited CLI settings, and restores a session after restart", async () => {
     const data = selections();
     data.options.listModels = async () => ({ supported: true, models: [{ id: "m", label: "Model", service_tiers: [{ id: "priority", name: "Fast" }], supports_explicit_standard_service_tier: true }] });

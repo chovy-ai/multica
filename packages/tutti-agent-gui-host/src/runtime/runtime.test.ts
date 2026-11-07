@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { readFileSync } from "node:fs";
 import type {
 Agent,
 AgentTask,
@@ -2406,6 +2407,30 @@ describe("local thinking settings", () => {
     await expect(
       handle.setReasoningSelection(agent.id, "default-draft", "low")
     ).rejects.toMatchObject({ code: "run_in_progress" });
+  });
+  it.each(["priority", "default"] as const)("keeps saved %s in the queue after loading the local catalog and changing reasoning", async (tier) => {
+    const data = backend(new Map([
+      ["model-preferences-v1", JSON.stringify([[`draft:${agent.id}`, "test-model"]])],
+      ["service-tier-preferences-v1", JSON.stringify([[`draft:${agent.id}`, { model: "test-model", tier }]])]
+    ]));
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "models.list") return JSON.parse(readFileSync(new URL("../../../core/local-conversation/testdata/codex-models-response.json", import.meta.url), "utf8"));
+      return original(method, params);
+    });
+    const handle = createMulticaAgentGuiRuntime(data.client, { ...init, local: true });
+    handles.push(handle);
+    await handle.initialize();
+    expect(handle.getServiceTierSelection(agent.id)).toBe(tier);
+    await handle.loadModelCatalog(agent.id);
+    await handle.setReasoningSelection(agent.id, null, "high");
+    handle.runtime.activations.request({
+      mode: "new", agentSessionId: "tier-review-draft", agentTargetId: agent.id,
+      requestId: "tier-review-activation", clientSubmitId: "tier-review-submit",
+      initialContent: [{ type: "text", text: "Review probe" }]
+    });
+    await vi.waitFor(() => expect(enqueuedItem(data.request)).toBeDefined());
+    expect(enqueuedItem(data.request)).toMatchObject({ model: "test-model", reasoningEffort: "high", serviceTier: tier });
   });
   it("keeps draft model, thinking and speed through activation, delivery, and restart", async () => {
     const data = backend();

@@ -298,8 +298,9 @@ export class ComposerService<Options extends ComposerOptionsLike> {
     const selection = this.serviceTiers.get(agentId, this.savedUnder(sessionId));
     const tier = selection ? ((this.followingClaudeDefault(agentId, selection.model) ? null : selection.model) === model ? selection.tier : null)
       : model === (detail?.model ?? null) ? detail?.serviceTier ?? null : null;
-    const catalog = this.catalogs.get(agentId);
-    return tier && (!catalog || localServiceTiers(catalog.models, model ?? this.deps.requireAgent(agentId).model).includes(tier)) ? tier : null;
+    // Catalog capabilities gate new choices, not an already saved override.
+    // Reading an incomplete catalog must not turn the next send into a reset.
+    return tier;
   }
 
   selectedPermission(_agentId: string, _sessionId?: string | null): LocalPermissionMode {
