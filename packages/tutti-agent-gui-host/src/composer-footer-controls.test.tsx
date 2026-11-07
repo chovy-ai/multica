@@ -232,15 +232,20 @@ it.each([
         .find((entry) => entry.getAttribute("aria-label") === label)!;
     await open();
     if (provider === "codex") {
-      const tier = (value: string) => document.querySelector<HTMLInputElement>(`input[value="${value}"]`)!;
-      await act(async () => tier("priority").click());
+      const fast = document.querySelector<HTMLButtonElement>('button[aria-label="Fast"]');
+      expect(fast).not.toBeNull();
+      expect(fast!.getAttribute("aria-pressed")).toBe("false");
+      expect(fast!.querySelector("svg")?.getAttribute("fill")).toBe("none");
+      await act(async () => fast!.click());
       expect(handle.getServiceTierSelection(target.id)).toBe("priority");
-      expect(tier("priority").checked).toBe(true);
-      await act(async () => tier("default").click());
+      expect(fast!.getAttribute("aria-pressed")).toBe("true");
+      expect(fast!.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
+      await act(async () => fast!.click());
       expect(handle.getServiceTierSelection(target.id)).toBe("default");
-      expect(tier("default").checked).toBe(true);
+      expect(fast!.getAttribute("aria-pressed")).toBe("false");
+      expect(fast!.querySelector("svg")?.getAttribute("fill")).toBe("none");
     } else {
-      expect(document.querySelector('input[value="priority"]')).toBeNull();
+      expect(document.querySelector('button[aria-label="Fast"]')).toBeNull();
     }
     if (followDefault) {
       expect(container.querySelector('[data-testid="multica-model-picker"]')?.textContent).toContain("Default · Reasoning");

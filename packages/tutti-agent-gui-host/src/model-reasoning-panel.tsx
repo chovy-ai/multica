@@ -106,9 +106,11 @@ function ModelReasoningPanelRender({
   );
   const defaultLevel = effective?.thinking?.default_level;
   const tiers = remote ? [] : localServiceTiers(models, configured);
-  const handleTier = usePersistCallback(
-    (event: ChangeEvent<HTMLInputElement>) => void onTierChange(event.target.value)
-  );
+  const fast = selectedTier === "priority";
+  const toggleFast = usePersistCallback(() => {
+    if (disabled || !tiers.includes("priority") || !tiers.includes("default")) return;
+    void onTierChange(fast ? "default" : "priority");
+  });
   const known = models.some((model) => model.id === configured);
   const unavailable =
     catalog?.unavailableModels?.filter((model) =>
@@ -348,30 +350,25 @@ function ModelReasoningPanelRender({
               <p className="multica-model-message">{noReasoningOptions}</p>
             )}
           </div>
-          {tiers.length > 0 && (
-            <fieldset className="multica-model-speed" disabled={disabled}>
-              <legend className="multica-model-reasoning-heading">{chinese ? "速度" : "Speed"}</legend>
-              <div role="radiogroup" aria-label={chinese ? "速度" : "Speed"}>
-                {["", ...tiers].map((tier) => (
-                  <label
-                    className="multica-model-choice"
-                    key={tier}
-                    data-selected={(selectedTier ?? "") === tier}
-                  >
-                    <input
-                      type="radio"
-                      name={`${id}-speed`}
-                      value={tier}
-                      checked={(selectedTier ?? "") === tier}
-                      onChange={handleTier}
-                    />
-                    {tier === "priority" && <Zap aria-hidden="true" className="size-4" />}
-                    <span className="multica-model-name">{tier === "priority" ? "Fast" : tier === "default" ? (chinese ? "普通" : "Standard") : copy.inherit}</span>
-                    {(selectedTier ?? "") === tier && <Check aria-hidden="true" className="size-4" />}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
+          {tiers.includes("priority") && (
+            <div className="multica-model-speed">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Fast"
+                aria-pressed={fast}
+                disabled={disabled || !tiers.includes("default")}
+                title={!tiers.includes("default")
+                  ? (chinese ? "更新 CLI 后可切换 Fast" : "Update the CLI to toggle Fast")
+                  : fast
+                    ? (chinese ? "关闭 Fast" : "Turn off Fast")
+                    : (chinese ? "开启 Fast" : "Turn on Fast")}
+                onClick={toggleFast}
+              >
+                <Zap aria-hidden="true" className="size-4" fill={fast ? "currentColor" : "none"} />
+              </Button>
+            </div>
           )}
         </section>
       </div>
