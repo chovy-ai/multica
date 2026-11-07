@@ -6,6 +6,7 @@ const APPROX_CHARS_PER_LINE = 34;
 export interface StreamingMarkdownBlock {
   content: string;
   initialKeyContent: string;
+  sourceStart: number;
 }
 
 export function splitStreamingMarkdownBlocks(
@@ -13,15 +14,18 @@ export function splitStreamingMarkdownBlocks(
 ): StreamingMarkdownBlock[] {
   const normalized = content.replace(/\r\n?/g, "\n");
   if (!normalized) {
-    return [{ content: "", initialKeyContent: "" }];
+    return [{ content: "", initialKeyContent: "", sourceStart: 0 }];
   }
 
   const lines = normalized.split("\n");
   const blocks: StreamingMarkdownBlock[] = [];
   const current: string[] = [];
   let fence: { marker: string; length: number } | null = null;
+  let sourceStart = 0;
+  let offset = 0;
 
   for (const line of lines) {
+    offset += line.length + 1;
     current.push(line);
     const lineFence = parseStreamingFence(line);
     if (lineFence) {
@@ -36,18 +40,20 @@ export function splitStreamingMarkdownBlocks(
       continue;
     }
     if (!fence && line.trim() === "") {
-      pushStreamingMarkdownBlock(blocks, current);
+      pushStreamingMarkdownBlock(blocks, current, sourceStart);
+      sourceStart = offset;
     }
   }
-  pushStreamingMarkdownBlock(blocks, current);
+  pushStreamingMarkdownBlock(blocks, current, sourceStart);
   return blocks.length > 0
     ? blocks
-    : [{ content: normalized, initialKeyContent: normalized }];
+    : [{ content: normalized, initialKeyContent: normalized, sourceStart: 0 }];
 }
 
 export function pushStreamingMarkdownBlock(
   blocks: StreamingMarkdownBlock[],
-  lines: string[]
+  lines: string[],
+  sourceStart: number
 ): void {
   if (lines.length === 0) {
     return;
@@ -59,7 +65,8 @@ export function pushStreamingMarkdownBlock(
   }
   blocks.push({
     content,
-    initialKeyContent: content
+    initialKeyContent: content,
+    sourceStart
   });
   lines.length = 0;
 }

@@ -178,6 +178,49 @@ describe("AgentMessageMarkdown", () => {
     expect(screen.getByTestId("markdown-code-copy")).toBeInTheDocument();
   });
 
+  it("previews a closed SVG while streaming and preserves it as prose continues", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle r="4"/></svg>';
+    const open = `Intro\n\n\`\`\`svg\n${svg}`;
+    const { container, rerender } = render(
+      <AgentMessageMarkdown content={open} streaming />
+    );
+    expect(container.querySelector("iframe")).toBeNull();
+
+    const closed = `${open}\n\`\`\``;
+    rerender(<AgentMessageMarkdown content={closed} streaming />);
+    await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull());
+    const frame = container.querySelector("iframe");
+    const documentSource = frame?.getAttribute("srcdoc");
+
+    for (const tail of ["\nContinuing", "\nContinuing the reply\n\nMore details"]) {
+      rerender(<AgentMessageMarkdown content={closed + tail} streaming />);
+      await screen.findByText(tail.includes("More details") ? "More details" : "Continuing");
+      expect(container.querySelector("iframe")).toBe(frame);
+      expect(frame?.getAttribute("srcdoc")).toBe(documentSource);
+    }
+  });
+
+  it("previews completed SVGs independently of an unfinished SVG, HTML and Mermaid", () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    const { container } = render(
+      <AgentMessageMarkdown
+        content={[
+          "```svg", svg, "```", "",
+          "```html", "<p>HTML</p>", "```", "",
+          "```mermaid", "graph TD; A-->B", "```", "",
+          "```svg", svg
+        ].join("\n")}
+        streaming
+      />
+    );
+    const previews = container.querySelectorAll('[data-testid="multica-html-preview"]');
+    expect(previews).toHaveLength(3);
+    expect(previews[0]?.querySelector("iframe")).not.toBeNull();
+    expect(previews[1]?.querySelector("iframe")).toBeNull();
+    expect(previews[2]?.querySelector("iframe")).toBeNull();
+    expect(screen.getByTestId("agent-mermaid-placeholder")).toBeInTheDocument();
+  });
+
   it("copies code block content to clipboard", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });

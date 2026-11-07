@@ -45,9 +45,13 @@ async function mountGui(page: Page, provider: "codex" | "claude", content: strin
     let port: MessagePort;
     const storage = new Map<string, string>();
     const frame = document.querySelector("iframe")!;
+    window.addEventListener("multica:test:preview-content", (event) => {
+      content = (event as CustomEvent<string>).detail;
+      port.postMessage({ type: "event", event: { type: "local.reload", sessionId: session.id } });
+    });
     document.querySelector("#finish")!.addEventListener("click", () => {
       running = false;
-      port.postMessage({ type: "event", event: { type: "invalidate", scope: "session", sessionId: session.id } });
+      port.postMessage({ type: "event", event: { type: "local.reload", sessionId: session.id } });
     });
     document.querySelector("#theme")!.addEventListener("click", () => {
       snapshot.theme = snapshot.theme === "dark" ? "light" : "dark";
@@ -68,7 +72,7 @@ async function mountGui(page: Page, provider: "codex" | "claude", content: strin
           case "workspace.load": result = snapshot; break;
           case "session.load": result = { session, messages: [
             { id: "html-question", chat_session_id: session.id, role: "user", content: "Show an interactive project summary", task_id: "html-run", created_at: session.created_at },
-            ...(!running ? [{ id: "html-answer", chat_session_id: session.id, role: "assistant", content, task_id: "html-run", created_at: session.created_at }] : []),
+            { id: "html-answer", chat_session_id: session.id, role: "assistant", content, task_id: "html-run", created_at: session.created_at },
           ], tasks: [], pending: running ? { task_id: "html-run", status: "running", created_at: session.created_at } : {} }; break;
           case "task.messages": result = running ? [{ seq: 1, type: "text", content, created_at: session.created_at }] : []; break;
           case "context.tasks": result = []; break;
@@ -326,18 +330,38 @@ for (const provider of ["codex", "claude"] as const) {
   });
 }
 
-test("SVG streaming waits and a malformed image does not break other previews", async ({ page }) => {
-  const content = `\`\`\`svg\n<svg><g></svg>\n\`\`\`\n\n\`\`\`svg\n${svgArtifact}\n\`\`\``;
+test("SVG blocks finish independently during streaming and preserve their interactions", async ({ page }) => {
+  const content = `\`\`\`svg\n<svg><g></svg>\n\`\`\`\n\n\`\`\`svg\n${svgArtifact}`;
   const gui = await mountGui(page, "codex", content, true);
   const previews = gui.getByRole("region", { name: "SVG", exact: true });
   await expect(previews).toHaveCount(2, { timeout: 30_000 });
-  await expect(previews.first().getByText("Preview appears when generation finishes")).toBeVisible();
-  await expect(previews.locator("iframe")).toHaveCount(0);
-  await page.getByRole("button", { name: "Finish generation", exact: true }).click();
   await expect(previews.first().getByRole("alert")).toContainText("Invalid SVG document");
+  await expect(previews.last().getByText("Preview appears when generation finishes")).toBeVisible();
+  await expect(previews.last().locator("iframe")).toHaveCount(0);
+  const closed = `${content}\n\`\`\``;
+  await page.evaluate((value) => window.dispatchEvent(new CustomEvent("multica:test:preview-content", { detail: value })), closed);
   await expect(previews.first().getByRole("status")).toHaveCount(0);
   await previews.first().getByRole("button", { name: "Source", exact: true }).click();
   await expect(previews.first().getByTestId("multica-html-source")).toHaveText("<svg><g></svg>");
-  await expect(previews.last().frameLocator("iframe").getByRole("img", { name: "Project workflow", exact: true })).toBeVisible();
+  const graphic = previews.last().frameLocator("iframe");
+  await expect(graphic.getByRole("img", { name: "Project workflow", exact: true })).toBeVisible();
+  await graphic.locator("html").evaluate((element) => element.setAttribute("data-retained", "yes"));
+  await previews.last().getByRole("button", { name: "Zoom in SVG", exact: true }).click();
+  const tail = "\nThe reply continues\n\nMore explanation while the turn is running";
+  await page.evaluate((value) => window.dispatchEvent(new CustomEvent("multica:test:preview-content", { detail: value })), closed + tail);
+  await expect(gui.getByText("More explanation while the turn is running", { exact: true })).toBeVisible();
+  await expect(graphic.locator("html")).toHaveAttribute("data-retained", "yes");
+  await expect.poll(() => graphic.getByTestId("multica-svg-stage").evaluate((element) => (element as HTMLElement).style.width)).toBe("125%");
+  await previews.last().getByRole("button", { name: "Source", exact: true }).click();
+  await expect(previews.last().getByTestId("multica-html-source")).toContainText("Project workflow");
+  await previews.last().getByRole("button", { name: "Preview", exact: true }).click();
+  await previews.last().getByRole("button", { name: "Expand preview", exact: true }).click();
+  const dialog = gui.getByRole("dialog", { name: "SVG preview", exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Close preview", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(graphic.locator("html")).toHaveAttribute("data-retained", "yes");
+  await mkdir(".tmp/local-conversations", { recursive: true });
+  await page.screenshot({ path: ".tmp/local-conversations/svg-streaming-complete.png" });
   await expect(gui.getByTestId("agent-gui-composer-editor")).toBeVisible();
 });
