@@ -35,6 +35,7 @@ type queueItem struct {
 	Prompt          *string         `json:"prompt"`
 	Model           json.RawMessage `json:"model"`
 	ReasoningEffort json.RawMessage `json:"reasoningEffort"`
+	ServiceTier     json.RawMessage `json:"serviceTier"`
 	PermissionMode  *string         `json:"permissionMode"`
 	AttachmentIDs   []string        `json:"attachmentIds"`
 	References      []Reference     `json:"references"`

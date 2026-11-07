@@ -826,3 +826,30 @@ func validateLocalV2(t *testing.T, def string, body any) {
 		t.Fatalf("%s response: %v", def, err)
 	}
 }
+
+func TestV2ServiceTierRoundTripAndValidation(t *testing.T) {
+	t.Parallel()
+	srv, svc := newV2Server(t)
+	h := v2Headers("user-1")
+	scopeID, err := svc.Store().EnsureScope(context.Background(), store.Scope{APIOrigin: "https://api.multica.ai", UserID: "user-1", WorkspaceID: "ws-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store().CreateConversation(context.Background(), store.NewConversation{ID: "tier", ScopeID: scopeID, Provider: "codex", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tier := range []any{"priority", "default", nil} {
+		if status, body := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/tier/commands", map[string]any{"type": "update_settings", "service_tier": tier}, h); status != http.StatusOK {
+			t.Fatalf("set %v = %d %v", tier, status, body)
+		}
+		status, snap := v2Do(t, srv, http.MethodGet, "/local/v2/sessions/tier/snapshot", nil, h)
+		if status != http.StatusOK || snap["settings"].(map[string]any)["service_tier"] != tier {
+			t.Fatalf("read %v = %d %v", tier, status, snap)
+		}
+	}
+	for _, tier := range []any{"invalid", 42} {
+		if status, _ := v2Do(t, srv, http.MethodPost, "/local/v2/sessions/tier/commands", map[string]any{"type": "update_settings", "service_tier": tier}, h); status != http.StatusBadRequest {
+			t.Fatalf("invalid tier %v accepted: %d", tier, status)
+		}
+	}
+}

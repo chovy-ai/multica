@@ -27,6 +27,18 @@ export function localReasoningLevels(
     )?.thinking?.supported_levels ?? []
   );
 }
+export const LOCAL_SERVICE_TIERS = ["default", "priority"] as const;
+export type LocalServiceTier = (typeof LOCAL_SERVICE_TIERS)[number];
+export function isLocalServiceTier(value: unknown): value is LocalServiceTier {
+  return LOCAL_SERVICE_TIERS.some((tier) => tier === value);
+}
+export function localServiceTiers(models: RuntimeModel[], model: string | null | undefined): LocalServiceTier[] {
+  const selected = models.find((entry) => model ? entry.id === model : entry.default || entry.isDefault);
+  return [
+    ...(selected?.supports_explicit_standard_service_tier ? ["default" as const] : []),
+    ...(selected?.service_tiers?.some((tier) => tier.id === "priority") ? ["priority" as const] : []),
+  ];
+}
 export type LocalProviderId = "codex" | "claude";
 export const LOCAL_PERMISSION_MODES = [
   "default",
@@ -177,6 +189,7 @@ export interface LocalConversation {
   archived: boolean;
   model: string | null;
   reasoningEffort?: LocalReasoningEffort | null;
+  serviceTier?: LocalServiceTier | null;
   permissionMode?: LocalPermissionMode;
   providerSessionId?: string;
   providerContext?: { sessionId: string; throughMessageId: string };
@@ -212,6 +225,7 @@ export interface LocalSidePrompt {
   references?: LocalContextReference[];
   model?: string;
   reasoningEffort?: LocalReasoningEffort | null;
+  serviceTier?: LocalServiceTier | null;
   permissionMode?: LocalPermissionMode;
   requestId: string;
 }

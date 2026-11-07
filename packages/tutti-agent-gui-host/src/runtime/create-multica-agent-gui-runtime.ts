@@ -14,6 +14,7 @@ ConversationMutationService
 } from "@multica/conversation-client/services";
 import {
 localReasoningLevels,
+localServiceTiers,
 type LocalPermissionMode
 } from "@multica/core/local-conversation/protocol";
 import type { LocalV2Event } from "@multica/core/local-conversation/v2";
@@ -161,7 +162,7 @@ export function createMulticaAgentGuiRuntime(
   let workspaceDirty = false;
   let disposed = false;
   let initialized = false;
-  let historyRevision = 0;
+  const historyRevision = 0;
   let saveQueue = Promise.resolve();
   let latestGeneration = init.generation ?? 0;
 
@@ -190,6 +191,7 @@ export function createMulticaAgentGuiRuntime(
           request.agentSessionId
         );
         const levels = localReasoningLevels(catalog.models, model);
+        const tiers = localServiceTiers(catalog.models, model);
         return {
           ...options,
           models: catalog.models.map((entry) => ({
@@ -202,11 +204,14 @@ export function createMulticaAgentGuiRuntime(
             label: entry.label
           })),
           reasoningConfigurable: levels.length > 0,
+          speeds: tiers.map((value) => ({ value, label: value === "priority" ? "Fast" : "Standard" })),
+          speedConfigurable: tiers.length > 0,
           effectiveModel: model,
           effectiveSettings: {
             ...options.effectiveSettings,
             model,
-            reasoningEffort
+            reasoningEffort,
+            speed: composer.selectedServiceTier(agent.id, request.agentSessionId)
           }
         };
       },
@@ -240,6 +245,7 @@ export function createMulticaAgentGuiRuntime(
               ? {
                   model: detail.model,
                   reasoningEffort: detail.reasoningEffort,
+                  serviceTier: detail.serviceTier,
                   permissionMode: detail.permissionMode,
                   untouched:
                     detail.messages.length === 0 &&
@@ -480,6 +486,7 @@ export function createMulticaAgentGuiRuntime(
                   ? { model: input.settings.model }
                   : {}),
                 reasoningEffort: input.settings?.reasoningEffort ?? null,
+                serviceTier: input.settings?.speed ?? null,
                 permissionMode: input.settings?.permissionModeId ?? "default",
               }),
             };
@@ -684,6 +691,7 @@ export function createMulticaAgentGuiRuntime(
       ...session,
       settings: {
         ...session.settings,
+        speed: composer.selectedServiceTier(session.agentTargetId ?? "", session.agentSessionId),
         reasoningEffort: composer.selectedReasoning(
           session.agentTargetId ?? "",
           session.agentSessionId
@@ -1057,6 +1065,7 @@ export function createMulticaAgentGuiRuntime(
         ([key, value]) =>
           key !== "model" &&
           key !== "reasoningEffort" &&
+          key !== "speed" &&
           value != null &&
           value !== false
       )
@@ -1188,6 +1197,7 @@ export function createMulticaAgentGuiRuntime(
         requestId: input.clientSubmitId,
         display,
         ...(model?{model}:durableStorage?{model:null}:{}),
+        serviceTier: composer.selectedServiceTier(session.agent_id, input.agentSessionId),
         reasoningEffort: composer.selectedReasoning(
           session.agent_id,
           input.agentSessionId,
@@ -1949,6 +1959,8 @@ export function createMulticaAgentGuiRuntime(
       agentId: string,
       options?: { force?: boolean; signal?: AbortSignal }
     ) => composer.refreshCatalog(agentId, options),
+    getServiceTierSelection: (agentId: string, sessionId?: string | null) => composer.selectedServiceTier(agentId, sessionId),
+    setServiceTierSelection: (agentId: string, sessionId: string | null | undefined, tier: string | null) => composer.setServiceTierSelection(agentId, sessionId, tier),
     getReasoningSelection: (agentId: string, sessionId?: string | null) =>
       composer.selectedReasoning(agentId, sessionId),
     setReasoningSelection: (

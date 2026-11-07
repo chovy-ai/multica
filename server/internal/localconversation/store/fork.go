@@ -60,7 +60,7 @@ func (s *Store) ForkConversation(ctx context.Context, f ForkCopy) (int64, error)
 	now := formatTime(f.CreatedAt)
 	err = q.InsertConversation(ctx, sqlitedb.InsertConversationParams{
 		ID: f.ID, ScopeID: src.ScopeID, Provider: src.Provider, ProviderSessionID: f.ProviderSessionID,
-		Title: f.Title, TitleMode: "manual", Cwd: src.Cwd, Model: src.Model, ReasoningEffort: src.ReasoningEffort,
+		Title: f.Title, TitleMode: "manual", Cwd: src.Cwd, Model: src.Model, ReasoningEffort: src.ReasoningEffort, ServiceTier: src.ServiceTier,
 		PermissionMode: src.PermissionMode, ProjectID: src.ProjectID, ForkedFromID: src.ID, ForkedFromTurnID: f.ThroughTurnID,
 		SummarySeq: scopeSeq, CreatedAt: now, UpdatedAt: now,
 	})

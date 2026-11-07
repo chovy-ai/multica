@@ -504,10 +504,13 @@ func (v *V2) snapshot(w http.ResponseWriter, r *http.Request, scopeID int64, id 
 	}
 	queue := v.svc.SnapshotQueue(id, snap.Queue, snap.Submissions)
 	c := snap.Conversation
-	settings := map[string]any{"model": nil, "reasoning_effort": nil, "permission_mode": c.PermissionMode}
+	settings := map[string]any{"model": nil, "reasoning_effort": nil, "service_tier": nil, "permission_mode": c.PermissionMode}
 	// A conversation that picked Claude's old "default" row follows the default.
 	if c.Model.Valid && c.Model.String != agent.ClaudeDefaultModelValue {
 		settings["model"] = c.Model.String
+	}
+	if c.ServiceTier.Valid {
+		settings["service_tier"] = c.ServiceTier.String
 	}
 	if c.ReasoningEffort.Valid {
 		settings["reasoning_effort"] = c.ReasoningEffort.String
@@ -587,6 +590,7 @@ type commandBody struct {
 	// the provider default.
 	Model           json.RawMessage `json:"model"`
 	ReasoningEffort json.RawMessage `json:"reasoning_effort"`
+	ServiceTier     json.RawMessage `json:"service_tier"`
 	PermissionMode  *string         `json:"permission_mode"`
 	// update: an absent field keeps its value; project_id null removes it.
 	Title     *string         `json:"title"`
@@ -707,7 +711,13 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 			writeV2Error(w, err)
 			return
 		}
+		tier, clearTier, err := optionalString(body.ServiceTier)
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
 		err = v.svc.UpdateSettings(r.Context(), scopeID, id, service.SettingsUpdate{
+			ServiceTier: tier, ClearServiceTier: clearTier,
 			Model: model, ClearModel: clearModel, ReasoningEffort: effort, ClearReasoningEffort: clearEffort, PermissionMode: body.PermissionMode,
 		})
 		if err != nil {

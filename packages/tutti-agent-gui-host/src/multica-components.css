@@ -592,3 +592,21 @@ html.multica-agent-gui img[src$="#multica-agent-avatar"] {
   border-radius: 50%;
   background: var(--muted);
 }
+
+html.multica-agent-gui .multica-model-speed {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+html.multica-agent-gui .multica-model-speed > legend { width: 100%; }
+
+html.multica-agent-gui .multica-reasoning-column { overflow-y: auto; }
+html.multica-agent-gui .multica-reasoning-column > * { flex-shrink: 0; }
+html.multica-agent-gui .multica-reasoning-column > .multica-model-options { overflow-y: visible; }
+html.multica-agent-gui .multica-model-speed [role="radiogroup"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+html.multica-agent-gui .multica-model-speed .multica-model-choice:first-child { grid-column: 1 / -1; }

@@ -690,6 +690,9 @@ func (s *Service) codexRunner(ctx context.Context, conv sqlitedb.Conversation) (
 	if conv.ReasoningEffort.Valid {
 		session.ReasoningEffort = &conv.ReasoningEffort.String
 	}
+	if conv.ServiceTier.Valid {
+		session.ServiceTier = &conv.ServiceTier.String
+	}
 	session.PermissionMode = conv.PermissionMode
 	return NewCodexRunner(CodexRunnerOptions{
 		ConversationID: conv.ID, ScopeID: conv.ScopeID, Files: s.store, Start: start, Session: session,
@@ -770,11 +773,14 @@ func conversationSettings(conv sqlitedb.Conversation) store.ConversationSettings
 	if conv.ReasoningEffort.Valid {
 		st.ReasoningEffort = &conv.ReasoningEffort.String
 	}
+	if conv.ServiceTier.Valid {
+		st.ServiceTier = &conv.ServiceTier.String
+	}
 	return st
 }
 
 func sameSettings(a, b store.ConversationSettings) bool {
-	return a.PermissionMode == b.PermissionMode && sameModel(a.Model, b.Model) && sameModel(a.ReasoningEffort, b.ReasoningEffort)
+	return a.PermissionMode == b.PermissionMode && sameModel(a.Model, b.Model) && sameModel(a.ReasoningEffort, b.ReasoningEffort) && sameModel(a.ServiceTier, b.ServiceTier)
 }
 
 func sendFingerprint(cmd SendCommand) string {
@@ -795,6 +801,8 @@ type SettingsUpdate struct {
 	ClearModel           bool
 	ReasoningEffort      *string
 	ClearReasoningEffort bool
+	ServiceTier          *string
+	ClearServiceTier     bool
 	PermissionMode       *string
 }
 
@@ -820,18 +828,30 @@ func (s *Service) UpdateSettings(ctx context.Context, scopeID int64, conversatio
 	case u.ReasoningEffort != nil:
 		st.ReasoningEffort = u.ReasoningEffort
 	}
+	switch {
+	case u.ClearServiceTier:
+		st.ServiceTier = nil
+	case u.ServiceTier != nil:
+		st.ServiceTier = u.ServiceTier
+	}
+	if err := validateServiceTier(conv.Provider, st.ServiceTier); err != nil {
+		return err
+	}
 	if u.PermissionMode != nil {
 		if !validPermissionModes[*u.PermissionMode] {
 			return fmt.Errorf("%w: permission mode %q", ErrInvalidSettings, *u.PermissionMode)
 		}
 		st.PermissionMode = *u.PermissionMode
 	}
-	payload := map[string]any{"model": nil, "reasoning_effort": nil, "permission_mode": st.PermissionMode}
+	payload := map[string]any{"model": nil, "reasoning_effort": nil, "service_tier": nil, "permission_mode": st.PermissionMode}
 	if st.Model != nil {
 		payload["model"] = *st.Model
 	}
 	if st.ReasoningEffort != nil {
 		payload["reasoning_effort"] = *st.ReasoningEffort
+	}
+	if st.ServiceTier != nil {
+		payload["service_tier"] = *st.ServiceTier
 	}
 	data, _ := json.Marshal(payload)
 	if _, err := s.batcher.AppendWait(ctx, store.Batch{ConversationID: conversationID, Settings: &st,
@@ -984,4 +1004,11 @@ func (s *Service) askHost(ctx context.Context, scopeID int64, conversationID, ki
 		return nil, ErrHostUnavailable
 	}
 	return h(ctx, scopeID, conversationID, kind, payload)
+}
+
+func validateServiceTier(provider string, tier *string) error {
+	if tier != nil && (provider != "codex" || (*tier != "priority" && *tier != "default")) {
+		return fmt.Errorf("%w: service tier", ErrInvalidSettings)
+	}
+	return nil
 }

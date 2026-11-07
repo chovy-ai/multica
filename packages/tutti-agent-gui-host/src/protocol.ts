@@ -120,6 +120,7 @@ export interface AgentGuiSessionDetail {
   reasoningEffort?:
     | import("@multica/core/local-conversation/protocol").LocalReasoningEffort
     | null;
+  serviceTier?: import("@multica/core/local-conversation/protocol").LocalServiceTier | null;
   permissionMode?: LocalPermissionMode;
   messages: ChatMessage[];
   pending: ChatPendingTask;
@@ -223,6 +224,7 @@ export interface AgentGuiOperations {
       reasoningEffort?:
         | import("@multica/core/local-conversation/protocol").LocalReasoningEffort
         | null;
+      serviceTier?: import("@multica/core/local-conversation/protocol").LocalServiceTier | null;
       permissionMode?: LocalPermissionMode;
       queued?: true;
       requestId?: string;

@@ -20,9 +20,9 @@ SELECT scope_seq FROM scope WHERE id = ?;
 -- name: InsertConversation :exec
 INSERT INTO conversation (
     id, scope_id, provider, provider_session_id, title, title_mode, cwd, model,
-    reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id,
+    reasoning_effort, service_tier, permission_mode, project_id, side_source_id, side, forked_from_id,
     forked_from_turn_id, imported_from_session_id, summary_seq, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetConversation :one
 SELECT * FROM conversation WHERE id = ?;
@@ -184,7 +184,7 @@ SELECT * FROM command_receipt WHERE scope_id = ? AND request_id = ?;
 UPDATE command_receipt SET uncertain = 1 WHERE scope_id = ? AND request_id = ?;
 
 -- name: UpdateConversationSettings :exec
-UPDATE conversation SET model = ?, reasoning_effort = ?, permission_mode = ? WHERE id = ?;
+UPDATE conversation SET model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ? WHERE id = ?;
 
 -- name: ListScopeConversations :many
 SELECT * FROM conversation WHERE scope_id = ? ORDER BY updated_at DESC, id;

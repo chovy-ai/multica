@@ -182,6 +182,7 @@ it.each([
                 id: "reasoning",
                 label: "Reasoning",
                 isDefault: true,
+                ...(provider === "codex" ? { service_tiers: [{ id: "priority", name: "Fast" }], supports_explicit_standard_service_tier: true } : {}),
                 thinking: {
                   supported_levels: [
                     { value: "low", label: "Low" },
@@ -230,6 +231,17 @@ it.each([
       [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')]
         .find((entry) => entry.getAttribute("aria-label") === label)!;
     await open();
+    if (provider === "codex") {
+      const tier = (value: string) => document.querySelector<HTMLInputElement>(`input[value="${value}"]`)!;
+      await act(async () => tier("priority").click());
+      expect(handle.getServiceTierSelection(target.id)).toBe("priority");
+      expect(tier("priority").checked).toBe(true);
+      await act(async () => tier("default").click());
+      expect(handle.getServiceTierSelection(target.id)).toBe("default");
+      expect(tier("default").checked).toBe(true);
+    } else {
+      expect(document.querySelector('input[value="priority"]')).toBeNull();
+    }
     if (followDefault) {
       expect(container.querySelector('[data-testid="multica-model-picker"]')?.textContent).toContain("Default · Reasoning");
     }

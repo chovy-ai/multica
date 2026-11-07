@@ -41,6 +41,7 @@ type CodexSession struct {
 	ThreadID        string
 	Model           *string
 	ReasoningEffort *string
+	ServiceTier     *string
 	PermissionMode  string
 	// DeveloperInstructions are appended to Codex's own instructions.
 	DeveloperInstructions string
@@ -128,6 +129,7 @@ type codexNative struct {
 	DeveloperInstructions string         `json:"developer_instructions"`
 	Model                 string         `json:"model"`
 	ReasoningEffort       string         `json:"model_reasoning_effort"`
+	ServiceTier           string         `json:"service_tier"`
 	MCPServers            map[string]any `json:"mcp_servers"`
 	ApprovalPolicy        any            `json:"approval_policy"`
 	ApprovalsReviewer     string         `json:"approvals_reviewer"`
@@ -232,6 +234,10 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 	server, threadID := ready.server, ready.threadID
 	r.mu.Lock()
 	turn.threadID = threadID
+	tier := ready.native.ServiceTier
+	if r.session.ServiceTier != nil {
+		tier = *r.session.ServiceTier
+	}
 	effort := ready.native.ReasoningEffort
 	if r.session.ReasoningEffort != nil {
 		effort = *r.session.ReasoningEffort
@@ -259,10 +265,14 @@ func (r *CodexRunner) Send(ctx context.Context, req SendRequest) error {
 	if effort != "" {
 		effortParam = effort
 	}
-	raw, err := server.Request(ctx, "turn/start", map[string]any{
+	params := map[string]any{
 		"threadId": threadID, "effort": effortParam,
 		"input": []map[string]any{{"type": "text", "text": req.prompt(), "text_elements": []any{}}},
-	})
+	}
+	if tier != "" {
+		params["serviceTier"] = tier
+	}
+	raw, err := server.Request(ctx, "turn/start", params)
 	submitted(err)
 	if err != nil {
 		if codexOutcomeUnknown(err) {
@@ -599,14 +609,15 @@ func (r *CodexRunner) Steer(ctx context.Context, text string) error {
 
 // ApplySettings changes settings for the next turn; a running turn keeps
 // the settings it started with. Reasoning effort travels with turn/start, so
-// only a model or permission change restarts the process before the next turn.
+// model, permission and service tier changes reload native configuration before the next turn.
 func (r *CodexRunner) ApplySettings(_ context.Context, st store.ConversationSettings) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.server != nil && (!sameModel(r.session.Model, st.Model) || r.session.PermissionMode != st.PermissionMode) {
+	if r.server != nil && (!sameModel(r.session.Model, st.Model) || !sameModel(r.session.ServiceTier, st.ServiceTier) || r.session.PermissionMode != st.PermissionMode) {
 		r.restart = true
 	}
 	r.session.Model, r.session.ReasoningEffort, r.session.PermissionMode = st.Model, st.ReasoningEffort, st.PermissionMode
+	r.session.ServiceTier = st.ServiceTier
 	return nil
 }
 
@@ -809,6 +820,9 @@ func (r *CodexRunner) thread(ctx context.Context, server CodexServer, native *co
 		config["model_reasoning_effort"] = *session.ReasoningEffort
 	}
 	params := map[string]any{"cwd": session.Cwd, "config": config}
+	if session.ServiceTier != nil {
+		params["serviceTier"] = *session.ServiceTier
+	}
 	if model != "" {
 		params["model"] = model
 	} else {

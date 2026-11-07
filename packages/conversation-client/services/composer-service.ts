@@ -1,8 +1,8 @@
 import { action, makeObservable, observable } from "mobx";
-import { isLocalPermissionMode, isLocalReasoningEffort, localReasoningLevels, type LocalPermissionMode, type LocalReasoningEffort } from "@multica/core/local-conversation/protocol";
+import { isLocalServiceTier, localServiceTiers, type LocalServiceTier, isLocalPermissionMode, isLocalReasoningEffort, localReasoningLevels, type LocalPermissionMode, type LocalReasoningEffort } from "@multica/core/local-conversation/protocol";
 import type { RuntimeModelsResult } from "@multica/core/types";
 import "../mobx-config";
-import { GLOBAL_EXECUTION_PERMISSION_KEY, ModelPreferences, PermissionPreferences, ReasoningPreferences } from "../models/composer-preferences";
+import { GLOBAL_EXECUTION_PERMISSION_KEY, ModelPreferences, PermissionPreferences, ReasoningPreferences, ServiceTierPreferences } from "../models/composer-preferences";
 
 export type ComposerOptionsSection = "core" | "capabilities" | "connectors";
 export type ComposerOptionsStatus = "loading" | "ready" | "error";
@@ -40,6 +40,7 @@ export interface ComposerOptionsRequest {
 
 const MODEL_PREFERENCES_KEY = "model-preferences-v1";
 const REASONING_PREFERENCES_KEY = "reasoning-preferences-v1";
+const SERVICE_TIER_PREFERENCES_KEY = "service-tier-preferences-v1";
 const SETTINGS_UPDATE_TIMEOUT_MS = 30_000;
 
 /** A choice the service refused, with a stable code for callers. */
@@ -87,7 +88,7 @@ export interface ComposerServiceOptions {
   /** Throws once this workspace's connection is gone. */
   assertOpen(): void;
   /** What selections read of a conversation; detail is what its own record says, once loaded. */
-  conversation(sessionId: string): { agentId: string; detail: { model?: string | null; reasoningEffort?: LocalReasoningEffort | null; permissionMode?: LocalPermissionMode; untouched: boolean } | null } | undefined;
+  conversation(sessionId: string): { agentId: string; detail: { model?: string | null; reasoningEffort?: LocalReasoningEffort | null; serviceTier?: LocalServiceTier | null; permissionMode?: LocalPermissionMode; untouched: boolean } | null } | undefined;
   /** The id a conversation's choices are saved under. */
   storedId(sessionId: string): string;
   /** A run is under way, and its settings must not change beneath it. */
@@ -119,9 +120,10 @@ export class ComposerService<Options extends ComposerOptionsLike> {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly models = new ModelPreferences();
   private readonly reasoning = new ReasoningPreferences();
+  private readonly serviceTiers = new ServiceTierPreferences();
   private readonly permissions = new PermissionPreferences();
   private readonly catalogs = new Map<string, RuntimeModelsResult>();
-  private readonly hydrations: { model: Promise<void>; reasoning: Promise<void>; permission: Promise<void> };
+  private readonly hydrations: { model: Promise<void>; reasoning: Promise<void>; serviceTier: Promise<void>; permission: Promise<void> };
   private modelWrites: Promise<void> = Promise.resolve();
   private permissionWrites: Promise<void> = Promise.resolve();
   private readonly releasePermissions?: () => void;
@@ -146,6 +148,7 @@ export class ComposerService<Options extends ComposerOptionsLike> {
     this.hydrations = {
       model: deps.storage.read(MODEL_PREFERENCES_KEY).then((value) => { this.models.hydrate(value); }),
       reasoning: deps.storage.read(REASONING_PREFERENCES_KEY).then((value) => { this.reasoning.hydrate(value); }),
+      serviceTier: deps.storage.read(SERVICE_TIER_PREFERENCES_KEY).then((value) => { this.serviceTiers.hydrate(value); }),
       permission: deps.storage.read(GLOBAL_EXECUTION_PERMISSION_KEY).then((value) => {
         if (!permissionChanged) this.receivePermissions(value);
       }),
@@ -287,6 +290,18 @@ export class ComposerService<Options extends ComposerOptionsLike> {
     return effort && (!catalog || localReasoningLevels(catalog.models, model ?? this.deps.requireAgent(agentId).model).some((level) => level.value === effort)) ? effort : null;
   }
 
+  selectedServiceTier(agentId: string, sessionId?: string | null): LocalServiceTier | null {
+    const conversation = sessionId ? this.deps.conversation(sessionId) : undefined;
+    const detail = conversation?.detail ?? undefined;
+    if (detail && conversation?.agentId !== agentId) return null;
+    const model = this.selectedModel(agentId, sessionId);
+    const selection = this.serviceTiers.get(agentId, this.savedUnder(sessionId));
+    const tier = selection ? ((this.followingClaudeDefault(agentId, selection.model) ? null : selection.model) === model ? selection.tier : null)
+      : model === (detail?.model ?? null) ? detail?.serviceTier ?? null : null;
+    const catalog = this.catalogs.get(agentId);
+    return tier && (!catalog || localServiceTiers(catalog.models, model ?? this.deps.requireAgent(agentId).model).includes(tier)) ? tier : null;
+  }
+
   selectedPermission(_agentId: string, _sessionId?: string | null): LocalPermissionMode {
     void this.permissionRevision;
     return this.permissions.get();
@@ -379,6 +394,32 @@ export class ComposerService<Options extends ComposerOptionsLike> {
     return operation;
   }
 
+  setServiceTierSelection(agentId: string, sessionId: string | null | undefined, tier: string | null): Promise<void> {
+    const operation = this.modelWrites.catch(() => {}).then(async () => {
+      await this.hydrations.serviceTier;
+      await this.hydrations.model;
+      this.deps.assertOpen();
+      const agent = this.deps.assertInvokable(agentId, sessionId ?? undefined);
+      if (tier !== null && !isLocalServiceTier(tier)) throw new ComposerSelectionError("Invalid service tier.", "invalid_service_tier");
+      this.assertScope(agentId, sessionId, "The service tier scope does not belong to this provider.");
+      this.assertIdle(sessionId, "service tier");
+      const model = this.selectedModel(agentId, sessionId);
+      if (tier !== null && !localServiceTiers((await this.loadCatalog(agentId)).models, model ?? agent.model).includes(tier)) throw new ComposerSelectionError("This model does not support that service tier.", "invalid_service_tier");
+      // The catalog request can overlap a newly accepted turn.
+      this.assertIdle(sessionId, "service tier");
+      const next = new ServiceTierPreferences();
+      next.hydrate(this.serviceTiers.serialize());
+      next.set(agentId, this.savedUnder(sessionId), model, tier);
+      await this.deps.storage.write(SERVICE_TIER_PREFERENCES_KEY, next.serialize());
+      this.deps.assertOpen();
+      this.serviceTiers.hydrate(next.serialize());
+      if (sessionId) this.deps.selectionChanged(sessionId);
+      this.bumpModels();
+    });
+    this.modelWrites = operation;
+    return operation;
+  }
+
   setPermissionSelection(agentId: string, sessionId: string | null | undefined, mode: LocalPermissionMode): Promise<void> {
     const operation = this.permissionWrites.catch(() => {}).then(async () => {
       await this.hydrations.permission;
@@ -399,7 +440,7 @@ export class ComposerService<Options extends ComposerOptionsLike> {
   }
 
   /** Saves what a just-created conversation starts with: the draft's choices, or what its creation asked for. */
-  async seedConversation(agent: { id: string; model?: string | null }, storedId: string, requested?: { model?: string | null; reasoningEffort?: string | null } | null): Promise<void> {
+  async seedConversation(agent: { id: string; model?: string | null }, storedId: string, requested?: { model?: string | null; reasoningEffort?: string | null; speed?: string | null } | null): Promise<void> {
     const model = this.selectedModel(agent.id) ?? (requested?.model && requested.model !== agent.model ? requested.model : null);
     this.models.set(agent.id, storedId, model);
     await this.deps.storage.write(MODEL_PREFERENCES_KEY, this.models.serialize());
@@ -407,6 +448,10 @@ export class ComposerService<Options extends ComposerOptionsLike> {
     const effort = this.reasoning.get(agent.id) ? this.selectedReasoning(agent.id) : (isLocalReasoningEffort(requested?.reasoningEffort) ? requested.reasoningEffort : null);
     this.reasoning.set(agent.id, storedId, model, effort);
     await this.deps.storage.write(REASONING_PREFERENCES_KEY, this.reasoning.serialize());
+    await this.hydrations.serviceTier;
+    const tier = this.serviceTiers.get(agent.id) ? this.selectedServiceTier(agent.id) : (isLocalServiceTier(requested?.speed) ? requested.speed : null);
+    this.serviceTiers.set(agent.id, storedId, model, tier);
+    await this.deps.storage.write(SERVICE_TIER_PREFERENCES_KEY, this.serviceTiers.serialize());
   }
 
   // ---- Writing a conversation's settings ----
@@ -480,9 +525,10 @@ export class ComposerService<Options extends ComposerOptionsLike> {
     this.deps.assertOpen();
     const agentId = this.deps.session(id)?.agentId;
     if (!agentId) throw new ComposerSelectionError("Conversation is not loaded.", "session_not_loaded");
-    if (Object.keys(settings).some((key) => key !== "model" && key !== "reasoningEffort")) throw new ComposerSelectionError("Non-model conversation settings is not supported by this Multica connection.", "unsupported");
+    if (Object.keys(settings).some((key) => key !== "model" && key !== "reasoningEffort" && key !== "speed")) throw new ComposerSelectionError("Non-model conversation settings is not supported by this Multica connection.", "unsupported");
     if ("model" in settings) await this.setModelSelection(agentId, id, (settings.model as string | null | undefined) ?? null);
     if ("reasoningEffort" in settings) await this.setReasoningSelection(agentId, id, (settings.reasoningEffort as string | null | undefined) ?? null);
+    if ("speed" in settings) await this.setServiceTierSelection(agentId, id, (settings.speed as string | null | undefined) ?? null);
   }
 
   private settleSettings(id: string, request: SettingsRequest, result: { outcome: "succeeded" | "timedOut" } | { outcome: "failed"; error: unknown }) {

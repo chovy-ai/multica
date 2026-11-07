@@ -261,6 +261,7 @@ export function localConversationSource(
         model: (settings.model ?? null) as string | null,
         reasoningEffort: (settings.reasoning_effort ??
           null) as AgentGuiSessionDetail["reasoningEffort"],
+        serviceTier: settings.service_tier === "priority" || settings.service_tier === "default" ? settings.service_tier : null,
         permissionMode:
           settings.permission_mode as AgentGuiSessionDetail["permissionMode"],
         promptQueue: {
@@ -714,6 +715,7 @@ export function createLocalConversationParentService(
           !agents.length &&
           (params.model !== undefined ||
             params.reasoningEffort !== undefined ||
+            params.serviceTier !== undefined ||
             params.permissionMode !== undefined)
         ) {
           await command(params.sessionId, {
@@ -724,6 +726,7 @@ export function createLocalConversationParentService(
             ...(params.reasoningEffort !== undefined
               ? { reasoning_effort: params.reasoningEffort }
               : {}),
+            ...(params.serviceTier !== undefined ? { service_tier: params.serviceTier } : {}),
             ...(params.permissionMode !== undefined
               ? { permission_mode: params.permissionMode }
               : {})

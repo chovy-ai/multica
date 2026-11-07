@@ -128,11 +128,13 @@ export const localV2SnapshotSchema = z.object({
     .object({
       model: nullableString,
       reasoning_effort: nullableString,
+      service_tier: nullableString,
       permission_mode: z.string().default("default"),
     })
     .default({
       model: null,
       reasoning_effort: null,
+      service_tier: null,
       permission_mode: "default",
     }),
   submissions: z.array(localSubmissionSchema).default([]),

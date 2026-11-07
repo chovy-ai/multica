@@ -59,6 +59,7 @@ type Conversation struct {
 	CreatedAt             string
 	UpdatedAt             string
 	BackgroundTasks       int64
+	ServiceTier           sql.NullString
 }
 
 type ConversationExecution struct {

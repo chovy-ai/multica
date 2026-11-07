@@ -2407,7 +2407,7 @@ describe("local thinking settings", () => {
       handle.setReasoningSelection(agent.id, "default-draft", "low")
     ).rejects.toMatchObject({ code: "run_in_progress" });
   });
-  it("keeps draft selection through activation, delivery, and restart", async () => {
+  it("keeps draft model, thinking and speed through activation, delivery, and restart", async () => {
     const data = backend();
     const original = data.request.getMockImplementation()!;
     data.request.mockImplementation(async (method, params) => {
@@ -2418,6 +2418,8 @@ describe("local thinking settings", () => {
             {
               id: "test-model",
               label: "Test",
+              service_tiers: [{ id: "priority", name: "Fast" }],
+              supports_explicit_standard_service_tier: true,
               thinking: {
                 supported_levels: [
                   { value: "low", label: "Low" },
@@ -2437,6 +2439,7 @@ describe("local thinking settings", () => {
     await handle.initialize();
     await handle.setModelSelection(agent.id, null, "test-model");
     await handle.setReasoningSelection(agent.id, null, "high");
+    await handle.setServiceTierSelection(agent.id, null, "priority");
     const options = await handle.runtime.composer.load({
       targetKey: agent.id,
       provider: "codex"
@@ -2460,6 +2463,7 @@ describe("local thinking settings", () => {
     await vi.waitFor(() =>
       expect(enqueuedItem(data.request)).toMatchObject({
         reasoningEffort: "high",
+        serviceTier: "priority",
         model: "test-model"
       })
     );
@@ -2479,6 +2483,7 @@ describe("local thinking settings", () => {
     expect(restarted.getReasoningSelection(agent.id, "thinking-draft")).toBe(
       "high"
     );
+    expect(restarted.getServiceTierSelection(agent.id, "thinking-draft")).toBe("priority");
     await expect(
       restarted.setModelSelection(
         agent.id,

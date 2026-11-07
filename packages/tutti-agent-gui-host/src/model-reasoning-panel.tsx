@@ -1,7 +1,8 @@
 import { useId, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { observer } from "mobx-react-lite";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
-import { Bot, Check, Command, Search } from "lucide-react";
+import { Bot, Check, Command, Search, Zap } from "lucide-react";
+import { localServiceTiers } from "@multica/core/local-conversation/protocol";
 import { activateModelPickerShortcut } from "./model-picker-shortcut";
 import { Button } from "@multica/ui/components/ui/button";
 import type {
@@ -15,6 +16,8 @@ interface Props {
   selected: string | null;
   configured: string | null;
   selectedEffort: string | null;
+  selectedTier: string | null;
+  onTierChange(value: string): Promise<void>;
   modelLabel: string;
   defaultModel?: string;
   levels: RuntimeModelThinkingLevel[];
@@ -49,6 +52,8 @@ function ModelReasoningPanelRender({
   selected,
   configured,
   selectedEffort,
+  selectedTier,
+  onTierChange,
   modelLabel,
   defaultModel,
   levels,
@@ -100,6 +105,10 @@ function ModelReasoningPanelRender({
     configured ? model.id === configured : model.default || model.isDefault
   );
   const defaultLevel = effective?.thinking?.default_level;
+  const tiers = remote ? [] : localServiceTiers(models, configured);
+  const handleTier = usePersistCallback(
+    (event: ChangeEvent<HTMLInputElement>) => void onTierChange(event.target.value)
+  );
   const known = models.some((model) => model.id === configured);
   const unavailable =
     catalog?.unavailableModels?.filter((model) =>
@@ -339,6 +348,31 @@ function ModelReasoningPanelRender({
               <p className="multica-model-message">{noReasoningOptions}</p>
             )}
           </div>
+          {tiers.length > 0 && (
+            <fieldset className="multica-model-speed" disabled={disabled}>
+              <legend className="multica-model-reasoning-heading">{chinese ? "速度" : "Speed"}</legend>
+              <div role="radiogroup" aria-label={chinese ? "速度" : "Speed"}>
+                {["", ...tiers].map((tier) => (
+                  <label
+                    className="multica-model-choice"
+                    key={tier}
+                    data-selected={(selectedTier ?? "") === tier}
+                  >
+                    <input
+                      type="radio"
+                      name={`${id}-speed`}
+                      value={tier}
+                      checked={(selectedTier ?? "") === tier}
+                      onChange={handleTier}
+                    />
+                    {tier === "priority" && <Zap aria-hidden="true" className="size-4" />}
+                    <span className="multica-model-name">{tier === "priority" ? "Fast" : tier === "default" ? (chinese ? "普通" : "Standard") : copy.inherit}</span>
+                    {(selectedTier ?? "") === tier && <Check aria-hidden="true" className="size-4" />}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
         </section>
       </div>
       {(error || remote) && (

@@ -486,3 +486,45 @@ describe("choices", () => {
     expect(stored.has(GLOBAL_EXECUTION_PERMISSION_KEY)).toBe(false);
   });
 });
+
+describe("native service tier selections", () => {
+  it("saves Fast, overrides it with Standard, resets to inherited CLI settings, and restores a session after restart", async () => {
+    const data = selections();
+    data.options.listModels = async () => ({ supported: true, models: [{ id: "m", label: "Model", service_tiers: [{ id: "priority", name: "Fast" }], supports_explicit_standard_service_tier: true }] });
+    const service = new ComposerService(async () => ({ provider: "codex" }), data.options);
+    await service.hydrated();
+    await service.setServiceTierSelection("a", null, "priority");
+    await service.seedConversation({ id: "a", model: "m" }, "c");
+    await service.setServiceTierSelection("a", null, "default");
+    expect(service.selectedServiceTier("a", "c")).toBe("priority");
+    const restarted = new ComposerService(async () => ({ provider: "codex" }), data.options);
+    await restarted.hydrated();
+    expect(restarted.selectedServiceTier("a", "c")).toBe("priority");
+    await restarted.setServiceTierSelection("a", "c", "default");
+    expect(restarted.selectedServiceTier("a", "c")).toBe("default");
+    await restarted.setServiceTierSelection("a", "c", null);
+    expect(restarted.selectedServiceTier("a", "c")).toBeNull();
+    service.dispose(); restarted.dispose();
+  });
+
+  it("rejects unsupported Standard, retains confirmed Fast after failed persistence, and invalidates it on model changes", async () => {
+    let busy = false;
+    const data = selections({ busy: () => busy });
+    data.options.listModels = async () => ({ supported: true, models: [{ id: "m", label: "Model", service_tiers: [{ id: "priority", name: "Fast" }] }, { id: "m2", label: "Plain" }] });
+    const service = new ComposerService(async () => ({ provider: "codex" }), data.options);
+    await service.hydrated();
+    await expect(service.setServiceTierSelection("a", null, "default")).rejects.toMatchObject({ code: "invalid_service_tier" });
+    await service.setServiceTierSelection("a", null, "priority");
+    const write = data.options.storage.write;
+    data.options.storage.write = async () => { throw new Error("disk full"); };
+    await expect(service.setServiceTierSelection("a", null, null)).rejects.toThrow("disk full");
+    expect(service.selectedServiceTier("a")).toBe("priority");
+    data.options.storage.write = write;
+    busy = true;
+    await expect(service.setServiceTierSelection("a", null, null)).rejects.toMatchObject({ code: "run_in_progress" });
+    busy = false;
+    await service.setModelSelection("a", null, "m2");
+    expect(service.selectedServiceTier("a")).toBeNull();
+    service.dispose();
+  });
+});

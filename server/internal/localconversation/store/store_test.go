@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -469,5 +470,70 @@ func TestReceiptCommitsWithItsBatchAndRejectsDuplicates(t *testing.T) {
 	}
 	if _, err := s.Receipt(ctx, scopeID+1, "req-1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("receipt visible in another scope: %v", err)
+	}
+}
+
+func TestServiceTierMigrationPreservesHistoryAndSettings(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions, err := schemaVersions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range versions[:7] {
+		ddl, err := schemaFS.ReadFile(version.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, string(ddl)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, stmt := range []string{
+		"PRAGMA user_version = 7",
+		"INSERT INTO scope (id, api_origin, user_id, workspace_id) VALUES (1, 'https://test', 'u', 'w')",
+		"INSERT INTO conversation (id, scope_id, provider, model, created_at, updated_at) VALUES ('old', 1, 'codex', 'm', '2026-11-07T00:00:00Z', '2026-11-07T00:00:00Z')",
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := s.Conversation(ctx, "old")
+	if err != nil || original.ServiceTier.Valid || original.Model.String != "m" {
+		t.Fatalf("upgrade = %+v, %v", original, err)
+	}
+	tier := "priority"
+	writer := s.NewWriter(WriterOptions{})
+	if _, err := writer.Submit(ctx, Batch{ConversationID: "old", Settings: &ConversationSettings{Model: &original.Model.String, ServiceTier: &tier, PermissionMode: "default"}}); err != nil {
+		t.Fatal(err)
+	}
+	writer.Close()
+	if _, err := s.ForkConversation(ctx, ForkCopy{SourceID: "old", ID: "fork", Title: "fork", CreatedAt: testTime}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, id := range []string{"old", "fork"} {
+		saved, err := s.Conversation(ctx, id)
+		if err != nil || saved.ServiceTier.String != "priority" {
+			t.Fatalf("reopened %s = %+v, %v", id, saved, err)
+		}
 	}
 }
