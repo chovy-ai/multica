@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ChevronRight, File, Folder } from "lucide-react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
@@ -22,11 +22,28 @@ export function ChangeTree({ files, selected, onSelect, label }: { files: Conver
   const multipleRoots = new Set(files.map(file => file.cwd)).size > 1;
   const pathOf = useCallback((file: ConversationFileResource) => `${multipleRoots ? `${file.cwd.replace(/^[/\\]+/, "")}/` : ""}${file.path}`, [multipleRoots]);
   const paths = useMemo(() => files.map(pathOf), [files, pathOf]);
-  const select = usePersistCallback((paths: readonly string[]) => { const file = files.find(file => pathOf(file) === paths[0]); if (file && file.id !== selected) onSelect(file.id); });
+  const synchronizingSelection = useRef(false);
+  const select = usePersistCallback((paths: readonly string[]) => {
+    if (synchronizingSelection.current) return;
+    const current = files.find(file => file.id === selected);
+    const next = paths.find(path => !current || path !== pathOf(current)) ?? paths[0];
+    const file = files.find(file => pathOf(file) === next);
+    if (file && file.id !== selected) onSelect(file.id);
+  });
   const decorate = usePersistCallback(({ item }: { item: { path: string } }) => { const file = files.find(file => pathOf(file) === item.path); return file ? { text: ({added:"A",deleted:"D",renamed:"R",modified:"M"} as Record<string,string>)[file.kind] ?? "?", title: `${file.cwd}/${file.path}` } : null; });
   const { model } = useFileTree({ paths, initialExpansion: "open", dragAndDrop: false, renaming: false, icons, onSelectionChange: select, renderRowDecoration: decorate, unsafeCSS: treeCSS });
   useEffect(() => { model.resetPaths(paths); }, [model, paths]);
-  useEffect(() => { const file = files.find(file => file.id === selected); if (file) model.getItem(pathOf(file))?.select(); }, [model, selected, files, pathOf]);
+  useEffect(() => {
+    const file = files.find(file => file.id === selected);
+    const path = file ? pathOf(file) : undefined;
+    // The resource tab owns one selected file; Pierre's item.select() adds to
+    // its selection, so synchronize without treating these updates as input.
+    synchronizingSelection.current = true;
+    try {
+      for (const previous of model.getSelectedPaths()) if (previous !== path) model.getItem(previous)?.deselect();
+      if (path) model.getItem(path)?.select();
+    } finally { synchronizingSelection.current = false; }
+  }, [model, selected, files, pathOf]);
   return <FileTree model={model} className="h-full min-w-0" aria-label={label} />;
 }
 

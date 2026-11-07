@@ -59,3 +59,39 @@ func TestFailedMultiFileToolCountsOnlyExactlyVerifiedWrites(t *testing.T) {
 		t.Fatalf("partial tool %#v", out)
 	}
 }
+
+func TestFailedNativeNoWritePreservesContentsAndExistence(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, patch, move string
+		exists                  bool
+		content                 string
+	}{
+		{name: "failed add", kind: "add", patch: "new\n"},
+		{name: "failed empty add", kind: "add"},
+		{name: "failed update", kind: "update", patch: "@@ -1 +1 @@\n-A\n+B\n", exists: true, content: "A\n"},
+		{name: "failed delete", kind: "delete", patch: "A\n", exists: true, content: "A\n"},
+		{name: "failed move", kind: "move", move: "destination", exists: true, content: "A\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.exists {
+				put(t, root, "source", tc.content)
+			}
+			c := Scan(root)
+			observations := c.NativeBatch("turn", []NativeChange{{OperationID: "no-write", Path: "source", MovePath: tc.move, Kind: tc.kind, Patch: tc.patch, Success: false}})
+			if len(observations) != 1 {
+				t.Fatal(observations)
+			}
+			o := observations[0]
+			if o.Path != "" || o.MovePath != "" || o.Reason != "" || o.Before.Exists != tc.exists || o.After != o.Before {
+				t.Fatalf("no-write invented a change: %#v", o)
+			}
+			if actual := Read(root, "source"); actual.Exists != tc.exists || actual.Content != tc.content {
+				t.Fatalf("capture wrote source: %#v", actual)
+			}
+			if len(c.Unknown("turn")) != 0 {
+				t.Fatal("no-write left a phantom scan difference")
+			}
+		})
+	}
+}

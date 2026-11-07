@@ -93,17 +93,24 @@ func (c *Capture) NativeBatch(turn string, changes []NativeChange) []Observation
 		if o.Reason == "" {
 			noWrite := false
 			if !n.Success {
-				actual := Read(c.Root, target)
+				actual := Read(c.Root, path)
 				noWrite = actual.Reason == "" && actual.Hash == o.Before.Hash && actual.Exists == o.Before.Exists
+				if noWrite && target != path {
+					previousTarget, actualTarget := before(target), Read(c.Root, target)
+					noWrite = previousTarget.Reason == "" && actualTarget.Reason == "" && actualTarget.Hash == previousTarget.Hash && actualTarget.Exists == previousTarget.Exists
+				}
 			}
 			if noWrite {
-				n.Patch, n.Kind = "", "move"
-			}
-			text, valid := Apply(o.Before.Content, n.Patch, n.Kind)
-			if !valid {
-				o.Reason = "uncertain"
+				// A failed operation did not move or create a file when both paths
+				// still match their snapshots. Preserve existence as well as bytes.
+				target, o.MovePath = path, ""
 			} else {
-				o.After = Snapshot{Exists: n.Kind != "delete", Content: text, Hash: Hash(text)}
+				text, valid := Apply(o.Before.Content, n.Patch, n.Kind)
+				if !valid {
+					o.Reason = "uncertain"
+				} else {
+					o.After = Snapshot{Exists: n.Kind != "delete", Content: text, Hash: Hash(text)}
+				}
 			}
 		}
 		if o.Reason != "" {

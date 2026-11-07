@@ -20,6 +20,7 @@ export default defineConfig({
     resolveId(id) { if (id === "#verification-dev/renderer") return "\0fixture-verification"; return null; },
     load(id) { if (id === "\0fixture-verification") return "export const verificationRenderer = undefined;"; return null; },
   }, react(), tailwindcss()],
+  optimizeDeps: { entries: ["e2e-harness/*.html", "../../e2e/fixtures/conversation-resources.tsx"], include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/trees/react"] },
   resolve: {
     dedupe: ["react", "react-dom", "@tiptap/core", "@tiptap/pm", "@tiptap/react"],
   },

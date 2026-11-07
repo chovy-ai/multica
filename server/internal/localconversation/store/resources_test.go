@@ -244,3 +244,88 @@ func TestResourceCountsIncludeSourceLinesThatLookLikePatchHeaders(t *testing.T) 
 		t.Fatalf("source +/- miscounted %#v %v", p, err)
 	}
 }
+
+func TestResourceBudgetRejectsNewEvidenceWithoutReplacingTrustedBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		used  int64
+		other bool
+	}{{"conversation", 64 << 20, false}, {"profile", 1 << 30, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := openTestStore(t)
+			createConversation(t, s, "a")
+			createConversation(t, s, "b")
+			ctx := context.Background()
+			w := s.NewWriter(WriterOptions{})
+			defer w.Close()
+			owner := "a"
+			if tc.other {
+				owner = "b"
+			}
+			_, err := w.Submit(ctx, Batch{ConversationID: owner, FileObservations: []filechanges.Observation{{OperationID: "seed", Cwd: "/repo", Path: "trusted", Before: snap("old", true), After: snap("new", true)}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Account for an already occupied budget without allocating a GiB in the test.
+			if _, err = s.write.ExecContext(ctx, "UPDATE conversation_file_change SET bytes = ? WHERE conversation_id = ?", tc.used, owner); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = w.Submit(ctx, Batch{ConversationID: "a", FileObservations: []filechanges.Observation{{OperationID: "denied", Cwd: "/repo", Path: "new", Before: snap("", false), After: snap("new content", true)}}}); err != nil {
+				t.Fatal(err)
+			}
+			p, err := s.ResourcePage(ctx, "a", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rejected *FileResource
+			for i := range p.Files {
+				if p.Files[i].Path == "new" {
+					rejected = &p.Files[i]
+				}
+			}
+			if rejected == nil || rejected.Reason != "storage_limit" || rejected.Added != nil || rejected.Deleted != nil {
+				t.Fatalf("quota %#v", p)
+			}
+			detail, err := s.ChangeDetail(ctx, "a", rejected.ID, p.Revision)
+			if err != nil || detail.Before != "" || detail.After != "" || detail.Patch != "" {
+				t.Fatalf("quota exposed evidence %#v %v", detail, err)
+			}
+			prior, err := s.ResourcePage(ctx, owner, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range prior.Files {
+				if f.Path == "trusted" {
+					d, err := s.ChangeDetail(ctx, owner, f.ID, prior.Revision)
+					if err != nil || d.Before != "old" || d.After != "new" {
+						t.Fatalf("quota replaced trusted bytes %#v %v", d, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSamePathInDifferentWorkingDirectoriesHasIndependentBaselines(t *testing.T) {
+	s, _ := openTestStore(t)
+	createConversation(t, s, "a")
+	w := s.NewWriter(WriterOptions{})
+	defer w.Close()
+	ctx := context.Background()
+	for i, cwd := range []string{"/first", "/second"} {
+		_, err := w.Submit(ctx, Batch{ConversationID: "a", FileObservations: []filechanges.Observation{{OperationID: fmt.Sprint(i), Cwd: cwd, Path: "same.ts", Before: snap(cwd+" before", true), After: snap(cwd+" after", true)}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := s.ResourcePage(ctx, "a", "")
+	if err != nil || len(p.Files) != 2 {
+		t.Fatalf("cwd merged %#v %v", p, err)
+	}
+	for _, f := range p.Files {
+		d, err := s.ChangeDetail(ctx, "a", f.ID, p.Revision)
+		if err != nil || d.Before != f.Cwd+" before" || d.After != f.Cwd+" after" {
+			t.Fatalf("cross-cwd detail %#v %v", d, err)
+		}
+	}
+}
