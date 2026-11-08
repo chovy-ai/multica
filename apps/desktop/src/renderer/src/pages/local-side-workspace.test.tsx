@@ -8,6 +8,7 @@ import { sessionEntry } from "../platform/local-conversation-projects";
 import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 vi.mock("../platform/local-v2-transport", () => ({ localV2Transport: () => window.desktopAPI.localV2 }));
 
+vi.mock("./local-change-preview", () => ({ LocalChangePreview: () => <div>Read-only changes fixture</div> }));
 vi.mock("@multica/views/i18n", () => ({ useT: () => ({ t: (selector: (resource: typeof chat) => string, options?: Record<string, string | number>) => selector(chat).replace(/{{(\w+)}}/g, (_, key) => String(options?.[key] ?? "")) }) }));
 vi.mock("../components/tutti-agent-gui-panel", () => ({ TuttiAgentGuiPanel: ({ activeSessionId, active }: { activeSessionId: string; active: boolean }) => <textarea aria-label={`Side draft ${activeSessionId}`} data-active={String(active)} /> }));
 const scope = { userId: "side-user", workspaceId: "side-workspace" };
@@ -105,7 +106,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals(); localStorage.clear(); });
 function setup() {
   const ref = createRef<SideWorkspaceHandle>(); const onSelectSource = vi.fn(), onShowMessage = vi.fn();
-  const element = (source: LocalConversation | undefined, sessionId: string | null = source?.id ?? null) => <QueryClientProvider client={queryClient}><LocalSideWorkspace ref={ref} scope={scope} slug="test" source={source && sessionEntry(summary(source) as never)} sessionId={sessionId} provider="codex" sessions={sessions.map((entry) => sessionEntry(summary(entry) as never))} chinese active onSelectSource={onSelectSource} onOpenTask={() => {}} onShowMessage={onShowMessage} onReference={() => {}}>{(visible) => <textarea aria-label="Main draft" data-visible={String(visible)} />}</LocalSideWorkspace></QueryClientProvider>;
+  const element = (source: LocalConversation | undefined, sessionId: string | null = source?.id ?? null) => <QueryClientProvider client={queryClient}><LocalSideWorkspace ref={ref} scope={scope} slug="test" source={source && sessionEntry(summary(source) as never)} sessionId={sessionId} provider="codex" sessions={sessions.map((entry) => sessionEntry(summary(entry) as never))} chinese active onSelectSource={onSelectSource} onOpenTask={() => {}} onShowMessage={onShowMessage} onReference={() => {}}>{(visible, resources) => <>{resources}<textarea aria-label="Main draft" data-visible={String(visible)} /></>}</LocalSideWorkspace></QueryClientProvider>;
   const view = render(element(sessions[0]));
   return { ...view, ref, onSelectSource, onShowMessage, select: (source: LocalConversation | null) => view.rerender(element(source ?? undefined)), selectId: (id: string) => view.rerender(element(undefined, id)) };
 }
@@ -539,4 +540,32 @@ it("leaves outside inputs clickable when only one workspace pane is visible", ()
     input.remove();
     bounds.mockRestore(); offset.mockRestore(); width.mockRestore();
   }
+});
+
+it("preserves the original Side, folder, file and web tabs and editor instances around resources and Changes", async () => {
+  const view = setup(); const main = screen.getByRole("textbox", { name: "Main draft" });
+  fireEvent.change(main, { target: { value: "Keep main" } });
+  await act(async () => view.ref.current!.openSide("new-side"));
+  const side = await screen.findByRole("textbox", { name: "Side draft new-side" });
+  fireEvent.change(side, { target: { value: "Keep side" } });
+  fireEvent.click(screen.getByRole("button", { name: "添加右侧内容" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "打开文件夹" }));
+  await screen.findByRole("tab", { name: "project" });
+  await act(async () => view.ref.current!.openResource("main", "/project/test.ts"));
+  await act(async () => view.ref.current!.openResource("main", "https://retained.example/"));
+  const key = `multica-side-workspace:${scope.userId}:${scope.workspaceId}:session:main`;
+  const before = localStorage.getItem(key);
+  fireEvent.click(screen.getByRole("button", { name: "打开会话资源" }));
+  await screen.findByRole("dialog", { name: "会话资源" });
+  fireEvent.click(within(screen.getByRole("dialog", { name: "会话资源" })).getByRole("button", { name: "关闭会话资源" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "会话资源" })).not.toBeInTheDocument());
+  expect(localStorage.getItem(key)).toBe(before);
+  act(() => view.ref.current!.openChanges());
+  expect(await screen.findByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getAllByRole("tab")).toHaveLength(5);
+  fireEvent.click(screen.getByRole("tab", { name: /旁支/ }));
+  expect(screen.getByRole("textbox", { name: "Side draft new-side" })).toBe(side);
+  expect(side).toHaveValue("Keep side"); expect(main).toHaveValue("Keep main");
+  expect(screen.getByRole("textbox", { name: "Main draft" })).toBe(main);
+  for (const name of ["project", "test.ts", "retained.example"]) expect(screen.getByRole("tab", { name })).toBeInTheDocument();
 });

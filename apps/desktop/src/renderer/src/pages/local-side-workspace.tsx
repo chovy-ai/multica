@@ -43,6 +43,7 @@ import { useQueries } from "@tanstack/react-query";
 import {
   ArrowLeft,
   File,
+  FileDiff,
   FolderOpen,
   Globe,
   Loader2,
@@ -99,6 +100,10 @@ import {
   WebResourcePreview
 } from "./local-resource-preview";
 import { useLocalDevice } from "../platform/local-device";
+import { ConversationResourcesButton, useResourceLabels } from "./local-conversation-resources";
+import { LocalChangePreview } from "./local-change-preview";
+import type { ConversationFileResource, ConversationResourceAttachment } from "@multica/core/local-conversation/resources";
+
 const SideConversation = observer(SideConversationRender);
 const WorkspaceTab = observer(WorkspaceTabRender);
 const SideConversationTab = observer(SideConversationTabRender);
@@ -110,6 +115,7 @@ export interface SideWorkspaceHandle {
     url: string,
     sourceId?: string
   ): Promise<void>;
+  openChanges(fileId?: string, sourceId?: string): void;
   toggle(): void;
 }
 interface Props {
@@ -128,7 +134,7 @@ interface Props {
   ): void;
   onOpenTask(id: string): void;
   onReference(content: string): void;
-  children: (visible: boolean) => ReactNode;
+  children: (visible: boolean, resourceAction?: ReactNode) => ReactNode;
   onOpenChange?: (open: boolean) => void;
 }
 const emptyLayout = (): Layout => ({ tabs: [], selected: null, open: false });
@@ -143,6 +149,8 @@ function layoutKey(
 export const LocalSideWorkspace = observer(
   forwardRef<SideWorkspaceHandle, Props>(
     function LocalSideWorkspace(props, ref) {
+      const resourceLabels = useResourceLabels();
+      const [resourcesOpen, setResourcesOpen] = useState(false);
       const device = useLocalDevice();
       const { transport } = device;
       const sessionId =
@@ -153,6 +161,7 @@ export const LocalSideWorkspace = observer(
       const [layouts, setLayouts] = useState<Record<string, Layout>>(() => ({
         [key]: sessionId ? readLayout(key) : emptyLayout()
       }));
+      useEffect(() => setResourcesOpen(false), [key]);
       const layoutsRef = useRef(layouts);
       layoutsRef.current = layouts;
       const layout =
@@ -494,7 +503,7 @@ export const LocalSideWorkspace = observer(
             return {
               tabs: existing
                 ? current.tabs.map((item) =>
-                    item.id === existing.id &&
+                    item.id === existing.id && item.kind === "changes" && tab.kind === "changes" ? tab : item.id === existing.id &&
                     item.kind === "file" &&
                     tab.kind === "file"
                       ? { ...item, line: tab.line }
@@ -511,6 +520,10 @@ export const LocalSideWorkspace = observer(
       );
       const addToCallback = usePersistCallback(addTo);
       const add = useCallback((tab: Tab) => addTo(key, tab), [addTo, key]);
+      const openChanges = useCallback((fileId?: string, sourceId?: string) => {
+        const id = sourceId ?? sessionId;
+        if (id) addTo(sourceId ? layoutKey(props.scope, sourceId, device.id) : key, {id:`changes:${id}`,kind:"changes",sessionId:id,...(fileId ? {fileId} : {})});
+      }, [addTo,key,sessionId,props.scope,device.id]);
       const openSide = useCallback(
         (id: string, sourceId?: string) =>
           addTo(sourceId ? layoutKey(props.scope, sourceId, device.id) : key, {
@@ -531,6 +544,15 @@ export const LocalSideWorkspace = observer(
             currentKey.current === owner &&
             epoch.current === started;
           const operation = (async () => {
+            if (value.startsWith("multica:changes?")) {
+              const service=conversationService(transport, latest.current.scope).resources(sessionId);
+              await service.refresh();
+              if (service.model.supported===false) throw new Error(resourceLabels.unsupported);
+              const path=new URL(value).searchParams.get("path") ?? "";
+              const file=service.model.data?.files.find(file=>file.path===path || `${file.cwd}/${file.path}`===path);
+              addTo(owner,{id:`changes:${sessionId}`,kind:"changes",sessionId,...(file ? {fileId:file.id} : {})});
+              return;
+            }
             if (/^https?:\/\//i.test(value)) {
               const url = new URL(value);
               if (url.username || url.password)
@@ -596,7 +618,7 @@ export const LocalSideWorkspace = observer(
             .catch(() => {});
           return operation;
         },
-        [addTo, updateLayout, transport]
+        [addTo, updateLayout, transport, resourceLabels.unsupported]
       );
       const openResourceForCallback = usePersistCallback(openResourceFor);
       const openResource = useCallback(
@@ -613,10 +635,11 @@ export const LocalSideWorkspace = observer(
         () => ({
           openSide,
           openResource,
+          openChanges,
           toggle: () =>
             setLayout((current) => ({ ...current, open: !current.open }))
         }),
-        [openSide, openResource, setLayout]
+        [openSide, openResource, openChanges, setLayout]
       );
       const showError = (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -715,7 +738,7 @@ export const LocalSideWorkspace = observer(
           ? `${props.chinese ? "旁支" : "Side"} · ${sessions.find((entry) => entry.id === tab.sessionId)?.title.replace(/ · Side$/, "") ?? (props.chinese ? "新对话" : "New chat")}`
           : tab.kind === "web"
             ? tab.title || new URL(tab.url).hostname
-            : (tab.selected ?? tab.location).name;
+            : tab.kind === "changes" ? resourceLabels.changes : tab.kind === "attachment" ? tab.name : (tab.selected ?? tab.location).name;
       const titleCallback = usePersistCallback(title);
       const activeTab = layout.tabs.find((tab) => tab.id === layout.selected);
       const onClickProp1 = usePersistCallback<
@@ -771,6 +794,11 @@ export const LocalSideWorkspace = observer(
       const onClickProp9 = usePersistCallback<
         NonNullable<React.ComponentProps<typeof Button>["onClick"]>
       >(() => setAddressOpen(false));
+      const onChangeFile = usePersistCallback((fileId: string) => openChanges(fileId));
+      const previewOutput = usePersistCallback((file: ConversationFileResource) => { if (sessionId) void openResource(sessionId, `${file.cwd}/${file.path}`).catch(showError); });
+      const previewAttachment = usePersistCallback((file: ConversationResourceAttachment) => { if (sessionId) add({id:`attachment:${sessionId}:${file.id}`,kind:"attachment",sessionId,attachmentId:file.id,name:file.name,mimeType:file.media_type}); });
+      const backToResources = usePersistCallback(() => setResourcesOpen(true));
+      const resourceAction = sessionId ? <ConversationResourcesButton service={v2.resources(sessionId)} open={resourcesOpen} onOpenChange={setResourcesOpen} onChange={onChangeFile} onPreview={previewOutput} onAttachment={previewAttachment} /> : null;
       return (
         <div
           ref={root}
@@ -785,7 +813,7 @@ export const LocalSideWorkspace = observer(
           >
             <ResizablePanel id="side-main" minSize="32%" hidden={!mainVisible}>
               <div className="h-full min-w-0">
-                {props.children(mainVisible)}
+                {props.children(mainVisible, mainVisible ? resourceAction : undefined)}
               </div>
             </ResizablePanel>
             {sideVisible && mainVisible && (
@@ -887,6 +915,7 @@ export const LocalSideWorkspace = observer(
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  {!mainVisible && resourceAction}
                   <IconButton
                     label={
                       maximized
@@ -992,6 +1021,10 @@ export const LocalSideWorkspace = observer(
                             sideVisible={sideVisible}
                             layout={layout}
                           />
+                        ) : tab.kind === "changes" ? (
+                          <ChangesTab service={v2.resources(tab.sessionId)} tab={tab} active={sideVisible && owner===key && layout.selected===tab.id} expanded={maximized} setLayout={setLayoutCallback} onBack={backToResources} />
+                        ) : tab.kind === "attachment" ? (
+                          <AttachmentTab tab={tab} scope={props.scope} chinese={props.chinese} />
                         ) : tab.kind === "web" ? (
                           <WebResourcePreviewBinding9
                             tab={tab}
@@ -1217,7 +1250,7 @@ function WorkspaceTabRender({
     <Button {...button}>
       {tab.kind === "web" ? (
         <Globe className="size-4 shrink-0" />
-      ) : tab.location.kind === "directory" ? (
+      ) : tab.kind === "changes" ? (<FileDiff className="size-4 shrink-0" />) : tab.kind === "attachment" ? (<File className="size-4 shrink-0" />) : tab.location.kind === "directory" ? (
         <FolderOpen className="size-4 shrink-0" />
       ) : (
         <File className="size-4 shrink-0" />
@@ -1709,4 +1742,15 @@ const ButtonBinding11 = observer(function ButtonBinding11({
       </Button>
     </Slot.Root>
   );
+});
+
+const ChangesTab = observer(function ChangesTab({service,tab,setLayout,...props}: Omit<React.ComponentProps<typeof LocalChangePreview>,"onSelect"|"fileId"> & {tab:Extract<Tab,{kind:"changes"}>;setLayout:(update:SetStateAction<Layout>)=>void}) {
+ const select = usePersistCallback((fileId:string)=>setLayout(current=>({...current,tabs:current.tabs.map(item=>item.id===tab.id&&item.kind==="changes"?{...item,fileId}:item)})));
+ return <LocalChangePreview {...props} service={service} fileId={tab.fileId} onSelect={select} />;
+});
+
+const AttachmentTab = observer(function AttachmentTab({tab,scope,chinese}: {tab:Extract<Tab,{kind:"attachment"}>;scope:LocalConversationScope;chinese:boolean}) {
+ const location = useMemo(()=>({root:"",path:tab.name,name:tab.name,kind:"file" as const}),[tab.name]);
+ const attachment = useMemo(()=>({id:tab.attachmentId,name:tab.name,media_type:tab.mimeType,size:0,source:"input"}),[tab.attachmentId,tab.name,tab.mimeType]);
+ return <LocalFilePreview location={location} attachment={attachment} scope={scope} sessionId={tab.sessionId} chinese={chinese} />;
 });

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
+	"github.com/multica-ai/multica/server/internal/localconversation/filechanges"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/timing"
@@ -105,6 +107,7 @@ func detachSend(ctx context.Context) (context.Context, context.CancelFunc) {
 // into events, and completes the turn when Claude reports its result or the
 // adapter goes away. Output handling never blocks the adapter reader.
 type ClaudeRunner struct {
+	captureTurns   map[string]string
 	rec            turnRecorder
 	conversationID string
 	start          StartClaudeAdapter
@@ -167,6 +170,7 @@ type ClaudeRunner struct {
 }
 
 type claudeTurn struct {
+	files           atomic.Pointer[filechanges.Capture]
 	id              string
 	compacting      bool
 	compacted       bool
@@ -297,6 +301,22 @@ func (r *ClaudeRunner) Send(ctx context.Context, req SendRequest) error {
 	if adapter == nil {
 		return nil
 	}
+	r.mu.Lock()
+	cwd, _ := r.session.Fields["cwd"].(string)
+	if r.captureTurns == nil {
+		r.captureTurns = map[string]string{}
+	}
+	r.captureTurns[req.RequestID] = turn.id
+	r.mu.Unlock()
+	turn.files.Store(filechanges.Scan(cwd))
+	if r.stoppedBeforeDispatch(turn) {
+		return nil
+	}
+	init := filechanges.Observation{OperationID: "capture-start:" + turn.id, Cwd: cwd, TurnID: turn.id}
+	if !turn.files.Load().Complete {
+		init.Reason = "scan_limit"
+	}
+	_ = r.batcher.Append(store.Batch{ConversationID: r.rec.conversationID, FileObservations: []filechanges.Observation{init}}, true)
 	content := []map[string]any{{"type": "text", "text": req.prompt()}}
 	queued := trace.Begin(timing.StageProviderInputQueued)
 	_, err = adapter.Request(ctx, "send", map[string]any{"request_id": req.RequestID, "content": content})
@@ -631,6 +651,9 @@ func (r *ClaudeRunner) ensureAdapter(ctx context.Context, trace *timing.Trace) e
 		}
 		fields["allowed_tools"] = []string{"mcp__" + contextName(r.contextName) + "__*"}
 	}
+	if able, ok := adapter.(adapterCapabilities); ok && able.Supports("file-capture-v1") {
+		fields["capture_files"] = true
+	}
 	starting := trace.Now()
 	started, err := adapter.Request(ctx, "start", fields)
 	if err != nil {
@@ -795,6 +818,34 @@ func (r *ClaudeRunner) handle(norm *claude.Normalizer, out claude.Output) {
 		return
 	}
 	switch out.Type {
+	case "file_capture":
+		var source struct {
+			RequestID string `json:"request_id"`
+		}
+		if json.Unmarshal(out.Message, &source) != nil {
+			return
+		}
+		r.mu.Lock()
+		owner := r.captureTurns[source.RequestID]
+		cwd, _ := r.session.Fields["cwd"].(string)
+		current := r.norm == norm
+		r.mu.Unlock()
+		if owner == "" || !current {
+			return
+		}
+		raw := append(json.RawMessage(nil), out.Message...)
+		_ = r.batcher.Append(store.Batch{ConversationID: r.rec.conversationID, FileCollections: []filechanges.Collection{{Bytes: len(raw), Run: func() []filechanges.Observation {
+			evidence, err := claudeFileObservation(raw, cwd, owner)
+			if err != nil {
+				return []filechanges.Observation{{OperationID: owner + ":invalid-capture", TurnID: owner, Reason: "uncertain"}}
+			}
+			if turn != nil && turn.id == owner {
+				if files := turn.files.Load(); files != nil {
+					files.Recorded(evidence)
+				}
+			}
+			return []filechanges.Observation{evidence}
+		}}}}, true)
 	case "sdk_message":
 		if inputSent {
 			turn.trace.Once(timing.StageProviderFirstMessage)
@@ -926,6 +977,11 @@ func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
 	}
 	markProviderOutput(turn.trace, out)
 	batch := r.rec.outputBatch(turn.id, out)
+	for _, e := range out {
+		if e.Final && e.Payload["kind"] == "tool_call" && e.Payload["tool"] != "Edit" && e.Payload["tool"] != "Write" {
+			batch.FileObservations = append(batch.FileObservations, filechanges.Observation{OperationID: turn.id + ":" + e.ItemID + ":coverage", Cwd: turn.filesRoot(), TurnID: turn.id, Reason: "untracked_tools"})
+		}
+	}
 	if err := r.batcher.Append(batch, false); err != nil {
 		r.mu.Lock()
 		turn.storageFailed = true
@@ -984,7 +1040,11 @@ func (r *ClaudeRunner) finish(turn *claudeTurn, status string, failure *turnErro
 	r.mu.Lock()
 	lastMessageID := turn.lastMessageID
 	r.mu.Unlock()
-	_ = r.batcher.Append(r.rec.completionBatch(turn.id, lastMessageID, status, failure, finals), true)
+	batch := r.rec.completionBatch(turn.id, lastMessageID, status, failure, finals)
+	if files := turn.files.Load(); files != nil {
+		batch.FileCollections = []filechanges.Collection{{Capture: files, TurnID: turn.id, Unknown: true}}
+	}
+	_ = r.batcher.Append(batch, true)
 	finishTrace(turn.trace, status, failure)
 	if r.onTurnEnd != nil {
 		r.onTurnEnd(turn.id)
@@ -1239,4 +1299,11 @@ func (r *ClaudeRunner) Running() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.turn != nil || r.interrupting
+}
+
+func (t *claudeTurn) filesRoot() string {
+	if t.files.Load() == nil {
+		return ""
+	}
+	return t.files.Load().Root
 }

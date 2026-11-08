@@ -221,7 +221,11 @@ func (p *sparePool) launchClaude(ctx context.Context, l *ClaudeSpareLauncher, c 
 		stop()
 		return nil, errSpareUnsupported
 	}
-	if _, err := adapter.Request(ctx, "prewarm", l.Fields(c)); err != nil {
+	fields := l.Fields(c)
+	if able, ok := adapter.(adapterCapabilities); ok && able.Supports("file-capture-v1") {
+		fields["capture_files"] = true
+	}
+	if _, err := adapter.Request(ctx, "prewarm", fields); err != nil {
 		stop()
 		var adapterErr *claude.AdapterError
 		if errors.As(err, &adapterErr) && adapterErr.Code == claude.CodePrewarmUnsupported {

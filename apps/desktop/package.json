@@ -55,6 +55,8 @@
     "@multica/tutti-agent-gui-host": "workspace:*",
     "@multica/ui": "workspace:*",
     "@multica/views": "workspace:*",
+    "@pierre/diffs": "1.6.4",
+    "@pierre/trees": "1.0.0-beta.6",
     "@tanstack/react-query": "catalog:",
     "@tutti-os/browser-node": "workspace:*",
     "electron-updater": "^6.8.3",

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/filechanges"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 )
 
@@ -124,6 +125,24 @@ func TestBatcherFlushesAfterDelayFromFirstEvent(t *testing.T) {
 		t.Fatalf("batch = %s", eventTexts(got[0]))
 	}
 	b.Close()
+}
+
+func TestBatcherKeepsCompletionReadAndFileEvidenceTogether(t *testing.T) {
+	c, timers := &recordingCommitter{}, &manualTimers{}
+	b := NewBatcher(c, BatcherOptions{AfterFunc: timers.after})
+	defer b.Close()
+	read := &store.ReadCompletion{TurnID: "completed", TurnIndex: 0, CompletionSeq: 7}
+	if err := b.Append(store.Batch{ConversationID: "conversation", ReadCompletion: read}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Append(store.Batch{ConversationID: "conversation", FileObservations: []filechanges.Observation{{OperationID: "verified-write", Cwd: "/project", Path: "source.ts"}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	timers.fire()
+	committed := waitBatches(t, c, 1)[0]
+	if committed.ReadCompletion == nil || *committed.ReadCompletion != *read || len(committed.FileObservations) != 1 || committed.FileObservations[0].OperationID != "verified-write" {
+		t.Fatalf("combined batch lost state: %+v", committed)
+	}
 }
 
 func TestBatcherFlushesAtSizeAndOnCriticalEvents(t *testing.T) {

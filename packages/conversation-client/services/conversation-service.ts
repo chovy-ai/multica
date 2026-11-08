@@ -8,6 +8,7 @@ import {
 import { LOCAL_V2_FOCUS_CAPABILITY, LocalV2FocusTracker } from "@multica/core/local-conversation/focus";
 import { ConversationListModel, ConversationModel } from "../models";
 import { ConversationNavigation } from "./conversation-navigation";
+import { ConversationResourcesService } from "./conversation-resources-service";
 import { CompletionReadService } from "./completion-read-service";
 
 /** Conversations of other devices as last read, shown while the current state travels. */
@@ -83,6 +84,12 @@ export interface ConversationServiceOptions {
 export class ConversationService {
   /** The list, complete and current; views read it directly. */
   readonly list = new ConversationListModel();
+  private resourceServices = new Map<string, ConversationResourcesService>();
+  resources(id: string): ConversationResourcesService {
+    let service = this.resourceServices.get(id);
+    if (!service) { service = new ConversationResourcesService({ request: (path) => this.request("GET", path), hold: () => this.open(id), capabilities: () => this.transport.capabilities?.() ?? Promise.resolve([]) }, id); this.resourceServices.set(id, service); }
+    return service;
+  }
   readonly completions?: CompletionReadService;
   private summaryLoad?: Promise<void>;
   private lastGeneration = "";
@@ -150,6 +157,7 @@ export class ConversationService {
 
   private noteGeneration(generation: string) {
     if (generation) {
+      if (this.lastGeneration && this.lastGeneration !== generation) for (const service of this.resourceServices.values()) service.invalidate(true);
       this.lastGeneration = generation;
       this.options.onGeneration(generation);
     }
@@ -260,6 +268,7 @@ export class ConversationService {
 
   private changed(id: string, entry: ContentEntry, events: readonly LocalV2Event[] = [], change?: "navigation") {
     entry.version++;
+    if (!events.length || events.some((event) => event.type === "conversation.resources_changed" || event.type === "user.message" || event.type === "turn.completed" || event.payload.kind === "image")) this.resourceServices.get(id)?.invalidate();
     entry.navigation?.sync();
     this.options.onUsed(this, id);
     for (const observer of [...entry.observers]) {
@@ -589,6 +598,8 @@ export class ConversationService {
   dispose(): void {
     this.completions?.dispose();
     this.disposed = true;
+    for (const service of this.resourceServices.values()) service.dispose();
+    this.resourceServices.clear();
     clearTimeout(this.listTimer);
     this.entries.clear();
     this.transport.release?.(this.scope);

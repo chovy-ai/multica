@@ -1,10 +1,13 @@
+import { CONVERSATION_RESOURCES_CAPABILITY } from "@multica/core/local-conversation/resources";
 import type { SideWorkspaceControlRequest } from "../../../shared/side-workspace";
 import { sideWorkspaceSyncSchema, type LocalConversationScope, type LocalPreviewLocation, type SideWorkspaceSnapshot } from "@multica/core/local-conversation/protocol";
 import type { LocalV2Transport } from "@multica/core/local-conversation/v2";
 import { conversationService } from "../platform/conversation-services";
 import { localV2Preview } from "../platform/local-v2-preview";
 
-export type SideTab = { id: string; kind: "side"; sessionId: string }
+export type SideTab = { id: string; kind: "changes"; sessionId: string; fileId?: string }
+ | { id:string; kind:"attachment"; sessionId:string; attachmentId:string; name:string; mimeType:string }
+ | { id: string; kind: "side"; sessionId: string }
   | { id: string; kind: "file"; location: LocalPreviewLocation; selected?: LocalPreviewLocation; sourceId?: string; line?: number }
   | { id: string; kind: "web"; url: string; title?: string; loading?: boolean; openedBy?: "user" | "agent"; turnId?: string; keep?: boolean };
 export type SideLayout = { tabs: SideTab[]; selected: string | null; open: boolean };
@@ -16,7 +19,7 @@ export function sideLayoutKey(scope: LocalConversationScope, id: string, deviceI
 export function sideSnapshot(conversationId: string, layout: SideLayout, visible: boolean): SideWorkspaceSnapshot {
   revision = Math.max(revision + 1, Date.now() * 1000);
   return sideWorkspaceSyncSchema.parse({ conversationId, revision, panelOpen: layout.open, visible, selectedTabId: layout.selected,
-    tabs: layout.tabs.map((tab) => tab.kind === "web" ? tab : tab.kind === "side" ? tab : {
+    tabs: layout.tabs.map((tab) => tab.kind === "web" ? tab : tab.kind === "side" || tab.kind === "changes" || tab.kind === "attachment" ? tab : {
       id: tab.id, kind: "file", root: tab.location.root, path: tab.location.path, fileKind: tab.location.kind, selectedPath: tab.selected?.path, line: tab.line,
     }),
   });
@@ -33,12 +36,16 @@ export function readSideLayout(key: string): SideLayout {
   try {
     const value = JSON.parse(localStorage.getItem(key) || "null");
     if (!value || !Array.isArray(value.tabs)) throw new Error();
-    const tabs = value.tabs.filter((tab: SideTab) => tab && typeof tab.id === "string" && (tab.kind === "side" ? typeof tab.sessionId === "string" : tab.kind === "web" ? typeof tab.url === "string" && /^https?:\/\//i.test(tab.url) : tab.kind === "file" && typeof tab.location?.root === "string" && typeof tab.location?.path === "string")).slice(0, 20);
+    const tabs = value.tabs.filter((tab: SideTab) => tab && typeof tab.id === "string" && (tab.kind === "changes" ? typeof tab.sessionId === "string" : tab.kind === "attachment" ? typeof tab.attachmentId === "string" && typeof tab.sessionId === "string" && typeof tab.name === "string" && typeof tab.mimeType === "string" : tab.kind === "side" ? typeof tab.sessionId === "string" : tab.kind === "web" ? typeof tab.url === "string" && /^https?:\/\//i.test(tab.url) : tab.kind === "file" && typeof tab.location?.root === "string" && typeof tab.location?.path === "string")).slice(0, 20);
     return { tabs, selected: tabs.some((tab: SideTab) => tab.id === value.selected) ? value.selected : tabs[0]?.id ?? null, open: value.open === true };
   } catch { return { tabs: [], selected: null, open: false }; }
 }
 /** Records a Side workspace layout in the daemon, where the conversation's tools read it. */
 export async function syncSideWorkspace(transport: LocalV2Transport, scope: LocalConversationScope, snapshot: SideWorkspaceSnapshot) {
+  if (snapshot.tabs.some(tab=>tab.kind==="changes"||tab.kind==="attachment") && !(await transport.capabilities?.())?.includes(CONVERSATION_RESOURCES_CAPABILITY)) {
+    const tabs=snapshot.tabs.filter(tab=>tab.kind!=="changes"&&tab.kind!=="attachment");
+    snapshot={...snapshot,tabs,selectedTabId:tabs.some(tab=>tab.id===snapshot.selectedTabId)?snapshot.selectedTabId:tabs[0]?.id??null};
+  }
   const result = await conversationService(transport, scope).command(snapshot.conversationId, { type: "side_workspace_sync", workspace: snapshot }) as { revision?: unknown } | null;
   // The browser tabs follow the layout the daemon accepted.
   if (result?.revision === snapshot.revision) await window.desktopAPI.sideWorkspace?.reconcile(scope, snapshot.conversationId, (transport as { deviceId?: string }).deviceId ?? "local");

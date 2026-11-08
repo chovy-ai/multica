@@ -3418,7 +3418,7 @@ const LocalSideWorkspaceBinding3 = observer(
         onOpenTask={onOpenTaskProp48}
         onShowMessage={onShowMessageProp49}
       >
-        {(mainVisible) => (
+        {(mainVisible, resourceAction) => (
           <div className="flex h-full min-h-0 min-w-0 flex-col">
             <div className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
               {compact && (
@@ -3443,6 +3443,7 @@ const LocalSideWorkspaceBinding3 = observer(
                     report={report}
                   />
                 )}
+                {resourceAction}
                 <IconButtonBinding32
                   sideOpen={sideOpen}
                   chinese={chinese}

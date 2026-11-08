@@ -30,7 +30,8 @@
       "types": "./src/mount.d.ts",
       "default": "./src/mount.tsx"
     },
-    "./host-services-connection": "./src/host-services-connection.ts"
+    "./host-services-connection": "./src/host-services-connection.ts",
+    "./tool-change-adapter": "./tool-change-adapter.ts"
   },
   "scripts": {
     "build": "node scripts/prepare.mjs",

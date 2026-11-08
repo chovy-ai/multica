@@ -54,6 +54,17 @@ func (q *Queries) AdvanceTurnSeq(ctx context.Context, arg AdvanceTurnSeqParams) 
 	return err
 }
 
+const allFileChangeBytes = `-- name: AllFileChangeBytes :one
+SELECT COALESCE(SUM(bytes), 0) FROM conversation_file_change
+`
+
+func (q *Queries) AllFileChangeBytes(ctx context.Context) (interface{}, error) {
+	row := q.db.QueryRowContext(ctx, allFileChangeBytes)
+	var coalesce interface{}
+	err := row.Scan(&coalesce)
+	return coalesce, err
+}
+
 const browseSessionPage = `-- name: BrowseSessionPage :many
 WITH recency AS (
     SELECT c.id, c.created_at, CAST(COALESCE((
@@ -383,6 +394,24 @@ func (q *Queries) DeleteConversationSubmissions(ctx context.Context, conversatio
 	return err
 }
 
+const deleteFileChanges = `-- name: DeleteFileChanges :exec
+DELETE FROM conversation_file_change WHERE conversation_id = ?
+`
+
+func (q *Queries) DeleteFileChanges(ctx context.Context, conversationID string) error {
+	_, err := q.db.ExecContext(ctx, deleteFileChanges, conversationID)
+	return err
+}
+
+const deleteFileOperations = `-- name: DeleteFileOperations :exec
+DELETE FROM conversation_file_operation WHERE conversation_id = ?
+`
+
+func (q *Queries) DeleteFileOperations(ctx context.Context, conversationID string) error {
+	_, err := q.db.ExecContext(ctx, deleteFileOperations, conversationID)
+	return err
+}
+
 const deleteOldPromptQueueTombstones = `-- name: DeleteOldPromptQueueTombstones :exec
 DELETE FROM prompt_queue_tombstone WHERE conversation_id = ? AND removed_at < ?
 `
@@ -411,6 +440,15 @@ func (q *Queries) DeletePromptQueueItem(ctx context.Context, arg DeletePromptQue
 	return err
 }
 
+const deleteResourceState = `-- name: DeleteResourceState :exec
+DELETE FROM conversation_resource_state WHERE conversation_id = ?
+`
+
+func (q *Queries) DeleteResourceState(ctx context.Context, conversationID string) error {
+	_, err := q.db.ExecContext(ctx, deleteResourceState, conversationID)
+	return err
+}
+
 const establishCompletionBaseline = `-- name: EstablishCompletionBaseline :exec
 UPDATE conversation SET
     read_completion_seq = completion_seq,
@@ -423,6 +461,17 @@ WHERE id = ?1
 func (q *Queries) EstablishCompletionBaseline(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, establishCompletionBaseline, id)
 	return err
+}
+
+const fileChangeBytes = `-- name: FileChangeBytes :one
+SELECT COALESCE(SUM(bytes), 0) FROM conversation_file_change WHERE conversation_id = ?
+`
+
+func (q *Queries) FileChangeBytes(ctx context.Context, conversationID string) (interface{}, error) {
+	row := q.db.QueryRowContext(ctx, fileChangeBytes, conversationID)
+	var coalesce interface{}
+	err := row.Scan(&coalesce)
+	return coalesce, err
 }
 
 const findConversationByCwd = `-- name: FindConversationByCwd :one
@@ -473,6 +522,33 @@ func (q *Queries) FindConversationByCwd(ctx context.Context, arg FindConversatio
 		&i.ReadCompletionSeq,
 		&i.ReadTurnIndex,
 		&i.ServiceTier,
+	)
+	return i, err
+}
+
+const findFileChange = `-- name: FindFileChange :one
+SELECT conversation_id, id, cwd, path, metadata, baseline, latest, patch, bytes FROM conversation_file_change WHERE conversation_id = ? AND cwd = ? AND path = ? LIMIT 1
+`
+
+type FindFileChangeParams struct {
+	ConversationID string
+	Cwd            string
+	Path           string
+}
+
+func (q *Queries) FindFileChange(ctx context.Context, arg FindFileChangeParams) (ConversationFileChange, error) {
+	row := q.db.QueryRowContext(ctx, findFileChange, arg.ConversationID, arg.Cwd, arg.Path)
+	var i ConversationFileChange
+	err := row.Scan(
+		&i.ConversationID,
+		&i.ID,
+		&i.Cwd,
+		&i.Path,
+		&i.Metadata,
+		&i.Baseline,
+		&i.Latest,
+		&i.Patch,
+		&i.Bytes,
 	)
 	return i, err
 }
@@ -794,6 +870,32 @@ func (q *Queries) GetExecution(ctx context.Context, conversationID string) (Conv
 	return i, err
 }
 
+const getFileChange = `-- name: GetFileChange :one
+SELECT conversation_id, id, cwd, path, metadata, baseline, latest, patch, bytes FROM conversation_file_change WHERE conversation_id = ? AND id = ?
+`
+
+type GetFileChangeParams struct {
+	ConversationID string
+	ID             string
+}
+
+func (q *Queries) GetFileChange(ctx context.Context, arg GetFileChangeParams) (ConversationFileChange, error) {
+	row := q.db.QueryRowContext(ctx, getFileChange, arg.ConversationID, arg.ID)
+	var i ConversationFileChange
+	err := row.Scan(
+		&i.ConversationID,
+		&i.ID,
+		&i.Cwd,
+		&i.Path,
+		&i.Metadata,
+		&i.Baseline,
+		&i.Latest,
+		&i.Patch,
+		&i.Bytes,
+	)
+	return i, err
+}
+
 const getFolderProject = `-- name: GetFolderProject :one
 SELECT id, scope_id, title, path, created_at FROM folder_project WHERE scope_id = ? AND id = ?
 `
@@ -925,6 +1027,23 @@ func (q *Queries) GetQueueOperation(ctx context.Context, arg GetQueueOperationPa
 	return i, err
 }
 
+const getResourceState = `-- name: GetResourceState :one
+SELECT conversation_id, revision, coverage, reason, recorded_from FROM conversation_resource_state WHERE conversation_id = ?
+`
+
+func (q *Queries) GetResourceState(ctx context.Context, conversationID string) (ConversationResourceState, error) {
+	row := q.db.QueryRowContext(ctx, getResourceState, conversationID)
+	var i ConversationResourceState
+	err := row.Scan(
+		&i.ConversationID,
+		&i.Revision,
+		&i.Coverage,
+		&i.Reason,
+		&i.RecordedFrom,
+	)
+	return i, err
+}
+
 const getScope = `-- name: GetScope :one
 SELECT id, api_origin, user_id, workspace_id, scope_seq FROM scope WHERE id = ?
 `
@@ -1021,6 +1140,22 @@ func (q *Queries) GetTurn(ctx context.Context, id string) (Turn, error) {
 		&i.OriginClientKind,
 	)
 	return i, err
+}
+
+const hasFileOperation = `-- name: HasFileOperation :one
+SELECT COUNT(*) FROM conversation_file_operation WHERE conversation_id = ? AND operation_id = ?
+`
+
+type HasFileOperationParams struct {
+	ConversationID string
+	OperationID    string
+}
+
+func (q *Queries) HasFileOperation(ctx context.Context, arg HasFileOperationParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, hasFileOperation, arg.ConversationID, arg.OperationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const insertAttachment = `-- name: InsertAttachment :exec
@@ -1646,6 +1781,44 @@ func (q *Queries) ListExecutions(ctx context.Context) ([]ConversationExecution, 
 	return items, nil
 }
 
+const listFileChanges = `-- name: ListFileChanges :many
+SELECT id, metadata FROM conversation_file_change WHERE conversation_id = ? AND id > ? ORDER BY id LIMIT ?
+`
+
+type ListFileChangesParams struct {
+	ConversationID string
+	ID             string
+	Limit          int64
+}
+
+type ListFileChangesRow struct {
+	ID       string
+	Metadata string
+}
+
+func (q *Queries) ListFileChanges(ctx context.Context, arg ListFileChangesParams) ([]ListFileChangesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFileChanges, arg.ConversationID, arg.ID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFileChangesRow{}
+	for rows.Next() {
+		var i ListFileChangesRow
+		if err := rows.Scan(&i.ID, &i.Metadata); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFolderProjects = `-- name: ListFolderProjects :many
 SELECT id, scope_id, title, path, created_at FROM folder_project WHERE scope_id = ? ORDER BY created_at, id
 `
@@ -1971,6 +2144,45 @@ func (q *Queries) ListRecentTurns(ctx context.Context, arg ListRecentTurnsParams
 			&i.OriginPeerID,
 			&i.OriginClientKind,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listResourceEntries = `-- name: ListResourceEntries :many
+SELECT cursor_id, entry_type, metadata FROM conversation_resource_entry WHERE conversation_id = ? AND cursor_id > ? ORDER BY cursor_id LIMIT ?
+`
+
+type ListResourceEntriesParams struct {
+	ConversationID string
+	CursorID       interface{}
+	Limit          int64
+}
+
+type ListResourceEntriesRow struct {
+	CursorID  interface{}
+	EntryType string
+	Metadata  string
+}
+
+func (q *Queries) ListResourceEntries(ctx context.Context, arg ListResourceEntriesParams) ([]ListResourceEntriesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listResourceEntries, arg.ConversationID, arg.CursorID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListResourceEntriesRow{}
+	for rows.Next() {
+		var i ListResourceEntriesRow
+		if err := rows.Scan(&i.CursorID, &i.EntryType, &i.Metadata); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2454,6 +2666,21 @@ func (q *Queries) MarkCommandUncertain(ctx context.Context, arg MarkCommandUncer
 	return err
 }
 
+const pendingResourceCaptures = `-- name: PendingResourceCaptures :one
+SELECT COUNT(*) FROM conversation_file_operation AS pending
+WHERE pending.conversation_id = ? AND pending.operation_id LIKE 'capture-start:%'
+AND NOT EXISTS (SELECT 1 FROM conversation_file_operation AS finished
+WHERE finished.conversation_id = pending.conversation_id
+AND finished.operation_id = 'capture-end:' || substr(pending.operation_id, 15))
+`
+
+func (q *Queries) PendingResourceCaptures(ctx context.Context, conversationID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, pendingResourceCaptures, conversationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const promptQueueBounds = `-- name: PromptQueueBounds :one
 SELECT CAST(COALESCE(MIN(position), 0) AS INTEGER) AS first_position, CAST(COALESCE(MAX(position), 0) AS INTEGER) AS last_position, COUNT(*) AS item_count
 FROM prompt_queue_item WHERE conversation_id = ?
@@ -2501,6 +2728,52 @@ func (q *Queries) PutAttempt(ctx context.Context, arg PutAttemptParams) error {
 	return err
 }
 
+const putFileChange = `-- name: PutFileChange :exec
+INSERT INTO conversation_file_change (conversation_id, id, cwd, path, metadata, baseline, latest, patch, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (conversation_id, id) DO UPDATE SET path = excluded.path, metadata = excluded.metadata, baseline = excluded.baseline, latest = excluded.latest, patch = excluded.patch, bytes = excluded.bytes
+`
+
+type PutFileChangeParams struct {
+	ConversationID string
+	ID             string
+	Cwd            string
+	Path           string
+	Metadata       string
+	Baseline       string
+	Latest         string
+	Patch          string
+	Bytes          int64
+}
+
+func (q *Queries) PutFileChange(ctx context.Context, arg PutFileChangeParams) error {
+	_, err := q.db.ExecContext(ctx, putFileChange,
+		arg.ConversationID,
+		arg.ID,
+		arg.Cwd,
+		arg.Path,
+		arg.Metadata,
+		arg.Baseline,
+		arg.Latest,
+		arg.Patch,
+		arg.Bytes,
+	)
+	return err
+}
+
+const putFileOperation = `-- name: PutFileOperation :exec
+INSERT INTO conversation_file_operation (conversation_id, operation_id) VALUES (?, ?)
+`
+
+type PutFileOperationParams struct {
+	ConversationID string
+	OperationID    string
+}
+
+func (q *Queries) PutFileOperation(ctx context.Context, arg PutFileOperationParams) error {
+	_, err := q.db.ExecContext(ctx, putFileOperation, arg.ConversationID, arg.OperationID)
+	return err
+}
+
 const putMeta = `-- name: PutMeta :exec
 INSERT INTO store_meta (key, value) VALUES (?, ?)
 ON CONFLICT (key) DO UPDATE SET value = excluded.value
@@ -2513,6 +2786,30 @@ type PutMetaParams struct {
 
 func (q *Queries) PutMeta(ctx context.Context, arg PutMetaParams) error {
 	_, err := q.db.ExecContext(ctx, putMeta, arg.Key, arg.Value)
+	return err
+}
+
+const putResourceState = `-- name: PutResourceState :exec
+INSERT INTO conversation_resource_state (conversation_id, revision, coverage, reason, recorded_from) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (conversation_id) DO UPDATE SET revision = excluded.revision, coverage = excluded.coverage, reason = excluded.reason
+`
+
+type PutResourceStateParams struct {
+	ConversationID string
+	Revision       int64
+	Coverage       string
+	Reason         string
+	RecordedFrom   string
+}
+
+func (q *Queries) PutResourceState(ctx context.Context, arg PutResourceStateParams) error {
+	_, err := q.db.ExecContext(ctx, putResourceState,
+		arg.ConversationID,
+		arg.Revision,
+		arg.Coverage,
+		arg.Reason,
+		arg.RecordedFrom,
+	)
 	return err
 }
 

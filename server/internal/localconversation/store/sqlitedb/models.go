@@ -73,6 +73,38 @@ type ConversationExecution struct {
 	AttemptID      string
 }
 
+type ConversationFileChange struct {
+	ConversationID string
+	ID             string
+	Cwd            string
+	Path           string
+	Metadata       string
+	Baseline       string
+	Latest         string
+	Patch          string
+	Bytes          int64
+}
+
+type ConversationFileOperation struct {
+	ConversationID string
+	OperationID    string
+}
+
+type ConversationResourceEntry struct {
+	ConversationID string
+	CursorID       interface{}
+	EntryType      string
+	Metadata       string
+}
+
+type ConversationResourceState struct {
+	ConversationID string
+	Revision       int64
+	Coverage       string
+	Reason         string
+	RecordedFrom   string
+}
+
 type Event struct {
 	ConversationID string
 	Seq            int64

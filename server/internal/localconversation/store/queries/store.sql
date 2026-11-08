@@ -421,6 +421,59 @@ INSERT INTO queue_operation (conversation_id, operation_id, action, request_id) 
 -- name: DeleteConversationQueueOperations :exec
 DELETE FROM queue_operation WHERE conversation_id = ?;
 
+
+-- name: GetResourceState :one
+SELECT * FROM conversation_resource_state WHERE conversation_id = ?;
+
+-- name: PutResourceState :exec
+INSERT INTO conversation_resource_state (conversation_id, revision, coverage, reason, recorded_from) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (conversation_id) DO UPDATE SET revision = excluded.revision, coverage = excluded.coverage, reason = excluded.reason;
+
+-- name: GetFileChange :one
+SELECT * FROM conversation_file_change WHERE conversation_id = ? AND id = ?;
+
+-- name: FindFileChange :one
+SELECT * FROM conversation_file_change WHERE conversation_id = ? AND cwd = ? AND path = ? LIMIT 1;
+
+-- name: ListFileChanges :many
+SELECT id, metadata FROM conversation_file_change WHERE conversation_id = ? AND id > ? ORDER BY id LIMIT ?;
+
+-- name: PutFileChange :exec
+INSERT INTO conversation_file_change (conversation_id, id, cwd, path, metadata, baseline, latest, patch, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (conversation_id, id) DO UPDATE SET path = excluded.path, metadata = excluded.metadata, baseline = excluded.baseline, latest = excluded.latest, patch = excluded.patch, bytes = excluded.bytes;
+
+-- name: FileChangeBytes :one
+SELECT COALESCE(SUM(bytes), 0) FROM conversation_file_change WHERE conversation_id = ?;
+
+-- name: AllFileChangeBytes :one
+SELECT COALESCE(SUM(bytes), 0) FROM conversation_file_change;
+
+-- name: HasFileOperation :one
+SELECT COUNT(*) FROM conversation_file_operation WHERE conversation_id = ? AND operation_id = ?;
+
+-- name: PutFileOperation :exec
+INSERT INTO conversation_file_operation (conversation_id, operation_id) VALUES (?, ?);
+
+-- name: DeleteFileChanges :exec
+DELETE FROM conversation_file_change WHERE conversation_id = ?;
+
+-- name: DeleteResourceState :exec
+DELETE FROM conversation_resource_state WHERE conversation_id = ?;
+
+-- name: DeleteFileOperations :exec
+DELETE FROM conversation_file_operation WHERE conversation_id = ?;
+
+
+-- name: ListResourceEntries :many
+SELECT cursor_id, entry_type, metadata FROM conversation_resource_entry WHERE conversation_id = ? AND cursor_id > ? ORDER BY cursor_id LIMIT ?;
+
+-- name: PendingResourceCaptures :one
+SELECT COUNT(*) FROM conversation_file_operation AS pending
+WHERE pending.conversation_id = ? AND pending.operation_id LIKE 'capture-start:%'
+AND NOT EXISTS (SELECT 1 FROM conversation_file_operation AS finished
+WHERE finished.conversation_id = pending.conversation_id
+AND finished.operation_id = 'capture-end:' || substr(pending.operation_id, 15));
+
 -- name: SetCompletedTurn :exec
 UPDATE conversation SET completed_turn_id = sqlc.arg(completed_turn_id), completed_turn_index = sqlc.arg(turn_index), completion_seq = sqlc.arg(completion_seq)
 WHERE id = sqlc.arg(id) AND completion_seq < sqlc.arg(completion_seq);

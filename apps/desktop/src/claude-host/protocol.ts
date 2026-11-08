@@ -4,7 +4,7 @@ import { z } from "zod";
 export const CLAUDE_ADAPTER_PROTOCOL_VERSION = 1;
 
 /** Announced in ready; a daemon uses prewarm and claim only when both are listed. */
-export const CLAUDE_ADAPTER_CAPABILITIES = ["set_model", "set_permission_mode", "apply_flag_settings", "set_mcp_servers", "stop_task", "prewarm", "claim"];
+export const CLAUDE_ADAPTER_CAPABILITIES = ["set_model", "set_permission_mode", "apply_flag_settings", "set_mcp_servers", "stop_task", "prewarm", "claim", "file-capture-v1"];
 
 const id = z.string().min(1).max(200);
 const request = { version: z.literal(CLAUDE_ADAPTER_PROTOCOL_VERSION), id };
@@ -13,14 +13,14 @@ const objectRecord = z.record(z.string(), z.unknown());
 
 export const daemonMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
-    ...request, type: z.literal("start"), executable: z.string().min(1), cwd: z.string(),
+    ...request, type: z.literal("start"), capture_files: z.boolean().optional(), executable: z.string().min(1), cwd: z.string(),
     resume: z.string().optional(), model: z.string().nullable().optional(), reasoning_effort: z.string().nullable().optional(),
     permission_mode: permissionMode.optional(), append_system_prompt: z.string().optional(),
     mcp_servers: z.record(z.string(), objectRecord).optional(), allowed_tools: z.array(z.string()).optional(),
     settings: objectRecord.optional(), env: z.record(z.string(), z.string()).optional(),
   }),
   z.strictObject({
-    ...request, type: z.literal("prewarm"), executable: z.string().min(1), allowed_tools: z.array(z.string()).optional(),
+    ...request, type: z.literal("prewarm"), capture_files: z.boolean().optional(), executable: z.string().min(1), allowed_tools: z.array(z.string()).optional(),
     settings: objectRecord.optional(), env: z.record(z.string(), z.string()).optional(),
   }),
   z.strictObject({
@@ -51,6 +51,7 @@ export type AdapterMessage =
   | { version: 1; type: "ready"; sdk_version: string; cli_version?: string; capabilities?: string[] }
   | { version: 1; type: "result"; id: string; data?: unknown }
   | { version: 1; type: "error"; id?: string; code: string; message: string; dispatch?: Dispatch }
+  | { version: 1; type: "file_capture"; query_generation: number; message: import("./file-capture").FileCaptureEvidence }
   | { version: 1; type: "sdk_message"; query_generation: number; message: { type: string } & Record<string, unknown> }
   | { version: 1; type: "interaction_request"; interaction_id: string; kind: "permission" | "question"; request: Record<string, unknown> };
 

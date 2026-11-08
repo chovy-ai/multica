@@ -1,5 +1,29 @@
 # UI performance scenarios
 
+## Conversation resources
+
+The standalone conversation fixture mounts production Desktop workspace and diff components with a fake transport and native textarea. It calls no backend, PostgreSQL or installed agent CLI. It keeps the approved 940,000-byte/20,000-line file budget.
+
+Prepare and build the current checkout:
+
+```bash
+pnpm --filter @multica/tutti-agent-gui-host exec node scripts/prepare.mjs
+pnpm --filter @multica/tutti-agent-gui-host exec vite build --config ../../e2e/perf/conversation-resources.vite.ts
+python3 -m http.server 18098 --bind 127.0.0.1 --directory .tmp/resource-perf-dist
+```
+
+For a same-machine baseline, create an isolated worktree at pre-feature `08f697395d15f2add016fe80a4f480d8f657a521`, copy the three `conversation-resources` fixture/config/HTML files from this directory to its `e2e/perf/`, install its frozen dependencies, and use the same prepare/build commands. Serve that output on port 18097. The fixture deliberately tolerates the baseline's absent resources slot and `openChanges` method.
+
+With both production builds available and other build/test jobs stopped:
+
+```bash
+RESOURCE_PERF_BASELINE_URL=http://127.0.0.1:18097 PLAYWRIGHT_BASE_URL=http://127.0.0.1:18098 pnpm exec playwright test --config=playwright.perf.config.ts conversation-resources.spec.ts
+```
+
+Three cold-page comparisons run sequentially, with no retries. Each scenario types for at least five seconds; the open-file scenario waits for actual rows, scrolls to the final line and checks the input still has focus. JSON and screenshots go to `.tmp/chov96-perf/`. The test reports p95 and maximum input-to-next-frame latency, long tasks, JS heap and mounted row counts. Both latency statistics use the approved baseline + max(20%, 50 ms) tolerance; the maximum remains the blocking measure. A baseline outlier is kept in the record, not discarded. Viewport row counts must stay below 1,000 while line 20,000 remains reachable.
+
+These measurements include Playwright/Chromium overhead and a fake host; they do not establish complete Electron release performance. Stop both static servers and remove the isolated baseline worktree after collecting results.
+
 The comment-typing scenario models a long issue thread while three agent runs
 stream progress. It exists because of MUL-7227, where a summary animation
 replaced a DOM node per streamed message and typing a comment slowed to a crawl.

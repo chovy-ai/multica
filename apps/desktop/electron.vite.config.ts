@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import { toolChangeAdapter } from "@multica/tutti-agent-gui-host/tool-change-adapter";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -70,6 +71,7 @@ export default defineConfig(({ command }) => {
       strictPort: true,
     },
     plugins: [
+      toolChangeAdapter(),
       verificationAlias("renderer"),
       {
         name: "multica-tutti-agent-gui-assets",

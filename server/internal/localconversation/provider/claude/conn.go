@@ -265,6 +265,11 @@ func (c *Conn) dispatch(line []byte) error {
 		} else {
 			c.resolve(f.ID, reply{err: adapterErr})
 		}
+	case "file_capture":
+		if len(f.Message) == 0 || f.Message[0] != '{' || f.QueryGeneration < 1 {
+			return fmt.Errorf("%w: invalid file capture", ErrProtocol)
+		}
+		c.handler(Output{Type: "file_capture", QueryGeneration: f.QueryGeneration, Message: f.Message})
 	case "sdk_message":
 		if len(f.Message) == 0 || f.Message[0] != '{' {
 			return fmt.Errorf("%w: sdk_message without an object message", ErrProtocol)
