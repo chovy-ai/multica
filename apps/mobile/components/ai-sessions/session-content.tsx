@@ -95,6 +95,7 @@ import { SessionDraftAttachments } from "./session-draft-attachments";
 import { SubmissionAttachments } from "./submission-attachments";
 import { isPhoto } from "@/data/ai-sessions/photo-attachments";
 import { SessionQuestions } from "@/components/ai-sessions/questions";
+import { createSessionScrollFollow } from "@/lib/session-scroll-follow";
 
 export function AISessionContent({
   sessionId,
@@ -191,7 +192,7 @@ export function AISessionContent({
   const [referenceError, setReferenceError] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const list = useRef<FlashListRef<ConversationRow>>(null);
-  const nearBottom = useRef(true);
+  const [scrollFollow] = useState(createSessionScrollFollow);
   const rows = useMemo(
     () => (snapshot ? transcript(snapshot) : []),
     [snapshot],
@@ -302,9 +303,9 @@ export function AISessionContent({
     }, [active, draftKey]),
   );
   useEffect(() => {
-    if (nearBottom.current && rows.length)
+    if (scrollFollow.following && rows.length)
       list.current?.scrollToEnd({ animated: false });
-  }, [rows]);
+  }, [rows, scrollFollow]);
   useEffect(() => {
     if (snapshot) client?.committed(session);
   }, [client, session, snapshot]);
@@ -725,11 +726,11 @@ export function AISessionContent({
     const index = allRows.findIndex((row) => row.turnId === turn);
     if (index >= 0) {
       located.current = turn;
-      nearBottom.current = false;
+      scrollFollow.pause();
       list.current?.scrollToIndex({ index, animated: true });
     } else if (hasOlder && !history.isFetching && connected)
       void history.fetchNextPage();
-  }, [turn, allRows, focused, active, hasOlder, history, connected]);
+  }, [turn, allRows, focused, active, hasOlder, history, connected, scrollFollow]);
   const sideRequest = useRef<{ key: string; requestId: string } | null>(null);
   const createSide = async (quote: string, turnId?: string) => {
     if (!client || !connected || busy || !quote.trim()) return;
@@ -981,13 +982,21 @@ export function AISessionContent({
               maintainVisibleContentPosition={{
                 startRenderingFromBottom: true,
               }}
+              onScrollBeginDrag={({ nativeEvent }) => {
+                scrollFollow.beginDrag(nativeEvent);
+                setReadingHistory(true);
+              }}
               onScroll={({ nativeEvent }) => {
-                nearBottom.current =
-                  nativeEvent.contentSize.height -
-                    nativeEvent.contentOffset.y -
-                    nativeEvent.layoutMeasurement.height <
-                  100;
-                setReadingHistory(!nearBottom.current);
+                scrollFollow.scroll(nativeEvent);
+                setReadingHistory(!scrollFollow.following);
+              }}
+              onScrollEndDrag={({ nativeEvent }) => {
+                scrollFollow.endDrag(nativeEvent);
+                setReadingHistory(!scrollFollow.following);
+              }}
+              onMomentumScrollEnd={({ nativeEvent }) => {
+                scrollFollow.endMomentum(nativeEvent);
+                setReadingHistory(!scrollFollow.following);
               }}
               contentContainerStyle={{ padding: 16 }}
               keyboardShouldPersistTaps="handled"
@@ -999,7 +1008,8 @@ export function AISessionContent({
                     variant="ghost"
                     disabled={!connected || history.isFetchingNextPage}
                     onPress={() => {
-                      nearBottom.current = false;
+                      scrollFollow.pause();
+                      setReadingHistory(true);
                       void history.fetchNextPage();
                     }}
                   >
@@ -1139,7 +1149,7 @@ export function AISessionContent({
                 className="rounded-full"
                 accessibilityLabel={t("latest")}
                 onPress={() => {
-                  nearBottom.current = true;
+                  scrollFollow.resume();
                   setReadingHistory(false);
                   list.current?.scrollToEnd({ animated: true });
                 }}
