@@ -28,7 +28,7 @@ Shell, MCP and background writes are not attributed from exit status. Untracked 
 | Detail | `GET /local/v2/sessions/{id}/changes/{fileId}?revision=...`; stale revision returns 409, missing file or foreign conversation returns 404 |
 | Scope | Existing V2 origin/user/workspace checks and selected device transport; no new file authorization or executable permissions |
 | Side workspace | Additive `changes` and `attachment` tab variants; a client omits them when syncing an older daemon |
-| SQLite | Migration 0009 adds resource state, file snapshots, operation keys and a resource/committed-attachment view after 0008 completion-read state; no PostgreSQL changes |
+| SQLite | Migration 0010 adds resource state, file snapshots, operation keys and a resource/committed-attachment view after 0008 completion-read state and 0009 service-tier settings; no PostgreSQL changes |
 
 Attachments retain existing IDs and download routes. Source directories and file IDs are scoped by the owning conversation; inherited transcripts do not copy the parent ledger. Cwd is part of file identity. Detail reads come from SQLite, so deleted files remain inspectable.
 

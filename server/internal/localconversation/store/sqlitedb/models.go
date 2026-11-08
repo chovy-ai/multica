@@ -64,6 +64,7 @@ type Conversation struct {
 	CompletionSeq         int64
 	ReadCompletionSeq     int64
 	ReadTurnIndex         int64
+	ServiceTier           sql.NullString
 }
 
 type ConversationExecution struct {

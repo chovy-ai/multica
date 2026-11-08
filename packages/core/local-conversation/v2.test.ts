@@ -89,3 +89,11 @@ describe("prompt statuses", () => {
     expect(localV2PromptStatusesSchema.safeParse({ statuses: "nope" }).success).toBe(false);
   });
 });
+
+it("round trips native service tiers while old snapshots inherit CLI configuration", () => {
+  const settings = localV2SnapshotSchema.shape.settings;
+  for (const service_tier of [null, "priority", "default", "future-tier"]) {
+    expect(settings.parse({ service_tier }).service_tier).toBe(service_tier);
+  }
+  expect(settings.parse({}).service_tier).toBeNull();
+});

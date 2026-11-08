@@ -1,4 +1,4 @@
-import { LOCAL_REASONING_EFFORTS } from "./protocol";
+import { LOCAL_REASONING_EFFORTS, LOCAL_SERVICE_TIERS } from "./protocol";
 import { z } from "zod";
 import { localSubmissionSchema } from "./submission";
 
@@ -34,6 +34,7 @@ export const persistedQueuedPromptSchema = z.object({
     .optional(),
   agents: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
   model: z.string().nullable().optional(),
+  serviceTier: z.enum(LOCAL_SERVICE_TIERS).nullable().optional(),
   reasoningEffort: z
     .enum(LOCAL_REASONING_EFFORTS)
     .nullable()

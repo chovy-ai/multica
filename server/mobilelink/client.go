@@ -142,7 +142,18 @@ func Start(configJSON string) (*Client, error) {
 	}
 	c.registry = &registry{url: strings.TrimRight(cfg.RegistryURL, "/"), login: cfg.Token, http: &http.Client{Timeout: 30 * time.Second}}
 	changed := make(chan struct{}, 1)
+	self, err := peer.IDFromPrivateKey(key)
+	if err != nil {
+		_ = ln.Close()
+		cancel()
+		return nil, err
+	}
 	c.svc, err = p2p.Start(ctx, p2p.Config{Key: key, Fetch: c.fetchPeers, Relay: c.registry.relay,
+		Tailnet: func(ctx context.Context) (p2p.TailnetCredentials, error) {
+			return c.registry.tailnet(ctx, self.String())
+		},
+		// Partitioned by account like the key.
+		TailnetDir:      filepath.Join(cfg.StoragePath, hex.EncodeToString([]byte(cfg.UserID))+".tailnet"),
 		RefreshInterval: 15 * time.Second, Marks: c.marks, Logger: c.logger, OnPeersRead: c.peersSettled, OnAddrsChanged: func() {
 			select {
 			case changed <- struct{}{}:

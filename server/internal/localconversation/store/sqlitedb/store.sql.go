@@ -87,7 +87,7 @@ WITH recency AS (
         substr(rtrim(replace(substr(COALESCE(NULLIF(last_turn_sent_at, ''), created_at), 20), '.', ''), 'Z') || '000000000', 1, 9) || 'Z' AS sort_at
     FROM recency
 )
-SELECT c.id, c.scope_id, c.provider, c.provider_session_id, c.title, c.title_mode, c.title_generation, c.cwd, c.model, c.reasoning_effort, c.permission_mode, c.project_id, c.side_source_id, c.side, c.forked_from_id, c.forked_from_turn_id, c.imported_from_session_id, c.pinned, c.archived, c.status, c.last_seq, c.turn_count, c.summary_seq, c.last_message_preview, c.pending_interactions, c.queue_count, c.created_at, c.updated_at, c.background_tasks, c.completed_turn_index, c.completed_turn_id, c.completion_seq, c.read_completion_seq, c.read_turn_index, CAST(r.last_turn_sent_at AS TEXT) AS last_turn_sent_at
+SELECT c.id, c.scope_id, c.provider, c.provider_session_id, c.title, c.title_mode, c.title_generation, c.cwd, c.model, c.reasoning_effort, c.permission_mode, c.project_id, c.side_source_id, c.side, c.forked_from_id, c.forked_from_turn_id, c.imported_from_session_id, c.pinned, c.archived, c.status, c.last_seq, c.turn_count, c.summary_seq, c.last_message_preview, c.pending_interactions, c.queue_count, c.created_at, c.updated_at, c.background_tasks, c.completed_turn_index, c.completed_turn_id, c.completion_seq, c.read_completion_seq, c.read_turn_index, c.service_tier, CAST(r.last_turn_sent_at AS TEXT) AS last_turn_sent_at
 FROM conversation AS c
 JOIN sort_keys AS r ON r.id = c.id
 LEFT JOIN folder_project AS f ON f.scope_id = c.scope_id
@@ -184,6 +184,7 @@ func (q *Queries) BrowseSessionPage(ctx context.Context, arg BrowseSessionPagePa
 			&i.Conversation.CompletionSeq,
 			&i.Conversation.ReadCompletionSeq,
 			&i.Conversation.ReadTurnIndex,
+			&i.Conversation.ServiceTier,
 			&i.LastTurnSentAt,
 		); err != nil {
 			return nil, err
@@ -474,7 +475,7 @@ func (q *Queries) FileChangeBytes(ctx context.Context, conversationID string) (i
 }
 
 const findConversationByCwd = `-- name: FindConversationByCwd :one
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks, completed_turn_index, completed_turn_id, completion_seq, read_completion_seq, read_turn_index FROM conversation WHERE scope_id = ? AND cwd = ? ORDER BY created_at LIMIT 1
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks, completed_turn_index, completed_turn_id, completion_seq, read_completion_seq, read_turn_index, service_tier FROM conversation WHERE scope_id = ? AND cwd = ? ORDER BY created_at LIMIT 1
 `
 
 type FindConversationByCwdParams struct {
@@ -520,6 +521,7 @@ func (q *Queries) FindConversationByCwd(ctx context.Context, arg FindConversatio
 		&i.CompletionSeq,
 		&i.ReadCompletionSeq,
 		&i.ReadTurnIndex,
+		&i.ServiceTier,
 	)
 	return i, err
 }
@@ -552,7 +554,7 @@ func (q *Queries) FindFileChange(ctx context.Context, arg FindFileChangeParams) 
 }
 
 const findImportedConversation = `-- name: FindImportedConversation :one
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks, completed_turn_index, completed_turn_id, completion_seq, read_completion_seq, read_turn_index FROM conversation
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks, completed_turn_index, completed_turn_id, completion_seq, read_completion_seq, read_turn_index, service_tier FROM conversation
 WHERE scope_id = ? AND provider = ? AND (provider_session_id = ?3 OR imported_from_session_id = ?3)
 LIMIT 1
 `
@@ -601,6 +603,7 @@ func (q *Queries) FindImportedConversation(ctx context.Context, arg FindImported
 		&i.CompletionSeq,
 		&i.ReadCompletionSeq,
 		&i.ReadTurnIndex,
+		&i.ServiceTier,
 	)
 	return i, err
 }
@@ -745,7 +748,7 @@ func (q *Queries) GetCompletionEvent(ctx context.Context, arg GetCompletionEvent
 }
 
 const getConversation = `-- name: GetConversation :one
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks, completed_turn_index, completed_turn_id, completion_seq, read_completion_seq, read_turn_index FROM conversation WHERE id = ?
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks, completed_turn_index, completed_turn_id, completion_seq, read_completion_seq, read_turn_index, service_tier FROM conversation WHERE id = ?
 `
 
 func (q *Queries) GetConversation(ctx context.Context, id string) (Conversation, error) {
@@ -786,12 +789,13 @@ func (q *Queries) GetConversation(ctx context.Context, id string) (Conversation,
 		&i.CompletionSeq,
 		&i.ReadCompletionSeq,
 		&i.ReadTurnIndex,
+		&i.ServiceTier,
 	)
 	return i, err
 }
 
 const getConversationSummary = `-- name: GetConversationSummary :one
-SELECT conversation.id, conversation.scope_id, conversation.provider, conversation.provider_session_id, conversation.title, conversation.title_mode, conversation.title_generation, conversation.cwd, conversation.model, conversation.reasoning_effort, conversation.permission_mode, conversation.project_id, conversation.side_source_id, conversation.side, conversation.forked_from_id, conversation.forked_from_turn_id, conversation.imported_from_session_id, conversation.pinned, conversation.archived, conversation.status, conversation.last_seq, conversation.turn_count, conversation.summary_seq, conversation.last_message_preview, conversation.pending_interactions, conversation.queue_count, conversation.created_at, conversation.updated_at, conversation.background_tasks, conversation.completed_turn_index, conversation.completed_turn_id, conversation.completion_seq, conversation.read_completion_seq, conversation.read_turn_index, CAST(COALESCE((
+SELECT conversation.id, conversation.scope_id, conversation.provider, conversation.provider_session_id, conversation.title, conversation.title_mode, conversation.title_generation, conversation.cwd, conversation.model, conversation.reasoning_effort, conversation.permission_mode, conversation.project_id, conversation.side_source_id, conversation.side, conversation.forked_from_id, conversation.forked_from_turn_id, conversation.imported_from_session_id, conversation.pinned, conversation.archived, conversation.status, conversation.last_seq, conversation.turn_count, conversation.summary_seq, conversation.last_message_preview, conversation.pending_interactions, conversation.queue_count, conversation.created_at, conversation.updated_at, conversation.background_tasks, conversation.completed_turn_index, conversation.completed_turn_id, conversation.completion_seq, conversation.read_completion_seq, conversation.read_turn_index, conversation.service_tier, CAST(COALESCE((
     SELECT m.created_at FROM message m
     WHERE m.conversation_id = conversation.id AND m.role = 'user' AND m.steered = 0
       AND m.turn_id = (
@@ -849,6 +853,7 @@ func (q *Queries) GetConversationSummary(ctx context.Context, id string) (GetCon
 		&i.Conversation.CompletionSeq,
 		&i.Conversation.ReadCompletionSeq,
 		&i.Conversation.ReadTurnIndex,
+		&i.Conversation.ServiceTier,
 		&i.LastTurnSentAt,
 	)
 	return i, err
@@ -1214,9 +1219,9 @@ func (q *Queries) InsertCommandReceipt(ctx context.Context, arg InsertCommandRec
 const insertConversation = `-- name: InsertConversation :exec
 INSERT INTO conversation (
     id, scope_id, provider, provider_session_id, title, title_mode, cwd, model,
-    reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id,
+    reasoning_effort, service_tier, permission_mode, project_id, side_source_id, side, forked_from_id,
     forked_from_turn_id, imported_from_session_id, summary_seq, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertConversationParams struct {
@@ -1229,6 +1234,7 @@ type InsertConversationParams struct {
 	Cwd                   string
 	Model                 sql.NullString
 	ReasoningEffort       sql.NullString
+	ServiceTier           sql.NullString
 	PermissionMode        string
 	ProjectID             sql.NullString
 	SideSourceID          string
@@ -1252,6 +1258,7 @@ func (q *Queries) InsertConversation(ctx context.Context, arg InsertConversation
 		arg.Cwd,
 		arg.Model,
 		arg.ReasoningEffort,
+		arg.ServiceTier,
 		arg.PermissionMode,
 		arg.ProjectID,
 		arg.SideSourceID,
@@ -2233,7 +2240,7 @@ func (q *Queries) ListRunningTurns(ctx context.Context) ([]Turn, error) {
 }
 
 const listScopeConversations = `-- name: ListScopeConversations :many
-SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks, completed_turn_index, completed_turn_id, completion_seq, read_completion_seq, read_turn_index FROM conversation WHERE scope_id = ? ORDER BY updated_at DESC, id
+SELECT id, scope_id, provider, provider_session_id, title, title_mode, title_generation, cwd, model, reasoning_effort, permission_mode, project_id, side_source_id, side, forked_from_id, forked_from_turn_id, imported_from_session_id, pinned, archived, status, last_seq, turn_count, summary_seq, last_message_preview, pending_interactions, queue_count, created_at, updated_at, background_tasks, completed_turn_index, completed_turn_id, completion_seq, read_completion_seq, read_turn_index, service_tier FROM conversation WHERE scope_id = ? ORDER BY updated_at DESC, id
 `
 
 func (q *Queries) ListScopeConversations(ctx context.Context, scopeID int64) ([]Conversation, error) {
@@ -2280,6 +2287,7 @@ func (q *Queries) ListScopeConversations(ctx context.Context, scopeID int64) ([]
 			&i.CompletionSeq,
 			&i.ReadCompletionSeq,
 			&i.ReadTurnIndex,
+			&i.ServiceTier,
 		); err != nil {
 			return nil, err
 		}
@@ -2295,7 +2303,7 @@ func (q *Queries) ListScopeConversations(ctx context.Context, scopeID int64) ([]
 }
 
 const listSummariesAfter = `-- name: ListSummariesAfter :many
-SELECT conversation.id, conversation.scope_id, conversation.provider, conversation.provider_session_id, conversation.title, conversation.title_mode, conversation.title_generation, conversation.cwd, conversation.model, conversation.reasoning_effort, conversation.permission_mode, conversation.project_id, conversation.side_source_id, conversation.side, conversation.forked_from_id, conversation.forked_from_turn_id, conversation.imported_from_session_id, conversation.pinned, conversation.archived, conversation.status, conversation.last_seq, conversation.turn_count, conversation.summary_seq, conversation.last_message_preview, conversation.pending_interactions, conversation.queue_count, conversation.created_at, conversation.updated_at, conversation.background_tasks, conversation.completed_turn_index, conversation.completed_turn_id, conversation.completion_seq, conversation.read_completion_seq, conversation.read_turn_index, CAST(COALESCE((
+SELECT conversation.id, conversation.scope_id, conversation.provider, conversation.provider_session_id, conversation.title, conversation.title_mode, conversation.title_generation, conversation.cwd, conversation.model, conversation.reasoning_effort, conversation.permission_mode, conversation.project_id, conversation.side_source_id, conversation.side, conversation.forked_from_id, conversation.forked_from_turn_id, conversation.imported_from_session_id, conversation.pinned, conversation.archived, conversation.status, conversation.last_seq, conversation.turn_count, conversation.summary_seq, conversation.last_message_preview, conversation.pending_interactions, conversation.queue_count, conversation.created_at, conversation.updated_at, conversation.background_tasks, conversation.completed_turn_index, conversation.completed_turn_id, conversation.completion_seq, conversation.read_completion_seq, conversation.read_turn_index, conversation.service_tier, CAST(COALESCE((
     SELECT m.created_at FROM message m
     WHERE m.conversation_id = conversation.id AND m.role = 'user' AND m.steered = 0
       AND m.turn_id = (
@@ -2366,6 +2374,7 @@ func (q *Queries) ListSummariesAfter(ctx context.Context, arg ListSummariesAfter
 			&i.Conversation.CompletionSeq,
 			&i.Conversation.ReadCompletionSeq,
 			&i.Conversation.ReadTurnIndex,
+			&i.Conversation.ServiceTier,
 			&i.LastTurnSentAt,
 		); err != nil {
 			return nil, err
@@ -3054,12 +3063,13 @@ func (q *Queries) UpdateConversationMetadata(ctx context.Context, arg UpdateConv
 }
 
 const updateConversationSettings = `-- name: UpdateConversationSettings :exec
-UPDATE conversation SET model = ?, reasoning_effort = ?, permission_mode = ? WHERE id = ?
+UPDATE conversation SET model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ? WHERE id = ?
 `
 
 type UpdateConversationSettingsParams struct {
 	Model           sql.NullString
 	ReasoningEffort sql.NullString
+	ServiceTier     sql.NullString
 	PermissionMode  string
 	ID              string
 }
@@ -3068,6 +3078,7 @@ func (q *Queries) UpdateConversationSettings(ctx context.Context, arg UpdateConv
 	_, err := q.db.ExecContext(ctx, updateConversationSettings,
 		arg.Model,
 		arg.ReasoningEffort,
+		arg.ServiceTier,
 		arg.PermissionMode,
 		arg.ID,
 	)

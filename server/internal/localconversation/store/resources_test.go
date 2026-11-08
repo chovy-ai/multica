@@ -164,49 +164,64 @@ func TestResourceRenameIdentitySurvivesSourceRecreationAndReturn(t *testing.T) {
 	}
 }
 
-func TestResourcesUpgradeV8PreservesCompletionReadAndDoesNotBackfill(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "completion.sqlite")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	versions, err := schemaVersions()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, version := range versions[:8] {
-		ddl, err := schemaFS.ReadFile(version.file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = db.Exec(string(ddl)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	legacy := &Store{path: path, write: db, read: db}
-	createConversation(t, legacy, "history")
-	if _, err = db.Exec(`UPDATE conversation SET turn_count=1, completed_turn_id='old-turn', completed_turn_index=0, completion_seq=7, read_turn_index=0, read_completion_seq=7 WHERE id='history'; PRAGMA user_version=8;`); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if _, err = os.Stat(path + ".v8.bak"); err != nil {
-		t.Fatal("upgrade backup missing", err)
-	}
-	c, err := s.Conversation(ctx, "history")
-	if err != nil || c.CompletedTurnID != "old-turn" || c.CompletedTurnIndex != 0 || c.ReadTurnIndex != 0 || c.CompletionSeq != 7 || c.ReadCompletionSeq != 7 {
-		t.Fatalf("resource migration changed completion state: %+v, %v", c, err)
-	}
-	p, err := s.ResourcePage(ctx, "history", "")
-	if err != nil || p.Coverage != "missing_baseline" || len(p.Files) != 0 {
-		t.Fatalf("backfilled v8 history: %+v, %v", p, err)
+func TestResourcesUpgradePreservesCompletionReadAndDoesNotBackfill(t *testing.T) {
+	for _, oldVersion := range []int{8, 9} {
+		t.Run(fmt.Sprint(oldVersion), func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "completion.sqlite")
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			versions, err := schemaVersions()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, version := range versions[:oldVersion] {
+				ddl, err := schemaFS.ReadFile(version.file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = db.Exec(string(ddl)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = db.Exec(`INSERT INTO scope (id, api_origin, user_id, workspace_id) VALUES (1, 'api', 'user', 'workspace');
+INSERT INTO conversation (id, scope_id, provider, turn_count, created_at, updated_at, completed_turn_id, completed_turn_index, completion_seq, read_turn_index, read_completion_seq) VALUES ('history', 1, 'codex', 1, 'now', 'now', 'old-turn', 0, 7, 0, 7);
+INSERT INTO turn (id, conversation_id, turn_index, status, started_at) VALUES ('old-turn', 'history', 0, 'completed', 'now');`); err != nil {
+				t.Fatal(err)
+			}
+			if oldVersion == 9 {
+				if _, err = db.Exec("UPDATE conversation SET service_tier='priority' WHERE id='history'"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = db.Exec(fmt.Sprintf("PRAGMA user_version=%d", oldVersion)); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err := Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if _, err = os.Stat(fmt.Sprintf("%s.v%d.bak", path, oldVersion)); err != nil {
+				t.Fatal("upgrade backup missing", err)
+			}
+			c, err := s.Conversation(ctx, "history")
+			if err != nil || c.CompletedTurnID != "old-turn" || c.CompletedTurnIndex != 0 || c.ReadTurnIndex != 0 || c.CompletionSeq != 7 || c.ReadCompletionSeq != 7 {
+				t.Fatalf("resource migration changed completion state: %+v, %v", c, err)
+			}
+			if oldVersion == 9 && (!c.ServiceTier.Valid || c.ServiceTier.String != "priority") {
+				t.Fatalf("resource migration changed service tier: %+v", c.ServiceTier)
+			}
+			p, err := s.ResourcePage(ctx, "history", "")
+			if err != nil || p.Coverage != "missing_baseline" || len(p.Files) != 0 {
+				t.Fatalf("backfilled history: %+v, %v", p, err)
+			}
+		})
 	}
 }
 

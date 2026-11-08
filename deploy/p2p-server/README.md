@@ -2,12 +2,15 @@
 
 p2p-server (device registry and relay, see
 [server/cmd/p2p-server/README.md](../../server/cmd/p2p-server/README.md)) runs
-as a Docker container on one Tencent Cloud host. The
+as a Docker container on one Tencent Cloud host, next to a Headscale container
+that is the tailnet control server. The
 [Deploy p2p-server](../../.github/workflows/deploy-p2p.yml) workflow runs on
 every push to `main` that touches it, or on demand from the Actions tab:
 
 1. Test, build the image from [Dockerfile](Dockerfile) and push it to Tencent
-   Container Registry (TCR) as `ccr.ccs.tencentyun.com/<namespace>/p2p-server:<sha>`.
+   Container Registry (TCR) as `ccr.ccs.tencentyun.com/<namespace>/p2p-server:<sha>`,
+   and copy the pinned Headscale image into the same repository as
+   `ccr.ccs.tencentyun.com/<namespace>/p2p-server:headscale-<version>`.
 2. Send [deploy.sh](deploy.sh) to the host through Tencent Cloud Automation
    Tools (TAT) and wait for its result. The workflow never logs in to the host.
 3. Check `http://<public IP>:8090/healthz` from outside (warning only).
@@ -22,8 +25,12 @@ restarts the previous tag if the check fails.
 ```
 /etc/multica-p2p/env            configuration, created on the first deploy (see below)
 /var/lib/multica-p2p/           p2p.db, p2p-server.key (relay identity), owned by uid 10001
-/var/lib/multica-p2p-deploy/    the live tag
+/var/lib/multica-p2p/           also derp.key and derp.pem (DERP identity and pinned certificate)
+/var/lib/multica-p2p-deploy/    the live tag and Headscale config checksum
+/etc/multica-headscale/         Headscale config.yaml and policy.json, rewritten on every deploy
+/var/lib/multica-headscale/     Headscale database and noise key, owned by uid 10002
 container multica-p2p           host networking, read-only root, all capabilities dropped
+container multica-headscale     same restrictions; listens on TCP 8091
 ```
 
 ## One-time setup
@@ -36,8 +43,9 @@ container multica-p2p           host networking, read-only root, all capabilitie
    repository lets the host pull without registry credentials. Set the
    registry password; the username is the main account ID.
 
-2. **Firewall** (Lighthouse instance → 防火墙): allow `TCP 8090`, `TCP 4001`
-   and `UDP 4001` from all IPv4 addresses. SSH is not needed for deploys.
+2. **Firewall** (Lighthouse instance → 防火墙): allow `TCP 8090`, `TCP 4001`,
+   `UDP 4001`, `TCP 8091` (Headscale), `TCP 8443` (DERP) and `UDP 3478`
+   (STUN) from all IPv4 addresses. SSH is not needed for deploys.
 
 3. **TAT agent**: on the instance page, check that Automation Tools
    (自动化助手) shows the agent online. Lighthouse images ship it.
@@ -102,6 +110,11 @@ since every new session is verified there (TAT → 执行命令, or OrcaTerm):
 curl -m 10 -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://api.multica.ai/api/me   # 401 is expected
 ```
 
+The first deploy that includes Headscale also adds the tailnet settings to
+`/etc/multica-p2p/env`, creates a Headscale API key once Headscale is up, adds
+it as `MULTICA_P2P_HEADSCALE_API_KEY` and restarts p2p-server. Until then
+devices stay on libp2p.
+
 ## Operations
 
 - Logs: `docker logs -f multica-p2p`. A relay usage summary is logged every
@@ -111,4 +124,11 @@ curl -m 10 -s -o /dev/null -w '%{http_code} %{time_total}s\n' https://api.multic
 - Keep `/var/lib/multica-p2p/p2p-server.key`: losing it changes the relay peer
   ID. Daemons fetch the relay address from the registry and recover on their
   next refresh, but existing relay reservations are dropped.
-- Relayed traffic counts against the Lighthouse monthly traffic allowance.
+- Keep `/var/lib/multica-p2p/derp.pem` and `/var/lib/multica-headscale/`:
+  a new certificate changes the pinned hash, which Headscale picks up within
+  an hour; a lost Headscale database signs every tailnet node out, and
+  devices register again on their own.
+- Headscale: `docker logs -f multica-headscale`;
+  `docker exec multica-headscale headscale nodes list`.
+- Relayed traffic (libp2p relay and DERP) counts against the Lighthouse
+  monthly traffic allowance.

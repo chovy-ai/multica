@@ -1135,3 +1135,55 @@ func TestCodexAsksForTheCatalogOncePerProcess(t *testing.T) {
 		t.Fatalf("a new process must ask again: %d processes, %d asks", f.started(), lists(1))
 	}
 }
+
+func TestCodexServiceTierSwitchAndReset(t *testing.T) {
+	t.Parallel()
+	fast, standard := "priority", "default"
+	f := newCodexRestartFixture(t, CodexSession{ServiceTier: &fast})
+	codexSend(t, f.runner, "t1")
+	for _, method := range []string{"thread/start", "turn/start"} {
+		if got := f.server(0).paramsOf(method)["serviceTier"]; got != fast {
+			t.Fatalf("%s tier = %v", method, got)
+		}
+	}
+	f.finishTurn(t, 0, "t1")
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{ServiceTier: &standard}); err != nil {
+		t.Fatal(err)
+	}
+	codexSend(t, f.runner, "t2")
+	for _, method := range []string{"thread/resume", "turn/start"} {
+		if got := f.server(1).paramsOf(method)["serviceTier"]; got != standard {
+			t.Fatalf("%s tier = %v", method, got)
+		}
+	}
+	f.finishTurn(t, 1, "t2")
+	if err := f.runner.ApplySettings(context.Background(), store.ConversationSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	codexSend(t, f.runner, "t3")
+	for _, method := range []string{"thread/resume", "turn/start"} {
+		got, present := f.server(2).paramsOf(method)["serviceTier"]
+		if !present || got != nil {
+			t.Fatalf("%s must explicitly clear the saved tier: %v, present=%v", method, got, present)
+		}
+	}
+}
+
+func TestCodexServiceTierInheritsCLIConfiguration(t *testing.T) {
+	t.Parallel()
+	_, runner, server := newCodexFixture(t, CodexSession{}, func(fake *fakeCodex) {
+		fake.reply = func(method string, params map[string]any) (json.RawMessage, bool) {
+			if method == "config/read" {
+				return json.RawMessage(`{"config":{"service_tier":"priority"}}`), true
+			}
+			return nil, false
+		}
+	})
+	codexSend(t, runner, "tier-cli")
+	if got := server.paramsOf("turn/start")["serviceTier"]; got != "priority" {
+		t.Fatalf("CLI tier lost: %v", got)
+	}
+	if got := server.paramsOf("thread/start")["serviceTier"]; got != "priority" {
+		t.Fatalf("inherited thread config lost: %v", got)
+	}
+}

@@ -427,47 +427,119 @@ html.multica-agent-gui .multica-composer-footer-menu [role^="menuitem"] {
   overflow-wrap: anywhere;
 }
 
-/* Reserve the settings/footer while only the model catalog scrolls. */
+/* Keep the search and model context visible while each options column scrolls. */
 html.multica-agent-gui .multica-model-picker-menu {
+  width: min(calc(var(--spacing) * 144), calc(100vw - var(--spacing) * 8));
+  max-height: min(calc(var(--spacing) * 108), var(--radix-popover-content-available-height));
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  border-color: var(--surface-border);
+  border-radius: var(--radius-xl);
+  background: var(--surface-raised);
+  color: var(--foreground);
+  box-shadow: var(--menu-shadow);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}
+
+html.multica-agent-gui .multica-model-panel {
   display: flex;
   flex-direction: column;
-  max-height: min(calc(var(--spacing) * 90), var(--radix-dropdown-menu-content-available-height));
-  overflow: hidden;
+  min-height: 0;
+  overflow: auto;
 }
 
-html.multica-agent-gui .multica-model-picker-menu > * {
+html.multica-agent-gui .multica-model-panel-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  min-height: 0;
+  flex: 1;
+}
+
+html.multica-agent-gui :is(.multica-model-column, .multica-reasoning-column) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: calc(var(--spacing) * 2);
+}
+
+html.multica-agent-gui .multica-reasoning-column { border-inline-start: 1px solid var(--border); }
+
+html.multica-agent-gui :is(.multica-model-search, .multica-model-reasoning-heading) {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-height: calc(var(--spacing) * 10);
   flex-shrink: 0;
+  margin-bottom: calc(var(--spacing) * 2);
+  padding: var(--spacing) calc(var(--spacing) * 2);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
 }
 
-html.multica-agent-gui .multica-model-picker-menu > .multica-model-picker-list {
-  flex: 1 1 auto;
+html.multica-agent-gui .multica-model-search:focus-within { border-color: var(--brand); }
+html.multica-agent-gui .multica-model-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+}
+html.multica-agent-gui .multica-model-search input::placeholder { color: var(--muted-foreground); }
+html.multica-agent-gui .multica-model-reasoning-heading { flex-wrap: wrap; gap: 0 calc(var(--spacing) * 2); }
+html.multica-agent-gui .multica-model-reasoning-heading .multica-model-name { font-size: var(--text-caption); }
+html.multica-agent-gui .multica-model-reasoning-heading:focus-visible { outline: 1px solid var(--ring); }
+html.multica-agent-gui .multica-model-options {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-
-html.multica-agent-gui .multica-model-picker-effort {
+html.multica-agent-gui :is(.multica-model-option, .multica-model-choice) {
+  display: flex;
+  align-items: center;
   gap: calc(var(--spacing) * 2);
+  min-width: 0;
+  border-radius: var(--radius-md);
 }
-
-html.multica-agent-gui .multica-model-picker-effort-value {
-  margin-inline-start: auto;
-  color: var(--muted-foreground);
+html.multica-agent-gui .multica-model-option { padding-inline-end: calc(var(--spacing) * 2); }
+html.multica-agent-gui .multica-model-choice {
+  position: relative;
+  flex: 1;
+  min-height: calc(var(--spacing) * 9);
+  padding: calc(var(--spacing) * 2);
+  cursor: pointer;
 }
-
-html.multica-agent-gui .multica-model-picker-effort > svg {
-  margin-inline-start: 0;
-  flex-shrink: 0;
+html.multica-agent-gui .multica-model-choice input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
 }
-
-html.multica-agent-gui .multica-model-picker-effort-menu {
-  width: calc(var(--spacing) * 40);
-  max-height: var(--radix-dropdown-menu-content-available-height);
-}
-
-html.multica-agent-gui .multica-model-picker-list [role="menuitemradio"][data-state="checked"] {
+html.multica-agent-gui :is(.multica-model-option, .multica-model-choice):hover { background: var(--surface-hover); }
+html.multica-agent-gui :is(.multica-model-option, .multica-model-choice)[data-selected="true"],
+html.multica-agent-gui .multica-model-option[data-selected="true"] .multica-model-choice:hover {
   background: var(--surface-selected);
   color: var(--surface-selected-foreground);
+}
+html.multica-agent-gui .multica-model-choice:has(input:focus-visible) { outline: 1px solid var(--ring); outline-offset: -1px; }
+html.multica-agent-gui .multica-model-choice:has(input:disabled) { cursor: default; color: var(--muted-foreground); }
+html.multica-agent-gui .multica-model-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.multica-agent-gui .multica-model-choice > svg { flex-shrink: 0; }
+html.multica-agent-gui :is(.multica-model-shortcut, .multica-model-default) { flex-shrink: 0; color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--text-caption--line-height); }
+html.multica-agent-gui .multica-model-shortcut { display: inline-flex; align-items: center; gap: var(--spacing); padding: var(--spacing); border-radius: var(--radius-sm); background: var(--muted); white-space: nowrap; }
+html.multica-agent-gui .multica-model-show-more { margin-top: var(--spacing); color: var(--muted-foreground); }
+html.multica-agent-gui :is(.multica-model-message, .multica-model-error) { margin: 0; padding: calc(var(--spacing) * 2); color: var(--muted-foreground); overflow-wrap: anywhere; font-size: var(--text-caption); line-height: var(--text-caption--line-height); }
+html.multica-agent-gui .multica-model-error { color: var(--destructive); }
+html.multica-agent-gui .multica-model-panel-footer { flex-shrink: 0; border-top: 1px solid var(--border); padding: var(--spacing); }
+@media (max-width: 480px) {
+  html.multica-agent-gui .multica-model-panel-columns { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  html.multica-agent-gui :is(.multica-model-column, .multica-reasoning-column) { min-height: auto; }
+  html.multica-agent-gui .multica-reasoning-column { border-inline-start: 0; border-top: 1px solid var(--border); }
+  html.multica-agent-gui .multica-model-options { max-height: calc(var(--spacing) * 42); flex-shrink: 0; }
 }
 
 html.multica-agent-gui .multica-composer-agent-option {
@@ -520,3 +592,7 @@ html.multica-agent-gui img[src$="#multica-agent-avatar"] {
   border-radius: 50%;
   background: var(--muted);
 }
+
+html.multica-agent-gui .multica-reasoning-column { overflow-y: auto; }
+html.multica-agent-gui .multica-reasoning-column > * { flex-shrink: 0; }
+html.multica-agent-gui .multica-reasoning-column > .multica-model-options { overflow-y: visible; }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,11 +71,39 @@ func (r *registry) call(ctx context.Context, method, path string, body, out any)
 			return err
 		}
 		if status < 200 || status >= 300 {
-			return fmt.Errorf("registry_request_failed: HTTP %d", status)
+			return registryStatusError(status)
 		}
 		return nil
 	}
 	return fmt.Errorf("registry_auth_failed: session expired")
+}
+
+// registryStatusError is a registry response outside 2xx.
+type registryStatusError int
+
+func (e registryStatusError) Error() string {
+	return fmt.Sprintf("registry_request_failed: HTTP %d", int(e))
+}
+
+// tailnet asks for credentials that register this phone's tailnet node. A
+// registry without a control server answers 404.
+func (r *registry) tailnet(ctx context.Context, peerID string) (p2p.TailnetCredentials, error) {
+	var resp struct {
+		ControlURL string `json:"control_url"`
+		AuthKey    string `json:"auth_key"`
+	}
+	err := r.call(ctx, "POST", "/v1/tailnet", map[string]string{"peer_id": peerID}, &resp)
+	var status registryStatusError
+	if errors.As(err, &status) && status == http.StatusNotFound {
+		return p2p.TailnetCredentials{}, p2p.ErrTailnetUnavailable
+	}
+	if err != nil {
+		return p2p.TailnetCredentials{}, err
+	}
+	if resp.ControlURL == "" || resp.AuthKey == "" {
+		return p2p.TailnetCredentials{}, errors.New("registry_request_failed: incomplete tailnet credentials")
+	}
+	return p2p.TailnetCredentials{ControlURL: resp.ControlURL, AuthKey: resp.AuthKey}, nil
 }
 
 func (r *registry) send(ctx context.Context, method, path, token string, body, out any) (int, error) {

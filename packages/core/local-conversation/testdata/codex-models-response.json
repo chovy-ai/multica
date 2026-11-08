@@ -1,0 +1,14 @@
+{
+  "supported": true,
+  "models": [
+    {
+      "id": "test-model",
+      "label": "Test",
+      "thinking": {
+        "supported_levels": [{ "value": "high", "label": "High" }],
+        "default_level": "high"
+      },
+      "isDefault": true
+    }
+  ]
+}

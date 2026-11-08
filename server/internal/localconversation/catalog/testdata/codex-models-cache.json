@@ -1,0 +1,10 @@
+{
+  "models": [
+    {
+      "slug": "test-model",
+      "display_name": "Test",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [{ "effort": "high" }]
+    }
+  ]
+}

@@ -1,10 +1,12 @@
 import { useEffect } from "react";
+import { activateModelPickerShortcut } from "@multica/tutti-agent-gui-host/model-picker-shortcut";
 import type { TabSelectionShortcutKey } from "../../../shared/main-renderer-messages";
 import { useTabStore } from "@/stores/tab-store";
 import { useWindowOverlayStore } from "@/stores/window-overlay-store";
 
 /**
- * Select a product tab using browser numbering semantics:
+ * Let the focused model panel consume 1..4, then select a product tab using
+ * browser numbering semantics:
  *
  * - 1..8 select that exact one-based position.
  * - 9 always selects the final tab, even when more than nine tabs exist.
@@ -15,6 +17,7 @@ import { useWindowOverlayStore } from "@/stores/window-overlay-store";
  */
 export function selectTabByShortcut(key: TabSelectionShortcutKey): void {
   if (useWindowOverlayStore.getState().overlay) return;
+  if (activateModelPickerShortcut(key)) return;
 
   const store = useTabStore.getState();
   const slug = store.activeWorkspaceSlug;

@@ -44,13 +44,18 @@ const (
 //	GET    /v1/devices                         list the account's live devices
 //	GET    /v1/events                          watch account device invalidations (SSE)
 //	DELETE /v1/devices?daemon_id=..&profile=.. remove a device
+//	POST   /v1/tailnet                         tailnet credentials for a registered device
+//	GET    /v1/tailnet/derpmap                 tailnet relay map, for the control server
 //	GET    /healthz
 //
 // Every /v1 endpoint except /v1/sessions takes the session token.
 type Server struct {
-	Auth       Authenticator
-	Store      *Store
-	Relay      *Relay
+	Auth  Authenticator
+	Store *Store
+	Relay *Relay
+	// Tailnet is nil when no control server is configured; devices then stay
+	// on libp2p.
+	Tailnet    *Tailnet
 	DeviceTTL  time.Duration
 	SessionTTL time.Duration
 	Logger     *slog.Logger
@@ -72,6 +77,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/devices", s.authed(s.list))
 	mux.HandleFunc("GET /v1/events", s.authed(s.watchDevices))
 	mux.HandleFunc("DELETE /v1/devices", s.authed(s.remove))
+	mux.HandleFunc("POST /v1/tailnet", s.authed(s.tailnetCredentials))
+	mux.HandleFunc("GET /v1/tailnet/derpmap", s.tailnetDERPMap)
 	return mux
 }
 
@@ -89,6 +96,13 @@ func (s *Server) RunPurge(ctx context.Context, interval time.Duration) {
 				s.logger().Warn("p2pserver: purge failed", "error", err)
 			} else if n > 0 {
 				s.logger().Info("p2pserver: purged expired devices", "count", n)
+			}
+			if s.Tailnet != nil {
+				if n, err := s.pruneTailnet(ctx); err != nil {
+					s.logger().Warn("p2pserver: tailnet prune failed", "error", err)
+				} else if n > 0 {
+					s.logger().Info("p2pserver: removed tailnet nodes of departed devices", "count", n)
+				}
 			}
 		}
 	}
@@ -286,6 +300,12 @@ func (s *Server) remove(w http.ResponseWriter, r *http.Request, userID string) {
 	}
 	if s.Relay != nil {
 		s.Relay.Forget(peerID)
+	}
+	if s.Tailnet != nil {
+		if err := s.Tailnet.forget(r.Context(), userID, peerID); err != nil {
+			// The hourly prune removes it once the registry no longer lists it.
+			s.logger().Warn("p2pserver: tailnet node removal failed", "error", err)
+		}
 	}
 	s.logger().Info("p2pserver: device removed", "user_id", userID, "peer_id", peerID)
 	s.devicesChanged(userID)

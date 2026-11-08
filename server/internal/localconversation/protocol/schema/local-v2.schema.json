@@ -1116,6 +1116,12 @@
             "null"
           ]
         },
+        "service_tier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "reasoning_effort": {
           "type": [
             "string",

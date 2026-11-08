@@ -40,5 +40,7 @@ for (const theme of ["light", "dark"]) {
     await page.getByRole("button", { name: /src\/auth\/redirect.test.ts/ }).click();
     await expect(diff).toContainText("expect");
     expect(page.workers().find(active => active.url().includes("diffs"))).toBe(worker);
+    await page.getByRole("button", { name: "Close Changes", exact: true }).click();
+    await expect.poll(() => page.workers().filter(active => active.url().includes("diffs")).length).toBe(0);
   });
 }

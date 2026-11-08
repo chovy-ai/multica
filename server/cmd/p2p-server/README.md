@@ -16,6 +16,14 @@ separately from the Multica API server and does not use its database.
   `MULTICA_P2P_RELAY_MAX_CIRCUITS_PER_USER` relayed connections per account at
   a time. Relayed connections have no duration or data limit. Relayed traffic
   stays end-to-end encrypted between the daemons.
+- **Tailnet (optional):** with a Headscale control server configured, the
+  process also runs a DERP relay and a STUN server for the Tailscale nodes
+  embedded in daemons and phone apps, and issues each registered device a
+  single-use Headscale pre-auth key. Each account is one Headscale user. DERP
+  serves a self-signed certificate that the DERP map pins by hash, and admits
+  only node keys Headscale knows. Removed and purged devices are deleted from
+  Headscale. See
+  [tailnet-device-link.md](../../../docs/engineering/tailnet-device-link.md).
 - **Storage:** one SQLite file. Devices not refreshed for 24 hours stop being
   listed and are purged hourly with expired sessions; daemons refresh every
   6 hours.
@@ -36,6 +44,13 @@ a domain exists.
 | `MULTICA_P2P_KEY` | `p2p-server.key` | Relay identity key, created on first start; keeps the relay peer ID stable |
 | `MULTICA_P2P_LIBP2P_PORT` | `4001` | Relay TCP and QUIC (UDP) port |
 | `MULTICA_P2P_RELAY_MAX_CIRCUITS_PER_USER` | `8` | Concurrent relayed connections per account |
+| `MULTICA_P2P_HEADSCALE_URL` | — | Headscale API base URL; enables DERP, STUN and the tailnet endpoints |
+| `MULTICA_P2P_HEADSCALE_API_KEY` | — | Headscale API key; without it, credentials and DERP admission are refused |
+| `MULTICA_P2P_TAILNET_CONTROL_URL` | `http://<public IP>:8091` | Control server URL handed to devices |
+| `MULTICA_P2P_DERP_PORT` | `8443` | DERP TLS port |
+| `MULTICA_P2P_STUN_PORT` | `3478` | STUN UDP port |
+| `MULTICA_P2P_DERP_KEY` | `derp.key` | DERP node key, created on first start |
+| `MULTICA_P2P_DERP_CERT` | `derp.pem` | DERP self-signed certificate and key, created on first start and reissued when the public IP changes |
 
 ## API
 
@@ -46,6 +61,8 @@ a domain exists.
 | `POST` | `/v1/devices` | Register or refresh a device: `daemon_id`, `profile`, `public_key` (base64 libp2p ed25519 public key), `device_name`, `addrs` (up to 32 multiaddrs). 409 if the key belongs to another account |
 | `GET` | `/v1/devices` | `{"devices": [...]}` for the caller's account |
 | `DELETE` | `/v1/devices?daemon_id=&profile=` | Remove a device of the caller's account and drop its relay connections |
+| `POST` | `/v1/tailnet` | `{"peer_id"}` of a device registered to the caller's account → `{"control_url", "auth_key", "hostname"}`. 404 when no control server is configured, 403 for other devices |
+| `GET` | `/v1/tailnet/derpmap` | DERP map for Headscale's `derp.urls`; unauthenticated |
 | `GET` | `/healthz` | 204 when the database and relay are up, 503 otherwise |
 
 Daemons use it when `MULTICA_DAEMON_P2P_SERVER_URL` points here.
