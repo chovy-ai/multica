@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { ConnectionNotice } from "@/components/ai-sessions/connection-notice";
 import { NewSessionMenu } from "@/components/ai-sessions/new-session-menu";
-import { ProviderLogo } from "@/components/ai-sessions/provider-logo";
+import { AISessionRow } from "@/components/ai-sessions/session-row";
 import { useAIConnection, useAISessionScope } from "@/data/ai-sessions/hooks";
 import { aiKeys } from "@/data/ai-sessions/client";
 import { providersSchema } from "@/data/ai-sessions/schemas";
@@ -18,7 +18,6 @@ import { useSessionList } from "@/data/ai-sessions/use-session-list";
 import { invalidateAISessionLists } from "@/data/ai-sessions/list-queries";
 import { useT } from "@/lib/i18n";
 import { createRequestId } from "@/lib/request-id";
-import { aiSessionPreview } from "@/data/ai-sessions/preview";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
 
@@ -93,14 +92,8 @@ export default function AISessionList() {
         {section.loading ? <ActivityIndicator className="py-3" /> : section.error ? <View className="gap-2"><Text style={{ lineHeight: undefined }} accessibilityRole="alert" className="text-body text-destructive">{t("connection_failed")}</Text><Button style={{ height: "auto", minHeight: 40 }} hitSlop={2} variant="ghost" disabled={!connected} onPress={section.retry}><Text style={{ lineHeight: undefined }}>{t("retry")}</Text></Button></View>
           : section.count === 0 ? <Text className="py-3 text-caption text-muted-foreground">{t("empty_sessions")}</Text> : section.hasMore ? <Button style={{ height: "auto", minHeight: 40 }} hitSlop={2} variant="ghost" disabled={!connected} onPress={section.loadMore}><Text style={{ lineHeight: undefined }}>{t("load_more_sessions")}</Text></Button> : null}
       </View>}
-      renderItem={({ item }) => <Pressable className="mx-4 px-3 py-4 flex-row items-center gap-3 border-x border-b border-border bg-surface-1 active:bg-secondary" accessibilityRole="button" accessibilityLabel={`${item.title}${(client?.completionReadSupported && item.has_unread_completion) ? `, ${t("unread_result")}` : ""}`}
-        onPress={() => router.push({ pathname: "/[workspace]/ai-sessions/[device]/[session]", params: { workspace, device, session: item.conversation_id, name } })}>
-        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" className="w-8 h-8 shrink-0 items-center justify-center"><ProviderLogo provider={item.provider} color={THEME[colorScheme].foreground} /></View>
-        <View className="flex-1 min-w-0">
-          <Text style={{ lineHeight: undefined }} className="font-medium text-title-sm" numberOfLines={1}>{item.pinned ? "📌 " : ""}{item.title}</Text><Text style={{ lineHeight: undefined }} className="text-caption text-muted-foreground mt-1" numberOfLines={1}>{item.provider === "claude" ? "Claude Code" : item.provider === "codex" ? "Codex" : item.provider} · {aiSessionPreview(item.last_message_preview)}</Text>
-        </View>
-        <View className="w-2 h-2">{(client?.completionReadSupported && item.has_unread_completion) === true && <View className="w-2 h-2 rounded-full bg-brand" />}</View>
-      </Pressable>}
+      renderItem={({ item }) => <AISessionRow item={item} completionReadSupported={client?.completionReadSupported === true}
+        onPress={() => router.push({ pathname: "/[workspace]/ai-sessions/[device]/[session]", params: { workspace, device, session: item.conversation_id, name } })} />}
     />}
   </View>;
 }
