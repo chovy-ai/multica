@@ -215,6 +215,13 @@ func applyFileObservations(ctx context.Context, q *sqlitedb.Queries, b *Batch, c
 		if loadErr != nil && !errors.Is(loadErr, sql.ErrNoRows) {
 			return loadErr
 		}
+		if !exists && (o.Reason == "excluded" || o.Before.Reason == "missing_baseline") {
+			// An unsampled path has no baseline/existence proof. Keep coverage
+			// partial without inventing file metadata; existing rows still need
+			// their previously trusted evidence invalidated below.
+			st.Coverage, st.Reason = "partial", o.Reason
+			continue
+		}
 		f := FileResource{ID: id, Cwd: o.Cwd, Path: o.Path, InitialExists: o.Before.Exists, TurnID: o.TurnID}
 		baseline, latest, patch := o.Before.Content, o.After.Content, ""
 		if exists {

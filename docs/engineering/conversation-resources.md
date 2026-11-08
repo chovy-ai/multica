@@ -17,6 +17,8 @@ Each file has a viewer-local identity plus cwd/file ID and the daemon's detail r
 
 The ledger keeps the first verified baseline and latest verified contents, not a sum of per-operation counts. A→B→C displays A→C, and returning to A removes the net change. Confirmed renames preserve identity. External edits, broken content chains and missing evidence suppress the current diff and counts. Previously trusted bytes remain internal and are never served as evidence for an uncertain record.
 
+The initial Git listing also records ignored file names and collapsed directory boundaries without reading their contents. A pre-existing ignored path omitted from sampling cannot prove an empty baseline: Codex native events for it reduce coverage instead of creating inferred A/D metadata. An independently verified Claude hook baseline, or a new file whose absence was established before dispatch, can still supply exact evidence. End-of-turn checks re-read known paths within the scan budget; absence from an ignore-filtered listing alone never proves deletion.
+
 Shell, MCP and background writes are not attributed from exit status. Untracked tool activity marks coverage partial; an end-of-turn scan discovers changed paths when possible. Failed tools with no write add no file. Incomplete scans, historical imports and inherited Fork/Side history never become a confirmed zero. Persisted capture-start/end markers make an interrupted capture visible as incomplete after restart. Old transcript text is not backfilled.
 
 ## Contracts and storage

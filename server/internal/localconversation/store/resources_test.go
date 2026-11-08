@@ -389,3 +389,27 @@ func TestSamePathInDifferentWorkingDirectoriesHasIndependentBaselines(t *testing
 		}
 	}
 }
+
+func TestUnsampledEvidenceInvalidatesAnEarlierTrustedResource(t *testing.T) {
+	s, _ := openTestStore(t)
+	createConversation(t, s, "a")
+	w := s.NewWriter(WriterOptions{})
+	defer w.Close()
+	ctx := context.Background()
+	for _, o := range []filechanges.Observation{
+		{OperationID: "verified", Cwd: "/repo", Path: "ignored.txt", Before: snap("A\n", true), After: snap("B\n", true)},
+		{OperationID: "unsampled", Cwd: "/repo", Path: "ignored.txt", Before: filechanges.Snapshot{Reason: "excluded"}, After: snap("C\n", true), Reason: "excluded"},
+	} {
+		if _, err := w.Submit(ctx, Batch{ConversationID: "a", FileObservations: []filechanges.Observation{o}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ResourcePage(ctx, "a", "")
+	if err != nil || len(page.Files) != 1 || page.Coverage != "partial" {
+		t.Fatalf("resources: %+v %v", page, err)
+	}
+	detail, err := s.ChangeDetail(ctx, "a", page.Files[0].ID, page.Revision)
+	if err != nil || detail.File.Reason == "" || !detail.File.CurrentExists || detail.File.Kind == "deleted" || detail.File.Added != nil || detail.File.Deleted != nil || detail.Patch != "" || detail.Before != "" || detail.After != "" {
+		t.Fatalf("previous bytes remained current evidence: %+v %v", detail, err)
+	}
+}

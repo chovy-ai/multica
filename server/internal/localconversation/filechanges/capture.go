@@ -128,11 +128,35 @@ func Read(root, path string) Snapshot {
 }
 
 type Capture struct {
-	mu       sync.Mutex
-	Root     string
-	Files    map[string]Snapshot
-	Complete bool
-	touched  map[string]bool
+	mu        sync.Mutex
+	Root      string
+	Files     map[string]Snapshot
+	Complete  bool
+	touched   map[string]bool
+	unsampled map[string]struct{}
+}
+
+func gitPaths(ctx context.Context, root string, args ...string) ([]byte, bool, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root, "ls-files"}, args...)...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, false, err
+	}
+	if err = cmd.Start(); err != nil {
+		return nil, false, err
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(stdout, MaxScanBytes+1))
+	truncated := len(raw) > MaxScanBytes
+	if truncated || readErr != nil {
+		cancel()
+	}
+	err = cmd.Wait()
+	if readErr != nil {
+		err = readErr
+	}
+	return raw, truncated, err
 }
 
 func Scan(root string) *Capture {
@@ -148,31 +172,33 @@ func Scan(root string) *Capture {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	// Git is used only for its ignore-aware directory listing, never as a diff baseline.
-	cmd := exec.CommandContext(ctx, "git", "-C", canonical, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", ".")
-	stdout, pipeErr := cmd.StdoutPipe()
-	var raw []byte
-	gitErr := pipeErr
-	if gitErr == nil {
-		gitErr = cmd.Start()
-	}
-	truncated := false
-	if gitErr == nil {
-		raw, gitErr = io.ReadAll(io.LimitReader(stdout, MaxScanBytes+1))
-		if len(raw) > MaxScanBytes {
-			truncated = true
-			cancel()
-		}
-		waitErr := cmd.Wait()
-		if gitErr == nil {
-			gitErr = waitErr
-		}
-	}
+	raw, truncated, gitErr := gitPaths(ctx, canonical, "--cached", "--others", "--exclude-standard", "-z", "--", ".")
 	if truncated {
 		return c
 	}
 	var paths []string
+	listingComplete := true
+	metadataBytes := len(raw)
 	if gitErr == nil {
 		paths = strings.Split(string(raw), "\x00")
+		// Retain ignored names, not contents. Directory entries cover their
+		// descendants without walking dependency/build trees or reading secrets.
+		ignored, limited, ignoredErr := gitPaths(ctx, canonical, "--others", "--ignored", "--exclude-standard", "--directory", "-z", "--", ".")
+		listingComplete = ignoredErr == nil && !limited
+		metadataBytes += len(ignored)
+		c.unsampled = map[string]struct{}{}
+		if listingComplete {
+			for _, path := range strings.Split(string(ignored), "\x00") {
+				if path == "" {
+					continue
+				}
+				if len(c.unsampled) >= MaxEntries {
+					listingComplete = false
+					break
+				}
+				c.unsampled[path] = struct{}{}
+			}
+		}
 	} else {
 		err = filepath.WalkDir(canonical, func(path string, entry fs.DirEntry, err error) error {
 			if ctx.Err() != nil || len(paths) > MaxEntries {
@@ -198,8 +224,8 @@ func Scan(root string) *Capture {
 		})
 	}
 	sort.Strings(paths)
-	total, count := 0, 0
-	c.Complete = err == nil && ctx.Err() == nil && len(paths) <= MaxEntries
+	total, count := metadataBytes, 0
+	c.Complete = listingComplete && err == nil && ctx.Err() == nil && len(paths)+len(c.unsampled) <= MaxEntries && total <= MaxScanBytes
 	for _, path := range paths {
 		if path == "" {
 			continue
@@ -225,8 +251,21 @@ func Scan(root string) *Capture {
 }
 
 func (c *Capture) Before(path string) Snapshot {
-	if s, ok := c.Files[path]; ok {
+	return c.before(c.Files, path)
+}
+
+func (c *Capture) before(files map[string]Snapshot, path string) Snapshot {
+	if s, ok := files[path]; ok {
 		return s
+	}
+	if _, ok := c.unsampled[path]; ok {
+		return Snapshot{Reason: "excluded"}
+	}
+	for parent := path; strings.Contains(parent, "/"); {
+		parent = parent[:strings.LastIndex(parent, "/")]
+		if _, ok := c.unsampled[parent+"/"]; ok {
+			return Snapshot{Reason: "excluded"}
+		}
 	}
 	if c.Complete {
 		return Snapshot{Hash: Hash("")}
@@ -248,7 +287,13 @@ func (c *Capture) Codex(operation, turn, path, move, kind, patch string, success
 		target, o.Reason = Relative(c.Root, move)
 		o.MovePath = target
 	}
-	o.Before, o.After = c.Before(rel), Read(c.Root, target)
+	o.Before = c.Before(rel)
+	if o.Before.Reason == "excluded" || c.Before(target).Reason == "excluded" {
+		o.MovePath, o.Reason = "", "excluded"
+		o.After = Read(c.Root, rel)
+		return o
+	}
+	o.After = Read(c.Root, target)
 	if o.Reason == "" {
 		o.Reason = o.Before.Reason
 	}
@@ -280,7 +325,15 @@ func (c *Capture) Codex(operation, turn, path, move, kind, patch string, success
 func (c *Capture) Unknown(turn string) []Observation {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
 	after := Scan(c.Root)
+	readBytes := 0
+	for path, snapshot := range after.Files {
+		readBytes += len(path) + len(snapshot.Content)
+	}
+	for path := range after.unsampled {
+		readBytes += len(path)
+	}
 	paths := map[string]bool{}
 	for path := range c.Files {
 		paths[path] = true
@@ -289,9 +342,31 @@ func (c *Capture) Unknown(turn string) []Observation {
 		paths[path] = true
 	}
 	var out []Observation
+	if !after.Complete {
+		out = append(out, Observation{OperationID: turn + ":unknown:scan-limit", TurnID: turn, Reason: "scan_limit"})
+	}
 	for path := range paths {
 
-		a, b := c.Before(path), after.Before(path)
+		a := c.Before(path)
+		if a.Reason == "excluded" {
+			out = append(out, Observation{OperationID: turn + ":unknown:" + path, TurnID: turn, Cwd: c.Root, Path: path, Before: a, After: after.Files[path], Reason: "excluded"})
+			continue
+		}
+		b, ok := after.Files[path]
+		if !ok {
+			// A filtered or incomplete listing cannot prove deletion. Known
+			// paths still use the same bounded, scope-checked file reader.
+			if time.Now().Before(deadline) && readBytes < MaxScanBytes {
+				b = Read(c.Root, path)
+				readBytes += len(b.Content)
+			}
+			if b == (Snapshot{}) || readBytes > MaxScanBytes {
+				b = Snapshot{Exists: a.Exists, Reason: "scan_limit"}
+			}
+			if b.Reason != "" && !b.Exists {
+				b.Exists = a.Exists
+			}
+		}
 		if a.Hash == b.Hash && a.Exists == b.Exists && a.Reason == b.Reason {
 			continue
 		}

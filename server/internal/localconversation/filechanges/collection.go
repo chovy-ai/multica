@@ -55,13 +55,7 @@ func (c *Capture) NativeBatch(turn string, changes []NativeChange) []Observation
 		virtual[path] = s
 	}
 	before := func(path string) Snapshot {
-		if s, ok := virtual[path]; ok {
-			return s
-		}
-		if c.Complete {
-			return Snapshot{Hash: Hash("")}
-		}
-		return Snapshot{Reason: "missing_baseline"}
+		return c.before(virtual, path)
 	}
 	out := make([]Observation, 0, len(changes))
 	lineages := map[string]int{}
@@ -84,6 +78,19 @@ func (c *Capture) NativeBatch(turn string, changes []NativeChange) []Observation
 				o.Reason = moveReason
 			}
 			o.MovePath = target
+		}
+		if before(path).Reason == "excluded" || before(target).Reason == "excluded" {
+			// Preserve the path so persistence can invalidate an earlier ledger
+			// entry, without inventing a baseline for a newly observed path.
+			o.Before, o.After, o.Reason = before(path), Read(c.Root, path), "excluded"
+			o.MovePath = ""
+			groups = append(groups, group)
+			out = append(out, o)
+			if target != path {
+				groups = append(groups, group)
+				out = append(out, Observation{OperationID: n.OperationID + ":excluded-target", TurnID: turn, Cwd: c.Root, Path: target, Before: before(target), After: Read(c.Root, target), Reason: "excluded"})
+			}
+			continue
 		}
 		o.Before = before(path)
 		o.After = o.Before
@@ -142,6 +149,9 @@ func (c *Capture) NativeBatch(turn string, changes []NativeChange) []Observation
 		}
 		if invalid[groups[i]] && o.Reason == "" {
 			o.Reason = "uncertain"
+		}
+		if o.Reason != "" {
+			o.After = Read(c.Root, target)
 		}
 		if o.Reason == "" {
 			delete(c.Files, o.Path)
