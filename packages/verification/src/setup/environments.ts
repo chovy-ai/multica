@@ -46,6 +46,14 @@ import {
   type RunningProcess,
 } from "./process.js";
 import { productionRuntimeDigest } from "./production-guard.js";
+import { checkoutMedia, type IosDeviceSetting } from "../page/ios.js";
+import {
+  devClientBuild,
+  Simulator,
+  SIMULATOR_PREFIX,
+  startMetro,
+  startP2PServer,
+} from "./ios.js";
 import type { Bindings } from "../sources/bindings.js";
 
 export const prepareInput = z
@@ -56,7 +64,7 @@ export const prepareInput = z
       .min(1)
       .max(200)
       .regex(/^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+$/),
-    mode: z.enum(["renderer", "desktop"]),
+    mode: z.enum(["renderer", "desktop", "ios"]),
     dataMode: z.enum(["liveReadOnly", "realSnapshot", "fixture"]),
     apiOrigin: z.url().optional(),
     sourceRef: z.string().optional(),
@@ -66,6 +74,18 @@ export const prepareInput = z
     idleTimeoutMinutes: z.number().int().min(1).max(10080).optional(),
   })
   .strict();
+
+/** Logs an environment can produce; ios adds its registry, Metro and simulator phase. */
+export const logNames = z.enum([
+  "prepare",
+  "backend",
+  "desktop",
+  "stop",
+  "p2p",
+  "metro",
+  "ios",
+]);
+type LogName = z.infer<typeof logNames>;
 
 export type EnvironmentPolicy = {
   /** Project-level directory shared by every host: toolchains, build cache, repository mirror. */
@@ -199,6 +219,11 @@ export class Environments {
             );
           result = await this.readiness(retained);
         }
+        if (result.mode === "ios")
+          result = await this.serializeLifecycle(async () => {
+            context.signal.throwIfAborted();
+            return this.startIos(id, context);
+          });
         this.touch(id);
         return toJson(result);
       },
@@ -455,6 +480,7 @@ export class Environments {
         };
       }
     }
+    if (environment.mode === "ios") components.mobile = await this.observeIos(environment);
     environment = {
       ...environment,
       components: {
@@ -490,12 +516,12 @@ export class Environments {
   }
   async readLog(
     id: string,
-    name: "prepare" | "backend" | "desktop" | "stop",
+    name: LogName,
     offset = 0,
     limit = 8000,
   ) {
     await this.get(id);
-    z.enum(["prepare", "backend", "desktop", "stop"]).parse(name);
+    logNames.parse(name);
     z.number().int().nonnegative().parse(offset);
     z.number().int().min(1).max(32000).parse(limit);
     const path = join(this.directory(id), `${name}.log`);
@@ -622,7 +648,13 @@ export class Environments {
       await awaitPrerequisites(
         this.storage.projectRoot,
         input.mode,
-        ["platform", "disk", "commandLineTools", "make"],
+        [
+          "platform",
+          "disk",
+          "commandLineTools",
+          "make",
+          ...(input.mode === "ios" ? ["xcode", "iosRuntime", "axe"] : []),
+        ],
         context,
         async (reason) => {
           environment.components.waitingReason = reason;
@@ -695,6 +727,7 @@ export class Environments {
           "@multica/desktop...",
           "--filter",
           "@multica/web...",
+          ...(input.mode === "ios" ? ["--filter", "@multica/mobile..."] : []),
           "--frozen-lockfile",
         ],
         {
@@ -824,7 +857,7 @@ export class Environments {
         },
         [
           "apps/desktop/resources/bin",
-          ...(input.mode === "desktop" && process.platform === "darwin"
+          ...(input.mode !== "renderer" && process.platform === "darwin"
             ? ["apps/desktop/resources/native/cua-driver"]
             : []),
         ],
@@ -843,7 +876,7 @@ export class Environments {
               signal: context.signal,
             },
           );
-          if (input.mode === "desktop")
+          if (input.mode !== "renderer")
             for (const script of ["stage-cua-driver.mjs"])
               await run(
                 tools.node,
@@ -858,7 +891,7 @@ export class Environments {
         },
         context.signal,
       );
-      if (input.mode === "desktop")
+      if (input.mode !== "renderer")
         await run(
           tools.node,
           [join(checkout, "apps/desktop/scripts/brand-dev-electron.mjs")],
@@ -874,6 +907,17 @@ export class Environments {
             signal: context.signal,
           },
         );
+      let mobileApp: Awaited<ReturnType<typeof devClientBuild>> | undefined;
+      if (input.mode === "ios") {
+        await context.progress("iosBuild");
+        mobileApp = await devClientBuild({
+          checkout,
+          cacheRoot: join(this.policy.sharedRoot, "ios-build-cache"),
+          tools,
+          log: join(directory, "prepare.log"),
+          signal: context.signal,
+        });
+      }
       environment = {
         ...environment,
         state: "prepared",
@@ -885,6 +929,7 @@ export class Environments {
           build: toJson(build),
           buildKind: "development",
           profile: "desktop-runtime",
+          ...(mobileApp ? { mobileApp: toJson(mobileApp) } : {}),
         },
       };
       await this.save(environment);
@@ -1453,6 +1498,27 @@ export class Environments {
         await writeFile(sessionFile, JSON.stringify(session), { mode: 0o600 });
         await this.save(environment);
       }
+      let registryUrl: string | undefined;
+      if (environment.mode === "ios") {
+        // The phone reaches this environment's computer through a registry
+        // that trusts only the local test backend, never the shared one.
+        const registry = await startP2PServer({
+          checkout: environment.checkout,
+          directory,
+          apiOrigin: environment.apiOrigin,
+          tools,
+          freePort,
+          signal: context.signal,
+        });
+        components.push(registry.process);
+        registryUrl = registry.url;
+        environment.components = {
+          ...environment.components,
+          registryUrl,
+          registryPid: registry.process.pid,
+        };
+        await this.save(environment);
+      }
       const session = sessionSchema.parse(
           JSON.parse(await readFile(join(directory, "session.json"), "utf8")),
         ),
@@ -1510,6 +1576,9 @@ export class Environments {
             V8_INSPECTOR_PORT: "127.0.0.1:0",
             MULTICA_DAEMON_AUTO_UPDATE: "false",
             MULTICA_DAEMON_AUTO_RELOAD: "false",
+            ...(registryUrl
+              ? { MULTICA_DAEMON_P2P_SERVER_URL: registryUrl }
+              : {}),
           },
           log: join(directory, "desktop.log"),
           signal: context.signal,
@@ -1848,6 +1917,10 @@ export class Environments {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
+    const mobileAbsent =
+      environment.mode === "ios"
+        ? await this.stopIos(environment, this.processes.has(id))
+        : true;
     this.processes.delete(id);
     if (!applicationAbsent) {
       try {
@@ -1924,13 +1997,16 @@ export class Environments {
     }
     environment = {
       ...environment,
-      state: daemonAbsent && applicationAbsent ? "stopped" : "failed",
-      ...(daemonAbsent && applicationAbsent
+      state:
+        daemonAbsent && applicationAbsent && mobileAbsent ? "stopped" : "failed",
+      ...(daemonAbsent && applicationAbsent && mobileAbsent
         ? {}
         : {
             problem: problem(
               "cleanupIncomplete",
-              "Application or daemon shutdown could not be confirmed",
+              mobileAbsent
+                ? "Application or daemon shutdown could not be confirmed"
+                : "The simulator, Metro or device registry could not be confirmed gone",
               "inspect",
             ),
           }),
@@ -1944,6 +2020,301 @@ export class Environments {
    * renderer through the same handoff a browser login uses.
    */
   private async signIn(environment: Environment): Promise<void> {
+    const { jwt, email, slug } = await this.testAccount(environment);
+    // The dev renderer can still reload (Vite re-optimizes dependencies on
+    // first start) and drop a token delivered too early, so hand it off until
+    // the application reports the signed-in user.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await this.desktopRequest(environment.environmentId, "/login", {
+        token: jwt,
+      });
+      if (await this.signedInWithin(environment.environmentId, 5000)) break;
+    }
+    environment.components = {
+      ...environment.components,
+      signedIn: { email, workspaceSlug: slug },
+    };
+    await this.save(environment);
+  }
+  /**
+   * Puts the mobile app on a simulator of its own, linked to this environment's
+   * computer: Device link on, a Metro serving the checkout with the local
+   * endpoints and the test account inlined, then install and open.
+   */
+  private async startIos(
+    id: string,
+    context: OperationContext,
+  ): Promise<Environment> {
+    let environment = await this.get(id);
+    const directory = this.directory(id),
+      log = join(directory, "ios.log"),
+      tools = this.tools.get(id)!,
+      components = this.processes.get(id) ?? [];
+    this.processes.set(id, components);
+    const app = z
+      .object({ app: z.string() })
+      .passthrough()
+      .parse(environment.components.mobileApp).app;
+    const registryUrl = z.string().parse(environment.components.registryUrl);
+    try {
+      await context.progress("deviceLink");
+      const daemon = await this.connection(id, "daemon");
+      // Device link becomes available once the daemon holds a registry
+      // session, which can trail the application's own readiness.
+      let link = { available: false, enabled: false };
+      for (
+        let attempt = 0;
+        attempt < 60 && !(link.available && link.enabled);
+        attempt++
+      ) {
+        if (attempt) await new Promise((done) => setTimeout(done, 1000));
+        context.signal.throwIfAborted();
+        link = z
+          .object({ available: z.boolean(), enabled: z.boolean() })
+          .passthrough()
+          .parse(
+            await this.bindings.request(daemon, "/local/device-link", "PUT", {
+              enabled: true,
+            }),
+          );
+      }
+      if (!link.available || !link.enabled)
+        throw new VerificationError(
+          problem(
+            "sourceUnavailable",
+            "The environment's daemon did not enable Device link with its registry",
+            "inspect",
+          ),
+        );
+      await context.progress("metro");
+      const account = await this.testAccount(environment),
+        metroPort = await freePort();
+      const metro = await startMetro({
+        checkout: environment.checkout,
+        directory,
+        port: metroPort,
+        tools,
+        publicEnv: {
+          EXPO_PUBLIC_API_URL: environment.apiOrigin,
+          EXPO_PUBLIC_P2P_SERVER_URL: registryUrl,
+          EXPO_PUBLIC_VERIFICATION_TOKEN: account.jwt,
+          EXPO_PUBLIC_VERIFICATION_WORKSPACE_SLUG: account.slug,
+        },
+        signal: context.signal,
+      });
+      components.push(metro);
+      environment.components = {
+        ...environment.components,
+        metroPort,
+        metroPid: metro.pid,
+      };
+      await this.save(environment);
+      await context.progress("simulator");
+      const { simulator, target } = await Simulator.create(
+        `${SIMULATOR_PREFIX}${id.slice(0, 8)}`,
+        context.signal,
+      );
+      // Recorded before booting so a failed start still deletes it.
+      environment.components = {
+        ...environment.components,
+        simulator: {
+          udid: simulator.udid,
+          device: target.deviceName,
+          runtime: target.runtimeName,
+        },
+      };
+      await this.save(environment);
+      await simulator.boot(context.signal);
+      await simulator.install(app, context.signal);
+      await simulator.open(metroPort, appLanguage(environment), context.signal);
+      await context.progress("bundle");
+      // The first bundle compiles the whole app; later loads are incremental.
+      let bundled = false;
+      for (let attempt = 0; attempt < 600 && !bundled; attempt++) {
+        context.signal.throwIfAborted();
+        await new Promise((done) => setTimeout(done, 1000));
+        const text = await readFile(join(directory, "metro.log"), "utf8").catch(
+          () => "",
+        );
+        bundled =
+          /iOS Bundled/.test(text) && (await simulator.appRunning());
+        if (/iOS Bundling failed|SyntaxError|Unable to resolve/.test(text))
+          throw new VerificationError(
+            problem(
+              "sourceUnavailable",
+              "Metro could not bundle the mobile app; read the metro log",
+              "inspect",
+            ),
+          );
+      }
+      if (!bundled)
+        throw new VerificationError(
+          problem(
+            "deadlineExceeded",
+            "The mobile app did not load its bundle on the simulator",
+            "inspect",
+          ),
+        );
+      environment = {
+        ...environment,
+        components: {
+          ...environment.components,
+          mobileReadiness: "bundleLoaded",
+        },
+      };
+      await this.save(environment);
+      await appendFile(
+        log,
+        `${new Date().toISOString()} simulator ${simulator.udid} loaded Metro ${metroPort}\n`,
+      );
+      return environment;
+    } catch (error) {
+      await this.recordFailure(id, "ios", error);
+      await this.save({
+        ...environment,
+        state: "failed",
+        problem: toProblem(error),
+      });
+      throw error;
+    }
+  }
+  /**
+   * Deletes the environment's simulator and, when no live handle remains (the
+   * host restarted), ends its Metro and registry by their recorded process
+   * groups. Returns whether everything is confirmed gone.
+   */
+  private async stopIos(
+    environment: Environment,
+    handled: boolean,
+  ): Promise<boolean> {
+    let gone = true;
+    const recorded = z
+      .object({ udid: z.string() })
+      .passthrough()
+      .safeParse(environment.components.simulator);
+    if (recorded.success)
+      gone = await new Simulator(recorded.data.udid).remove().then(
+        () => true,
+        () => false,
+      );
+    if (handled) return gone;
+    const owners = {
+      metroPid: join(environment.checkout, "apps/mobile"),
+      registryPid: join(this.directory(environment.environmentId), "p2p"),
+    };
+    for (const [key, cwd] of Object.entries(owners)) {
+      const pid = environment.components[key];
+      if (typeof pid !== "number" || (await processGone(pid))) continue;
+      if ((await processDirectory(pid)) !== cwd) continue;
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        /* The group already exited. */
+      }
+      for (let attempt = 0; attempt < 50; attempt++) {
+        if (await processGone(pid)) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      gone &&= await processGone(pid);
+    }
+    return gone;
+  }
+  private async observeIos(
+    environment: Environment,
+  ): Promise<import("../contracts/index.js").Json> {
+    const recorded = z
+      .object({ udid: z.string() })
+      .passthrough()
+      .safeParse(environment.components.simulator);
+    if (!recorded.success) return { status: "notCreated" };
+    const simulator = new Simulator(recorded.data.udid);
+    const device = await simulator.describe().catch(() => null);
+    const port = environment.components.metroPort;
+    const metro =
+      typeof port === "number"
+        ? await fetch(`http://localhost:${port}/status`, {
+            signal: AbortSignal.timeout(2000),
+          })
+            .then(async (response) =>
+              (await response.text()).includes("packager-status:running"),
+            )
+            .catch(() => false)
+        : false;
+    return {
+      status: device?.state === "Booted" && metro ? "available" : "unavailable",
+      simulator: device ? device.state : "deleted",
+      appRunning: device?.state === "Booted" ? await simulator.appRunning() : false,
+      metro,
+    };
+  }
+  async iosSetting(id: string, setting: IosDeviceSetting): Promise<void> {
+    const simulator = await this.simulator(id),
+      environment = await this.get(id);
+    switch (setting.type) {
+      case "appearance":
+        return simulator.setAppearance(setting.value);
+      case "contentSize":
+        return simulator.setContentSize(setting.value);
+      case "addMedia":
+        return simulator.addMedia(checkoutMedia(environment.checkout, setting.paths));
+      case "openUrl":
+        return simulator.openUrl(setting.url);
+      case "language": {
+        await this.save({
+          ...environment,
+          components: { ...environment.components, appLanguage: setting.value },
+        });
+        const port = z.number().int().positive().parse(environment.components.metroPort);
+        return simulator.open(port, setting.value);
+      }
+      case "relaunch": {
+        const port = z.number().int().positive().parse(environment.components.metroPort);
+        return simulator.open(port, appLanguage(environment));
+      }
+    }
+  }
+  /** The simulator an ios environment owns, when it has been created. */
+  async simulator(id: string): Promise<Simulator> {
+    const environment = await this.get(id);
+    if (environment.mode !== "ios")
+      throw new VerificationError(
+        problem(
+          "unsupportedCapability",
+          "Only ios environments have a simulator; start one with mode ios",
+        ),
+      );
+    const recorded = z
+      .object({ udid: z.string() })
+      .passthrough()
+      .safeParse(environment.components.simulator);
+    if (!recorded.success)
+      throw new VerificationError(
+        problem("sourceUnavailable", "The environment has not created its simulator yet", "inspect"),
+      );
+    return new Simulator(recorded.data.udid);
+  }
+  /**
+   * Issues a token for the local test account through the test backend's
+   * development verification code, creating its workspace on first use.
+   */
+  private async testAccount(
+    environment: Environment,
+  ): Promise<{ jwt: string; email: string; slug: string }> {
+    // Desktop and phone share one issuance: the backend sends at most one
+    // code per address a minute, so a second sign-in right after would fail.
+    const file = join(this.directory(environment.environmentId), "test-account.json");
+    const accountSchema = z.object({ jwt: z.string().min(1), email: z.string(), slug: z.string() });
+    const kept = accountSchema.safeParse(
+      JSON.parse(await readFile(file, "utf8").catch(() => "null")),
+    );
+    if (kept.success) return kept.data;
+    const issued = await this.issueTestAccount(environment);
+    await writeFile(file, JSON.stringify(issued), { mode: 0o600 });
+    return issued;
+  }
+  private async issueTestAccount(
+    environment: Environment,
+  ): Promise<{ jwt: string; email: string; slug: string }> {
     const text = await readFile(
         join(environment.checkout, ".env.worktree"),
         "utf8",
@@ -2011,20 +2382,7 @@ export class Environments {
       token: jwt,
       workspace: workspace.id,
     });
-    // The dev renderer can still reload (Vite re-optimizes dependencies on
-    // first start) and drop a token delivered too early, so hand it off until
-    // the application reports the signed-in user.
-    for (let attempt = 0; attempt < 30; attempt++) {
-      await this.desktopRequest(environment.environmentId, "/login", {
-        token: jwt,
-      });
-      if (await this.signedInWithin(environment.environmentId, 5000)) break;
-    }
-    environment.components = {
-      ...environment.components,
-      signedIn: { email, workspaceSlug: slug },
-    };
-    await this.save(environment);
+    return { jwt, email, slug };
   }
   private async signedInWithin(id: string, timeoutMs: number) {
     const deadline = Date.now() + timeoutMs;
@@ -2041,7 +2399,7 @@ export class Environments {
   /** Keeps the original failure in the environment's private log; tool results stay generic. */
   private async recordFailure(
     id: string,
-    log: "prepare" | "desktop",
+    log: "prepare" | "desktop" | "ios",
     error: unknown,
   ) {
     const detail =
@@ -2239,6 +2597,11 @@ async function removeContainer(
   }
 }
 
+/** The app's interface language chosen with ios_device; the system's when unset. */
+function appLanguage(environment: Environment): string | undefined {
+  const value = environment.components.appLanguage;
+  return typeof value === "string" ? value : undefined;
+}
 async function processGone(pid: number): Promise<boolean> {
   try {
     process.kill(pid, 0);

@@ -61,7 +61,7 @@ export interface ToolCheck {
 }
 export interface Inspection {
   inspectionScope: "device";
-  mode: "renderer" | "desktop";
+  mode: "renderer" | "desktop" | "ios";
   platform: string;
   arch: string;
   project: { name: string; commit: string | null };
@@ -80,7 +80,7 @@ export class SetupInspector {
   ) {}
 
   async inspect(
-    mode: "renderer" | "desktop",
+    mode: "renderer" | "desktop" | "ios",
     signal?: AbortSignal,
   ): Promise<Inspection> {
     signal?.throwIfAborted();

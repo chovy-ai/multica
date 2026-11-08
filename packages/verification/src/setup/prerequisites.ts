@@ -5,7 +5,7 @@ import { inspectDevice } from "./device-inspect.js";
 import { probeTool } from "./inspect.js";
 export async function awaitPrerequisites(
   projectRoot: string,
-  mode: "renderer" | "desktop",
+  mode: "renderer" | "desktop" | "ios",
   required: string[],
   context: OperationContext,
   waiting: (reason: string) => Promise<void>,
