@@ -139,7 +139,6 @@
     "agent_heading": "Agents · Invoked after sending",
     "invoke": "Invoke",
     "remove": "Remove {{name}}",
-    "invoke_hint": "Sending invokes {{names}} using the agent’s own settings.",
     "unavailable": "{{name}} is unavailable. Remove it or choose another reference.",
     "prepare_failed": "Could not verify the selected references. Your draft is saved. Try again.",
     "session_heading": "Sessions · {{device}}",

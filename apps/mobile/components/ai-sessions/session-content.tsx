@@ -1279,16 +1279,6 @@ export function AISessionContent({
                 textAlignVertical: "top",
               }}
             />
-            {!!agents.length && (
-              <Text
-                style={{ lineHeight: undefined }}
-                className="px-4 py-1 text-xs text-muted-foreground"
-              >
-                {t("references.invoke_hint", {
-                  names: agents.map((entry) => entry.name).join(", "),
-                })}
-              </Text>
-            )}
             {width <= 375 && <View className="px-2">{modelControl}</View>}
             <View className="flex-row items-center px-2 pb-1">
               <IconButton

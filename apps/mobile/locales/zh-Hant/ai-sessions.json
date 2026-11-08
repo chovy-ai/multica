@@ -139,7 +139,6 @@
     "agent_heading": "智能體 · 傳送後呼叫",
     "invoke": "呼叫",
     "remove": "移除 {{name}}",
-    "invoke_hint": "傳送後呼叫 {{names}}，使用智能體自身設定。",
     "unavailable": "{{name}} 已無法使用，請移除或重新選擇。",
     "prepare_failed": "無法確認所選引用，草稿已保留，請重試。",
     "session_heading": "會話 · {{device}}",
