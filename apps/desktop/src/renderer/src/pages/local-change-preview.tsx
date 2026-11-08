@@ -58,10 +58,10 @@ export const LocalChangePreview = observer(function LocalChangePreview({ service
           <IconButton label={labels.wrap} aria-pressed={wrap} onClick={toggleWrap}><WrapText /></IconButton>
           </div>
         </div>
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto pb-chat-launcher" role="region" aria-label={labels.view} tabIndex={0}>
-          {file?.reason ? <p className="p-4 text-body text-muted-foreground">{resourceReason(labels, file.reason)}</p> : detail ? detail.patch ?
-            <Suspense fallback={<Loading />}><ChangeDiff detail={detail} split={split && expanded && !narrow} wrap={wrap} /></Suspense> :
-            <p className="p-4 text-body text-muted-foreground">{file?.kind === "renamed" ? labels.renamed : labels.no_change}</p> : file ? <Loading /> :
+        <div className={`min-h-0 min-w-0 flex-1 pb-chat-launcher ${file && !file.reason ? "overflow-hidden" : "overflow-auto"}`} role="region" aria-label={labels.view} tabIndex={file && !file.reason ? -1 : 0}>
+          {file?.reason ? <p className="p-4 text-body text-muted-foreground">{resourceReason(labels, file.reason)}</p> : file ? detail && !detail.patch ?
+            <p className="p-4 text-body text-muted-foreground">{file.kind === "renamed" ? labels.renamed : labels.no_change}</p> :
+            <Suspense fallback={<Loading />}><ChangeDiff file={file} detail={detail} split={split && expanded && !narrow} wrap={wrap} /></Suspense> :
             <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-body text-muted-foreground"><FileDiff className="size-6" /><p>{fileId ? labels.no_change : labels.choose}</p></div>}
         </div>
         <p className="shrink-0 border-t px-3 py-2 text-caption text-muted-foreground">{labels.readonly}</p>

@@ -4,6 +4,10 @@ Desktop’s sliders button lists the selected conversation’s changes, outputs 
 
 The Changes view measures its own panel, independently of the chat workspace. Below 640 px it replaces the inline tree with the file drawer and renders unified diff, including after a panel resize. The path occupies a separate truncated row; its focusable tooltip exposes the full path without consuming code height.
 
+The selected file uses Pierre CodeView's row virtualization and owns one bounded scroll container. Its estimated line height matches the shared label role (18 px); file padding and separator geometry stay aligned with Pierre. Split/wrap columns use zero-minimum grid tracks to avoid width feedback during measurement. The adapter follows [T3 Code's styled viewer](https://github.com/pingdotgg/t3code/blob/322f6544dfad0a3c8a0c8cbecf2c7f7874b14268/apps/web/src/components/diffs/StyledDiffCodeView.tsx), with its MIT notice shipped alongside the Pierre notices. It does not copy T3's dependency patches or data pipeline.
+
+Each file has a viewer-local identity plus cwd/file ID and the daemon's detail revision. The viewer and Pierre's shared single-worker provider remain mounted during detail loading and file selection. Pending data clears the viewer's items instead of displaying stale bytes; only client-owned scroll offsets are retained. Version changes restore the reading position without replacing the main composer or taking focus. The existing pool is released when its last viewer unmounts; no additional global pool or idle timer is added.
+
 ## Trace a file change
 
 1. A runner takes a bounded, ignore-aware snapshot of its current working directory before dispatching a turn. Git supplies file names only; HEAD and the index are never baselines.
@@ -46,6 +50,8 @@ Run the adjacent filechanges/store/service/localhost Go tests with `-race`; they
 `e2e/conversation-resources.spec.ts` mounts production Desktop workspace/resource components with a fake transport. Serve `packages/tutti-agent-gui-host/vite.config.ts`, then point `PLAYWRIGHT_BASE_URL` at that server. It covers light/dark at 1440/1024/390, popover layout/focus, read-only diff, expanded split mode and the narrow file drawer. No user profile, real agent CLI, model API or PostgreSQL is used.
 
 `e2e/conversation-resources-layout.spec.ts` covers long paths in both themes at all three widths, plus dragging the panel through the inline-tree threshold and restoring an expanded split diff. It asserts that the rendered code starts inside the scroll region and at least 200 px of that region intersects the visible panel and viewport; checking only document overflow misses vertically displaced code.
+
+`e2e/conversation-resources-viewer.spec.ts` checks revision replacement, measured role line height, reading-position retention, keyboard/read-only behavior, shared-worker reuse and composer identity in both themes. The separate production performance scenario is documented in `e2e/perf/README.md`; it measures input-to-frame p95 and maximum, long tasks, heap and mounted rows for the unchanged 940,000-byte/20,000-line budget.
 
 Dependencies are pinned in manifests/lockfiles. Pierre license/notice files and gotextdiff’s BSD license ship under Desktop renderer `public/licenses/conversation-resources/`. The Vite tool-action adapter adds the button to the pinned upstream GUI at build time and fails if the insertion anchor changes; vendored sources remain untouched.
 

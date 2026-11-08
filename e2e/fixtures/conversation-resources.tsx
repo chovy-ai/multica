@@ -34,6 +34,11 @@ const contents: Record<string, { before: string; after: string; patch: string }>
   legacy: { before: "export const legacyRedirect = true;\n", after: "", patch: '--- a/src/auth/legacy.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-export const legacyRedirect = true;\n' },
   report: { before: "", after: "# Redirect notes\n", patch: '--- /dev/null\n+++ b/redirect-notes.md\n@@ -0,0 +1 @@\n+# Redirect notes\n' },
 };
+function scrollContents(revised: boolean) {
+  const lines = [contents.redirect!.before.trim(), ...Array.from({ length: 2999 }, (_, i) => `// ${revised && i === 2998 ? "revision-two" : `fixture-line-${i}`}`)];
+  return { before: contents.redirect!.before, after: lines.join("\n") + "\n", patch: `--- a/src/auth/redirect.ts\n+++ b/src/auth/redirect.ts\n@@ -1 +1,3000 @@\n-${contents.redirect!.before.trim()}\n${lines.map(line => `+${line}\n`).join("")}` };
+}
+if (scenario === "scroll") contents.redirect = scrollContents(false);
 const basePage = proof ? conversationResourcesSchema.parse(proof.page) : { revision: 1, coverage: "complete", reason: "", recorded_from: "2026-11-07T10:00:00Z", files, attachments: [{ id: "input", name: "login-reference.md", media_type: "text/markdown", size: 20, source: "input" }], next_cursor: null };
 const resourceFiles = scenario === "paged" ? Array.from({ length: 203 }, (_, i) => ({ ...files[0], id: `early-${i}`, path: `early/file-${String(i).padStart(3, "0")}.ts`, turn_id: "early-turn" })) : scenario === "empty" || scenario === "history" ? [] : scenario === "limit" ? [{ ...files[0], added: null, deleted: null, reason: "storage_limit" }] : scenario === "long" ? [{ ...files[0], path: `${"long-directory/".repeat(40)}source.ts` }] : basePage.files;
 const attachments = scenario === "attachments" ? [
@@ -55,7 +60,7 @@ const transport = createFakeTransport(scope, async (_method, path, body) => {
     if (scenario === "paged") return { ...basePage, files: url.searchParams.has("cursor") ? resourceFiles.slice(200) : resourceFiles.slice(0, 200), attachments: [], next_cursor: url.searchParams.has("cursor") ? null : "second-page" };
     return { ...basePage, coverage: scenario === "history" ? "missing_baseline" : basePage.coverage, files: resourceFiles, attachments };
   }
-  if (url.pathname.includes("/changes/")) { const id = url.pathname.split("/").at(-1)!; return proof ? conversationChangeDetailSchema.parse(proof.details[id]) : { revision: 1, file: resourceFiles.find(file => file.id === id), ...contents[id] }; }
+  if (url.pathname.includes("/changes/")) { const id = url.pathname.split("/").at(-1)!; return proof ? conversationChangeDetailSchema.parse(proof.details[id]) : { revision: basePage.revision, file: resourceFiles.find(file => file.id === id), ...contents[id] }; }
   if (url.pathname === "/preview/locate") { const path = url.searchParams.get("path")!; return { root: "/project", path, name: path.split("/").at(-1), kind: "file" }; }
   if (url.pathname === "/preview/file") { const path = url.searchParams.get("path")!; return { root: "/project", path, name: path.split("/").at(-1), mime_type: "text/markdown", size: 40 }; }
   if (url.pathname.endsWith("/commands")) return { revision: (body as { workspace?: { revision?: number } })?.workspace?.revision };
@@ -67,6 +72,12 @@ transport.storeGeneration = async () => "fixture";
 transport.fileUrl = (_scope, path) => `/__resources/content?path=${encodeURIComponent(path)}`;
 Object.defineProperty(window, "__resourceFixture", { value: {
   requests: () => requests.slice(), recover: () => { unavailable = false; },
+  detailRevision: () => conversationService(transport, scope).resources("source").model.details.get("redirect")?.revision,
+  revise: () => {
+    basePage.revision++;
+    contents.redirect = scenario === "scroll" ? scrollContents(true) : { before: contents.redirect!.before, after: 'export const redirect = "revision-two";\n', patch: '--- a/src/auth/redirect.ts\n+++ b/src/auth/redirect.ts\n@@ -1 +1 @@\n-export const redirect = (next: string) => next;\n+export const redirect = "revision-two";\n' };
+    conversationService(transport, scope).resources("source").invalidate();
+  },
   failRefresh: () => { unavailable = true; conversationService(transport, scope).resources("source").invalidate(); },
 } });
 const device = { id: "local", name: "", transport } as LocalDevice;
