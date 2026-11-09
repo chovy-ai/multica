@@ -29,11 +29,13 @@ export function AISessionRow({ item, completionReadSupported, onPress }: {
     <View className="flex-1 min-w-0">
       <Text style={{ lineHeight: undefined }} className="font-medium text-title-sm" numberOfLines={1}>{item.pinned ? "📌 " : ""}{item.title}</Text>
       <Text style={{ lineHeight: undefined }} className="text-caption text-muted-foreground mt-1" numberOfLines={1}>{item.provider === "claude" ? "Claude Code" : item.provider === "codex" ? "Codex" : item.provider} · {aiSessionPreview(item.last_message_preview)}</Text>
-      {activityLabel && <View className="flex-row items-center gap-2 mt-1">
-        {activity !== "pending_question" && <ActivityIndicator accessible={false} size="small" color={theme.mutedForeground} />}
-        <Text style={{ lineHeight: undefined }} className="flex-1 text-caption text-muted-foreground">{activityLabel}</Text>
-      </View>}
     </View>
-    <View className="w-2 h-2">{unread && <View className="w-2 h-2 rounded-full bg-brand" />}</View>
+    <View className="max-w-32 shrink-0 items-end gap-2">
+      {activityLabel && <View className="flex-row items-center gap-2">
+        {activity !== "pending_question" && <ActivityIndicator accessible={false} size="small" color={theme.mutedForeground} />}
+        <Text style={{ lineHeight: undefined }} className="shrink text-right text-caption text-muted-foreground">{activityLabel}</Text>
+      </View>}
+      {(unread || !activityLabel) && <View className="w-2 h-2">{unread && <View className="w-2 h-2 rounded-full bg-brand" />}</View>}
+    </View>
   </Pressable>;
 }
