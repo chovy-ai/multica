@@ -29,6 +29,10 @@
 | `page_read` | 同步 | 按定位器读取匹配数量及每个匹配的可见性、可用性、文本、值、位置 |
 | `page_action` | 同步 | 对定位器匹配项或窗口坐标执行 click/fill/select/pressKey/scroll/scrollIntoView；Desktop 环境只接受 scroll 和 scrollIntoView；只报告输入已送达 |
 | `page_screenshot` | 同步 | 截取窗口并直接返回图片 |
+| `ios_observe` | 同步 | ios 环境：列出模拟器屏幕内的无障碍元素（类型、testID、标签、值、可用性、坐标），可按文字过滤 |
+| `ios_action` | 同步 | ios 环境：后台点击（按 testID、标签或坐标，可等待元素出现）、长按、输入文字、按键、滑动、预设手势、硬件按键；只报告输入已送达 |
+| `ios_screenshot` | 同步 | ios 环境：截取模拟器屏幕并直接返回图片 |
+| `ios_device` | 同步 | ios 环境：切换深浅色、动态字体大小、App 界面语言，往相册导入 checkout 内的图片或视频，打开 `multica://` 链接，冷启动 App |
 
 窗口参数省略时使用第一个窗口。定位器支持 testId、text、label、role、css；匹配多个元素时 `page_action` 要求传 `index`。
 
@@ -43,6 +47,21 @@ let state = await app.observe();
 宿主为每个 Desktop 环境设置专属 bundle ID `ai.multica.verification.<环境 ID>`，Multica Computer Use 对它不显示授权框，`getApp` 能唯一定位这个环境。Computer Use 的 `app.scroll` 对 Electron 窗口返回 `background_unavailable`，请改用 `page_action`。拖拽使用 Computer Use 的 `app.drag`：宿主启动开发 Electron 时以随机端口打开主进程 inspector（`V8_INSPECTOR_PORT=127.0.0.1:0`），cua-driver 经它在后台完成拖拽，多个环境不争用同一端口。
 
 异步工具的 requestId 用于去重：同一 requestId 只对应一种输入，响应丢失时用 `job_query` 按 requestId 查询原任务，不要换 ID 重放。同步工具不经过任务账本。
+
+## iOS 环境
+
+`env_start` 传 `mode: "ios"` 时，在完整的 desktop 环境（后端、开发 Electron、bundled daemon）之外再准备手机端，AI 会话页面可以端到端验证：
+
+- **设备注册表**：宿主为环境构建并启动一个只监听本机的 `p2p-server`，它只信任本环境的测试后端；Electron 的 daemon 通过 `MULTICA_DAEMON_P2P_SERVER_URL` 指向它，宿主再经 daemon 的 `/local/device-link` 打开 Device link。验证构建的 daemon 只在注册表地址是回环地址时启动设备连接，不会加入共享注册表。
+- **App 构建**：准备阶段构建 iOS 模拟器 Debug dev client。缓存键是 Expo 原生 fingerprint（不含生成的 device-link 框架）、device-link 源码的提交内容哈希、Xcode 版本和架构，原生依赖不变时直接复用；首次构建约十分钟，命中缓存时几十秒。
+- **JavaScript**：环境自己的 Metro 从 checkout 提供 bundle，把本地后端、注册表地址和测试账号 token 内联为 `EXPO_PUBLIC_*`。桌面和手机共用同一次签发的测试账号（后端每个邮箱每分钟只发一次验证码）。Debug bundle 冷启动时若 Keychain 没有 token，就采用这份测试账号（`apps/mobile/data/verification-login.ts`），所以 App 打开即已登录并进入 `verification` 工作区。Metro 使用环境私有的 `TMPDIR`，转换缓存不与其他项目共享。
+- **模拟器**：每个环境新建一台名为 `multica-verification-<环境 ID 前 8 位>` 的模拟器（最新 iOS 运行时上编号最大的 iPhone Pro），首次启动前设为未接硬件键盘，预先授予相册权限；`env_stop` 删除它，宿主只删除带该前缀的设备。App 用 `simctl launch --initialUrl` 直接加载本环境的 Metro（`openurl` 会弹系统确认框），启动参数关闭开发菜单的首启弹窗、悬浮按钮、手势和单键快捷键。
+- **操作**：`ios_*` 工具经 [AXe](https://github.com/cameroncooke/AXe) 按模拟器 UDID 在后台操作，不需要 Simulator 窗口，也不占用 Computer Use 的应用锁，多个环境互不影响。打开 Simulator.app 时它会显示这些设备的窗口，关掉窗口不影响验证。
+- **输入与键盘**：聚焦输入框时显示软键盘，可直接验证键盘遮挡与布局。`ios_action` 的 `type` 把文字写入模拟器剪贴板再按 ⌘V 粘贴到当前焦点，任何语言都按原样进入，不经输入法；它会覆盖剪贴板。按键事件会让 iOS 认为接了硬件键盘并收起软键盘，宿主随后复位该状态，重新聚焦即恢复。
+- **语言**：模拟器沿用主机的系统语言；`ios_device` 的 `language` 以 `zh-Hans` 或 `en` 重启 App，用于检查另一种语言的文案。
+- **日志**：`env_log_read` 增加 `p2p`、`metro`、`ios`；`env_status` 的 `observed.mobile` 报告模拟器状态、App 是否在运行、Metro 是否可用。
+
+设备需要完整的 Xcode、至少一个 iOS 模拟器运行时，以及 `brew install cameroncooke/axe/axe`；`env_inspect` 传 `mode: "ios"` 时检查这三项。
 
 ## 安装守护进程
 
@@ -80,7 +99,7 @@ claude mcp add --scope user --transport http multica-verification http://127.0.0
 
 `fixture` 和 `realSnapshot` 环境的登录全自动：宿主用本地测试后端的开发验证码（`.env.worktree` 中的 `MULTICA_DEV_VERIFICATION_CODE`）为 `verification@localhost` 换取令牌，创建 `verification` 工作区并完成引导，再通过开发 Electron 诊断接口的 `/login` 把令牌交给渲染进程，与浏览器登录走同一条 `auth:token` 路径。
 
-`env_start` 的参数是 `branch`（远端分支名或可达的 commit SHA）、`mode`（`desktop` 或 `renderer`）、`dataMode`（`fixture`、`realSnapshot` 或 `liveReadOnly`），以及可选的 `owner`（是谁的环境，显示在管理台）、`idleTimeoutMinutes` 和 `sourceRef`。
+`env_start` 的参数是 `branch`（远端分支名或可达的 commit SHA）、`mode`（`desktop`、`renderer` 或 `ios`）、`dataMode`（`fixture`、`realSnapshot` 或 `liveReadOnly`），以及可选的 `owner`（是谁的环境，显示在管理台）、`idleTimeoutMinutes` 和 `sourceRef`。
 
 守护进程在 `<state-root>/repository.git` 维护一份只属于自己的部分克隆（远端默认是安装 checkout 的 `origin`），每次 `env_start` 拉取指定分支并固定到当时的 commit，再从这份镜像建独立 worktree，不使用任何人的工作目录。只能验证已推送到远端的代码。
 

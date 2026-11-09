@@ -12,7 +12,7 @@ export type DeviceCheck = {
 };
 export async function inspectDevice(
   projectRoot: string,
-  mode: "renderer" | "desktop",
+  mode: "renderer" | "desktop" | "ios",
   probe: Probe,
   signal?: AbortSignal,
 ): Promise<DeviceCheck[]> {
@@ -229,10 +229,42 @@ export async function inspectDevice(
     () => true,
     () => false,
   );
+  if (mode === "ios") {
+    const [xcodebuild, runtimes, axe] = await Promise.all([
+      run("xcodebuild", ["-version"]),
+      // Text, not JSON: probes keep at most 16 KiB of output.
+      run("xcrun", ["simctl", "list", "runtimes", "available"]),
+      run("axe", ["--version"]),
+    ]);
+    add(
+      "xcode",
+      xcodebuild.kind === "available" ? "ready" : "awaitingUser",
+      xcodebuild.kind === "available"
+        ? xcodebuild.output.split("\n")[0]!
+        : "xcodebuild is unavailable; Command Line Tools alone cannot build the iOS app",
+      "Install Xcode and select it with xcode-select",
+    );
+    const iosRuntime =
+      runtimes.kind === "available" && /^iOS \d/m.test(runtimes.output);
+    add(
+      "iosRuntime",
+      iosRuntime ? "ready" : "awaitingUser",
+      iosRuntime ? "An iOS simulator runtime is installed" : "No iOS simulator runtime is installed",
+      "Add an iOS platform in Xcode → Settings → Components",
+    );
+    add(
+      "axe",
+      axe.kind === "available" ? "ready" : "awaitingUser",
+      axe.kind === "available"
+        ? `AXe ${axe.output}`
+        : "AXe drives the simulator's touch, keyboard and accessibility tree",
+      "brew install cameroncooke/axe/axe",
+    );
+  }
   add(
     "computerUse",
-    mode !== "desktop" || helperPresent ? "ready" : "blocked",
-    mode === "desktop"
+    mode === "renderer" || helperPresent ? "ready" : "blocked",
+    mode !== "renderer"
       ? "cua-driver SDK presence checked; external agent CU is independently configured"
       : "Not required in renderer mode",
     "env_start stages cua-driver; configure the external agent's computer-use capability",

@@ -89,6 +89,10 @@ describe("verification MCP transport", () => {
       "page_read",
       "page_action",
       "page_screenshot",
+      "ios_observe",
+      "ios_action",
+      "ios_screenshot",
+      "ios_device",
     ]);
     const missing = await client.callTool({
       name: "job_query",
@@ -165,7 +169,7 @@ describe("verification MCP transport", () => {
       new StreamableHTTPClientTransport(new URL(daemon.info.mcpUrl)),
     );
     cleanups.push(() => client.close());
-    expect((await client.listTools()).tools).toHaveLength(18);
+    expect((await client.listTools()).tools).toHaveLength(22);
     const receipt = acceptedSchema.parse(
       await snapshotRestore(client, "http-restore"),
     );

@@ -9,10 +9,15 @@ import {
 } from "../contracts/index.js";
 import type { VerificationHost } from "../host/host.js";
 import { toProblem } from "../host/problem.js";
-import { prepareInput } from "../setup/environments.js";
+import { logNames, prepareInput } from "../setup/environments.js";
 import { restoreInput, snapshotInput } from "../host/operations.js";
 import { eventsReadInput, stateReadInput } from "../state/service.js";
 import { fixtureControlInput } from "../data/fixture-control.js";
+import {
+  IosDriver,
+  iosActionSchema,
+  iosDeviceSchema,
+} from "../page/ios.js";
 import {
   pageActionSchema,
   pointSchema,
@@ -83,7 +88,7 @@ export function createVerificationMcpServer(host: VerificationHost): McpServer {
     {
       description:
         "Inspect declared tools, disk, GUI session, build dependencies, managed database, ports and Computer Use prerequisites on this device.",
-      inputSchema: { mode: z.enum(["renderer", "desktop"]).default("desktop") },
+      inputSchema: { mode: z.enum(["renderer", "desktop", "ios"]).default("desktop") },
       annotations: readOnly,
     },
     ({ mode }, extra) => read(() => host.setup.inspect(mode, extra.signal)),
@@ -127,10 +132,10 @@ export function createVerificationMcpServer(host: VerificationHost): McpServer {
     "env_log_read",
     {
       description:
-        "Read a page of an environment's prepare, backend, desktop or stop log. Credential-like text is masked.",
+        "Read a page of an environment's prepare, backend, desktop or stop log; ios environments add p2p (device registry), metro and ios (simulator phase). Credential-like text is masked.",
       inputSchema: {
         environmentId: resourceIdSchema,
-        name: z.enum(["prepare", "backend", "desktop", "stop"]),
+        name: logNames,
         offset: z.number().int().nonnegative().default(0),
         limit: z.number().int().min(1).max(32000).default(8000),
       },
@@ -364,6 +369,100 @@ export function createVerificationMcpServer(host: VerificationHost): McpServer {
         });
       }
     },
+  );
+  server.registerTool(
+    "ios_observe",
+    {
+      description:
+        "List the ios environment's on-screen accessibility elements in tree order: type, id (React Native testID), label, value, enabled and frame in screen points. query keeps elements whose label, id or value contains it.",
+      inputSchema: {
+        environmentId: resourceIdSchema,
+        query: z.string().max(200).optional(),
+        offset: z.number().int().min(0).max(10000).default(0),
+        limit: z.number().int().min(1).max(200).default(80),
+      },
+      annotations: { ...readOnly, idempotentHint: false },
+    },
+    ({ environmentId, query, offset, limit }) =>
+      read(async () => {
+        const all = await new IosDriver(
+          await host.environments.simulator(environmentId),
+        ).elements();
+        const needle = query?.toLowerCase();
+        const matched = needle
+          ? all.filter((element) =>
+              [element.label, element.id, element.value].some((text) =>
+                text?.toLowerCase().includes(needle),
+              ),
+            )
+          : all;
+        return {
+          total: matched.length,
+          elements: matched.slice(offset, offset + limit),
+          nextOffset:
+            offset + limit < matched.length ? offset + limit : null,
+        };
+      }),
+  );
+  server.registerTool(
+    "ios_action",
+    {
+      description:
+        "Perform one input on the ios environment's simulator, in the background: tap an element by id or label (or a point), longPress, type text into the focused field (pasted through the simulator pasteboard, so any language works; it replaces the pasteboard), press a key, swipe, a preset gesture, or a hardware button. Coordinates are screen points as reported by ios_observe. Reports only that the input was delivered; observe again for the result.",
+      inputSchema: { environmentId: resourceIdSchema, action: iosActionSchema },
+      annotations: pageAction,
+    },
+    ({ environmentId, action }) =>
+      read(async () =>
+        new IosDriver(await host.environments.simulator(environmentId)).perform(
+          action,
+        ),
+      ),
+  );
+  server.registerTool(
+    "ios_screenshot",
+    {
+      description: "Capture the ios environment's simulator screen and return the image.",
+      inputSchema: { environmentId: resourceIdSchema },
+      annotations: { ...readOnly, idempotentHint: false },
+    },
+    async ({ environmentId }) => {
+      try {
+        const png = await (
+          await host.environments.simulator(environmentId)
+        ).screenshot();
+        const metadata = { capturedAt: new Date().toISOString() };
+        return {
+          content: [
+            {
+              type: "image" as const,
+              data: png.toString("base64"),
+              mimeType: "image/png",
+            },
+            { type: "text" as const, text: JSON.stringify(metadata) },
+          ],
+          structuredContent: { result: readOk(metadata) },
+        };
+      } catch (error) {
+        return respond(async () => {
+          throw error;
+        });
+      }
+    },
+  );
+  server.registerTool(
+    "ios_device",
+    {
+      description:
+        "Change the ios environment's simulator: appearance light/dark, Dynamic Type contentSize, addMedia (images/videos committed in the environment's checkout, by relative path, into Photos), openUrl (multica:// links), language (relaunch the app in zh-Hans or en instead of the system language), or relaunch (cold-start the app on the environment's Metro).",
+      inputSchema: { environmentId: resourceIdSchema, setting: iosDeviceSchema },
+      annotations: pageAction,
+    },
+    ({ environmentId, setting }) =>
+      read(async () => {
+        await host.environments.iosSetting(environmentId, setting);
+        return { performed: true };
+      }),
   );
   return server;
 }

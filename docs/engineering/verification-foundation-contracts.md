@@ -53,7 +53,7 @@ interface Problem {
 
 | 操作 | 输入 | 输出 |
 | --- | --- | --- |
-| `env.start` | branch、mode、dataMode，可选 owner、idleTimeoutMinutes、sourceRef、apiOrigin | 环境记录 |
+| `env.start` | branch、mode（renderer / desktop / ios）、dataMode，可选 owner、idleTimeoutMinutes、sourceRef、apiOrigin | 环境记录 |
 | `env.stop` | environmentId | 环境记录 |
 | `data.snapshot` | sourceRef、selection | 快照清单（不含内容） |
 | `data.restore` | environmentId、content（snapshot / conversationTemplate / workspaceTemplate） | 副本：datasetId、映射、转换列表 |
@@ -83,6 +83,10 @@ interface Problem {
 | `page_read` | environmentId、target、limit | 匹配数量，以及每个匹配的可见性、可用性、文本、值、位置 |
 | `page_action` | environmentId、target 或坐标、action | `{ performed: true }`；Desktop 环境只接受 scroll 和 scrollIntoView，其他动作返回 `unsupportedCapability` |
 | `page_screenshot` | environmentId、windowId、fullPage | PNG 图片及 colorScheme、capturedAt |
+| `ios_observe` | environmentId、query、offset、limit | 模拟器屏幕内的无障碍元素：type、id、label、value、enabled、frame（屏幕点） |
+| `ios_action` | environmentId、action（tap / longPress / type / key / swipe / gesture / button） | `{ performed: true, detail }` |
+| `ios_screenshot` | environmentId | PNG 图片及 capturedAt |
+| `ios_device` | environmentId、setting（appearance / contentSize / language / addMedia / openUrl / relaunch） | `{ performed: true }` |
 
 ## 6. 数据语义
 
@@ -117,7 +121,11 @@ interface Problem {
 
 不支持的内容（执行 source context、自定义属性定义、项目执行资源、Side 上下文的 API 导出）明确拒绝，不当作已复制。
 
-### 6.3 页面
+### 6.3 iOS 环境
+
+`mode: "ios"` 在 desktop 环境之上增加：本机 `p2p-server`（只信任本环境后端，Electron daemon 指向它并打开 Device link）、按原生 fingerprint 缓存的模拟器 dev client、环境私有的 Metro（内联本地端点和测试账号 token），以及专属模拟器 `multica-verification-<id 前 8 位>`。验证构建的 daemon 只经回环地址的注册表启动设备连接。`ios_*` 工具经 AXe 按 UDID 在后台操作，不经 Computer Use；文字输入经模拟器剪贴板粘贴，不经输入法。`env_stop` 只删除带该前缀的模拟器。宿主重启后没有进程句柄时，按记录的进程组结束 Metro 和注册表，前提是其工作目录属于本环境。
+
+### 6.4 页面
 
 - 定位器为 testId、text、label、role（可带 name）、css，可附加 frameUrl 和 index。
 - Desktop 环境的点击和输入由调用方经 Multica Computer Use 在后台投递：`computer.getApp(appId)` 后 `app.selectWindow(windowId)`，再观察和操作。Electron 窗口在后台丢弃系统滚轮事件，Computer Use 无法滚动，因此 `page_action` 对 Desktop 环境只执行 scroll 和 scrollIntoView，经 CDP 送达页面，不激活应用；读取和截图也走 CDP。

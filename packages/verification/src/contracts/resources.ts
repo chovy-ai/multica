@@ -38,7 +38,7 @@ export const environmentSchema = z
     projectRef: z.string(),
     commit: z.string(),
     checkout: z.string(),
-    mode: z.enum(["renderer", "desktop"]),
+    mode: z.enum(["renderer", "desktop", "ios"]),
     dataMode: z.enum(["liveReadOnly", "realSnapshot", "fixture"]),
     state: z.enum([
       "preparing",
