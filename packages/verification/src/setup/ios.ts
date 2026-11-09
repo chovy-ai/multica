@@ -14,6 +14,11 @@ export const MOBILE_BUNDLE_ID = "ai.multica.mobile.dev";
 export const SIMULATOR_PREFIX = "multica-verification-";
 
 type Tools = Awaited<ReturnType<typeof prepareToolchain>>;
+/**
+ * A launchd-started host passes only PATH and HOME. Without a UTF-8 locale
+ * CocoaPods aborts and simctl pbcopy cannot decode non-ASCII text.
+ */
+const utf8 = { LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" };
 
 export function exec(
   command: string,
@@ -29,6 +34,7 @@ export function exec(
         timeout: options.timeout ?? 60_000,
         maxBuffer: 64 * 1024 * 1024,
         encoding: "buffer",
+        env: { ...process.env, ...utf8 },
         signal: options.signal,
       },
       (error, stdout, stderr) => {
@@ -141,9 +147,10 @@ export async function devClientBuild(options: {
 }): Promise<{ app: string; key: string; cached: boolean }> {
   const { checkout, tools, log, signal } = options;
   const mobile = join(checkout, "apps/mobile");
+  const env = { ...tools.env, ...utf8 };
   await run(tools.node, [tools.pnpm, "run", "build:device-link"], {
     cwd: mobile,
-    env: tools.env,
+    env,
     log,
     signal,
   });
@@ -217,7 +224,7 @@ export async function devClientBuild(options: {
       await run(
         tools.node,
         [tools.pnpm, "exec", "expo", "prebuild", "-p", "ios"],
-        { cwd: mobile, env: { ...tools.env, CI: "1" }, log, signal },
+        { cwd: mobile, env: { ...env, CI: "1" }, log, signal },
       );
       await run(
         "xcodebuild",
@@ -239,7 +246,7 @@ export async function devClientBuild(options: {
           derived,
           "build",
         ],
-        { cwd: mobile, env: tools.env, log, signal },
+        { cwd: mobile, env, log, signal },
       );
       const staging = `${target}.partial`;
       await rm(staging, { recursive: true, force: true });
@@ -462,7 +469,18 @@ export class Simulator {
     );
   }
   async install(app: string, signal: AbortSignal) {
-    await simctl(["install", this.udid, app], signal, 300_000);
+    // Right after boot the install service can still refuse with
+    // "Failed to create promise"; it accepts the same request moments later.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await simctl(["install", this.udid, app], signal, 300_000);
+        break;
+      } catch (error) {
+        if (attempt >= 5) throw error;
+        await new Promise((done) => setTimeout(done, 3000));
+        signal.throwIfAborted();
+      }
+    }
     // The photo picker and its permission sheet are part of what is verified;
     // pre-granting keeps the system prompt from covering the first attempt.
     await simctl(["privacy", this.udid, "grant", "photos", MOBILE_BUNDLE_ID], signal);
@@ -514,6 +532,7 @@ export class Simulator {
   async setPasteboard(text: string) {
     await new Promise<void>((done, fail) => {
       const child = spawn("xcrun", ["simctl", "pbcopy", this.udid], {
+        env: { ...process.env, ...utf8 },
         stdio: ["pipe", "ignore", "pipe"],
       });
       let stderr = "";
