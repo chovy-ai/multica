@@ -31,17 +31,21 @@ export function createSessionScrollFollow() {
   function scroll(position: ScrollPosition) {
     if (!gesture) return;
     const previous = gesture.position;
+    const growth = position.contentSize.height - previous.contentSize.height;
     if (
-      position.contentSize.height !== previous.contentSize.height ||
+      growth < 0 ||
       position.layoutMeasurement.height !== previous.layoutMeasurement.height
     ) {
-      // Content growth, history prepends and keyboard resizing are not user input.
       gesture.reachedBottom = false;
     } else {
-      const movement = offset(position) - offset(previous);
+      // Equal content growth and offset displacement only preserve the reader's
+      // position. Movement beyond that displacement closes the gap to the bottom.
+      const movement = offset(position) - offset(previous) - growth;
       // Native content size and offsets can round to different subpixel values.
       if (Math.abs(movement) > 0.5)
         gesture.reachedBottom = movement > 0 && atBottom(position);
+      else if (growth > 0)
+        gesture.reachedBottom = gesture.reachedBottom && atBottom(position);
     }
     gesture.position = position;
   }

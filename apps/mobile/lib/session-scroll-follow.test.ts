@@ -76,6 +76,44 @@ describe("AI session scroll following", () => {
     expect(follow.following).toBe(true);
   });
 
+  it.each(["scroll", "release", "momentum"] as const)(
+    "resumes when streamed growth and the user's return to the bottom coincide at %s",
+    (stage) => {
+      const follow = createSessionScrollFollow();
+      follow.pause();
+      follow.beginDrag(position(1000));
+      follow.scroll(position(1300));
+      const bottom = position(1440, 2040);
+      if (stage === "scroll") {
+        follow.scroll(bottom);
+        expect(follow.following).toBe(false);
+        follow.endDrag({ ...bottom, velocity: { y: 0 } });
+      } else if (stage === "release") {
+        follow.endDrag({ ...bottom, velocity: { y: 0 } });
+      } else {
+        follow.endDrag({ ...position(1300), velocity: { y: 1 } });
+        follow.endMomentum(bottom);
+      }
+      expect(follow.following).toBe(true);
+    },
+  );
+
+  it("preserves an intentional return when growth only shifts the bottom before release", () => {
+    const follow = createSessionScrollFollow();
+    follow.beginDrag(position(1000));
+    follow.scroll(position(1400));
+    follow.endDrag({ ...position(1440, 2040), velocity: { y: 0 } });
+    expect(follow.following).toBe(true);
+  });
+
+  it("does not restore following from content growth and equal anchoring displacement", () => {
+    const follow = createSessionScrollFollow();
+    follow.beginDrag(position(1000));
+    follow.scroll(position(1300));
+    follow.endDrag({ ...position(1340, 2040), velocity: { y: 0 } });
+    expect(follow.following).toBe(false);
+  });
+
   it("keeps upward momentum paused despite streamed content and later programmatic scrolling", () => {
     const follow = createSessionScrollFollow();
     follow.beginDrag(position(1400));
@@ -90,7 +128,7 @@ describe("AI session scroll following", () => {
   it.each([
     ["keyboard opening", position(1600, 2000, 400)],
     ["keyboard closing", position(1200, 2000, 800)],
-    ["history prepend", position(1800, 2400)],
+    ["history prepend", position(1700, 2400)],
     ["content shrinking", position(1000, 1600)],
   ])("does not treat %s during a drag as intentionally returning to the bottom", (_name, resized) => {
     const follow = createSessionScrollFollow();
