@@ -98,7 +98,11 @@ function service(id: string, theme: "light" | "dark", sidePane: boolean) {
               id: `${id}-a`,
               chat_session_id: id,
               role: "assistant",
-              content: `Reply in ${id}`,
+              content: `Reply in ${id}` + (
+                new URLSearchParams(location.search).has("selection")
+                  ? "\n\n> Quoted answer"
+                  : ""
+              ),
               task_id: `${id}-t`,
               created_at: at
             }

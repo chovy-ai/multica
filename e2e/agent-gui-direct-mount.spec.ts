@@ -83,6 +83,65 @@ test("instances keep their own state in one document and fill their host", async
   expect(Math.abs(boxes[0]!.width - boxes[1]!.width)).toBeLessThan(2);
 });
 
+test("select-all stays in the clicked conversation and leaves composer selection native", async ({ page }) => {
+  await page.goto("/tutti-agent-gui/direct.html?selection");
+  await page.locator("#toggle").click();
+  for (const instance of ["main-conversation", "side-conversation"]) {
+    const host = page.locator(`[data-instance="${instance}"]`);
+    const timeline = host.getByTestId("agent-gui-timeline");
+    for (const shortcut of ["ControlOrMeta+a", "Control+a"]) {
+      await host.getByText(`Reply in ${instance}`).click();
+      await page.keyboard.press(shortcut);
+      await page.keyboard.press(shortcut);
+      const selected = await timeline.evaluate((root) => {
+        const selection = document.getSelection()!;
+        return {
+          inside: root.contains(selection.anchorNode) && root.contains(selection.focusNode),
+          text: selection.toString()
+        };
+      });
+      expect(selected, `${instance}: ${shortcut}`).toMatchObject({ inside: true });
+      expect(selected.text).toContain(`Question for ${instance}`);
+      expect(selected.text).toContain(`Reply in ${instance}`);
+      expect(selected.text).toContain("Quoted answer");
+      expect(selected.text).not.toContain(instance === "main-conversation" ? "side-conversation" : "main-conversation");
+      expect(selected.text).not.toContain("App heading");
+      expect(selected.text).not.toContain("Replacement draft");
+    }
+    await page.screenshot({ path: `.tmp/chov115-selection-${instance}.png` });
+    const editor = host.locator('[contenteditable="true"]');
+    await page.keyboard.press("ControlOrMeta+c");
+    await editor.click();
+    await editor.press("ControlOrMeta+v");
+    await expect(editor).toContainText(`Reply in ${instance}`);
+    await expect(editor).toContainText("Quoted answer");
+    await expect(editor).not.toContainText("App heading");
+    await expect(editor).not.toContainText(instance === "main-conversation" ? "side-conversation" : "main-conversation");
+    await editor.fill(`Draft for ${instance}`);
+    await editor.press("ControlOrMeta+a");
+    expect(await editor.evaluate((root) => {
+      const selection = document.getSelection()!;
+      return root.contains(selection.anchorNode) && root.contains(selection.focusNode);
+    })).toBe(true);
+    await page.keyboard.insertText("Replacement draft");
+    await expect(editor).toHaveText("Replacement draft");
+
+    const reply = await host.getByText(`Reply in ${instance}`, { exact: true }).boundingBox();
+    await page.mouse.move(reply!.x + 2, reply!.y + reply!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(reply!.x + reply!.width - 2, reply!.y + reply!.height / 2, { steps: 5 });
+    await page.mouse.up();
+    await page.keyboard.press("ControlOrMeta+a");
+    expect(await timeline.evaluate((root) => {
+      const selection = document.getSelection()!;
+      return root.contains(selection.anchorNode) && root.contains(selection.focusNode);
+    })).toBe(true);
+  }
+  await page.locator("#theme").focus();
+  await page.keyboard.press("ControlOrMeta+a");
+  expect(await page.evaluate(() => document.getSelection()!.toString())).toContain("App heading");
+});
+
 test("GUI colors follow the theme without restyling the app", async ({
   page
 }) => {
