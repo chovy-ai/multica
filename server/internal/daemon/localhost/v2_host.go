@@ -66,7 +66,6 @@ func (h *hosts) attach(scopeID int64, c *wsConn) func() {
 
 func (h *hosts) detach(scopeID int64, c *wsConn) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	conns := h.byScope[scopeID]
 	for i, x := range conns {
 		if x == c {
@@ -74,20 +73,41 @@ func (h *hosts) detach(scopeID int64, c *wsConn) {
 			break
 		}
 	}
+	// The replacement socket can attach before this socket's close is read.
+	// In that order attach has no orphan to resend, so hand requests over here.
+	var reconnected *wsConn
+	if c.caller.clientKey != "" {
+		conns = h.byScope[scopeID]
+		for i := len(conns) - 1; i >= 0; i-- {
+			if conns[i].caller.clientKey == c.caller.clientKey {
+				reconnected = conns[i]
+				break
+			}
+		}
+	}
 	var left []*hostPending
 	for _, p := range h.pending {
 		if p.conn == c {
-			p.conn = nil
+			p.conn = reconnected
 			left = append(left, p)
 		}
 	}
 	if len(left) == 0 {
+		h.mu.Unlock()
+		return
+	}
+	if reconnected != nil {
+		h.mu.Unlock()
+		for _, p := range left {
+			_ = reconnected.send(p.message)
+		}
 		return
 	}
 	if c.caller.clientKey == "" {
 		for _, p := range left {
 			h.fail(p)
 		}
+		h.mu.Unlock()
 		return
 	}
 	key := c.caller.clientKey
@@ -102,6 +122,7 @@ func (h *hosts) detach(scopeID int64, c *wsConn) {
 		}
 		delete(h.orphans, key)
 	})
+	h.mu.Unlock()
 }
 
 // fail ends p with ErrHostUnavailable; h.mu is held.
