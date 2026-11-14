@@ -101,3 +101,12 @@ func TestMemoryDesktopAPIConflictsAndLimits(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestMemoryBodyLimitIncludesTrailingWhitespace(t *testing.T) {
+	d := memoryTestDaemon(t)
+	path := "/local/agents/" + memoryTestAgent + "/memory/restore"
+	w := memoryTestCall(d, "POST", path, "desktop", `{"trash_path":"missing"}`+strings.Repeat(" ", 65536))
+	if w.Code != 413 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

@@ -46,7 +46,11 @@ func memoryDecode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err == nil {
 		var extra any
 		if end := decoder.Decode(&extra); end != io.EOF {
-			err = agentmemory.ErrInvalidInput
+			if end == nil {
+				err = agentmemory.ErrInvalidInput
+			} else {
+				err = end
+			}
 		}
 	}
 	if err == nil {
