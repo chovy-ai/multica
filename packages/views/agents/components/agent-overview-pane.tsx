@@ -41,9 +41,13 @@ import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
 
-type DetailSection = "overview" | "work" | "capabilities" | "settings";
+import { AgentMemoryPane } from "./memory/agent-memory-pane";
+import type { AgentMemoryAdapter } from "./memory/types";
+
+type DetailSection = "overview" | "work" | "capabilities" | "memory" | "settings";
 
 export type DetailTab =
+ | "memory"
   | "overview"
   | "work"
   | "instructions"
@@ -93,12 +97,14 @@ const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "overview", labelKey: "overview" },
   { id: "work", labelKey: "work" },
   { id: "capabilities", labelKey: "capabilities" },
+ { id: "memory", labelKey: "memory" },
   { id: "settings", labelKey: "settings" },
 ];
 
 const CAPABILITY_IDS = new Set<DetailTab>(CAPABILITY_TABS.map((tab) => tab.id));
 const SETTINGS_IDS = new Set<DetailTab>(SETTINGS_TABS.map((tab) => tab.id));
 const DETAIL_VIEWS = new Set<DetailTab>([
+ "memory",
   "overview",
   "work",
   ...CAPABILITY_TABS.map((tab) => tab.id),
@@ -112,11 +118,13 @@ function isDetailTab(value: string | null): value is DetailTab {
 function sectionForView(view: DetailTab): DetailSection {
   if (view === "overview") return "overview";
   if (view === "work") return "work";
+ if (view === "memory") return "memory";
   if (CAPABILITY_IDS.has(view)) return "capabilities";
   return "settings";
 }
 
 interface AgentOverviewPaneProps {
+ memoryAdapter?: AgentMemoryAdapter;
   agent: Agent;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
@@ -145,6 +153,7 @@ export function AgentOverviewPane({
   onUpdate,
   currentUserId,
   canEdit,
+  memoryAdapter,
   navIntent,
   onNavIntentHandled,
 }: AgentOverviewPaneProps) {
@@ -246,6 +255,7 @@ export function AgentOverviewPane({
   const visibleViews = useMemo(
     () =>
       new Set<DetailTab>([
+ "memory",
         "overview",
         "work",
         ...visibleCapabilityTabs.map((tab) => tab.id),
@@ -282,7 +292,7 @@ export function AgentOverviewPane({
   );
 
   const requestSection = (section: DetailSection) => {
-    if (section === "overview" || section === "work") {
+    if (section === "overview" || section === "work" || section === "memory") {
       requestView(section);
       return;
     }
@@ -405,7 +415,11 @@ export function AgentOverviewPane({
           </div>
         )}
 
-        {effectiveView === "work" && (
+        {effectiveView === "memory" && (
+ <AgentMemoryPane key={agent.id} agentId={agent.id} runtime={runtime} canEdit={canEdit} adapter={memoryAdapter} onDirtyChange={setActiveDirty} />
+ )}
+
+ {effectiveView === "work" && (
           <div className={cn(PAGE_RAIL, "flex min-h-[620px] flex-col")}>
             <ActorIssuesPanel actorType="agent" actorId={agent.id} />
           </div>

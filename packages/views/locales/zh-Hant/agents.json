@@ -273,7 +273,8 @@
     "discard_dialog_title": "放棄未儲存的修改？",
     "discard_dialog_description": "當前 tab 有未儲存的修改，離開會丟棄這些修改。",
     "discard_keep": "繼續編輯",
-    "discard_confirm": "放棄修改"
+    "discard_confirm": "放棄修改",
+    "memory": "記憶"
   },
   "creation_studio": {
     "title": "建立智慧體",
@@ -1035,5 +1036,47 @@
   "actions": {
     "selected_other": "已選 {{count}} 項",
     "clear_selection": "清除選擇"
+  },
+  "memory": {
+    "desktop_only": "僅能在執行該智慧體的裝置上的桌面端查看記憶",
+    "other_device": "記憶儲存在 {{device}} 上，請在該裝置的桌面端查看",
+    "unknown_device": "其他裝置",
+    "offline": "本機守護程序未執行",
+    "empty": "還沒有記憶。智慧體在任務中學到需要長期記住的內容時會寫到這裡。",
+    "tree": "記憶檔案",
+    "search": "搜尋記憶",
+    "generated": "自動產生 · 唯讀",
+    "trash": "回收筒",
+    "loading": "載入中...",
+    "no_results": "沒有符合的記憶",
+    "title": "標題",
+    "description": "說明",
+    "kind": "類型",
+    "updated": "更新時間",
+    "source": "來源",
+    "size": "內文大小",
+    "body": "內文",
+    "edit": "編輯",
+    "preview": "預覽",
+    "soft_limit": "內文超過 2KB，建議精簡",
+    "hard_limit": "內文不能超過 8KB",
+    "conflict": "這條記憶已被智慧體修改，已載入最新內容",
+    "failed": "無法存取記憶，請重試",
+    "delete": "刪除",
+    "save": "儲存",
+    "content": "記憶內容",
+    "retry": "重試",
+    "copy_path": "複製路徑",
+    "entry_count": "{{count}} 條記憶",
+    "clear": "清空記憶",
+    "deleted": "刪除時間",
+    "restore": "還原",
+    "restore_conflict": "原位置已有同名記憶，無法還原",
+    "discard": "放棄修改",
+    "delete_hint": "刪除後可在回收筒保留 30 天",
+    "clear_hint": "所有記憶將移到回收筒，30 天後永久刪除",
+    "discard_hint": "未儲存的修改將遺失",
+    "cancel": "取消",
+    "confirm": "確認"
   }
 }

@@ -5,6 +5,8 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { useDocumentTitle } from "@/hooks/use-document-title";
 
+import { agentMemoryAdapter } from "@/platform/agent-memory-adapter";
+
 export function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const wsId = useWorkspaceId();
@@ -14,5 +16,5 @@ export function AgentDetailPage() {
   useDocumentTitle(agent?.name ?? "Agent");
 
   if (!id) return null;
-  return <SharedAgentDetailPage agentId={id} />;
+  return <SharedAgentDetailPage agentId={id} memoryAdapter={agentMemoryAdapter} />;
 }

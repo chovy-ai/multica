@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { LOCAL_V2_VERSION, localV2HelloSchema, localV2UploadSchema, type LocalV2ChooseRequest, type LocalV2ClientMessage, type LocalV2RendererEndpoint, type LocalV2Scope, type LocalV2Transport } from "@multica/core/local-conversation/v2";
 import { LOCAL_TIMING_REQUEST_HEADER, consoleLocalTiming, localTimingCloseReason, localTimingRequestId, parseLocalTiming, type LocalTimingRecord, type LocalTimingSink } from "@multica/tutti-agent-gui-host/local-timing";
 import type { LocalHostAvailability, LocalHostUnavailableReason } from "../../../shared/local-host-availability";
@@ -339,8 +340,17 @@ export class DirectLocalV2Transport implements LocalV2Transport {
     const endpoint = await this.endpoint();
     const response = await this.fetch(`http://${endpoint.base}${path}`, { method, headers: { Authorization: `Bearer ${endpoint.token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
     const value: unknown = await response.json().catch(() => null);
-    if (!response.ok) throw failure(`http_${response.status}`, "The local daemon refused the request");
+    if (!response.ok) {
+      const parsed = z.object({ error: z.object({ kind: z.string(), message: z.string() }) }).safeParse(value);
+      const kind = parsed.success ? parsed.data.error.kind : `http_${response.status}`;
+      throw Object.assign(failure(kind, parsed.success ? parsed.data.error.message : "The local daemon refused the request"), { kind });
+    }
     return value;
+  }
+
+  agentMemory(method: string, path: string, body?: unknown): Promise<unknown> {
+    if (!/^\/local\/agents\/[^/]+\/memory(?:[/?]|$)/.test(path)) return Promise.reject(new Error("Invalid memory endpoint"));
+    return this.own(method, path, body);
   }
 
   /** The account's other devices that are connected and share their conversations. */

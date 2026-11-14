@@ -374,3 +374,13 @@ describe("AgentOverviewPane horizontal alignment", () => {
     expect(container.querySelector("aside")).toHaveClass(GUTTER_SENTINEL);
   });
 });
+
+
+it("places Memory after Capabilities in the top navigation", () => {
+  renderPane([makeRuntime("claude")]);
+  const tabs = screen.getAllByRole("tab");
+  const names = tabs.map((tab) => tab.textContent);
+  expect(names.indexOf("Memory")).toBe(names.indexOf("Capabilities") + 1);
+  fireEvent.click(screen.getByRole("tab", { name: /^Memory$/ }));
+  expect(screen.getByText(/View memory in the desktop app/)).toBeInTheDocument();
+});

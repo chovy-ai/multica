@@ -265,7 +265,8 @@
     "discard_dialog_title": "保存していない変更を破棄しますか？",
     "discard_dialog_description": "このタブに保存していない変更があります。今移動すると変更は破棄されます。",
     "discard_keep": "編集を続ける",
-    "discard_confirm": "変更を破棄"
+    "discard_confirm": "変更を破棄",
+    "memory": "メモリ"
   },
   "create_dialog": {
     "title_create": "エージェントを作成",
@@ -1035,5 +1036,47 @@
   "actions": {
     "selected_other": "{{count}} 件選択中",
     "clear_selection": "選択を解除"
+  },
+  "memory": {
+    "desktop_only": "このエージェントを実行している端末のデスクトップアプリでメモリを確認できます。",
+    "other_device": "メモリは {{device}} に保存されています。その端末のデスクトップアプリで確認してください。",
+    "unknown_device": "別の端末",
+    "offline": "ローカルデーモンが停止しています。",
+    "empty": "メモリはまだありません。エージェントが今後のタスクに役立つ情報をここに保存します。",
+    "tree": "メモリファイル",
+    "search": "メモリを検索",
+    "generated": "自動生成 · 読み取り専用",
+    "trash": "ゴミ箱",
+    "loading": "読み込み中...",
+    "no_results": "一致するメモリはありません。",
+    "title": "タイトル",
+    "description": "説明",
+    "kind": "種類",
+    "updated": "更新日時",
+    "source": "出典",
+    "size": "本文サイズ",
+    "body": "本文",
+    "edit": "編集",
+    "preview": "プレビュー",
+    "soft_limit": "本文が 2KB を超えています。短くすることをお勧めします。",
+    "hard_limit": "本文は 8KB 以下にしてください。",
+    "conflict": "エージェントがこのメモリを変更しました。最新の内容を読み込みました。",
+    "failed": "メモリにアクセスできません。再試行してください。",
+    "delete": "削除",
+    "save": "保存",
+    "content": "メモリの内容",
+    "retry": "再試行",
+    "copy_path": "パスをコピー",
+    "entry_count": "{{count}} 件",
+    "clear": "メモリを消去",
+    "deleted": "削除日時",
+    "restore": "復元",
+    "restore_conflict": "元の場所に同名のメモリがあるため復元できません。",
+    "discard": "変更を破棄",
+    "delete_hint": "削除したメモリはゴミ箱に 30 日間保存されます。",
+    "clear_hint": "すべてのメモリをゴミ箱に移動し、30 日後に完全に削除します。",
+    "discard_hint": "未保存の変更は失われます。",
+    "cancel": "キャンセル",
+    "confirm": "確認"
   }
 }

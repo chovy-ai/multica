@@ -67,11 +67,14 @@ import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
 import { ExpandableDescription } from "../../common/expandable-description";
 import { useT, useTimeAgo } from "../../i18n";
 
+import type { AgentMemoryAdapter } from "./memory/types";
+
 interface AgentDetailPageProps {
+ memoryAdapter?: AgentMemoryAdapter;
   agentId: string;
 }
 
-export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
+export function AgentDetailPage({ agentId, memoryAdapter }: AgentDetailPageProps) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -422,6 +425,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           onUpdate={handleUpdate}
           currentUserId={currentUser?.id ?? null}
           canEdit={canEdit.allowed}
+ memoryAdapter={memoryAdapter}
           navIntent={tabNavIntent}
           onNavIntentHandled={() => setTabNavIntent(null)}
         />
