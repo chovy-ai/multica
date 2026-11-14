@@ -9,6 +9,7 @@ import chat from "../../../../../../packages/views/locales/zh-Hans/chat.json";
 import layout from "../../../../../../packages/views/locales/zh-Hans/layout.json";
 import { LocalConversationFlowPage } from "./local-conversation-flow";
 import { useProjectVisibilityStore } from "../stores/local-conversation-project-visibility";
+import { useProjectExpansionStore } from "../stores/local-conversation-project-expansion";
 import { useConversationLayoutStore } from "../stores/local-conversation-layout";
 import { issueConversationDraftKey, useIssueConversationStore } from "../stores/issue-conversation-store";
 import type { TuttiAgentGuiPanel } from "../components/tutti-agent-gui-panel";
@@ -134,6 +135,7 @@ function installDaemon() {
 let qc: QueryClient;
 let source: LocalConversation;
 beforeEach(() => {
+  useProjectExpansionStore.setState({ collapsedByScope: {} });
   useIssueConversationStore.setState({ drafts: {}, pending: {} });
   useConversationLayoutStore.setState({ sessionListWidth: 268 });
   useProjectVisibilityStore.setState({ hiddenByScope: {} });
@@ -647,6 +649,8 @@ describe("removing projects from the local conversation list", () => {
     const original = structuredClone(source);
     render(page());
     const group = await screen.findByRole("region", { name: "Removable project" });
+    fireEvent.click(within(group).getByRole("button", { name: "Removable project" }));
+    expect(within(group).getByRole("button", { name: "Removable project" })).toHaveAttribute("aria-expanded", "false");
     const draft = screen.getByRole("textbox", { name: "Conversation draft" });
     fireEvent.change(draft, { target: { value: "Keep this draft" } });
     const projectMenu = within(group).getByRole("button", { name: "项目操作：Removable project" });
@@ -987,6 +991,30 @@ describe("local conversation directory label", () => {
 });
 
 describe("local conversation project headings", () => {
+  it("remembers each folder and unassigned group across page remounts", async () => {
+    mock.folders = [folder("project-a", "Project A"), folder("project-b", "Project B", "/other-project")];
+    const rows = [source, { ...source, id: "unassigned", title: "Unassigned conversation", cwd: "/other" }];
+    mock.request.mockImplementation(async (_scope, method) => method === "listPage" ? rows : [{ id: "codex", available: true }]);
+    const first = render(page());
+    await screen.findByRole("link", { name: /Original/ });
+    fireEvent.click(screen.getByRole("button", { name: "Project A" }));
+    fireEvent.click(screen.getByRole("button", { name: "未分配项目" }));
+    first.unmount();
+
+    const second = render(page());
+    expect(await screen.findByRole("button", { name: "Project A" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "未分配项目" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Project B" })).toHaveAttribute("aria-expanded", "true");
+    expect(listedIds()).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Project A" }));
+    second.unmount();
+
+    render(page());
+    expect(await screen.findByRole("link", { name: /Original/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Project A" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "未分配项目" })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("omits counts for project and unassigned headings when expanded, collapsed and archived", async () => {
     const title = "Multica project with a long name for checking truncation";
     mock.folders = [folder("project-a", title)];
