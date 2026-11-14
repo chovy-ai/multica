@@ -1,6 +1,7 @@
 package contextmcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -12,9 +13,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	outputredact "github.com/multica-ai/multica/server/pkg/redact"
 )
 
 const (
@@ -283,11 +287,67 @@ func (c *CloudClient) queryCLI(ctx context.Context, args []string, out any) erro
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.CLIPath, append([]string{"--server-url", c.APIURL, "--workspace-id", c.WorkspaceID}, args...)...)
 	cmd.Dir, cmd.Env = c.Dir, env
+	stderr := &cliDiagnosticBuffer{}
+	cmd.Stderr = stderr
 	stdout, err := cmd.Output()
-	if err != nil || json.Unmarshal(stdout, out) != nil {
-		return errors.New("Multica CLI context query failed. Check desktop login, workspace access and connectivity.")
+	if err != nil {
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			return fmt.Errorf("Multica CLI context query timed out: %w", ctx.Err())
+		case errors.Is(ctx.Err(), context.Canceled):
+			return fmt.Errorf("Multica CLI context query cancelled: %w", ctx.Err())
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			message := fmt.Sprintf("Multica CLI context query failed (%s)", exit.Error())
+			detail := "stderr exceeded diagnostic limit; details omitted"
+			if !stderr.overflow {
+				detail = cliDiagnostic(stderr.data.String(), token)
+			}
+			if detail != "" {
+				message += ": " + detail
+			}
+			return errors.New(message)
+		}
+		return fmt.Errorf("Multica CLI context query failed to start: %s", cliDiagnostic(err.Error(), token))
+	}
+	if err := json.Unmarshal(stdout, out); err != nil {
+		// Parser errors can quote response bytes; report the stage without
+		// returning task contents or credentials from malformed stdout.
+		return errors.New("Multica CLI context query returned invalid JSON")
 	}
 	return nil
+}
+
+// Discard oversized diagnostics rather than exposing a credential cut at a
+// capture boundary. Keep draining the pipe so the CLI can always finish.
+type cliDiagnosticBuffer struct {
+	data     bytes.Buffer
+	overflow bool
+}
+
+func (b *cliDiagnosticBuffer) Write(p []byte) (int, error) {
+	if b.overflow || b.data.Len()+len(p) > 64<<10 {
+		b.overflow = true
+		b.data.Reset()
+		return len(p), nil
+	}
+	return b.data.Write(p)
+}
+
+var (
+	cliDiagnosticURL   = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
+	cliDiagnosticToken = regexp.MustCompile(`\b(?:mul|mat|mcn)_[A-Za-z0-9_-]+`)
+)
+
+// cliDiagnostic scrubs before shortening so a credential crossing the output
+// limit cannot be exposed as a partial token. stdout is never diagnostic text.
+func cliDiagnostic(text, token string) string {
+	text = redact(text, token)
+	text = cliDiagnosticURL.ReplaceAllString(text, "[redacted URL]")
+	text = cliDiagnosticToken.ReplaceAllString(text, "[redacted token]")
+	text = outputredact.Text(text)
+	return truncate(strings.Join(strings.Fields(text), " "), 1000)
 }
 
 func (c *CloudClient) inScope(row map[string]any) error {

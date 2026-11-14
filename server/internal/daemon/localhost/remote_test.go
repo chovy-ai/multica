@@ -157,6 +157,57 @@ func TestV2HostRequestsGoToTheClientThatActedAndWaitForItsReconnect(t *testing.T
 	}
 }
 
+func TestV2HostRequestSurvivesReconnectBeforeOldConnectionDetaches(t *testing.T) {
+	t.Parallel()
+
+	srv, svc, v := newV2Fixture(t)
+	h := v2Headers("user-1")
+	h.Set(headerClientID, "viewer")
+	scopeID, err := svc.Store().EnsureScope(context.Background(), store.Scope{APIOrigin: "https://api.multica.ai", UserID: "user-1", WorkspaceID: "ws-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connect := func() *websocket.Conn {
+		ws := dialWS(t, srv.URL, h)
+		if err := ws.WriteJSON(map[string]any{"version": V2Version, "type": "subscribe_scope", "after_scope_seq": 0}); err != nil {
+			t.Fatal(err)
+		}
+		readUntil(t, ws, func(m map[string]any) bool { return m["status"] == "subscribed" })
+		return ws
+	}
+	first := connect()
+	v.hosts.mu.Lock()
+	old := v.hosts.byScope[scopeID][0]
+	v.hosts.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := v.hosts.request(ctx, scopeID, "", "settings.confirm", map[string]any{})
+		result <- err
+	}()
+	request := readUntil(t, first, func(m map[string]any) bool { return m["type"] == "host.request" })
+	again := connect()
+	// Model the server observing the old socket's close after the reconnect
+	// has attached, without depending on network scheduling.
+	v.hosts.detach(scopeID, old)
+	resent := readUntil(t, again, func(m map[string]any) bool { return m["type"] == "host.request" })
+	if resent["request_id"] != request["request_id"] {
+		t.Fatalf("resent %v, want %v", resent["request_id"], request["request_id"])
+	}
+	if err := again.WriteJSON(map[string]any{"version": V2Version, "type": "host.reply", "request_id": resent["request_id"], "result": map[string]any{"approved": true}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconnected client could not answer the request")
+	}
+}
+
 func TestV2HostRequestFailsWhenItsClientDoesNotReturn(t *testing.T) {
 	t.Parallel()
 
