@@ -79,6 +79,14 @@ Object.defineProperty(window, "__resourceFixture", { value: {
     conversationService(transport, scope).resources("source").invalidate();
   },
   failRefresh: () => { unavailable = true; conversationService(transport, scope).resources("source").invalidate(); },
+  resourceState: (state: "loading" | "empty" | "failed" | "unsupported" | "many" | "ready") => {
+    const model = conversationService(transport, scope).resources("source").model;
+    model.reset();
+    if (state === "loading") model.start();
+    else if (state === "failed") model.fail(new Error("Fixture unavailable"));
+    else if (state === "unsupported") model.setSupported(false);
+    else model.receive({ ...basePage, files: state === "empty" ? [] : state === "many" ? Array.from({ length: 100 }, (_, i) => ({ ...files[0]!, id: `file-${i}`, path: `src/file-${String(i).padStart(3, "0")}.ts` })) : files });
+  },
 } });
 const device = { id: "local", name: "", transport } as LocalDevice;
 Object.defineProperty(window, "desktopAPI", { configurable: true, value: { sideWorkspace: { reconcile: async () => {}, onActivity: () => () => {}, onCommand: () => () => {}, ack: async () => {} }, resourcePreview: (window as unknown as { __resourcePreviewFixture?: unknown }).__resourcePreviewFixture ?? { request: async () => null, subscribe: () => () => {} } } });
