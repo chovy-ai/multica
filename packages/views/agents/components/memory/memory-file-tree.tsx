@@ -149,14 +149,14 @@ export function MemoryFileTree({
         const expanded = previousPaths.current
           ? directories(previousPaths.current).filter((path) => {
               const item = model.getItem(path);
-              return item?.isDirectory() && item.isExpanded();
+              return item && "isExpanded" in item && item.isExpanded();
             })
           : directories(paths).filter((path) => !path.startsWith(".trash/"));
         model.resetPaths(paths);
         // Expand through item handles so the pinned index can precede folders.
         for (const path of expanded) {
           const item = model.getItem(path);
-          if (item?.isDirectory()) item.expand();
+          if (item && "expand" in item) item.expand();
         }
         previousPaths.current = paths;
       }
@@ -175,7 +175,7 @@ export function MemoryFileTree({
     const segments = selectedPath.split("/");
     for (let i = 1; i < segments.length; i++) {
       const folder = model.getItem(`${segments.slice(0, i).join("/")}/`);
-      if (folder?.isDirectory()) folder.expand();
+      if (folder && "expand" in folder) folder.expand();
     }
     if (model.getItem(selectedPath))
       model.scrollToPath(selectedPath, { focus: false });
