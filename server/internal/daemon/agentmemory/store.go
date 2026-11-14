@@ -132,6 +132,18 @@ func (m *Manager) List(id string) ([]Entry, error) {
 }
 func (m *Manager) Write(id string, in WriteInput) (Entry, []Warning, error) {
 	defer m.lock(id)()
+	var document Entry
+	if in.Document != nil {
+		if in.Mode != "update" || in.ExpectedUpdatedAt == nil {
+			return Entry{}, nil, ErrInvalidInput
+		}
+		var err error
+		document, err = ParseEntry(in.Path, []byte(*in.Document))
+		if err != nil {
+			return Entry{}, nil, err
+		}
+		in.Title, in.Description, in.Body = document.Title, document.Description, document.Body
+	}
 	in.Title = strings.TrimSpace(in.Title)
 	in.Description = strings.TrimSpace(in.Description)
 	if err := validate(in); err != nil {
@@ -162,6 +174,9 @@ func (m *Manager) Write(id string, in WriteInput) (Entry, []Warning, error) {
 	if in.ExpectedUpdatedAt != nil && !old.UpdatedAt.Equal(*in.ExpectedUpdatedAt) {
 		return Entry{}, nil, ErrConflict
 	}
+	if in.Document != nil && (!document.CreatedAt.Equal(old.CreatedAt) || !document.UpdatedAt.Equal(old.UpdatedAt) || document.Source != old.Source) {
+		return Entry{}, nil, ErrInvalidInput
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	// Second-resolution versions must still change on rapid consecutive edits.
 	if !old.UpdatedAt.IsZero() && !now.After(old.UpdatedAt) {
@@ -178,9 +193,19 @@ func (m *Manager) Write(id string, in WriteInput) (Entry, []Warning, error) {
 			e.Source = old.Source
 		}
 	}
+	if in.Document != nil {
+		e.extra = document.extra
+	}
 	data, err := FormatEntry(e)
 	if err != nil {
 		return Entry{}, nil, err
+	}
+	// Canonical metadata can remove anchors referenced by extension fields.
+	// Reject an unpreservable document before replacing the source file.
+	if in.Document != nil {
+		if _, err = ParseEntry(path, data); err != nil {
+			return Entry{}, nil, err
+		}
 	}
 	if err = AtomicWrite(target, data); err != nil {
 		return Entry{}, nil, err

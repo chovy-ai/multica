@@ -1092,6 +1092,22 @@
     "kind_feedback": "피드백",
     "kind_project": "프로젝트",
     "kind_reference": "참고 자료",
-    "entry_count_other": "{{count}}개 항목"
+    "entry_count_other": "{{count}}개 항목",
+    "document": "Markdown 문서",
+    "problems": "문제",
+    "hide_problems": "문제 닫기",
+    "cursor_position": "행 {{line}}, 열 {{column}}",
+    "device_storage": "이 기기에 저장됨",
+    "diagnostics": {
+      "opening": "문서는 --- 구분자로 시작해야 합니다.",
+      "closing": "프런트매터를 --- 구분자로 닫아 주세요.",
+      "mapping": "프런트매터는 YAML 필드 매핑이어야 합니다.",
+      "duplicate": "각 필드는 한 번만 정의할 수 있습니다.",
+      "required": "{{field}}에는 비어 있지 않은 문자열이 필요합니다.",
+      "missing_colon": "{{field}} 뒤에 콜론을 추가하세요: {{field}}: 값",
+      "system": "{{field}}은(는) 시스템에서 관리합니다. 원래 값을 유지하세요.",
+      "yaml": "YAML 구문 오류: {{detail}}"
+    },
+    "body_size": "{{bytes}} B / 8 KB"
   }
 }

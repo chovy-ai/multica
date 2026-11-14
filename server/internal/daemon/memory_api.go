@@ -17,6 +17,22 @@ func memoryJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+func memoryEntryJSON(w http.ResponseWriter, entry agentmemory.Entry, warnings []agentmemory.Warning, desktop bool) {
+	if !desktop {
+		memoryJSON(w, map[string]any{"entry": entry, "warnings": warnings})
+		return
+	}
+	document, err := agentmemory.FormatEntry(entry)
+	if err != nil {
+		memoryStoreError(w, err)
+		return
+	}
+	memoryJSON(w, map[string]any{"entry": struct {
+		agentmemory.Entry
+		Document string `json:"document"`
+	}{entry, string(document)}, "warnings": warnings})
+}
 func memoryError(w http.ResponseWriter, status int, kind, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -185,13 +201,14 @@ func (d *Daemon) memoryRequest(w http.ResponseWriter, r *http.Request, id, op st
 			memoryStoreError(w, err)
 			return
 		}
-		memoryJSON(w, map[string]any{"entry": entry})
+		memoryEntryJSON(w, entry, nil, task == nil)
 	case op == "entry" && r.Method == http.MethodPut:
 		var in struct {
 			Path              string                `json:"path"`
 			Title             string                `json:"title"`
 			Description       string                `json:"description"`
 			Body              string                `json:"body"`
+			Document          *string               `json:"document"`
 			Mode              agentmemory.WriteMode `json:"mode"`
 			ExpectedUpdatedAt *time.Time            `json:"expected_updated_at"`
 		}
@@ -210,7 +227,12 @@ func (d *Daemon) memoryRequest(w http.ResponseWriter, r *http.Request, id, op st
 				return
 			}
 			input.Mode = "update"
+			input.Document = in.Document
 		} else {
+			if in.Document != nil {
+				memoryStoreError(w, agentmemory.ErrInvalidInput)
+				return
+			}
 			input.ExpectedUpdatedAt = nil
 			input.Source = task.Source
 			input.Project = agentmemory.ProjectRef{ID: task.ProjectID, Title: task.ProjectTitle}
@@ -226,7 +248,7 @@ func (d *Daemon) memoryRequest(w http.ResponseWriter, r *http.Request, id, op st
 			}
 			entry.Body = ""
 		}
-		memoryJSON(w, map[string]any{"entry": entry, "warnings": warnings})
+		memoryEntryJSON(w, entry, warnings, task == nil)
 	case op == "entry" && r.Method == http.MethodDelete:
 		path, err := d.expandMemoryPath(id, r.URL.Query().Get("path"), task)
 		if err != nil {
@@ -267,7 +289,7 @@ func (d *Daemon) memoryRequest(w http.ResponseWriter, r *http.Request, id, op st
 			memoryStoreError(w, err)
 			return
 		}
-		memoryJSON(w, map[string]any{"entry": entry})
+		memoryEntryJSON(w, entry, nil, true)
 	default:
 		memoryError(w, 405, "invalid_request", "unsupported memory operation")
 	}

@@ -11,6 +11,7 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import type { AgentRuntime } from "@multica/core/types";
 import enAgents from "../../../locales/en/agents.json";
 import enCommon from "../../../locales/en/common.json";
+import { formatMemoryDocument, parseMemoryDocument } from "./memory-document";
 import { AgentMemoryPane } from "./agent-memory-pane";
 import {
   AgentMemoryConflictError,
@@ -73,6 +74,23 @@ vi.mock("./memory-file-tree", () => ({
     </div>
   ),
 }));
+vi.mock("./memory-code-editor", () => ({
+  MemoryCodeEditor: ({
+    value,
+    onChange,
+    label,
+    readOnly,
+    markers = [],
+  }: import("./memory-code-editor").MemoryCodeEditorProps) => (
+    <textarea
+      aria-label={label}
+      value={value}
+      readOnly={readOnly}
+      aria-invalid={markers.some((m) => m.severity === "error")}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  ),
+}));
 const first: AgentMemoryEntry = {
   path: "feedback/root-cause.md",
   title: "Root cause first",
@@ -111,7 +129,14 @@ function adapter(): AgentMemoryAdapter {
       { path: first.path, title: "Search hit", snippet: "Found evidence" },
     ]),
     update: vi.fn(async (_id, input) => {
-      const entry = { ...first, ...input, updatedAt: "2026-11-14T00:00:01Z" };
+      const parsed = parseMemoryDocument(input.document, first);
+      const entry = {
+        ...first,
+        title: parsed.title,
+        description: parsed.description,
+        body: parsed.body,
+        updatedAt: "2026-11-14T00:00:01Z",
+      };
       entries = entries.map((e) => (e.path === entry.path ? entry : e));
       return { entry, warnings: [] };
     }),
@@ -196,20 +221,24 @@ describe("agent memory", () => {
       await screen.findByRole("treeitem", { name: "MEMORY.md" }),
     ).toHaveAttribute("title", "Generated · Read only");
     expect(
-      screen.queryByRole("textbox", { name: "Body" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("textbox", { name: "Markdown document" }),
+    ).toHaveAttribute("readonly");
     fireEvent.click(screen.getByRole("treeitem", { name: first.path }));
     const title = await screen.findByRole("textbox", {
-      name: "Title",
+      name: "Markdown document",
     });
-    fireEvent.change(title, { target: { value: "Updated title" } });
+    fireEvent.change(title, {
+      target: {
+        value: formatMemoryDocument({ ...first, title: "Updated title" }),
+      },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(a.update).toHaveBeenCalledWith(
         "agent",
         expect.objectContaining({
           expectedUpdatedAt: first.updatedAt,
-          title: "Updated title",
+          document: expect.stringContaining("title: Updated title"),
         }),
       ),
     );
@@ -225,31 +254,48 @@ describe("agent memory", () => {
     mount(a);
     fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
     const title = await screen.findByRole("textbox", {
-      name: "Title",
+      name: "Markdown document",
     });
-    fireEvent.change(title, { target: { value: "Local draft" } });
+    fireEvent.change(title, {
+      target: {
+        value: formatMemoryDocument({ ...first, title: "Local draft" }),
+      },
+    });
     vi.mocked(a.read).mockResolvedValueOnce({
       ...first,
       title: "Changed by agent",
       updatedAt: "2026-11-14T00:00:02Z",
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(title).toHaveValue("Changed by agent"));
+    await waitFor(() =>
+      expect(title).toHaveValue(
+        formatMemoryDocument({
+          ...first,
+          title: "Changed by agent",
+          updatedAt: "2026-11-14T00:00:02Z",
+        }),
+      ),
+    );
   });
   it("asks before discarding edits when switching files", async () => {
     const a = adapter();
     mount(a);
     fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
-    fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), {
-      target: { value: "Draft" },
-    });
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "Markdown document" }),
+      {
+        target: { value: formatMemoryDocument({ ...first, title: "Draft" }) },
+      },
+    );
     fireEvent.click(screen.getByRole("treeitem", { name: second.path }));
     const dialog = await screen.findByRole("alertdialog");
     expect(
       within(dialog).getByText("Your unsaved changes will be lost."),
     ).toBeVisible();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Draft");
+    expect(
+      screen.getByRole("textbox", { name: "Markdown document" }),
+    ).toHaveValue(formatMemoryDocument({ ...first, title: "Draft" }));
   });
   it("deletes only after confirmation and restores from trash", async () => {
     const a = adapter();
@@ -272,16 +318,16 @@ describe("agent memory", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(a.restore).toHaveBeenCalled());
-    expect(await screen.findByRole("textbox", { name: "Title" })).toHaveValue(
-      first.title,
-    );
+    expect(
+      await screen.findByRole("textbox", { name: "Markdown document" }),
+    ).toHaveValue(formatMemoryDocument(first));
   });
   it("keeps members without edit access read-only", async () => {
     const a = adapter();
     mount(a, false);
     fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
     expect(
-      await screen.findByRole("textbox", { name: "Title" }),
+      await screen.findByRole("textbox", { name: "Markdown document" }),
     ).toHaveAttribute("readonly");
     for (const name of ["Save", "Delete", "Clear memory"])
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
@@ -290,18 +336,20 @@ describe("agent memory", () => {
     const a = adapter();
     mount(a);
     fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
-    const title = await screen.findByRole("textbox", { name: "Title" });
-    fireEvent.change(title, { target: { value: "" } });
-    expect(title).toHaveAttribute("aria-invalid", "true");
-    expect(title).toHaveAccessibleDescription(
-      "Use 1–100 characters on a single line.",
-    );
-    fireEvent.change(screen.getByRole("textbox", { name: "Body" }), {
-      target: { value: "界".repeat(2800) },
+    const title = await screen.findByRole("textbox", {
+      name: "Markdown document",
     });
-    expect(
-      screen.getByRole("textbox", { name: "Body" }),
-    ).toHaveAccessibleDescription(/8KB or smaller/);
+    fireEvent.change(title, {
+      target: { value: formatMemoryDocument({ ...first, title: "" }) },
+    });
+    expect(title).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("title must be a non-empty string.")).toBeVisible();
+    fireEvent.change(title, {
+      target: {
+        value: formatMemoryDocument({ ...first, body: "界".repeat(2800) }),
+      },
+    });
+    expect(screen.getByText(/8KB or smaller/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(a.update).not.toHaveBeenCalled();
   });
@@ -316,8 +364,14 @@ describe("agent memory", () => {
     );
     mount(a);
     fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
-    const title = await screen.findByRole("textbox", { name: "Title" });
-    fireEvent.change(title, { target: { value: "Retry this draft" } });
+    const title = await screen.findByRole("textbox", {
+      name: "Markdown document",
+    });
+    fireEvent.change(title, {
+      target: {
+        value: formatMemoryDocument({ ...first, title: "Retry this draft" }),
+      },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(
       await screen.findByRole("button", { name: "Saving..." }),
@@ -326,7 +380,9 @@ describe("agent memory", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not access memory",
     );
-    expect(title).toHaveValue("Retry this draft");
+    expect(title).toHaveValue(
+      formatMemoryDocument({ ...first, title: "Retry this draft" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Saved");
     expect(a.update).toHaveBeenCalledTimes(2);

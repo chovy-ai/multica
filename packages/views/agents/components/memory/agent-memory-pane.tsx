@@ -44,7 +44,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
-import { ReadonlyContent } from "../../../editor/readonly-content";
+import { MemoryCodeEditor } from "./memory-code-editor";
+import { formatMemoryDocument } from "./memory-document";
 import { useLocalDaemonStatus } from "../../../platform";
 import { useT } from "../../../i18n";
 import {
@@ -267,54 +268,60 @@ function LocalMemoryPane({
       : undefined;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2 md:px-4">
-        <FolderOpen
-          className="size-4 shrink-0 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <code
-          className="min-w-0 flex-1 truncate text-caption text-muted-foreground"
-          title={data.root}
-        >
-          {data.root}
-        </code>
-        <span className="shrink-0 text-caption text-muted-foreground">
-          {t(($) => $.memory.entry_count, { count: data.entries.length })}
-        </span>
-        <IconButton
-          label={
-            copied ? t(($) => $.memory.copied) : t(($) => $.memory.copy_path)
-          }
-          onClick={() => {
-            void navigator.clipboard
-              .writeText(data.root)
-              .then(() => setCopied(true))
-              .catch(() => toast.error(t(($) => $.memory.failed)));
-          }}
-        >
-          {copied ? <Check /> : <Copy />}
-        </IconButton>
-        {canEdit && data.entries.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<IconButton label={t(($) => $.memory.more_actions)} />}
-            >
-              <Ellipsis />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() => setConfirm("clear")}
-              >
-                <Trash2 />
-                {t(($) => $.memory.clear)}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </header>
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <MemoryTree
+          header={
+            <header className="flex min-w-0 shrink-0 items-center gap-2 px-1 py-1">
+              <FolderOpen
+                className="size-4 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <code
+                className="min-w-0 flex-1 truncate text-label font-medium"
+                title={data.root}
+              >
+                {"memory"}
+              </code>
+              <span className="shrink-0 text-caption text-muted-foreground">
+                {t(($) => $.memory.entry_count, { count: data.entries.length })}
+              </span>
+              <IconButton
+                label={
+                  copied
+                    ? t(($) => $.memory.copied)
+                    : t(($) => $.memory.copy_path)
+                }
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(data.root)
+                    .then(() => setCopied(true))
+                    .catch(() => toast.error(t(($) => $.memory.failed)));
+                }}
+              >
+                {copied ? <Check /> : <Copy />}
+              </IconButton>
+              {canEdit && data.entries.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <IconButton label={t(($) => $.memory.more_actions)} />
+                    }
+                  >
+                    <Ellipsis />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => setConfirm("clear")}
+                    >
+                      <Trash2 />
+                      {t(($) => $.memory.clear)}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </header>
+          }
           tree={data}
           selection={selection}
           onSelect={select}
@@ -340,10 +347,12 @@ function LocalMemoryPane({
                 </Badge>
               </MemoryFileHeader>
               {data.entries.length ? (
-                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-                  <div className="mx-auto max-w-3xl break-words p-4 md:p-6">
-                    <ReadonlyContent content={data.index} />
-                  </div>
+                <div className="min-h-0 flex-1">
+                  <MemoryCodeEditor
+                    value={data.index}
+                    readOnly
+                    label={t(($) => $.memory.document)}
+                  />
                 </div>
               ) : (
                 <Empty>
@@ -373,20 +382,16 @@ function LocalMemoryPane({
                   {t(($) => $.memory.trash)}
                 </Badge>
               </MemoryFileHeader>
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-                <div className="mx-auto max-w-3xl space-y-4 p-4 md:p-6">
-                  <p className="text-caption text-muted-foreground">
-                    {t(($) => $.memory.deleted)}:{" "}
-                    {trash && <MemoryTimestamp value={trash.deletedAt} />}
-                  </p>
-                  <h3 className="break-words text-title-sm font-medium">
-                    {entry.data.title}
-                  </h3>
-                  <p className="break-words text-body text-muted-foreground">
-                    {entry.data.description}
-                  </p>
-                  <ReadonlyContent content={entry.data.body ?? ""} />
-                </div>
+              <p className="shrink-0 px-4 py-2 text-caption text-muted-foreground">
+                {t(($) => $.memory.deleted)}:{" "}
+                {trash && <MemoryTimestamp value={trash.deletedAt} />}
+              </p>
+              <div className="min-h-0 flex-1">
+                <MemoryCodeEditor
+                  value={formatMemoryDocument(entry.data)}
+                  readOnly
+                  label={t(($) => $.memory.document)}
+                />
               </div>
               {canEdit && (
                 <footer className="flex shrink-0 justify-end border-t px-4 py-3 md:px-6">

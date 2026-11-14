@@ -28,6 +28,7 @@ type Entry struct {
 type ProjectRef struct{ ID, Title string }
 type WriteInput struct {
 	Path, Title, Description, Body string
+	Document                       *string
 	Mode                           WriteMode
 	Source                         string
 	Project                        ProjectRef

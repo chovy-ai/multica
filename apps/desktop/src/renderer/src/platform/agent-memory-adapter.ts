@@ -20,6 +20,7 @@ const entrySchema = z
     updated_at: z.string(),
     source: z.string().catch(""),
     body: z.string().optional(),
+    document: z.string().optional(),
   })
   .transform(
     (e): AgentMemoryEntry => ({
@@ -32,6 +33,7 @@ const entrySchema = z
       updatedAt: e.updated_at,
       source: e.source,
       body: e.body,
+      document: e.document,
     }),
   );
 const emptyEntry: AgentMemoryEntry = {
@@ -133,9 +135,7 @@ export function createAgentMemoryAdapter(
       parseWithFallback(
         await call("PUT", id, "/entry", {
           path: input.path,
-          title: input.title,
-          description: input.description,
-          body: input.body,
+          document: input.document,
           expected_updated_at: input.expectedUpdatedAt,
         }),
         responseSchema,

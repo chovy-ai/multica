@@ -1,10 +1,16 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Trash2 } from "lucide-react";
+import {
+  Check,
+  CircleAlert,
+  Loader2,
+  Trash2,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
+import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Badge } from "@multica/ui/components/ui/badge";
-import { Input } from "@multica/ui/components/ui/input";
-import { Textarea } from "@multica/ui/components/ui/textarea";
 import { ReadonlyContent } from "../../../editor/readonly-content";
 import { SettingsViewTabs } from "../../../settings/components/settings-layout";
 import { useLocale, useT } from "../../../i18n";
@@ -13,8 +19,17 @@ import {
   type AgentMemoryAdapter,
   type AgentMemoryEntry,
 } from "./types";
-import { MemoryFileHeader, MemoryTimestamp } from "./memory-file-header";
+import { MemoryFileHeader } from "./memory-file-header";
 import { memoryKeys, useMemoryMutation } from "./queries";
+import {
+  formatMemoryDocument,
+  parseMemoryDocument,
+  type MemoryDiagnostic,
+} from "./memory-document";
+import {
+  MemoryCodeEditor,
+  type MemoryEditorHandle,
+} from "./memory-code-editor";
 
 export function MemoryEntryEditor({
   entry,
@@ -35,63 +50,84 @@ export function MemoryEntryEditor({
 }) {
   const { t } = useT("agents");
   const locale = useLocale();
-  const id = useId();
   const qc = useQueryClient();
+  const editor = useRef<MemoryEditorHandle>(null);
   const [persisted, setPersisted] = useState(entry);
-  const [draft, setDraft] = useState(entry);
+  const [draft, setDraft] = useState(() => formatMemoryDocument(entry));
   const [mode, setMode] = useState<"write" | "preview">("write");
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const dirty =
-    draft.title !== persisted.title ||
-    draft.description !== persisted.description ||
-    draft.body !== persisted.body;
+  const [problemsOpen, setProblemsOpen] = useState(true);
+  const [cursor, setCursor] = useState({ line: 1, column: 1 });
+  const dirty = draft !== formatMemoryDocument(persisted);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   useEffect(() => {
     if (!dirtyRef.current) {
       setPersisted(entry);
-      setDraft(entry);
+      setDraft(formatMemoryDocument(entry));
     }
   }, [entry]);
   useEffect(() => {
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+  const parsed = useMemo(
+    () => parseMemoryDocument(draft, persisted),
+    [draft, persisted],
+  );
+  const message = (d: MemoryDiagnostic) => {
+    switch (d.code) {
+      case "title":
+        return t(($) => $.memory.title_limit);
+      case "description":
+        return t(($) => $.memory.description_limit);
+      case "body":
+        return t(($) => $.memory.body_required);
+      case "hard_limit":
+        return t(($) => $.memory.hard_limit);
+      case "soft_limit":
+        return t(($) => $.memory.soft_limit);
+      case "opening":
+        return t(($) => $.memory.diagnostics.opening);
+      case "closing":
+        return t(($) => $.memory.diagnostics.closing);
+      case "mapping":
+        return t(($) => $.memory.diagnostics.mapping);
+      case "duplicate":
+        return t(($) => $.memory.diagnostics.duplicate);
+      case "required":
+        return t(($) => $.memory.diagnostics.required, { field: d.field });
+      case "missing_colon":
+        return t(($) => $.memory.diagnostics.missing_colon, { field: d.field });
+      case "system":
+        return t(($) => $.memory.diagnostics.system, { field: d.field });
+      case "yaml":
+        return t(($) => $.memory.diagnostics.yaml, { detail: d.detail });
+    }
+  };
+  const markers = parsed.diagnostics.map((d) => ({
+    ...d,
+    message: message(d),
+  }));
+  const errors = markers.filter((m) => m.severity === "error").length;
+  const warnings = markers.length - errors;
   const update = useMemoryMutation<
     void,
     Awaited<ReturnType<AgentMemoryAdapter["update"]>>
-  >(wsId, agentId, async () =>
+  >(wsId, agentId, () =>
     adapter.update(agentId, {
       path: persisted.path,
-      title: draft.title,
-      description: draft.description,
-      body: draft.body ?? "",
+      document: draft,
       expectedUpdatedAt: persisted.updatedAt,
     }),
   );
-  const size = new TextEncoder().encode(draft.body ?? "").length;
-  const titleError =
-    !draft.title.trim() ||
-    [...draft.title.trim()].length > 100 ||
-    /[\r\n]/.test(draft.title);
-  const descriptionError =
-    !draft.description.trim() ||
-    [...draft.description.trim()].length > 200 ||
-    /[\r\n]/.test(draft.description);
-  const bodyError = !draft.body?.trim() || size > 8192;
-  const invalid = titleError || descriptionError || bodyError;
-  const change = (next: AgentMemoryEntry) => {
-    setDraft(next);
-    setSaved(false);
-    setFailure(null);
-  };
   const save = async () => {
-    if (!canEdit || !dirty || invalid || update.isPending) return;
+    if (!canEdit || !dirty || errors || update.isPending) return;
     setFailure(null);
     try {
       const result = await update.mutateAsync();
-      setDraft(result.entry);
+      setDraft(formatMemoryDocument(result.entry));
       setPersisted(result.entry);
       setSaved(true);
       qc.setQueryData(
@@ -102,7 +138,7 @@ export function MemoryEntryEditor({
       if (error instanceof AgentMemoryConflictError) {
         try {
           const latest = await adapter.read(agentId, persisted.path);
-          setDraft(latest);
+          setDraft(formatMemoryDocument(latest));
           setPersisted(latest);
           qc.setQueryData(memoryKeys.entry(wsId, agentId, latest.path), latest);
           setFailure(t(($) => $.memory.conflict));
@@ -112,225 +148,202 @@ export function MemoryEntryEditor({
       } else setFailure(t(($) => $.memory.failed));
     }
   };
-  const kinds = {
-    feedback: t(($) => $.memory.kind_feedback),
-    project: t(($) => $.memory.kind_project),
-    reference: t(($) => $.memory.kind_reference),
+  const location = (offset: number) => {
+    const lines = draft.slice(0, offset).split("\n");
+    return t(($) => $.memory.cursor_position, {
+      line: lines.length,
+      column: lines.at(-1)!.length + 1,
+    });
   };
   return (
-    <form
-      className="flex h-full min-h-0 flex-col"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save();
-      }}
-    >
+    <div className="flex h-full min-h-0 flex-col">
       <MemoryFileHeader path={entry.path}>
         {!canEdit && (
           <Badge variant="secondary">{t(($) => $.memory.read_only)}</Badge>
         )}
-      </MemoryFileHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto max-w-3xl space-y-5 p-4 md:p-6">
-          <div className="space-y-2">
-            <label htmlFor={`${id}-title`} className="text-label font-medium">
-              {t(($) => $.memory.title)}
-            </label>
-            <Input
-              id={`${id}-title`}
-              name="title"
-              autoComplete="off"
-              value={draft.title}
-              readOnly={!canEdit}
-              disabled={update.isPending}
-              aria-invalid={canEdit && titleError}
-              aria-describedby={
-                canEdit && titleError ? `${id}-title-error` : undefined
-              }
-              onChange={(event) =>
-                change({ ...draft, title: event.target.value })
-              }
-            />
-            {canEdit && titleError && (
-              <p
-                id={`${id}-title-error`}
-                className="text-caption text-destructive"
-              >
-                {t(($) => $.memory.title_limit)}
-              </p>
-            )}
-          </div>
-          <div className="space-y-2">
-            <label
-              htmlFor={`${id}-description`}
-              className="text-label font-medium"
-            >
-              {t(($) => $.memory.description)}
-            </label>
-            <Input
-              id={`${id}-description`}
-              name="description"
-              autoComplete="off"
-              value={draft.description}
-              readOnly={!canEdit}
-              disabled={update.isPending}
-              aria-invalid={canEdit && descriptionError}
-              aria-describedby={
-                canEdit && descriptionError
-                  ? `${id}-description-error`
-                  : undefined
-              }
-              onChange={(event) =>
-                change({ ...draft, description: event.target.value })
-              }
-            />
-            {canEdit && descriptionError && (
-              <p
-                id={`${id}-description-error`}
-                className="text-caption text-destructive"
-              >
-                {t(($) => $.memory.description_limit)}
-              </p>
-            )}
-          </div>
-          <dl className="flex flex-wrap gap-x-5 gap-y-2 text-caption text-muted-foreground">
-            <div>
-              <dt className="inline">{t(($) => $.memory.kind)}: </dt>
-              <dd className="inline">{kinds[persisted.kind]}</dd>
-            </div>
-            <div>
-              <dt className="inline">{t(($) => $.memory.updated)}: </dt>
-              <dd className="inline">
-                <MemoryTimestamp value={persisted.updatedAt} />
-              </dd>
-            </div>
-            {persisted.source && (
-              <div className="min-w-0">
-                <dt className="inline">{t(($) => $.memory.source)}: </dt>
-                <dd className="inline break-all">{persisted.source}</dd>
-              </div>
-            )}
-          </dl>
-          <div className="space-y-3">
-            {canEdit ? (
-              <SettingsViewTabs<"write" | "preview">
-                label={t(($) => $.memory.body)}
-                items={[
-                  { value: "write", label: t(($) => $.memory.edit) },
-                  { value: "preview", label: t(($) => $.memory.preview) },
-                ]}
-                value={mode}
-                onChange={setMode}
-              />
-            ) : (
-              <h3 className="text-label font-medium">
-                {t(($) => $.memory.body)}
-              </h3>
-            )}
-            {canEdit && mode === "write" ? (
-              <Textarea
-                name="body"
-                aria-label={t(($) => $.memory.body)}
-                value={draft.body ?? ""}
-                disabled={update.isPending}
-                aria-invalid={bodyError}
-                aria-describedby={`${id}-body-hint`}
-                onChange={(event) =>
-                  change({ ...draft, body: event.target.value })
-                }
-                className="min-h-72 resize-y font-mono text-label leading-relaxed md:text-label"
-              />
-            ) : (
-              <div className="min-h-40 break-words rounded-lg border p-4">
-                <ReadonlyContent content={draft.body ?? ""} />
-              </div>
-            )}
-            <div
-              id={`${id}-body-hint`}
-              className="flex flex-wrap justify-between gap-2 text-caption text-muted-foreground"
-            >
-              <span
-                className={
-                  canEdit && bodyError
-                    ? "text-destructive"
-                    : size > 2048
-                      ? "text-warning"
-                      : undefined
-                }
-              >
-                {canEdit && bodyError
-                  ? t(($) =>
-                      size > 8192
-                        ? $.memory.hard_limit
-                        : $.memory.body_required,
-                    )
-                  : size > 2048
-                    ? t(($) => $.memory.soft_limit)
-                    : t(($) => $.memory.markdown_hint)}
-              </span>
-              <span className="shrink-0 tabular-nums">
-                {new Intl.NumberFormat(locale).format(size)} /{" "}
-                {new Intl.NumberFormat(locale).format(8192)} B
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-      {canEdit && (
-        <footer className="shrink-0 border-t bg-background px-4 py-3 md:px-6">
-          {failure && (
-            <p
-              role="alert"
-              className="mx-auto mb-3 max-w-3xl text-caption text-destructive"
-            >
-              {failure}
-            </p>
-          )}
-          <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
+        <SettingsViewTabs<"write" | "preview">
+          label={t(($) => $.memory.document)}
+          items={[
+            { value: "write", label: t(($) => $.memory.edit) },
+            { value: "preview", label: t(($) => $.memory.preview) },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
+        {canEdit && (
+          <>
+            <IconButton
+              label={t(($) => $.memory.delete)}
               disabled={update.isPending}
               onClick={onDelete}
             >
-              <Trash2 aria-hidden="true" />
-              {t(($) => $.memory.delete)}
+              <Trash2 />
+            </IconButton>
+            <Button
+              size="sm"
+              disabled={!dirty || update.isPending || errors > 0}
+              aria-busy={update.isPending}
+              onClick={() => void save()}
+            >
+              {update.isPending && (
+                <Loader2
+                  className="animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              )}
+              {update.isPending
+                ? t(($) => $.memory.saving)
+                : t(($) => $.memory.save)}
             </Button>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <span
-                role="status"
-                className="flex items-center gap-1 text-caption text-muted-foreground"
-              >
-                {dirty ? (
-                  t(($) => $.memory.unsaved)
-                ) : saved ? (
-                  <>
-                    <Check className="size-3.5" aria-hidden="true" />
-                    {t(($) => $.memory.saved)}
-                  </>
-                ) : null}
+          </>
+        )}
+      </MemoryFileHeader>
+      {failure && (
+        <p
+          role="alert"
+          className="shrink-0 border-b px-4 py-2 text-caption text-destructive"
+        >
+          {failure}
+        </p>
+      )}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="h-full" hidden={mode !== "write"}>
+          <MemoryCodeEditor
+            ref={editor}
+            value={draft}
+            readOnly={!canEdit || update.isPending}
+            label={t(($) => $.memory.document)}
+            markers={markers}
+            onSave={() => void save()}
+            onCursor={(line, column) => setCursor({ line, column })}
+            onChange={(value) => {
+              setDraft(value);
+              setSaved(false);
+              setFailure(null);
+            }}
+          />
+        </div>
+        {mode === "preview" && (
+          <div className="h-full overflow-y-auto overscroll-contain p-4 md:p-6">
+            <article className="mx-auto max-w-3xl break-words">
+              <h3 className="mb-2 text-title font-semibold">
+                {parsed.title || persisted.title}
+              </h3>
+              <p className="mb-6 text-body text-muted-foreground">
+                {parsed.description}
+              </p>
+              <ReadonlyContent content={parsed.body} />
+            </article>
+          </div>
+        )}
+      </div>
+      {!!markers.length && problemsOpen && (
+        <section
+          aria-label={t(($) => $.memory.problems)}
+          aria-live="polite"
+          className="flex max-h-44 shrink-0 flex-col border-t bg-muted/30"
+        >
+          <div className="flex shrink-0 items-center justify-between px-4 py-1">
+            <h3 className="text-caption font-medium">
+              {t(($) => $.memory.problems)}{" "}
+              <span className="ml-1 text-muted-foreground">
+                {markers.length}
               </span>
+            </h3>
+            <IconButton
+              size="icon-xs"
+              label={t(($) => $.memory.hide_problems)}
+              onClick={() => setProblemsOpen(false)}
+            >
+              <X />
+            </IconButton>
+          </div>
+          <div className="min-h-0 overflow-y-auto pb-2">
+            {markers.map((m, i) => (
               <Button
-                type="submit"
+                key={`${m.start}-${i}`}
                 size="sm"
-                disabled={!dirty || update.isPending || invalid}
-                aria-busy={update.isPending}
+                variant="ghost"
+                className="h-auto w-full justify-start gap-2 rounded-none px-4 py-2 text-left"
+                onClick={() => {
+                  setMode("write");
+                  requestAnimationFrame(() => editor.current?.reveal(m));
+                }}
               >
-                {update.isPending && (
-                  <Loader2
-                    className="animate-spin motion-reduce:animate-none"
+                {m.severity === "error" ? (
+                  <CircleAlert
+                    className="text-destructive"
                     aria-hidden="true"
                   />
+                ) : (
+                  <TriangleAlert className="text-warning" aria-hidden="true" />
                 )}
-                {update.isPending
-                  ? t(($) => $.memory.saving)
-                  : t(($) => $.memory.save)}
+                <span className="min-w-0 flex-1 whitespace-normal break-words text-caption">
+                  {m.message}
+                </span>
+                <span className="shrink-0 text-micro text-muted-foreground">
+                  {location(m.start)}
+                </span>
               </Button>
-            </div>
+            ))}
           </div>
-        </footer>
+        </section>
       )}
-    </form>
+      <footer className="flex min-h-8 shrink-0 items-center gap-3 border-t px-3 text-micro text-muted-foreground">
+        <span className="hidden sm:inline">{"Markdown"}</span>
+        <Button
+          variant="ghost"
+          size="xs"
+          aria-label={t(($) => $.memory.problems)}
+          aria-expanded={!!markers.length && problemsOpen}
+          className="gap-2 px-0 text-micro"
+          onClick={() => setProblemsOpen((v) => !v)}
+          disabled={!markers.length}
+        >
+          <span
+            className={
+              errors
+                ? "flex items-center gap-1 text-destructive"
+                : "flex items-center gap-1"
+            }
+          >
+            <CircleAlert className="size-3" aria-hidden="true" />
+            {errors}
+          </span>
+          <span
+            className={
+              warnings
+                ? "flex items-center gap-1 text-warning"
+                : "flex items-center gap-1"
+            }
+          >
+            <TriangleAlert className="size-3" aria-hidden="true" />
+            {warnings}
+          </span>
+        </Button>
+        <span
+          role="status"
+          className="flex min-w-0 items-center gap-1 truncate"
+        >
+          {dirty ? (
+            t(($) => $.memory.unsaved)
+          ) : saved ? (
+            <>
+              <Check className="size-3 shrink-0" aria-hidden="true" />
+              {t(($) => $.memory.saved)}
+            </>
+          ) : null}
+        </span>
+        <span className="flex-1" />
+        <span className="hidden tabular-nums sm:inline">
+          {t(($) => $.memory.cursor_position, cursor)}
+        </span>
+        <span className="shrink-0 tabular-nums">
+          {t(($) => $.memory.body_size, {
+            bytes: new Intl.NumberFormat(locale).format(parsed.bytes),
+          })}
+        </span>
+      </footer>
+    </div>
   );
 }

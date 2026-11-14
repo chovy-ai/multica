@@ -1092,6 +1092,22 @@
     "kind_feedback": "フィードバック",
     "kind_project": "プロジェクト",
     "kind_reference": "参考資料",
-    "entry_count_other": "{{count}} 件"
+    "entry_count_other": "{{count}} 件",
+    "document": "Markdown ドキュメント",
+    "problems": "問題",
+    "hide_problems": "問題を閉じる",
+    "cursor_position": "行 {{line}}、列 {{column}}",
+    "device_storage": "このデバイスに保存",
+    "diagnostics": {
+      "opening": "ドキュメントは --- で開始してください。",
+      "closing": "フロントマターを --- で閉じてください。",
+      "mapping": "フロントマターには YAML マッピングが必要です。",
+      "duplicate": "同じフィールドを複数回指定できません。",
+      "required": "{{field}} には空でない文字列が必要です。",
+      "missing_colon": "{{field}} の後にコロンを追加してください：{{field}}: 値",
+      "system": "{{field}} はシステムが管理します。元の値を保持してください。",
+      "yaml": "YAML 構文エラー：{{detail}}"
+    },
+    "body_size": "{{bytes}} B / 8 KB"
   }
 }

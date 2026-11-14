@@ -8,6 +8,7 @@ export interface AgentMemoryEntry {
   updatedAt: string;
   source: string;
   body?: string;
+  document?: string;
 }
 export interface AgentMemoryTree {
   exists: boolean;
@@ -30,9 +31,7 @@ export interface AgentMemoryAdapter {
     agentId: string,
     input: {
       path: string;
-      title: string;
-      description: string;
-      body: string;
+      document: string;
       expectedUpdatedAt: string;
     },
   ): Promise<{ entry: AgentMemoryEntry; warnings: string[] }>;

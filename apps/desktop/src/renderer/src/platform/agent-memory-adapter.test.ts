@@ -37,6 +37,7 @@ describe("agent memory adapter", () => {
       updated_at: "updated",
       source: "CHOV-117",
       body: "B",
+      document: "---\ncustom: retained\n---\nB",
     };
     const request = vi.fn(async () => ({ entry: wire, warnings: [] }));
     const a = createAgentMemoryAdapter(request);
@@ -44,18 +45,20 @@ describe("agent memory adapter", () => {
       updatedAt: "updated",
       createdAt: "created",
       projectDir: "",
+      document: wire.document,
     });
     await a.update("agent", {
       path: wire.path,
-      title: "New",
-      description: "D",
-      body: "B",
+      document: "---\ntitle: New\n---\nB",
       expectedUpdatedAt: "updated",
     });
     expect(request).toHaveBeenLastCalledWith(
       "PUT",
       "/local/agents/agent/memory/entry",
-      expect.objectContaining({ expected_updated_at: "updated" }),
+      expect.objectContaining({
+        expected_updated_at: "updated",
+        document: "---\ntitle: New\n---\nB",
+      }),
     );
   });
   it.each([

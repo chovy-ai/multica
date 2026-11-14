@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { FileText } from "lucide-react";
+import { FileText, BookOpen } from "lucide-react";
 import { useLocale } from "../../../i18n";
 
 export function MemoryFileHeader({
@@ -9,14 +9,18 @@ export function MemoryFileHeader({
   path: string;
   children?: ReactNode;
 }) {
+  const Icon = path === "MEMORY.md" ? BookOpen : FileText;
+  const slash = path.lastIndexOf("/");
   return (
-    <header className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-3 md:px-6">
-      <FileText
-        className="size-4 shrink-0 text-muted-foreground"
-        aria-hidden="true"
-      />
-      <h2 className="min-w-0 flex-1 truncate font-mono text-label" title={path}>
-        {path}
+    <header className="flex min-w-0 items-center gap-2 border-b px-3 py-3 md:px-4">
+      <Icon className="size-4 shrink-0 text-brand" aria-hidden="true" />
+      <h2 className="min-w-0 flex-1 truncate text-label" title={path}>
+        {slash >= 0 && (
+          <span className="text-muted-foreground">
+            {path.slice(0, slash)} /{" "}
+          </span>
+        )}
+        {path.slice(slash + 1)}
       </h2>
       {children}
     </header>

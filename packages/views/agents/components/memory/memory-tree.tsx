@@ -1,5 +1,6 @@
+import type { ReactNode } from "react";
 import { Button } from "@multica/ui/components/ui/button";
-import { Search, X } from "lucide-react";
+import { Search, X, LockKeyhole } from "lucide-react";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import {
   InputGroup,
@@ -16,6 +17,7 @@ export type MemorySelection =
   | { type: "entry" | "trash"; path: string };
 export function MemoryTree({
   tree,
+  header,
   selection,
   onSelect,
   search,
@@ -26,6 +28,7 @@ export function MemoryTree({
   onRetrySearch,
 }: {
   tree: AgentMemoryTree;
+  header?: ReactNode;
   selection: MemorySelection;
   onSelect: (selection: MemorySelection) => void;
   search: string;
@@ -72,9 +75,10 @@ export function MemoryTree({
   };
   return (
     <aside
-      className="flex h-56 shrink-0 flex-col gap-3 overflow-hidden border-b p-3 md:h-auto md:w-64 md:border-b-0 md:border-r lg:w-[280px]"
+      className="flex h-56 shrink-0 flex-col gap-3 overflow-hidden border-b bg-sidebar p-3 md:h-auto md:w-64 md:border-b-0 md:border-r"
       aria-label={t(($) => $.memory.tree)}
     >
+      {header}
       <InputGroup>
         <InputGroupAddon>
           <Search aria-hidden="true" />
@@ -125,6 +129,10 @@ export function MemoryTree({
       ) : null}
       <div className="min-h-0 flex-1 overflow-hidden" hidden={!!search.trim()}>
         <MemoryFileTree tree={tree} selection={selection} onSelect={onSelect} />
+      </div>
+      <div className="hidden shrink-0 items-center gap-2 border-t pt-3 text-micro text-muted-foreground md:flex">
+        <LockKeyhole className="size-3.5" aria-hidden="true" />
+        {t(($) => $.memory.device_storage)}
       </div>
     </aside>
   );

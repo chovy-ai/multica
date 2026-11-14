@@ -1120,6 +1120,22 @@
     "kind_project": "Project",
     "kind_reference": "Reference",
     "entry_count_one": "{{count}} entry",
-    "entry_count_other": "{{count}} entries"
+    "entry_count_other": "{{count}} entries",
+    "document": "Markdown document",
+    "problems": "Problems",
+    "hide_problems": "Hide problems",
+    "cursor_position": "Ln {{line}}, Col {{column}}",
+    "device_storage": "Stored on this device",
+    "diagnostics": {
+      "opening": "Start the document with a --- frontmatter delimiter.",
+      "closing": "Close the frontmatter with a --- delimiter.",
+      "mapping": "Frontmatter must be a YAML field mapping.",
+      "duplicate": "Each field can only appear once.",
+      "required": "{{field}} must be a non-empty string.",
+      "missing_colon": "Add a colon after {{field}}: {{field}}: value",
+      "system": "{{field}} is managed by the system. Keep its original value.",
+      "yaml": "YAML syntax error: {{detail}}"
+    },
+    "body_size": "{{bytes}} B / 8 KB"
   }
 }

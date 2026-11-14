@@ -15,6 +15,7 @@ import {
   type AgentMemoryEntry,
   type AgentMemoryTree,
 } from "../../packages/views/agents/components/memory/types";
+import { parseMemoryDocument } from "../../packages/views/agents/components/memory/memory-document";
 import "../../apps/desktop/src/renderer/src/globals.css";
 
 const params = new URLSearchParams(location.search);
@@ -114,7 +115,20 @@ const adapter: AgentMemoryAdapter = {
       existing.title = "Updated by another run";
       throw new AgentMemoryConflictError("changed");
     }
-    const entry = { ...existing, ...input, updatedAt: "2026-11-14T09:00:01Z" };
+    const parsed = parseMemoryDocument(input.document, existing);
+    if (parsed.diagnostics.some((d) => d.severity === "error"))
+      throw new Error("Invalid document");
+    const entry = {
+      ...existing,
+      title: parsed.title,
+      description: parsed.description,
+      body: parsed.body,
+      updatedAt: "2026-11-14T09:00:01Z",
+    };
+    entry.document = input.document.replace(
+      /^updated_at:.*$/m,
+      `updated_at: ${entry.updatedAt}`,
+    );
     entries = entries.map((e) => (e.path === entry.path ? entry : e));
     return { entry, warnings: [] };
   },

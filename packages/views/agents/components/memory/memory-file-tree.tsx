@@ -10,12 +10,13 @@ import type {
 } from "@pierre/trees";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { useT } from "../../../i18n";
+import { memoryFolderCSS, memoryTreeIcons } from "./memory-tree-icons";
 import type { AgentMemoryTree } from "./types";
 import type { MemorySelection } from "./memory-tree";
 
 const treeCSS = `:host {
   --trees-accent-override: var(--ring);
-  --trees-bg-override: var(--background);
+  --trees-bg-override: var(--sidebar);
   --trees-fg-override: var(--foreground);
   --trees-fg-muted-override: var(--muted-foreground);
   --trees-selected-bg-override: var(--surface-selected);
@@ -26,8 +27,8 @@ const treeCSS = `:host {
   --trees-font-size-override: var(--text-label);
   --trees-font-family-override: var(--font-sans);
   --trees-focus-ring-color-override: var(--ring);
-}`;
-const icons = { set: "minimal" as const, colored: false };
+}
+${memoryFolderCSS}`;
 
 // Pierre sorts flat input paths; parents must precede their descendants.
 function comparePaths(left: FileTreeSortEntry, right: FileTreeSortEntry) {
@@ -126,7 +127,7 @@ export function MemoryFileTree({
     renaming: false,
     search: false,
     density: "compact",
-    icons,
+    icons: memoryTreeIcons,
     onSelectionChange: select,
     renderRowDecoration: decorate,
     unsafeCSS: treeCSS,

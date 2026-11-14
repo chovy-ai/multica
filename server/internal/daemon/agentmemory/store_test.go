@@ -280,3 +280,26 @@ func TestSnapshotAndReceipts(t *testing.T) {
 		t.Fatalf("%v %v", titles, err)
 	}
 }
+
+func TestDocumentAliasCannotCorruptStoredEntry(t *testing.T) {
+	m := NewManager(t.TempDir())
+	t.Cleanup(func() { _ = m.Close() })
+	original, _, err := m.Write(testAgent, input("feedback/alias"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := FormatEntry(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := strings.Replace(string(encoded), "title: ", "title: &heading ", 1)
+	document = strings.Replace(document, "\n---\n", "\ncustom: *heading\n---\n", 1)
+	_, _, err = m.Write(testAgent, WriteInput{Path: original.Path, Mode: "update", Document: &document, ExpectedUpdatedAt: &original.UpdatedAt})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unpreservable alias: %v", err)
+	}
+	stored, err := m.Read(testAgent, original.Path)
+	if err != nil || stored.Body != original.Body || !stored.UpdatedAt.Equal(original.UpdatedAt) {
+		t.Fatalf("invalid update changed stored entry: %+v %v", stored, err)
+	}
+}

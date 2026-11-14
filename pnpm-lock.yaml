@@ -69,6 +69,9 @@ catalogs:
     mermaid:
       specifier: ^11.14.0
       version: 11.14.0
+    monaco-editor:
+      specifier: 0.55.1
+      version: 0.55.1
     mobx:
       specifier: ^6.15.0
       version: 6.16.1
@@ -1424,6 +1427,9 @@ importers:
       micromark-extension-math:
         specifier: ^3.1.0
         version: 3.1.0
+      monaco-editor:
+        specifier: 'catalog:'
+        version: 0.55.1
       motion:
         specifier: ^12.38.0
         version: 12.38.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

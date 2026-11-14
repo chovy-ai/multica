@@ -1092,6 +1092,22 @@
     "kind_feedback": "反馈",
     "kind_project": "项目",
     "kind_reference": "参考资料",
-    "entry_count_other": "{{count}} 条记忆"
+    "entry_count_other": "{{count}} 条记忆",
+    "document": "Markdown 文档",
+    "problems": "问题",
+    "hide_problems": "收起问题",
+    "cursor_position": "行 {{line}}，列 {{column}}",
+    "device_storage": "存储在此设备",
+    "diagnostics": {
+      "opening": "文件必须以 --- 开始 YAML frontmatter。",
+      "closing": "frontmatter 缺少结束分隔符 ---。",
+      "mapping": "frontmatter 必须是 YAML 字段映射。",
+      "duplicate": "字段重复定义，每个字段只能出现一次。",
+      "required": "{{field}} 必须是非空字符串。",
+      "missing_colon": "{{field}} 后缺少冒号，格式应为 {{field}}: 值",
+      "system": "{{field}} 由系统维护，请保留原值。",
+      "yaml": "YAML 格式错误：{{detail}}"
+    },
+    "body_size": "{{bytes}} B / 8 KB"
   }
 }

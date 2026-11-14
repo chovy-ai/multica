@@ -1092,6 +1092,22 @@
     "kind_feedback": "回饋",
     "kind_project": "專案",
     "kind_reference": "參考資料",
-    "entry_count_other": "{{count}} 條記憶"
+    "entry_count_other": "{{count}} 條記憶",
+    "document": "Markdown 文件",
+    "problems": "問題",
+    "hide_problems": "收合問題",
+    "cursor_position": "行 {{line}}，列 {{column}}",
+    "device_storage": "儲存在此裝置",
+    "diagnostics": {
+      "opening": "檔案必須以 --- 開始 YAML frontmatter。",
+      "closing": "frontmatter 缺少結束分隔符號 ---。",
+      "mapping": "frontmatter 必須是 YAML 欄位對應。",
+      "duplicate": "欄位重複定義，每個欄位只能出現一次。",
+      "required": "{{field}} 必須是非空字串。",
+      "missing_colon": "{{field}} 後缺少冒號，格式應為 {{field}}: 值",
+      "system": "{{field}} 由系統維護，請保留原值。",
+      "yaml": "YAML 格式錯誤：{{detail}}"
+    },
+    "body_size": "{{bytes}} B / 8 KB"
   }
 }

@@ -1120,6 +1120,22 @@
     "kind_project": "Projet",
     "kind_reference": "Référence",
     "entry_count_one": "{{count}} entrée",
-    "entry_count_other": "{{count}} entrées"
+    "entry_count_other": "{{count}} entrées",
+    "document": "Document Markdown",
+    "problems": "Problèmes",
+    "hide_problems": "Masquer les problèmes",
+    "cursor_position": "Ligne {{line}}, col. {{column}}",
+    "device_storage": "Stocké sur cet appareil",
+    "diagnostics": {
+      "opening": "Commencez le document par le délimiteur ---.",
+      "closing": "Fermez le frontmatter avec le délimiteur ---.",
+      "mapping": "Le frontmatter doit être une table de champs YAML.",
+      "duplicate": "Chaque champ ne peut apparaître qu’une seule fois.",
+      "required": "{{field}} doit être une chaîne non vide.",
+      "missing_colon": "Ajoutez un deux-points après {{field}} : {{field}}: valeur",
+      "system": "{{field}} est géré par le système. Conservez sa valeur d’origine.",
+      "yaml": "Erreur de syntaxe YAML : {{detail}}"
+    },
+    "body_size": "{{bytes}} B / 8 KB"
   }
 }
