@@ -31,6 +31,17 @@ function tools(conversation: ConversationModel) {
 }
 
 describe("v2 tools through the GUI presentation boundary", () => {
+  it("keeps Bash file evidence on its original GUI call after a final snapshot", () => {
+    const changes = [{ path: "notes.md", kind: "update", diff: "@@ -1 +1 @@\n-old\n+new\n" }, { path: "other.md", kind: "update" }];
+    const conversation = restore([
+      event(1, "bash", "item.completed", { kind: "command", status: "completed", command: "fixture", output: "ok", file_changes: changes, file_changes_incomplete: true }),
+      event(2, "mcp", "item.completed", { kind: "tool_call", status: "completed", server: "fixture", tool: "lookup", output: "found", result: { count: 3 } }),
+    ]);
+    const calls = tools(conversation);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.call.output).toMatchObject({ text: "ok", fileChanges: changes, changesIncomplete: true });
+    expect(calls[1]!.call.toolName).toBe("mcp__fixture__lookup");
+  });
   it.each(["stream", "final snapshot"])("keeps remote tool commands from Go-normalized output-only results in %s", (source) => {
     // Go's TestRemoteToolEventFixture checks these events against raw cloud
     // messages whose tool_result supplies no input, including across polls.

@@ -978,8 +978,14 @@ func (r *ClaudeRunner) appendOutput(turn *claudeTurn, events []claude.Event) {
 	markProviderOutput(turn.trace, out)
 	batch := r.rec.outputBatch(turn.id, out)
 	for _, e := range out {
-		if e.Final && e.Payload["kind"] == "tool_call" && e.Payload["tool"] != "Edit" && e.Payload["tool"] != "Write" {
+		if e.Final && (e.Payload["kind"] == "command" || (e.Payload["kind"] == "tool_call" && e.Payload["tool"] != "Edit" && e.Payload["tool"] != "Write")) {
 			batch.FileObservations = append(batch.FileObservations, filechanges.Observation{OperationID: turn.id + ":" + e.ItemID + ":coverage", Cwd: turn.filesRoot(), TurnID: turn.id, Reason: "untracked_tools"})
+		}
+	}
+	if files := turn.files.Load(); files != nil {
+		collection := providerFileCollection(files, turn.id, out)
+		if len(collection.Native) > 0 {
+			batch.FileCollections = append(batch.FileCollections, collection)
 		}
 	}
 	if err := r.batcher.Append(batch, false); err != nil {

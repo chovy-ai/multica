@@ -11,4 +11,8 @@ it("adds the Desktop action to the pinned tool card and fails visibly when its a
   expect(transform(source, "/" + id)?.code).toContain("<FileChangeAction call={call} />");
   expect(transform(source, "/unrelated.tsx")).toBeUndefined();
   expect(() => transform("changed card", "/" + id)).toThrow("anchor changed");
+  const expanded = "agentConversation/components/tool-renderers/AgentExpandedToolContent.tsx";
+  const expandedSource = readFileSync(new URL("../../../vendor/tutti/packages/agent/gui/shared/" + expanded, import.meta.url), "utf8");
+  expect(transform(expandedSource, "/" + expanded)?.code).toContain("<ToolResultEvidence call={call} />");
+  expect(() => transform("changed tool content", "/" + expanded)).toThrow("evidence anchor changed");
 });

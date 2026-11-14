@@ -137,9 +137,9 @@ export class TurnModel {
       }
       case "command":
         return toolCall(item.id, status, "Bash", {
-          command: text(state.command), ...(text(state.cwd) ? { cwd: state.cwd } : {}),
+          ...record(state.input), command: text(state.command), ...(text(state.cwd) ? { cwd: state.cwd } : {}),
         }, {
-          text: item.output,
+          ...resultDetails(state), text: item.output,
           ...(typeof state.exit_code === "number" ? { exitCode: state.exit_code } : {}),
           ...(typeof state.duration_ms === "number" ? { durationMs: state.duration_ms } : {}),
         }, state.error);
@@ -150,7 +150,7 @@ export class TurnModel {
         const server = text(state.server);
         if (server === CONTEXT_SERVER && tool === "ask_user_question") return null;
         const failure = state.error ? errorMessage(state.error) : "";
-        return toolCall(item.id, status, server ? `mcp__${server}__${tool}` : tool || "Tool", state.input, item.output || failure, state.error);
+        return toolCall(item.id, status, server ? `mcp__${server}__${tool}` : tool || "Tool", state.input, state.result || state.file_changes || typeof state.elapsed_seconds === "number" ? { ...resultDetails(state), text: item.output || failure } : item.output || failure, state.error);
       }
       case "image": {
         const attachmentId = text(state.attachment_id);
@@ -165,6 +165,17 @@ export class TurnModel {
     }
     return null;
   }
+}
+
+function resultDetails(state: Record<string, unknown>): Record<string, unknown> {
+  const result = record(state.result);
+  return {
+    ...result,
+    ...(result ? { providerResult: result } : {}),
+    ...(Array.isArray(state.file_changes) ? { fileChanges: state.file_changes } : {}),
+    ...(state.file_changes_incomplete === true ? { changesIncomplete: true } : {}),
+    ...(typeof state.elapsed_seconds === "number" ? { elapsedSeconds: state.elapsed_seconds } : {}),
+  };
 }
 
 function toolCall(id: string, status: string, toolName: string, input: unknown, output: string | Record<string, unknown>, error?: unknown): ItemMessage {
@@ -212,19 +223,24 @@ function backgroundTask(item: ItemModel, locale: ConversationLocale, items: read
   const spawn = parent ? items.find((call) => call.id === parent) : undefined;
   const input = record(spawn?.state.input);
   const prompt = text(input?.prompt);
+  const taskResult = {
+    ...(text(state.output_file) ? { outputFile: state.output_file } : {}),
+    ...(Array.isArray(state.resource_links) ? { resourceLinks: state.resource_links } : {}),
+    ...(text(state.run_id) ? { runId: state.run_id } : {}),
+  };
   const subagentTranscript = {
-    locale, prompt,
+    locale, prompt, result: taskResult,
     items: transcript.map((child) => ({
       id: child.id, kind: child.kind, status: child.status === "in_progress" && status !== "running" ? "cancelled" : child.status,
       text: child.text, tool: child.kind === "command" ? "Bash" : text(child.state.tool),
-      input: child.state.input, output: child.output || errorMessage(child.state.error),
+      input: child.state.input, output: child.output || errorMessage(child.state.error), result: resultDetails(child.state),
       attachmentId: text(child.state.attachment_id), mimeType: text(child.state.mime_type),
     })),
   };
   return {
     messageId: item.id, kind: "text", status,
     payload: { kind: "agent_system_notice", noticeKind: "background_task", title, content: progress || title, ...(detail ? { detail } : {}),
-      ...(state.task_type !== "local_bash" && (state.task_type === "local_agent" || parent || !detail) ? { subagentTranscript } : {}),
+      ...((Object.keys(taskResult).length > 0 || (state.task_type !== "local_bash" && (state.task_type === "local_agent" || parent || !detail))) ? { subagentTranscript } : {}),
     },
     semantics: { userVisibleAssistantResponse: false, turnSettling: false },
   };

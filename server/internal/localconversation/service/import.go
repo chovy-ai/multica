@@ -14,7 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/localconversation/contextmcp"
+	"github.com/multica-ai/multica/server/internal/localconversation/provider"
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
+	"github.com/multica-ai/multica/server/internal/localconversation/provider/codex"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 	"github.com/multica-ai/multica/server/internal/localconversation/store/sqlitedb"
 	"github.com/multica-ai/multica/server/pkg/codexappserver"
@@ -67,8 +70,7 @@ type nativeTurn struct {
 	status    string
 	startedAt time.Time
 	user      string
-	items     []map[string]any
-	replies   []string
+	events    []provider.Event
 }
 
 type nativeSession struct {
@@ -272,20 +274,38 @@ func importBatches(conversationID string, turns []nativeTurn) []store.Batch {
 			b.Events = append(b.Events, event("", "user.message", true, map[string]any{"message_id": messageID, "content": t.user}))
 		}
 		b.Events = append(b.Events, event("", "turn.started", false, map[string]any{"request_id": turnID}))
-		for j, item := range t.items {
-			b.Events = append(b.Events, event(fmt.Sprintf("%s~tool-%03d", turnID, j+1), "item.completed", true, item))
+		preview := ""
+		nativeIDs := map[string]string{}
+		for j, item := range t.events {
+			nativeIDs[item.ItemID] = fmt.Sprintf("%s~m%05d", turnID, j+1)
 		}
-		for j, reply := range t.replies {
-			itemID := fmt.Sprintf("%s~m%03d", turnID, j+1)
-			b.Messages = append(b.Messages, store.NewMessage{ID: itemID, TurnID: turnID, Role: "assistant", Content: reply, CreatedAt: at})
-			b.Events = append(b.Events, event(itemID, "item.completed", true, map[string]any{"kind": "assistant_text", "status": "completed", "text": reply}))
+		for j, item := range t.events {
+			if item.Payload["kind"] == "reasoning" {
+				continue
+			}
+			payload := make(map[string]any, len(item.Payload)+1)
+			for key, value := range item.Payload {
+				payload[key] = value
+			}
+			payload["source_item_id"] = item.ItemID
+			for _, key := range []string{"parent_tool_use_id", "tool_use_id"} {
+				if source, ok := payload[key].(string); ok && nativeIDs[source] != "" {
+					payload[key] = nativeIDs[source]
+				}
+			}
+			itemID := fmt.Sprintf("%s~m%05d", turnID, j+1)
+			if item.Image != nil {
+				payload = map[string]any{"kind": "assistant_text", "status": "completed", "text": "[Image retained in native session context]", "source_item_id": item.ItemID}
+			}
+			b.Events = append(b.Events, event(itemID, "item.completed", true, payload))
+			if payload["kind"] == "assistant_text" {
+				text, _ := payload["text"].(string)
+				b.Messages = append(b.Messages, store.NewMessage{ID: itemID, TurnID: turnID, Role: "assistant", Content: text, CreatedAt: at})
+				preview = truncateRunes(text, previewRunes)
+			}
 		}
 		b.Events = append(b.Events, event("", "turn.completed", true, map[string]any{"status": t.status}))
 		b.CompleteTurn = &store.TurnCompletion{TurnID: turnID, Status: t.status, CompletedAt: at}
-		preview := ""
-		if n := len(t.replies); n > 0 {
-			preview = truncateRunes(t.replies[n-1], previewRunes)
-		}
 		b.Summary = &store.SummaryPatch{Status: &idle, LastMessagePreview: &preview, UpdatedAt: at}
 		out = append(out, b)
 	}
@@ -363,43 +383,72 @@ func (h *claudeHistory) read(ctx context.Context, id string) (nativeSession, err
 	if err != nil {
 		return session, err
 	}
-	var messages []struct {
-		Type      string `json:"type"`
-		Timestamp any    `json:"timestamp"`
-		Message   struct {
-			Content json.RawMessage `json:"content"`
-		} `json:"message"`
-	}
+	var messages []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &messages); err != nil {
 		return session, errors.New("Claude Code returned invalid history")
 	}
 	created, _ := time.Parse(time.RFC3339, session.CreatedAt)
 	var turn *nativeTurn
-	for _, m := range messages {
-		text := blockText(m.Message.Content)
-		at, _ := time.Parse(time.RFC3339, isoTime(m.Timestamp, session.CreatedAt))
+	var norm *claude.Normalizer
+	var transcript provider.Transcript
+	finish := func() {
+		if turn == nil {
+			return
+		}
+		transcript.Add(norm.Close("cancelled")...)
+		turn.events = transcript.Events()
+	}
+	for index, envelope := range messages {
+		var typ string
+		_ = json.Unmarshal(envelope["type"], &typ)
+		if typ != "user" && typ != "assistant" {
+			if norm != nil {
+				frame, _ := json.Marshal(envelope)
+				transcript.Add(norm.Accept(frame)...)
+			}
+			continue
+		}
+		var message map[string]json.RawMessage
+		if json.Unmarshal(envelope["message"], &message) != nil || message == nil {
+			return session, errors.New("Claude Code returned invalid history message")
+		}
+		text := blockText(message["content"])
+		// Historical SDK messages can have string content or no API message ID.
+		var contentString string
+		if json.Unmarshal(message["content"], &contentString) == nil {
+			message["content"], _ = json.Marshal([]map[string]any{{"type": "text", "text": contentString}})
+		}
+		if len(message["id"]) == 0 {
+			message["id"], _ = json.Marshal(fmt.Sprintf("history-%d", index))
+		}
+		envelope["message"], _ = json.Marshal(message)
+		frame, _ := json.Marshal(envelope)
+		if typ == "user" && text != "" && norm != nil {
+			// A user envelope can finish old tool calls and start a new prompt.
+			// Apply its results before closing the previous turn's normalizer.
+			transcript.Add(norm.Accept(frame)...)
+		}
+		var timestamp any
+		_ = json.Unmarshal(envelope["timestamp"], &timestamp)
+		at, _ := time.Parse(time.RFC3339, isoTime(timestamp, session.CreatedAt))
 		if at.IsZero() {
 			at = created
 		}
-		if turn == nil || (m.Type == "user" && text != "") {
+		if turn == nil || (typ == "user" && text != "") {
+			finish()
 			session.turns = append(session.turns, nativeTurn{status: "completed", startedAt: at})
 			turn = &session.turns[len(session.turns)-1]
+			norm = claude.NewNormalizer(contextmcp.Name)
+			transcript = provider.Transcript{}
 		}
-		switch {
-		case m.Type == "user" && text != "":
+		if typ == "user" && text != "" {
 			turn.user = text
-		case m.Type == "assistant" && text != "":
-			turn.replies = append(turn.replies, text)
+			continue
 		}
-		var blocks []map[string]any
-		_ = json.Unmarshal(m.Message.Content, &blocks)
-		for _, b := range blocks {
-			if b["type"] == "tool_use" {
-				name, _ := b["name"].(string)
-				turn.items = append(turn.items, map[string]any{"kind": "tool_call", "status": "completed", "tool": name, "input": b["input"], "output": ""})
-			}
-		}
+		transcript.Add(norm.Accept(frame)...)
 	}
+	finish()
+
 	return session, nil
 }
 
@@ -553,28 +602,24 @@ func (h *codexHistory) read(ctx context.Context, id string) (nativeSession, erro
 				status = "cancelled"
 			}
 			turn := nativeTurn{status: status, startedAt: at}
-			for _, item := range t.Items {
-				switch item["type"] {
-				case "userMessage":
+			norm := codex.NewNormalizer(contextmcp.Name)
+			var transcript provider.Transcript
+			for index, item := range t.Items {
+				if item["type"] == "userMessage" {
 					content, _ := json.Marshal(item["content"])
 					if text := blockText(content); text != "" {
 						turn.user = strings.TrimSpace(strings.Join([]string{turn.user, text}, "\n"))
 					}
-				case "agentMessage":
-					if text, _ := item["text"].(string); text != "" {
-						turn.replies = append(turn.replies, text)
-					}
-				case "commandExecution":
-					command, _ := item["command"].(string)
-					output, _ := item["aggregatedOutput"].(string)
-					turn.items = append(turn.items, map[string]any{"kind": "command", "status": "completed", "command": command, "output": output, "exit_code": item["exitCode"]})
-				case "mcpToolCall":
-					tool, _ := item["tool"].(string)
-					server, _ := item["server"].(string)
-					result, _ := json.Marshal(firstPresent(item["error"], item["result"], map[string]any{}))
-					turn.items = append(turn.items, map[string]any{"kind": "tool_call", "status": "completed", "tool": tool, "server": server, "input": item["arguments"], "output": string(result)})
+					continue
 				}
+				if item["id"] == nil {
+					item["id"] = fmt.Sprintf("history-%d", index)
+				}
+				frame, _ := json.Marshal(map[string]any{"item": item})
+				transcript.Add(norm.Accept("item/completed", frame)...)
 			}
+			turn.events = transcript.Events()
+
 			session.turns = append(session.turns, turn)
 		}
 		if page.NextCursor == nil || *page.NextCursor == "" {
@@ -655,13 +700,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func firstPresent(values ...any) any {
-	for _, v := range values {
-		if v != nil {
-			return v
-		}
-	}
-	return nil
 }

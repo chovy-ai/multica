@@ -6,26 +6,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/provider"
 )
 
-// Event is one normalized conversation event without sequence numbers or
-// turn; the conversation service assigns those when it commits the event.
-// Types and payloads follow the v2 schema (local-v2.schema.json).
-type Event struct {
-	ItemID  string
-	Type    string
-	Final   bool
-	Payload map[string]any
-	// Image is set on an image item.completed whose bytes the service must
-	// store as an attachment before committing; it then sets attachment_id.
-	Image *InlineImage
-}
-
-// InlineImage is an image returned inline by a tool.
-type InlineImage struct {
-	MimeType string
-	Data     string
-}
+// Event and inline images use the common live/history contract.
+type Event = provider.Event
+type InlineImage = provider.InlineImage
 
 // TurnResult is the outcome Claude Code reported for the current root turn.
 type TurnResult struct {
@@ -109,6 +96,11 @@ func (n *Normalizer) TakeResult() *TurnResult {
 }
 
 type sdkMessage struct {
+	ToolUseResult   json.RawMessage `json:"tool_use_result"`
+	OutputFile      string          `json:"output_file"`
+	ResourceLinks   json.RawMessage `json:"resource_links"`
+	RunID           string          `json:"run_id"`
+	Elapsed         float64         `json:"elapsed_time_seconds"`
 	Type            string          `json:"type"`
 	Subtype         string          `json:"subtype"`
 	SessionID       string          `json:"session_id"`
@@ -191,7 +183,19 @@ func (n *Normalizer) Accept(raw json.RawMessage) []Event {
 	case "assistant":
 		return n.assistant(m.Message)
 	case "user":
-		return n.user(m.Message)
+		return n.user(m.Message, m.ToolUseResult)
+	case "tool_progress":
+		if item := n.open[m.ToolUseID]; item != nil {
+			state := toolStart(n.toolNames[m.ToolUseID], item.startInput())
+			state["status"] = "in_progress"
+			state["elapsed_seconds"] = m.Elapsed
+			state["output"] = ""
+			if state["kind"] == "command" {
+				state["exit_code"] = nil
+			}
+			return []Event{{ItemID: m.ToolUseID, Type: "item.updated", Payload: state}}
+		}
+		return nil
 	case "result":
 		r := &TurnResult{IsError: m.IsError, Output: m.Result}
 		if m.IsError {
@@ -290,11 +294,17 @@ func (n *Normalizer) assistant(msg *apiMessage) []Event {
 	return events
 }
 
-func (n *Normalizer) user(msg *apiMessage) []Event {
+func (n *Normalizer) user(msg *apiMessage, result json.RawMessage) []Event {
 	if msg == nil {
 		return nil
 	}
 	var events []Event
+	count := 0
+	for _, block := range msg.Content {
+		if block.Type == "tool_result" {
+			count++
+		}
+	}
 	for _, block := range msg.Content {
 		if block.Type != "tool_result" || n.skipped[block.ToolUseID] {
 			continue
@@ -309,6 +319,9 @@ func (n *Normalizer) user(msg *apiMessage) []Event {
 		state := toolStart(name, item.startInput())
 		state["status"] = "completed"
 		state["output"] = output
+		if count == 1 {
+			applyToolResult(state, result)
+		}
 		if state["kind"] == "command" {
 			state["exit_code"] = nil
 		}
@@ -339,6 +352,9 @@ func (n *Normalizer) system(m sdkMessage) []Event {
 			return nil
 		}
 		state := map[string]any{"kind": "background_task", "status": "in_progress", "task_id": m.TaskID, "description": m.Description}
+		if m.RunID != "" {
+			state["run_id"] = m.RunID
+		}
 		if m.ToolUseID != "" {
 			state["tool_use_id"] = m.ToolUseID
 		}
@@ -389,6 +405,15 @@ func (n *Normalizer) system(m sdkMessage) []Event {
 			task.state["summary"] = *m.Summary
 		}
 		applyTaskUsage(task.state, m.Usage)
+		if m.OutputFile != "" {
+			task.state["output_file"] = m.OutputFile
+		}
+		if len(m.ResourceLinks) > 0 {
+			var links any
+			if json.Unmarshal(m.ResourceLinks, &links) == nil {
+				task.state["resource_links"] = links
+			}
+		}
 		return n.endTask(m.TaskID, status)
 	case "background_tasks_changed":
 		live := map[string]bool{}

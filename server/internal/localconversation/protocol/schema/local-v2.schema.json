@@ -745,6 +745,37 @@
         },
         "error": {
           "$ref": "#/$defs/error"
+        },
+        "result": {
+          "description": "Provider structured tool output, separate from model-visible text."
+        },
+        "source_item_id": {
+          "type": "string"
+        },
+        "file_changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file_change"
+          }
+        },
+        "file_changes_incomplete": {
+          "type": "boolean"
+        },
+        "elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_file": {
+          "type": "string"
+        },
+        "resource_links": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "run_id": {
+          "type": "string"
         }
       },
       "allOf": [

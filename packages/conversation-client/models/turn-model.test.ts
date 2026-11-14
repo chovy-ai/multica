@@ -20,6 +20,16 @@ function message(payload: Record<string, unknown>) {
 }
 
 describe("tool message payloads", () => {
+  it("keeps structured results, reported file changes and full command input", () => {
+    const changes = [{ path: "notes.md", kind: "update" }];
+    const result = { stdout: "ok", stderr: "", interrupted: false };
+    const row = message({ kind: "command", status: "completed", command: "fixture", input: { command: "fixture", description: "edit notes", timeout: 1000 }, output: "ok", result, file_changes: changes, file_changes_incomplete: true });
+    expect(row.payload).toMatchObject({ callId: "call", toolName: "Bash", input: { command: "fixture", description: "edit notes", timeout: 1000 }, output: { text: "ok", providerResult: result, fileChanges: changes, changesIncomplete: true } });
+    expect(message({ kind: "tool_call", status: "completed", server: "fixture", tool: "lookup", result: { structuredContent: { count: 3 } }, output: "found" }).payload)
+      .toMatchObject({ toolName: "mcp__fixture__lookup", output: { structuredContent: { count: 3 }, text: "found" } });
+    expect(message({ kind: "tool_call", status: "in_progress", tool: "WebFetch", output: "", elapsed_seconds: 3 }).payload)
+      .toMatchObject({ output: { elapsedSeconds: 3 } });
+  });
   it("preserves command output and execution metadata in the structured message", () => {
     const output = '  {"text":"this is command output, not a payload"}\n[output truncated]\n';
     const row = message({ kind: "command", status: "completed", command: "fixture", cwd: "/repo", output, exit_code: 0, duration_ms: 0 });
