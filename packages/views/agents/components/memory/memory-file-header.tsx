@@ -13,7 +13,10 @@ export function MemoryFileHeader({
   const slash = path.lastIndexOf("/");
   return (
     <header className="flex min-w-0 items-center gap-2 border-b px-3 py-3 md:px-4">
-      <Icon className="size-4 shrink-0 text-brand" aria-hidden="true" />
+      <Icon
+        className="hidden size-4 shrink-0 text-brand sm:block"
+        aria-hidden="true"
+      />
       <h2 className="min-w-0 flex-1 truncate text-label" title={path}>
         {slash >= 0 && (
           <span className="text-muted-foreground">

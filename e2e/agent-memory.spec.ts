@@ -22,6 +22,27 @@ async function openEntry(page: Page) {
 }
 const code = (page: Page) => page.locator(".view-lines");
 
+test("French save action stays inside a 320px editor toolbar", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 600 });
+  await page.goto("/e2e/fixtures/agent-memory.html?locale=fr");
+  await page
+    .getByRole("treeitem", { name: "root-cause-first.md", exact: true })
+    .click();
+  const save = page.getByRole("button", { name: "Enregistrer", exact: true });
+  await expect(save).toBeVisible();
+  const bounds = await save.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(600);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
 for (const theme of ["light", "dark"])
   for (const width of [1280, 390]) {
     test(`agent memory management: ${theme} ${width}`, async ({ page }) => {
