@@ -86,6 +86,8 @@ export interface PromptServiceOptions<
   Display extends PromptDisplay
 > {
   enqueue(input: Input): Promise<LocalPromptQueue>;
+  canReorder?(): boolean;
+  reorder?(id: string, requestIds: string[], revision: number): Promise<LocalPromptQueue>;
   checkpoint?(input: Input, display: Display): Promise<void>;
   update(
     id: string,
@@ -147,6 +149,7 @@ export class PromptService<
   private readonly awaitingTranscript = new Map<string, Map<string, Display>>();
   private readonly errors = new Map<string, PromptError>();
   private readonly operations = new Map<string, Promise<StopResult>>();
+  private readonly reordering = new Set<string>();
   private readonly steering = new Map<
     string,
     {
@@ -801,6 +804,47 @@ export class PromptService<
         delete item.admission;
       });
     return item.admission;
+  }
+
+  supportsReordering(): boolean {
+    return Boolean(this.options.reorder && this.options.canReorder?.());
+  }
+
+  canReorder(rawId: string | null | undefined): boolean {
+    void this.revision;
+    const id = rawId?.trim() ?? "";
+    const queue = this.queues.get(id);
+    if (!this.supportsReordering() ||
+        !queue || queue.items.length < 2 || queue.dispatchingRequestId ||
+        this.reordering.has(id) || this.sending(id) || this.pending(id).length) return false;
+    const visible = this.visibleQueuedPrompts(id);
+    return visible.length === queue.items.length && queue.items.every((item) =>
+      visible.some((prompt) => prompt.id === item.display.id) &&
+      this.authorities.get(id)?.get(item.requestId)?.state !== "recovery_required"
+    );
+  }
+
+  async reorder(id: string, promptIds: string[]): Promise<void> {
+    this.options.beforeTurnOperation?.();
+    if (!this.canReorder(id)) return;
+    const queue = this.queues.get(id)!;
+    const requestIds = promptIds.map((promptId) => queue.items.find((item) => item.display.id === promptId)?.requestId);
+    if (requestIds.length !== queue.items.length || new Set(requestIds).size !== requestIds.length ||
+        requestIds.some((requestId) => !requestId)) return;
+    this.reordering.add(id);
+    this.publish();
+    try {
+      const result = await this.options.reorder!(id, requestIds as string[], queue.revision);
+      if (this.disposed) return;
+      this.receive(id, result);
+    } catch (error) {
+      if (this.disposed) return;
+      this.options.error(error);
+      this.options.reconcile({ agentSessionId: id, needsState: true, needsMessages: false });
+    } finally {
+      this.reordering.delete(id);
+      this.publish();
+    }
   }
 
   update(id: string, queueAction: PromptQueueAction, promptId?: string): void {

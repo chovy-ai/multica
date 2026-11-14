@@ -14,9 +14,11 @@ AgentGuiInitSnapshot,
 LocalConversationSource
 } from "../src/protocol";
 import { localSourceFromClient } from "../src/runtime/local-snapshot-test-host";
+import type { LocalPromptQueue } from "@multica/core/local-conversation/protocol";
 
 const at = "2026-11-03T10:00:00Z";
 const listeners = new Set<(event: AgentGuiHostEvent) => void>();
+const queueReorder = new URLSearchParams(location.search).has("queueReorder");
 function snapshot(
   id: string,
   theme: "light" | "dark",
@@ -41,6 +43,8 @@ function snapshot(
     sidePane,
     sideWorkspace: true,
     local: true,
+    queueOwner: queueReorder ? "desktop" : undefined,
+    queueReordering: queueReorder,
     hostActive: true,
     hostVisible: true,
     agents: [],
@@ -74,9 +78,16 @@ const hostActions: { instance: string; method: string; params: unknown }[] = [];
 Object.assign(window, { hostActions });
 function service(id: string, theme: "light" | "dark", sidePane: boolean) {
   const session = snapshot(id, theme, sidePane).sessions[0]!;
+  let queue: LocalPromptQueue = {
+    revision: 1, paused: true,
+    items: queueReorder ? ["First queued message", "Second queued message", "Third queued message"].map((text, index) => ({
+      requestId: `${id}-${index}`, content: text,
+      display: { id: `${id}-${index}`, clientSubmitId: `${id}-${index}`, createdAtUnixMs: index + 1, content: [{ type: "text", text }] },
+    })) : [],
+  };
   const request = async (
     method: string,
-    params: { key?: string; value?: string }
+    params: { key?: string; value?: string; requestIds?: string[]; revision?: number }
   ) => {
     hostActions.push({ instance: id, method, params });
     switch (method) {
@@ -85,6 +96,7 @@ function service(id: string, theme: "light" | "dark", sidePane: boolean) {
       case "session.load":
         return {
           session,
+          ...(queueReorder ? { promptQueue: queue } : {}),
           messages: [
             {
               id: `${id}-q`,
@@ -110,6 +122,10 @@ function service(id: string, theme: "light" | "dark", sidePane: boolean) {
           tasks: [],
           pending: {}
         };
+      case "queue.reorder":
+        if (params.revision !== queue.revision) throw new Error("Queue changed");
+        queue = { ...queue, revision: queue.revision + 1, items: params.requestIds!.map((requestId) => queue.items.find((item) => item.requestId === requestId)!) };
+        return queue;
       case "storage.read":
         await startupGate;
         return storage.get(params.key!) ?? null;

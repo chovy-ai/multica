@@ -18,6 +18,7 @@ const (
 )
 
 var (
+	ErrQueueChanged = errors.New("local conversation: the queue changed; try reordering again")
 	// ErrQueueItemStarted rejects changing a queued message that already
 	// started.
 	ErrQueueItemStarted = errors.New("local conversation: this queued message has already started")
@@ -243,6 +244,47 @@ func (s *Service) Enqueue(ctx context.Context, scopeID int64, conversationID str
 // to the front, so it runs as soon as that turn ends.
 func (s *Service) UpdateQueue(ctx context.Context, scopeID int64, conversationID, action, requestID string) (QueueView, error) {
 	return s.ControlQueue(ctx, scopeID, conversationID, action, requestID, "")
+}
+
+const QueueReorderCapability = "queue-reorder-v1"
+
+// ReorderQueue changes waiting positions without interrupting or resuming execution.
+// A stale drag cannot restore a removed item or overwrite a concurrent queue change.
+func (s *Service) ReorderQueue(ctx context.Context, scopeID int64, conversationID string, revision int64, requestIDs []string) (QueueView, error) {
+	if _, err := s.scopedConversation(ctx, scopeID, conversationID); err != nil {
+		return QueueView{}, err
+	}
+	if revision < 0 || len(requestIDs) > maxQueueItems {
+		return QueueView{}, ErrInvalidRequest
+	}
+	seen := make(map[string]bool, len(requestIDs))
+	for _, id := range requestIDs {
+		if id == "" || seen[id] {
+			return QueueView{}, ErrInvalidRequest
+		}
+		seen[id] = true
+	}
+	ctx = context.WithoutCancel(ctx)
+	unlock := s.queues.lock(conversationID)
+	defer unlock()
+	state, err := s.store.Queue(ctx, conversationID)
+	if err != nil {
+		return QueueView{}, err
+	}
+	if state.Revision != revision || len(state.Items) != len(requestIDs) {
+		return QueueView{}, ErrQueueChanged
+	}
+	for _, item := range state.Items {
+		if !seen[item.RequestID] || s.queues.dispatchingFor(conversationID) == item.RequestID {
+			return QueueView{}, ErrQueueChanged
+		}
+	}
+	if reflect.DeepEqual(requestIDsAfter(state, store.QueueChange{}), requestIDs) {
+		return s.queueView(conversationID, state), nil
+	}
+	return s.commitQueue(ctx, conversationID, store.QueueChange{
+		Revision: state.Revision + 1, Paused: state.Paused, Error: state.Error, Order: requestIDs,
+	}, len(state.Items), "reordered")
 }
 
 func (s *Service) ControlQueue(ctx context.Context, scopeID int64, conversationID, action, requestID, operationID string, expectedTurnID ...string) (QueueView, error) {
@@ -571,6 +613,9 @@ func (s *Service) queuedAttemptID(ctx context.Context, conv sqlitedb.Conversatio
 
 // requestIDsAfter is the queue's order once a change applies.
 func requestIDsAfter(state store.QueueState, change store.QueueChange) []string {
+	if change.Order != nil {
+		return append([]string{}, change.Order...)
+	}
 	ids := []string{}
 	for _, item := range state.Items {
 		if item.RequestID != change.Remove && item.RequestID != change.Front {

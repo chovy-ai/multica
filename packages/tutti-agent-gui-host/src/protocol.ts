@@ -74,6 +74,7 @@ export interface AgentGuiWorkspaceState {
   /** Local composer storage partition: API origin and main/Side surface. */
   composerDraftScope?: string;
   queueOwner?: "desktop";
+  queueReordering?: boolean;
   sideWorkspace?: boolean;
   sidePane?: boolean;
   agents: AgentGuiAgentDescriptor[];
@@ -157,6 +158,10 @@ export type AgentGuiTaskMessagePayload = Omit<TaskMessagePayload, "type"> & {
 
 /** IDs belong to the selected transport; local IDs are never sent to cloud APIs. */
 export interface AgentGuiOperations {
+  "queue.reorder": {
+    params: { sessionId: string; requestIds: string[]; revision: number };
+    result: import("@multica/core/local-conversation/protocol").LocalPromptQueue;
+  };
   "queue.enqueue": {
     params: {
       sessionId: string;
@@ -427,6 +432,10 @@ export type AgentGuiOperationInvoker = <M extends AgentGuiOperation>(
 ) => Promise<AgentGuiOperations[M]["result"]>;
 export interface AgentGuiHostServices {
   queue: {
+    reorder?(
+      params: AgentGuiOperations["queue.reorder"]["params"],
+      options?: AgentGuiCallOptions
+    ): Promise<AgentGuiOperations["queue.reorder"]["result"]>;
     prepare?(
       params: AgentGuiOperations["queue.enqueue"]["params"],
     ): Promise<AgentGuiOperations["queue.enqueue"]["params"]>;

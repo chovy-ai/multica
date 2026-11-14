@@ -58,6 +58,66 @@ function service(options: Partial<PromptServiceOptions<Input, Display>> = {}) {
   };
 }
 
+describe("queue reordering", () => {
+  const queue = (ids = ["a", "b", "c"], revision = 4): LocalPromptQueue => ({
+    paused: true, revision,
+    items: ids.map((id) => ({ requestId: `request-${id}`, content: id,
+      display: { id, clientSubmitId: `request-${id}`, createdAtUnixMs: 1, content: [{ type: "text", text: id }] }
+    })),
+  });
+
+  it("waits for authority and maps display identities without interrupting or resuming", async () => {
+    let accept!: (queue: LocalPromptQueue) => void;
+    const reorder = vi.fn(() => new Promise<LocalPromptQueue>((resolve) => { accept = resolve; }));
+    const { prompts, update } = service({ canReorder: () => true, reorder });
+    prompts.receive("s", queue());
+    expect(prompts.canReorder("s")).toBe(true);
+    const done = prompts.reorder("s", ["c", "a", "b"]);
+    expect(reorder).toHaveBeenCalledWith("s", ["request-c", "request-a", "request-b"], 4);
+    expect(prompts.visibleQueuedPrompts("s").map((item) => item.id)).toEqual(["a", "b", "c"]);
+    expect(prompts.canReorder("s")).toBe(false);
+    accept(queue(["c", "a", "b"], 5));
+    await done;
+    expect(prompts.visibleQueuedPrompts("s").map((item) => item.id)).toEqual(["c", "a", "b"]);
+    expect(prompts.queue("s")?.paused).toBe(true);
+    expect(update).not.toHaveBeenCalled();
+    prompts.dispose();
+  });
+
+  it("keeps the known order on failure and requests a fresh queue", async () => {
+    const error = new Error("Queue changed; refresh");
+    const showError = vi.fn();
+    const reconcile = vi.fn();
+    const { prompts } = service({ canReorder: () => true, reorder: vi.fn(async () => { throw error; }), reconcile, error: showError });
+    prompts.receive("s", queue());
+    await prompts.reorder("s", ["b", "c", "a"]);
+    expect(prompts.visibleQueuedPrompts("s").map((item) => item.id)).toEqual(["a", "b", "c"]);
+    expect(reconcile).toHaveBeenCalledWith({ agentSessionId: "s", needsState: true, needsMessages: false });
+    expect(showError).toHaveBeenCalledWith(error);
+    expect(prompts.error("s")).toBeUndefined();
+    prompts.dispose();
+  });
+
+  it("disables unsupported, unconfirmed and dispatching queues and ignores stale permutations", async () => {
+    const reorder = vi.fn(async () => queue());
+    const { prompts } = service({ canReorder: () => true, reorder });
+    prompts.receive("s", queue());
+    await prompts.reorder("s", ["a", "a", "c"]);
+    await prompts.reorder("s", ["a", "b"]);
+    expect(reorder).not.toHaveBeenCalled();
+    prompts.receive("s", { ...queue(), dispatchingRequestId: "request-a" });
+    expect(prompts.canReorder("s")).toBe(false);
+    prompts.receive("s", queue());
+    prompts.restorePending([restored("unconfirmed")]);
+    expect(prompts.canReorder("s")).toBe(false);
+    const unsupported = service({ reorder });
+    unsupported.prompts.receive("s", queue());
+    expect(unsupported.prompts.canReorder("s")).toBe(false);
+    prompts.dispose();
+    unsupported.prompts.dispose();
+  });
+});
+
 describe("messages restored after a reload", () => {
   it("asks once what became of them, and drops only what no longer needs the user", async () => {
     const answers: Record<string, PromptStatus> = {

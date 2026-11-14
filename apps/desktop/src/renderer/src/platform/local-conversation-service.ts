@@ -450,6 +450,7 @@ export function createLocalConversationParentService(
         ...(deviceId === "local" ? [] : [deviceId])
       ]),
       queueOwner: "desktop",
+      queueReordering: (await transport.capabilities?.())?.includes("queue-reorder-v1") === true,
       sideWorkspace: true,
       sidePane: Boolean(options.storagePrefix),
       agents: lastAgents.get(client) ?? [],
@@ -558,6 +559,20 @@ export function createLocalConversationParentService(
 
   const services: AgentGuiHostServices = {
     queue: {
+      reorder: async (params) => {
+        assertCurrent();
+        const raw = await command(params.sessionId, {
+          type: "queue_reorder",
+          revision: params.revision,
+          request_ids: params.requestIds,
+        });
+        const queue = parseWithFallback<z.infer<typeof localV2QueueSchema> | null>(
+          raw, localV2QueueSchema.extend({ items: z.array(persistedQueuedPromptSchema) }),
+          null, { endpoint: "local-v2.queue-reorder" },
+        );
+        if (!queue) throw new Error("Invalid queue reorder response");
+        return projectQueue(queue);
+      },
       prepare: async (params) => {
         assertCurrent();
         await validateMembers(params.item.references ?? []);

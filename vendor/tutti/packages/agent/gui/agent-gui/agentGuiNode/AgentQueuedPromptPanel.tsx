@@ -14,7 +14,8 @@ import {
   TooltipTrigger,
   useTextOverflow
 } from "@tutti-os/ui-system";
-import { ChevronRight, Pencil } from "lucide-react";
+import { ChevronRight, GripVertical, Pencil } from "lucide-react";
+import { useTranslation } from "../../i18n";
 import { observer } from "mobx-react-lite";
 import {
   Component,
@@ -23,6 +24,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
   type KeyboardEvent,
   type PointerEvent
 } from "react";
@@ -92,6 +94,8 @@ interface AgentQueuedPromptPanelViewProps {
   onSendQueuedPromptNext: (queuedPromptId: string) => void;
   onRemoveQueuedPrompt: (queuedPromptId: string) => void;
   onEditQueuedPrompt: (queuedPromptId: string) => void;
+  onReorderQueuedPrompts?: (queuedPromptIds: string[]) => void;
+  reorderDisabled?: boolean;
   agentSessionId?: string | null;
   onLinkClick?: (href: string) => void;
   workspaceId?: string | null;
@@ -354,14 +358,78 @@ function AgentQueuedPromptPanelViewRender({
   onSendQueuedPromptNext,
   onRemoveQueuedPrompt,
   onEditQueuedPrompt,
+  onReorderQueuedPrompts,
+  reorderDisabled = false,
   agentSessionId = null,
   onLinkClick,
   workspaceId = null,
   workspaceAppIcons = EMPTY_WORKSPACE_APP_ICONS
 }: AgentQueuedPromptPanelViewProps): React.JSX.Element {
+  const { t } = useTranslation();
   const runtime = useOptionalConversationServices();
   const HostQueueAction = useContext(QueuedPromptMenuActionContext);
   const [isExpanded, setIsExpanded] = useState(false);
+  const dragRef = useRef<{ id: string; order: string[] } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; after: boolean } | null>(null);
+  const resetDrag = usePersistCallback(() => {
+    dragRef.current = null;
+    setDropTarget(null);
+  });
+  const onDragStart = usePersistCallback((event: DragEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const id = event.currentTarget.dataset.promptId;
+    if (!id || !onReorderQueuedPrompts || reorderDisabled || !isExpanded) {
+      event.preventDefault();
+      return;
+    }
+    dragRef.current = { id, order: queuedPrompts.map((prompt) => prompt.id) };
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-multica-queued-prompt", id);
+  });
+  const validDrag = () => {
+    const drag = dragRef.current;
+    return drag && onReorderQueuedPrompts && !reorderDisabled &&
+      drag.order.join("\0") === queuedPrompts.map((prompt) => prompt.id).join("\0") ? drag : null;
+  };
+  const onDragOver = usePersistCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!validDrag()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    const id = event.currentTarget.dataset.promptId!;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const after = event.clientY > bounds.top + bounds.height / 2;
+    setDropTarget((current) => current?.id === id && current.after === after ? current : { id, after });
+  });
+  const onDrop = usePersistCallback((event: DragEvent<HTMLDivElement>) => {
+    const drag = validDrag();
+    if (!drag) { resetDrag(); return; }
+    event.preventDefault();
+    event.stopPropagation();
+    const targetId = event.currentTarget.dataset.promptId!;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const after = event.clientY > bounds.top + bounds.height / 2;
+    const order = drag.order.filter((id) => id !== drag.id);
+    const index = order.indexOf(targetId);
+    if (index >= 0) {
+      order.splice(index + (after ? 1 : 0), 0, drag.id);
+      if (order.some((id, position) => id !== drag.order[position])) onReorderQueuedPrompts?.(order);
+    }
+    resetDrag();
+  });
+  const onReorderKeyDown = usePersistCallback((event: KeyboardEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (reorderDisabled) return;
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const order = queuedPrompts.map((prompt) => prompt.id);
+    const index = order.indexOf(event.currentTarget.dataset.promptId!);
+    const target = index + (event.key === "ArrowUp" ? -1 : 1);
+    if (index >= 0 && target >= 0 && target < order.length) {
+      [order[index], order[target]] = [order[target]!, order[index]!];
+      onReorderQueuedPrompts?.(order);
+    }
+  });
   const singlePromptTextRef = useRef<HTMLDivElement | null>(null);
   const queuedPromptListRef = useRef<HTMLDivElement | null>(null);
   const pointerHandledEditPromptIdRef = useRef<string | null>(null);
@@ -536,7 +604,28 @@ function AgentQueuedPromptPanelViewRender({
               className={styles.composerQueuedPromptRow}
               data-testid={`agent-gui-composer-queued-prompt-${queuedPrompt.id}`}
               data-draining={isDraining ? "true" : "false"}
+              data-prompt-id={queuedPrompt.id}
+              data-reorderable={Boolean(onReorderQueuedPrompts && isExpanded)}
+              data-drop-position={dropTarget?.id === queuedPrompt.id ? (dropTarget.after ? "after" : "before") : undefined}
+              onDragOver={onDragOver}
+              onDrop={onDrop}
             >
+              {onReorderQueuedPrompts && isExpanded ? (
+                <CanvasNodeGhostIconButton
+                  aria-label={t("agentHost.agentGui.reorderQueuedPrompt")}
+                  title={t("agentHost.agentGui.reorderQueuedPromptHint")}
+                  className="agent-gui-node__queued-prompt-drag-handle"
+                  data-prompt-id={queuedPrompt.id}
+                  disabled={isDraining}
+                  aria-disabled={reorderDisabled || undefined}
+                  draggable={!isDraining && !reorderDisabled}
+                  onDragStart={onDragStart}
+                  onDragEnd={resetDrag}
+                  onKeyDown={onReorderKeyDown}
+                >
+                  <GripVertical aria-hidden="true" />
+                </CanvasNodeGhostIconButton>
+              ) : null}
               <div className={styles.composerQueuedPromptMain}>
                 <div className={styles.composerQueuedPromptBody}>
                   {displayText ? (
@@ -661,6 +750,9 @@ export const AgentQueuedPromptPanel = observer(function AgentQueuedPromptPanel(
   const { prompts } = useConversationServices();
   const queuedPrompts = prompts.visibleQueuedPrompts(props.agentSessionId);
   const queue = prompts.queueRecord(props.agentSessionId);
+  const reorder = usePersistCallback((ids: string[]) => {
+    if (props.agentSessionId) void prompts.reorder(props.agentSessionId, ids);
+  });
   if (!queuedPrompts.length) return null;
   return (
     <div
@@ -674,6 +766,8 @@ export const AgentQueuedPromptPanel = observer(function AgentQueuedPromptPanel(
           queue?.suspendReason === "user_stop" ? "paused_by_user" : "active"
         }
         drainingQueuedPromptId={queue?.sendNextPromptId ?? null}
+        onReorderQueuedPrompts={prompts.supportsReordering?.() ? reorder : undefined}
+        reorderDisabled={!prompts.canReorder?.(props.agentSessionId)}
       />
     </div>
   );

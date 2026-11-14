@@ -4,6 +4,20 @@ import { fakeHostServices } from "../e2e-harness/fake-host-services";
 import { createHostServicesConnection } from "./host-services-connection";
 
 describe("direct host service lifetime", () => {
+  it("forwards reorder calls and blocks an inactive view", async () => {
+    const run = vi.fn(async () => ({ revision: 2, paused: true, items: [] }));
+    let interactive = true;
+    const connection = createHostServicesConnection(fakeHostServices(run), {
+      current: () => true, interactive: () => interactive,
+    });
+    const params = { sessionId: "s", requestIds: ["c", "a", "b"], revision: 1 };
+    await connection.client.queue.reorder!(params);
+    expect(run).toHaveBeenCalledWith("queue.reorder", params, undefined);
+    interactive = false;
+    await expect(connection.client.queue.reorder!(params)).rejects.toMatchObject({ code: "inactive_host" });
+    connection.dispose();
+  });
+
   it("refuses a queued call if its workspace changed before dispatch", async () => {
     let current = true;
     const run = vi.fn(async () => ({}));

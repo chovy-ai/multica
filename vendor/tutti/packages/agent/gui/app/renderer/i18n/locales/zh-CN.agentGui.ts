@@ -283,6 +283,8 @@ export const zhCNAgentGui = {
   editQueuedPrompt: "编辑",
   deleteQueuedPrompt: "删除",
   queuedPromptMoreActions: "更多排队操作",
+  reorderQueuedPrompt: "调整排队消息顺序",
+  reorderQueuedPromptHint: "拖拽调整顺序，也可使用上下方向键。",
   stop: "停止回复",
   stopping: "正在停止...",
   slashStatusTitle: "状态",
