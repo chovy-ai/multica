@@ -413,6 +413,21 @@ func (h *claudeHistory) read(ctx context.Context, id string) (nativeSession, err
 			return session, errors.New("Claude Code returned invalid history message")
 		}
 		text := blockText(message["content"])
+		// Historical SDK messages can have string content or no API message ID.
+		var contentString string
+		if json.Unmarshal(message["content"], &contentString) == nil {
+			message["content"], _ = json.Marshal([]map[string]any{{"type": "text", "text": contentString}})
+		}
+		if len(message["id"]) == 0 {
+			message["id"], _ = json.Marshal(fmt.Sprintf("history-%d", index))
+		}
+		envelope["message"], _ = json.Marshal(message)
+		frame, _ := json.Marshal(envelope)
+		if typ == "user" && text != "" && norm != nil {
+			// A user envelope can finish old tool calls and start a new prompt.
+			// Apply its results before closing the previous turn's normalizer.
+			transcript.Add(norm.Accept(frame)...)
+		}
 		var timestamp any
 		_ = json.Unmarshal(envelope["timestamp"], &timestamp)
 		at, _ := time.Parse(time.RFC3339, isoTime(timestamp, session.CreatedAt))
@@ -430,16 +445,6 @@ func (h *claudeHistory) read(ctx context.Context, id string) (nativeSession, err
 			turn.user = text
 			continue
 		}
-		// Historical SDK messages can have string content or no API message ID.
-		var contentString string
-		if json.Unmarshal(message["content"], &contentString) == nil {
-			message["content"], _ = json.Marshal([]map[string]any{{"type": "text", "text": contentString}})
-		}
-		if len(message["id"]) == 0 {
-			message["id"], _ = json.Marshal(fmt.Sprintf("history-%d", index))
-		}
-		envelope["message"], _ = json.Marshal(message)
-		frame, _ := json.Marshal(envelope)
 		transcript.Add(norm.Accept(frame)...)
 	}
 	finish()
