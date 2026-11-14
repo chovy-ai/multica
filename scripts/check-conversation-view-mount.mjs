@@ -14,7 +14,7 @@ const server = createServer(async (request, response) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 try {
-  const child = spawn("pnpm", ["exec", "playwright", "test", "--config", "scripts/playwright-conversation-view.config.ts"], {
+  const child = spawn("pnpm", ["exec", "playwright", "test", "--config", "scripts/playwright-conversation-view.config.ts", ...process.argv.slice(3)], {
     stdio: "inherit",
     env: { ...process.env, MULTICA_CONVERSATION_FIXTURE_URL: `http://127.0.0.1:${server.address().port}` }
   });

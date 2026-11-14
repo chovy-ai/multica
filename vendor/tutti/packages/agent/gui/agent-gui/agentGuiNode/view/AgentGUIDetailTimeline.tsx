@@ -29,6 +29,7 @@ import {
   type AgentGUITextSelectionSnapshot
 } from "./AgentGUITextSelectionActions";
 import { observer } from "mobx-react-lite";
+import { useAgentGUITimelineSelectAll } from "./useAgentGUITimelineSelectAll";
 
 const TIMELINE_CONTENT_STYLE: CSSProperties = {
   width: "100%",
@@ -115,6 +116,7 @@ export const AgentGUIDetailTimeline = observer(function AgentGUIDetailTimeline({
   "use memo";
   const [textSelection, setTextSelection] =
     useState<AgentGUITextSelectionSnapshot | null>(null);
+  useAgentGUITimelineSelectAll(timelineRef, isVisible && hasActiveConversation);
   const forkLineageAttachments = useMemo(
     () =>
       forkedFrom?.targetTurnId
@@ -181,6 +183,8 @@ export const AgentGUIDetailTimeline = observer(function AgentGUIDetailTimeline({
     NonNullable<React.ComponentProps<typeof ScrollArea>["viewportProps"]>
   >(
     () => ({
+      // Keep keyboard ownership when a click clears the native selection.
+      tabIndex: -1,
       onMouseUp: viewportPropsProp1Value1,
       onPointerDown: viewportPropsProp1Value2,
       onScroll: viewportPropsProp1Value3
