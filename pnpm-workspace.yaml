@@ -4,6 +4,7 @@ packages:
   - vendor/tutti/packages/*/*
 
 catalog:
+  '@pierre/trees': 1.0.0-beta.6
   '@formatjs/intl-localematcher': ^0.8.4
   '@tailwindcss/postcss': ^4
   '@tailwindcss/vite': ^4
@@ -26,6 +27,7 @@ catalog:
   katex: ^0.16.45
   lucide-react: ^1.0.1
   mermaid: ^11.14.0
+  monaco-editor: 0.55.1
   mobx: ^6.15.0
   mobx-react: ^9.2.1
   mobx-react-lite: ^4.1.1

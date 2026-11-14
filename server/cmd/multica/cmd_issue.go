@@ -2607,6 +2607,7 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
 
+	content = attachMemoryReceipt(content, cmd.ErrOrStderr())
 	body := map[string]any{"content": content}
 	if len(steerTargets) > 0 {
 		steerTaskIDs := make([]string, len(steerTargets))

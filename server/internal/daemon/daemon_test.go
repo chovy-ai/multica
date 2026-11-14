@@ -163,6 +163,8 @@ func TestIsBlockedEnvKey(t *testing.T) {
 		{key: "CURSOR_MCP_AUTH_SOURCE", want: true},
 		{key: "OPENCLAW_CONFIG_PATH", want: true},
 		{key: "OPENCLAW_INCLUDE_ROOTS", want: true},
+		{key: "CLAUDE_CODE_DISABLE_AUTO_MEMORY", want: true},
+		{key: "claude_code_disable_auto_memory", want: true},
 		{key: "ANTHROPIC_API_KEY", want: false},
 		{key: "CURSOR_AGENT", want: false},
 		// HERMES_HOME is intentionally NOT blocked: a skill-less Hermes task
@@ -6902,5 +6904,20 @@ func TestHermesProfileChainCoversLaunchPrefix(t *testing.T) {
 	}
 	if strings.Join(strippedCustom, "\x00") != "--yolo" {
 		t.Errorf("custom = %v, want only the selector's value removed", strippedCustom)
+	}
+}
+
+func TestTaskMulticaEnvironmentDisablesClaudeAutoMemory(t *testing.T) {
+	t.Parallel()
+
+	env := taskMulticaEnvironment(Task{}, "claude", "", "", "", "", "", 0, 0, "/task/tmp")
+	layerCustomEnvAndHermesHome(env, map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "0"}, "", nil)
+	if got := env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"]; got != "1" {
+		t.Fatalf("CLAUDE_CODE_DISABLE_AUTO_MEMORY = %q, want 1 even when custom_env re-enables it", got)
+	}
+
+	env = taskMulticaEnvironment(Task{}, "codex", "", "", "", "", "", 0, 0, "/task/tmp")
+	if _, ok := env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"]; ok {
+		t.Fatal("only Claude tasks get the Claude auto-memory switch")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/daemon/agentmemory"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/processtree"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
@@ -73,10 +74,11 @@ type gcStats struct {
 	// hermesMemoryStoresReclaimed is counted separately from storesReclaimed:
 	// the two stores hold different things on different TTLs, so folding them
 	// into one number would make either figure unreadable for an operator.
-	hermesMemoryStoresReclaimed   int            // per-agent Hermes memory stores reclaimed past their TTL
-	hermesSessionStoresReclaimed  int            // per-conversation Hermes session stores reclaimed past their TTL
-	repoCachesReclaimed           int            // bare repo caches under .repos evicted past their TTL
-	taskTempDirsReclaimed         int            // per-task temp dirs under the temp base reclaimed after their owning execution ended
+	hermesMemoryStoresReclaimed   int // per-agent Hermes memory stores reclaimed past their TTL
+	hermesSessionStoresReclaimed  int // per-conversation Hermes session stores reclaimed past their TTL
+	repoCachesReclaimed           int // bare repo caches under .repos evicted past their TTL
+	taskTempDirsReclaimed         int // per-task temp dirs under the temp base reclaimed after their owning execution ended
+	memoryTrashReclaimed          int
 	taskRootIndexEntriesReclaimed int            // abandoned stable-root records and unpublished entries reclaimed past the orphan TTL
 	bytesReclaimed                int64          // total bytes freed in this cycle
 	byPattern                     map[string]int // configured basename or managed path label -> reclaim count
@@ -160,6 +162,12 @@ func (d *Daemon) runGC(ctx context.Context) {
 		stats.bytesReclaimed += storeBytes
 	}
 
+	if removed, err := agentmemory.PruneTrash(d.cfg.ProfileDir, 30*24*time.Hour, time.Now()); err != nil {
+		d.logger.Warn("gc: could not prune memory trash", "error", err)
+	} else {
+		stats.memoryTrashReclaimed += removed
+	}
+
 	// Reclaim per-task temp dirs whose owning execution is gone. These are the
 	// agent process's TMPDIR and live under the system temp base, not under
 	// WorkspacesRoot, so the task walk above has never seen them and the only
@@ -175,8 +183,9 @@ func (d *Daemon) runGC(ctx context.Context) {
 		}
 	}
 
-	if stats.cleaned > 0 || stats.orphaned > 0 || stats.artifactDirs > 0 || stats.storesReclaimed > 0 || stats.hermesMemoryStoresReclaimed > 0 || stats.hermesSessionStoresReclaimed > 0 || stats.repoCachesReclaimed > 0 || stats.taskTempDirsReclaimed > 0 || stats.taskRootIndexEntriesReclaimed > 0 {
+	if stats.memoryTrashReclaimed > 0 || stats.cleaned > 0 || stats.orphaned > 0 || stats.artifactDirs > 0 || stats.storesReclaimed > 0 || stats.hermesMemoryStoresReclaimed > 0 || stats.hermesSessionStoresReclaimed > 0 || stats.repoCachesReclaimed > 0 || stats.taskTempDirsReclaimed > 0 || stats.taskRootIndexEntriesReclaimed > 0 {
 		d.logger.Info("gc: cycle complete",
+			"memory_trash_reclaimed", stats.memoryTrashReclaimed,
 			"cleaned", stats.cleaned,
 			"orphaned", stats.orphaned,
 			"skipped", stats.skipped,

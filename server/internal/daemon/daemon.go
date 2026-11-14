@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/daemon/agentmemory"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/localhost"
 	"github.com/multica-ai/multica/server/internal/daemon/p2p"
@@ -180,6 +181,8 @@ func taskScopedAuthToken(task Task) (string, error) {
 	return token, nil
 }
 
+const claudeDisableAutoMemoryEnv = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
+
 func taskMulticaEnvironment(task Task, provider, agentName, token, configRoot, workspacesRoot, serverURL string, healthPort, slot int, tempDir string) map[string]string {
 	env := map[string]string{
 		"MULTICA_TOKEN":        token,
@@ -195,6 +198,9 @@ func taskMulticaEnvironment(task Task, provider, agentName, token, configRoot, w
 		"TMPDIR":               tempDir,
 		"TMP":                  tempDir,
 		"TEMP":                 tempDir,
+	}
+	if provider == "claude" {
+		env[claudeDisableAutoMemoryEnv] = "1"
 	}
 	if runtime.GOOS != "windows" {
 		return env
@@ -444,6 +450,7 @@ type Daemon struct {
 	// localV2 serves Go-owned local conversations when Desktop ships the
 	// Claude adapter; nil otherwise.
 	localV2 *localhost.V2
+	memory  *agentmemory.Manager
 	// deviceLink shares local conversations with the account's other
 	// devices; nil without local conversations.
 	deviceLink *deviceLink
@@ -789,6 +796,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	// server can split logs/metrics by client version (parallel to the CLI).
 	client.SetVersion(cfg.CLIVersion)
 	d := &Daemon{
+		memory:                      agentmemory.NewManager(cfg.ProfileDir),
 		cfg:                         cfg,
 		client:                      client,
 		repoCache:                   repocache.New(cacheRoot, logger),
@@ -2087,6 +2095,7 @@ func (d *Daemon) RunWithHealthListener(ctx context.Context, healthLn net.Listene
 }
 
 func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
+	defer d.memory.Close()
 	var err error
 	// Wrap context so handleUpdate can cancel the daemon for restart.
 	ctx, cancel := context.WithCancel(ctx)
@@ -8616,6 +8625,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		gateCodexResumeToRolloutPresence(&task, &taskCtx, provider, env.CodexHome, taskLog)
 	}
 
+	memoryCtx := d.prepareMemoryContext(task, env.RootDir, taskCtx.PriorSessionResumed)
+	taskCtx.MemorySection = memoryCtx.Section
+
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
@@ -8645,6 +8657,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if computerUse != "" {
 		promptOptions = append(promptOptions, WithComputerUse(computerUse))
+	}
+	basePromptOptions := append([]PromptOption(nil), promptOptions...)
+	if memoryCtx.Reminder != "" {
+		promptOptions = append(promptOptions, WithMemoryReminder(memoryCtx.Reminder))
 	}
 	prompt := BuildPrompt(task, provider, promptOptions...)
 
@@ -8801,6 +8817,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}()
 	retiredSessionID = gateOpenCodeResumeToSaneClock(ctx, &task, &taskCtx, provider, backendConfig, env.WorkDir, effectiveMcpConfig, taskLog)
 	if retiredSessionID != "" {
+		memoryCtx = d.prepareMemoryContext(task, env.RootDir, false)
+		taskCtx.MemorySection = memoryCtx.Section
+		promptOptions = append([]PromptOption(nil), basePromptOptions...)
 		if freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); briefErr != nil {
 			return TaskResult{}, fmt.Errorf("prepare fresh OpenCode session after clock check: %w", briefErr)
 		} else {
@@ -8968,6 +8987,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentID:     task.AgentID,
 		AgentName:   task.Agent.Name,
 		WorkDir:     env.WorkDir,
+		ProjectID:   task.ProjectID, ProjectTitle: task.ProjectTitle, Source: memorySource(task), EnvRoot: env.RootDir,
 	})
 	defer d.clearActiveRepoCheckoutTask(agentToken)
 
@@ -9032,6 +9052,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		task.PriorSessionResumeUnavailable = true
 		execOpts.ResumeContinuityNotice = ""
 		taskCtx.PriorSessionResumed = false
+		memoryCtx = d.prepareMemoryContext(task, env.RootDir, false)
+		taskCtx.MemorySection = memoryCtx.Section
+		promptOptions = append([]PromptOption(nil), basePromptOptions...)
 		if freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); briefErr != nil {
 			taskLog.Warn("execenv: re-inject cold runtime config for fresh retry failed (non-fatal)", "error", briefErr)
 		} else {
@@ -10724,7 +10747,7 @@ func isBlockedEnvKey(key string) bool {
 		return true
 	}
 	switch upper {
-	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "REASONIX_STATE_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS":
+	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "REASONIX_STATE_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS", claudeDisableAutoMemoryEnv:
 		return true
 	}
 	return false
