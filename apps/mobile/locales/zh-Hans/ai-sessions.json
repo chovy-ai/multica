@@ -139,7 +139,6 @@
     "agent_heading": "智能体 · 发送后调用",
     "invoke": "调用",
     "remove": "移除 {{name}}",
-    "invoke_hint": "发送后调用 {{names}}，使用智能体自身配置。",
     "unavailable": "{{name}} 已不可用，请移除或重新选择。",
     "prepare_failed": "无法确认所选引用，草稿已保留，请重试。",
     "session_heading": "会话 · {{device}}",
