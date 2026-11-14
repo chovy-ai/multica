@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/runtimeinstance"
 	"github.com/spf13/cobra"
 )
@@ -77,6 +79,51 @@ func TestRuntimeInstanceSelectionHonorsSingleDesktopAndTaskBoundary(t *testing.T
 	task := instanceTestCommand("")
 	if err := selectRuntimeInstance(task, nil); err != nil || selectedInstance(task) != nil || resolveProfile(task) != "" {
 		t.Fatal("task adopted owner's Desktop credentials", err)
+	}
+}
+
+func TestRuntimeInstanceSelectionPreservesPrivateContextConfig(t *testing.T) {
+	_, launch := runtimeStoreFixture(t)
+	root := t.TempDir()
+	t.Setenv(cli.TaskConfigRootEnv, root)
+	t.Setenv("MULTICA_TOKEN", "")
+	const workspace = "context-workspace"
+	const token = "private-desktop-credential"
+	requests := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("X-Workspace-ID") != workspace {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/comments") {
+			fmt.Fprint(w, `[{"id":"comment","content":"complete discussion"}]`)
+			return
+		}
+		fmt.Fprintf(w, `{"id":%q,"workspace_id":%q,"description":"complete task body"}`, contextIssueID, workspace)
+	}))
+	t.Cleanup(api.Close)
+	if err := cli.SaveCLIConfig(cli.CLIConfig{ServerURL: api.URL, WorkspaceID: workspace, Token: token}); err != nil {
+		t.Fatal(err)
+	}
+	cmd, out := contextTestCommand()
+	cmd.Flags().String("profile", "", "")
+	cmd.Flags().String("server-url", "", "")
+	cmd.Flags().String("workspace-id", "", "")
+	_ = cmd.Flags().Set("server-url", api.URL)
+	_ = cmd.Flags().Set("workspace-id", workspace)
+	cmd.SetContext(context.Background())
+	if err := selectRuntimeInstance(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := runIssueContext(cmd, []string{contextIssueID}); err != nil {
+		t.Fatalf("context CLI lost its private config after runtime selection: %v (selected profile %q, desktop profile %q)", err, resolveProfile(cmd), launch.Profile)
+	}
+	if resolveProfile(cmd) != "" || selectedInstance(cmd) != nil {
+		t.Fatal("private context CLI adopted the registered Desktop profile")
+	}
+	if requests != 2 || !strings.Contains(out.String(), "complete task body") || !strings.Contains(out.String(), "complete discussion") {
+		t.Fatalf("incomplete context: requests=%d output=%s", requests, out.String())
 	}
 }
 

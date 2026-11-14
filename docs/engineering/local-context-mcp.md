@@ -67,6 +67,10 @@ Claude Code CLI 使用私有 `mcp.json` 和 `--strict-mcp-config`；SDK 使用�
 
 云端账号仍通过桌面专用 Profile 和 `/api/me` 校验，不回退到终端默认 Profile。云端不可用时，本机 MCP 读取仍可使用，提示词分别说明两者状态，避免把本机历史误判为需要重新登录。
 
+任务和附件的 CLI 查询使用每轮私有 `MULTICA_TASK_CONFIG_ROOT`。存在该配置根目录时，CLI 不自动采用已注册桌面的 Profile；否则会从临时根目录下错误的 Profile 路径读取配置，丢失本轮准备的凭据。此规则不改变任务令牌校验、显式 Profile 的配置布局或工作区隔离。
+
+CLI 查询失败会区分启动失败、非零退出、超时、取消和无效 JSON。非零退出保留退出状态及最多 1000 字符的脱敏 stderr 摘要；凭据和 URL 被遮蔽，stdout 不作为诊断文本返回。不能仅凭一次工具失败判断登录或网络有问题。
+
 ## 验证
 
 ```sh

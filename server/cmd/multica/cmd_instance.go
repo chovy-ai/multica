@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/runtimeinstance"
 	"github.com/spf13/cobra"
 )
@@ -33,7 +35,10 @@ func selectRuntimeInstance(cmd *cobra.Command, _ []string) error {
 	if cmd.Name() == "version" {
 		return nil
 	}
-	if inDaemonManagedExecutionContext() {
+	// Context MCP queries have a private config root without task identity.
+	// Adopting the Desktop profile would read a different, absent config in
+	// that root and discard the credential prepared for this query.
+	if inDaemonManagedExecutionContext() || strings.TrimSpace(os.Getenv(cli.TaskConfigRootEnv)) != "" {
 		return nil
 	}
 	profile, _ := cmd.Flags().GetString("profile")

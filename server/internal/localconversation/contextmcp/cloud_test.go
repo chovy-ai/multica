@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestHelperCLI is a fake multica CLI. It runs only when re-executed by
@@ -17,6 +18,37 @@ import (
 func TestHelperCLI(t *testing.T) {
 	if os.Getenv("CONTEXT_CLI_HELPER") != "1" {
 		return
+	}
+	switch os.Getenv("CONTEXT_CLI_MODE") {
+	case "unauthorized", "forbidden":
+		status := "401"
+		if os.Getenv("CONTEXT_CLI_MODE") == "forbidden" {
+			status = "403"
+		}
+		fmt.Fprintln(os.Stderr, "GET https://user:password@api.example.test/api/issues?token=hidden: HTTP "+status)
+		os.Exit(7)
+	case "invalid_json":
+		fmt.Print("not JSON: private task body")
+		os.Exit(0)
+	case "trailing_json":
+		fmt.Print(`{"issue":{}} private task body`)
+		os.Exit(0)
+	case "empty":
+		os.Exit(0)
+	case "sleep":
+		time.Sleep(time.Hour)
+		os.Exit(0)
+	case "secrets":
+		data, _ := os.ReadFile(filepath.Join(os.Getenv("MULTICA_TASK_CONFIG_ROOT"), "config.json"))
+		var config map[string]string
+		_ = json.Unmarshal(data, &config)
+		fmt.Fprintln(os.Stderr, "credential: "+config["token"]+" Bearer other-secret TOKEN=env-secret https://user:password@api.example.test/?token=url-secret")
+		fmt.Fprintln(os.Stderr, strings.Repeat("long diagnostic ", 200))
+		fmt.Print("private stdout")
+		os.Exit(2)
+	case "oversized":
+		fmt.Fprint(os.Stderr, strings.Repeat("sensitive diagnostic ", 10000))
+		os.Exit(2)
 	}
 	args := os.Args
 	for i, a := range args {
@@ -32,8 +64,27 @@ func TestHelperCLI(t *testing.T) {
 		}
 	}
 	joined := strings.Join(args, " ")
+	data, err := os.ReadFile(filepath.Join(os.Getenv("MULTICA_TASK_CONFIG_ROOT"), "config.json"))
+	var config map[string]string
+	if err != nil || json.Unmarshal(data, &config) != nil || config["token"] == "" || config["server_url"] != os.Getenv("MULTICA_SERVER_URL") || config["workspace_id"] != os.Getenv("MULTICA_WORKSPACE_ID") {
+		fmt.Fprint(os.Stderr, "invalid private CLI config")
+		os.Exit(1)
+	}
+	if os.Getenv("MULTICA_TOKEN") != "" || os.Getenv("MULTICA_AGENT_ID") != "" || os.Getenv("MULTICA_TASK_ID") != "" || os.Getenv("MULTICA_DAEMON_PORT") != "" {
+		fmt.Fprint(os.Stderr, "inherited task identity")
+		os.Exit(1)
+	}
 	switch {
 	case strings.Contains(joined, "issue context"):
+		if os.Getenv("CONTEXT_CLI_MODE") == "foreign_workspace" {
+			fmt.Print(`{"issue":{"id":"i1","workspace_id":"other"}}`)
+			os.Exit(0)
+		}
+		if strings.Contains(joined, "--before t1 --before-id c1") {
+			fmt.Print(`{"issue":{"id":"i1","workspace_id":"w"},"comments":[{"content":"older discussion"}],"comments_page":{"has_more":false}}`)
+			os.Exit(0)
+		}
+		fmt.Fprint(os.Stderr, "CLI warning on stderr")
 		fmt.Printf(`{"issue":{"id":"i1","workspace_id":"w"},"comments":[],"comments_page":{"has_more":true,"next_before":"t1","next_before_id":"c1"},"args":%q}`, joined)
 	case strings.Contains(joined, "attachment download"):
 		out := args[len(args)-1]
@@ -153,6 +204,18 @@ func TestCloudReadAgentsChatsAndTasks(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(c.Dir, "config.json")); err != nil {
 		t.Fatalf("private CLI config missing: %v", err)
 	}
+	olderTask, err := c.Read(ctx, "task", "i1", 5, m["next_cursor"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	olderMap := asMap(t, olderTask)
+	if olderMap["next_cursor"] != nil || olderMap["comments_page"].(map[string]any)["has_more"] != false || olderMap["comments"].([]any)[0].(map[string]any)["content"] != "older discussion" {
+		t.Fatalf("older task page = %v", olderTask)
+	}
+	t.Setenv("CONTEXT_CLI_MODE", "foreign_workspace")
+	if _, err := c.Read(ctx, "task", "i1", 5, ""); err == nil || !strings.Contains(err.Error(), "outside the selected workspace") {
+		t.Fatalf("foreign task = %v", err)
+	}
 }
 
 func TestCloudAttachmentDownloadsIntoTheExecutionDirectory(t *testing.T) {
@@ -171,5 +234,80 @@ func TestCloudWithoutTokenIsUnavailable(t *testing.T) {
 	c := cloudFixture(t, "")
 	if _, err := c.Search(context.Background(), "task", "x", 5); err == nil || !strings.Contains(err.Error(), "unavailable") {
 		t.Fatalf("search without token = %v", err)
+	}
+}
+
+func TestCloudCLIReportsFailureStage(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want []string
+	}{
+		{"missing", []string{"failed to start"}},
+		{"unauthorized", []string{"exit status 7", "HTTP 401"}},
+		{"forbidden", []string{"exit status 7", "HTTP 403"}},
+		{"invalid_json", []string{"invalid JSON"}},
+		{"trailing_json", []string{"invalid JSON"}},
+		{"empty", []string{"invalid JSON"}},
+		{"sleep", []string{"timed out"}},
+		{"cancelled", []string{"cancelled"}},
+		{"oversized", []string{"exit status 2", "details omitted"}},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			c := cloudFixture(t, "tok")
+			t.Setenv("CONTEXT_CLI_MODE", tc.mode)
+			ctx := context.Background()
+			if tc.mode == "missing" {
+				c.CLIPath = filepath.Join(t.TempDir(), "missing")
+			}
+			if tc.mode == "sleep" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
+				defer cancel()
+			}
+			if tc.mode == "cancelled" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			_, err := c.Read(ctx, "task", "i1", 5, "")
+			if err == nil {
+				t.Fatal("query unexpectedly succeeded")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want %q", err, want)
+				}
+			}
+			for _, unwanted := range []string{"Check desktop login", "private task body", "user:password", "token=hidden", "sensitive diagnostic"} {
+				if strings.Contains(err.Error(), unwanted) {
+					t.Fatalf("error exposed output or an unconfirmed cause: %q", err)
+				}
+			}
+		})
+	}
+}
+
+func TestCloudAttachmentReportsCLIFailures(t *testing.T) {
+	c := cloudFixture(t, "tok")
+	t.Setenv("CONTEXT_CLI_MODE", "forbidden")
+	if _, err := c.Attachment(context.Background(), "att-1"); err == nil || !strings.Contains(err.Error(), "HTTP 403") {
+		t.Fatalf("attachment failure = %v", err)
+	}
+}
+
+func TestCloudCLIFailureDiagnosticsAreRedactedAndBounded(t *testing.T) {
+	c := cloudFixture(t, "raw-desktop-token")
+	t.Setenv("CONTEXT_CLI_MODE", "secrets")
+	_, err := c.Read(context.Background(), "task", "i1", 5, "")
+	if err == nil || !strings.Contains(err.Error(), "exit status 2") || !strings.Contains(err.Error(), "credential:") {
+		t.Fatalf("missing CLI failure diagnostic: %v", err)
+	}
+	for _, secret := range []string{"raw-desktop-token", "other-secret", "env-secret", "url-secret", "user:password", "private stdout"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error exposed %q: %q", secret, err)
+		}
+	}
+	if len(err.Error()) > 1200 {
+		t.Fatalf("unbounded diagnostic: %d bytes", len(err.Error()))
 	}
 }
