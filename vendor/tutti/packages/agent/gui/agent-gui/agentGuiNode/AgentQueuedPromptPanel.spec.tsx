@@ -31,6 +31,49 @@ function textQueuedPrompt(id: string, text: string, createdAtUnixMs = 1) {
 }
 
 describe("AgentQueuedPromptPanel", () => {
+  it("reorders through the left drag handle and keeps the panel expanded", () => {
+    const reorder = vi.fn();
+    render(<AgentQueuedPromptPanel
+      queuedPrompts={[textQueuedPrompt("a", "A"), textQueuedPrompt("b", "B"), textQueuedPrompt("c", "C")]}
+      drainingQueuedPromptId={null} labels={labels}
+      onSendQueuedPromptNext={vi.fn()} onRemoveQueuedPrompt={vi.fn()} onEditQueuedPrompt={vi.fn()}
+      onReorderQueuedPrompts={reorder}
+    />);
+    fireEvent.click(screen.getByText("Queued"));
+    const handles = screen.getAllByRole("button", { name: "Reorder queued message" });
+    const transfer = { effectAllowed: "", dropEffect: "", setData: vi.fn() };
+    fireEvent.dragStart(handles[2]!, { dataTransfer: transfer });
+    const first = screen.getByTestId("agent-gui-composer-queued-prompt-a");
+    fireEvent.dragOver(first, { dataTransfer: transfer, clientY: 0 });
+    fireEvent.drop(first, { dataTransfer: transfer, clientY: 0 });
+    expect(reorder).toHaveBeenCalledWith(["c", "a", "b"]);
+    expect(screen.getAllByRole("button", { name: "Reorder queued message" })).toHaveLength(3);
+    expect(first).not.toHaveAttribute("data-drop-position");
+    reorder.mockClear();
+    fireEvent.keyDown(handles[0]!, { key: "ArrowUp" });
+    expect(reorder).not.toHaveBeenCalled();
+    fireEvent.keyDown(handles[0]!, { key: "ArrowDown" });
+    expect(reorder).toHaveBeenCalledWith(["b", "a", "c"]);
+  });
+
+  it("cancels a drag when the queue changes and ignores external drops", () => {
+    const reorder = vi.fn();
+    const panel = (ids: string[]) => <AgentQueuedPromptPanel
+      queuedPrompts={ids.map((id) => textQueuedPrompt(id, id))} drainingQueuedPromptId={null} labels={labels}
+      onSendQueuedPromptNext={vi.fn()} onRemoveQueuedPrompt={vi.fn()} onEditQueuedPrompt={vi.fn()}
+      onReorderQueuedPrompts={reorder}
+    />;
+    const { rerender } = render(panel(["a", "b", "c"]));
+    fireEvent.click(screen.getByText("Queued"));
+    const transfer = { effectAllowed: "", dropEffect: "", setData: vi.fn() };
+    fireEvent.drop(screen.getByTestId("agent-gui-composer-queued-prompt-a"), { dataTransfer: transfer });
+    expect(reorder).not.toHaveBeenCalled();
+    fireEvent.dragStart(screen.getAllByRole("button", { name: "Reorder queued message" })[2]!, { dataTransfer: transfer });
+    rerender(panel(["b", "c"]));
+    fireEvent.drop(screen.getByTestId("agent-gui-composer-queued-prompt-b"), { dataTransfer: transfer });
+    expect(reorder).not.toHaveBeenCalled();
+  });
+
   it("injects the host queue action with the current session and prompt", async () => {
     const action = vi.fn();
     function HostAction(props: QueuedPromptMenuActionProps) {

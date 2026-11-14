@@ -9194,6 +9194,31 @@ html[data-theme="light"] [data-message-center-item-id].agent-gui-edge-glow {
   opacity: 0.58;
 }
 
+.agent-gui-node__queued-prompt-drag-handle {
+  cursor: grab;
+}
+
+.agent-gui-node__composer-queued-prompt-row[data-reorderable="true"] {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.agent-gui-node__queued-prompt-drag-handle:active {
+  cursor: grabbing;
+}
+
+.agent-gui-node__queued-prompt-drag-handle[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.agent-gui-node__composer-queued-prompt-row[data-drop-position="before"] {
+  box-shadow: inset 0 2px 0 var(--tsh-shell-accent);
+}
+
+.agent-gui-node__composer-queued-prompt-row[data-drop-position="after"] {
+  box-shadow: inset 0 -2px 0 var(--tsh-shell-accent);
+}
+
 .agent-gui-node__composer-queued-prompt-main {
   display: block;
   width: 100%;

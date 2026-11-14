@@ -299,6 +299,8 @@ export const enAgentGui = {
   editQueuedPrompt: "Edit",
   deleteQueuedPrompt: "Delete",
   queuedPromptMoreActions: "More queued prompt actions",
+  reorderQueuedPrompt: "Reorder queued message",
+  reorderQueuedPromptHint: "Drag to reorder, or use the Up and Down arrow keys.",
   stop: "Stop",
   stopping: "Stopping...",
   ...enAgentGuiUsageStatus,

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/localconversation/provider/claude"
+	"github.com/multica-ai/multica/server/internal/localconversation/store"
 )
 
 func queued(id, content string) json.RawMessage {
@@ -92,6 +93,101 @@ func TestQueueRunsAfterTheCurrentTurn(t *testing.T) {
 	// A message that was already sent is not queued again.
 	if view, _ := f.svc.Enqueue(ctx, f.scopeID, "conv-1", queued("q1", "second"), false, TurnOrigin{}); len(view.Items) != 0 {
 		t.Fatalf("re-enqueued a sent message: %+v", view)
+	}
+}
+
+func TestQueueReorderChangesActualSendOrderWithoutInterrupting(t *testing.T) {
+	t.Parallel()
+	f := newServiceFixture(t, filepath.Join(t.TempDir(), "c.sqlite"))
+	ctx := context.Background()
+	f.create(t, "conv-1", "claude")
+	if _, err := f.svc.Send(ctx, SendCommand{ScopeID: f.scopeID, ConversationID: "conv-1", RequestID: "running", Text: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b", "c"} {
+		if _, err := f.svc.Enqueue(ctx, f.scopeID, "conv-1", queued(id, id), false, TurnOrigin{PeerID: "device", ClientKind: "desktop"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	view, err := f.svc.ReorderQueue(ctx, f.scopeID, "conv-1", 3, []string{"c", "a", "b"})
+	if err != nil || view.Paused || view.Revision != 4 {
+		t.Fatalf("reorder = %+v, %v", view, err)
+	}
+	if got := f.adapters[0].sent(); strings.Contains(fmt.Sprint(got), "interrupt") {
+		t.Fatalf("reorder interrupted running turn: %v", got)
+	}
+	state, _ := f.svc.Store().Queue(ctx, "conv-1")
+	if got := requestIDsAfter(state, store.QueueChange{}); fmt.Sprint(got) != "[c a b]" {
+		t.Fatalf("persisted order = %v", got)
+	}
+	for _, item := range state.Items {
+		if string(item.Item) != string(queued(item.RequestID, item.RequestID)) || item.OriginPeerID != "device" || item.OriginClientKind != "desktop" {
+			t.Fatalf("reorder changed payload or origin: %+v", item)
+		}
+	}
+	updates := queueUpdates(t, f, "conv-1")
+	if got := fmt.Sprint(updates[len(updates)-1]["request_ids"]); got != "[c a b]" {
+		t.Fatalf("event order = %s", got)
+	}
+	for _, want := range []string{"[running c]", "[running c a]", "[running c a b]"} {
+		f.adapters[0].emit(t, turnDone)
+		eventually(t, want, func() bool { return fmt.Sprint(f.sends(t)) == want })
+	}
+}
+
+func TestQueueReorderPreservesPauseAndSurvivesRestart(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "c.sqlite")
+	f := newServiceFixture(t, path)
+	ctx := context.Background()
+	f.create(t, "conv-1", "claude")
+	for _, id := range []string{"a", "b", "c"} {
+		if _, err := f.svc.Enqueue(ctx, f.scopeID, "conv-1", queued(id, id), true, TurnOrigin{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	view, err := f.svc.ReorderQueue(ctx, f.scopeID, "conv-1", 3, []string{"b", "c", "a"})
+	if err != nil || !view.Paused || len(f.sends(t)) != 0 {
+		t.Fatalf("paused reorder = %+v, %v", view, err)
+	}
+	if err := f.svc.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	again := newServiceFixture(t, path)
+	state, err := again.svc.Store().Queue(ctx, "conv-1")
+	if err != nil || !state.Paused || fmt.Sprint(requestIDsAfter(state, store.QueueChange{})) != "[b c a]" {
+		t.Fatalf("restored queue = %+v, %v", state, err)
+	}
+}
+
+func TestQueueReorderRejectsChangedAndInvalidQueues(t *testing.T) {
+	t.Parallel()
+	f := newServiceFixture(t, filepath.Join(t.TempDir(), "c.sqlite"))
+	ctx := context.Background()
+	f.create(t, "conv-1", "claude")
+	for _, id := range []string{"a", "b", "c"} {
+		if _, err := f.svc.Enqueue(ctx, f.scopeID, "conv-1", queued(id, id), true, TurnOrigin{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, ids := range [][]string{{"a", "a", "b"}, {"", "a", "b"}, {"a", "b"}, {"a", "b", "unknown"}} {
+		if _, err := f.svc.ReorderQueue(ctx, f.scopeID, "conv-1", 3, ids); err == nil {
+			t.Fatalf("accepted invalid order %v", ids)
+		}
+	}
+	if _, err := f.svc.UpdateQueue(ctx, f.scopeID, "conv-1", "remove", "b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.ReorderQueue(ctx, f.scopeID, "conv-1", 3, []string{"c", "b", "a"}); !errors.Is(err, ErrQueueChanged) {
+		t.Fatalf("stale reorder after remove = %v", err)
+	}
+	state, _ := f.svc.Store().Queue(ctx, "conv-1")
+	if fmt.Sprint(requestIDsAfter(state, store.QueueChange{})) != "[a c]" || state.Revision != 4 {
+		t.Fatalf("rejected reorder changed queue: %+v", state)
+	}
+	f.svc.queues.setDispatching("conv-1", "a")
+	if _, err := f.svc.ReorderQueue(ctx, f.scopeID, "conv-1", 4, []string{"c", "a"}); !errors.Is(err, ErrQueueChanged) {
+		t.Fatalf("reorder of dispatching item = %v", err)
 	}
 }
 

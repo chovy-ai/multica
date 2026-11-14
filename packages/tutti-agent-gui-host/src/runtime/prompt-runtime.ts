@@ -43,6 +43,8 @@ export function createPromptRuntime<Result>(
     loadSession(id: string): Promise<unknown>;
     locale?(): string;
     enqueue(input: SubmitInput): Promise<LocalPromptQueue>;
+    canReorder?(): boolean;
+    reorder?(id: string, requestIds: string[], revision: number): Promise<LocalPromptQueue>;
     checkpoint?(input: SubmitInput, display: AgentQueuedPrompt): Promise<void>;
     checkpointActivation?(input: AgentSessionActivationInput): Promise<void>;
     update(
@@ -79,6 +81,8 @@ export function createPromptRuntime<Result>(
   const service: PromptService<SubmitInput, AgentQueuedPrompt> =
     new PromptService<SubmitInput, AgentQueuedPrompt>({
       enqueue: options.enqueue,
+      canReorder: options.canReorder,
+      reorder: options.reorder,
       checkpoint: options.checkpoint,
       canSubmit: (id) => sessions.submitAvailability(id)?.state === "available",
       admit(input, queued) {

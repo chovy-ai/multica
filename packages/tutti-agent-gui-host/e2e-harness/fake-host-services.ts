@@ -9,6 +9,7 @@ export function fakeHostServices(
 ): AgentGuiHostServices {
   return {
     queue: {
+      reorder: (params, options) => request("queue.reorder", params, options),
       enqueue: (params, options) =>
         options
           ? request("queue.enqueue", params, options)

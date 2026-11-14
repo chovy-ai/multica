@@ -211,7 +211,7 @@ func (v *V2) serve(w http.ResponseWriter, r *http.Request, c caller) {
 		if v.servicePreview != nil {
 			capabilities = append(capabilities, "remote-service-preview-v1")
 		}
-		capabilities = append(capabilities, service.ConversationResourcesCapability, ConversationFocusCapability, AttachmentReserveCapability, PromptStatusCapability, NavigationCapability, service.SubmissionLifecycleCapability, "completion-read-v1")
+		capabilities = append(capabilities, service.ConversationResourcesCapability, ConversationFocusCapability, AttachmentReserveCapability, PromptStatusCapability, NavigationCapability, service.SubmissionLifecycleCapability, "completion-read-v1", service.QueueReorderCapability)
 		if v.reports != nil && c.kind == callerRemote {
 			capabilities = append(capabilities, TimingReportCapability)
 		}
@@ -627,6 +627,9 @@ type commandBody struct {
 	Paused      bool            `json:"paused"`
 	Action      string          `json:"action"`
 	OperationID string          `json:"operation_id"`
+	// queue_reorder: a complete permutation of the queue at Revision.
+	Revision   *int64   `json:"revision"`
+	RequestIDs []string `json:"request_ids"`
 	// send: provider text replacing Text, such as Text with context.
 	Prompt string `json:"prompt"`
 	// fork and create_side: the turn the copy ends after; empty takes
@@ -810,6 +813,17 @@ func (v *V2) command(w http.ResponseWriter, r *http.Request, scopeID int64, id s
 		writeJSON(w, http.StatusAccepted, result)
 	case "queue_enqueue":
 		queue, err := v.svc.Enqueue(r.Context(), scopeID, id, body.Item, body.Paused, callerOf(r.Context()).origin())
+		if err != nil {
+			writeV2Error(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, queue)
+	case "queue_reorder":
+		if body.Revision == nil || body.RequestIDs == nil {
+			writeV2Error(w, service.ErrInvalidRequest)
+			return
+		}
+		queue, err := v.svc.ReorderQueue(r.Context(), scopeID, id, *body.Revision, body.RequestIDs)
 		if err != nil {
 			writeV2Error(w, err)
 			return
@@ -1191,6 +1205,8 @@ func writeV2Error(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "forking"
 	case errors.Is(err, service.ErrQueueItemStarted):
 		status, code = http.StatusConflict, "queue_item_started"
+	case errors.Is(err, service.ErrQueueChanged):
+		status, code = http.StatusConflict, "queue_changed"
 	case errors.Is(err, service.ErrQueueFull):
 		status, code = http.StatusConflict, "queue_full"
 	case errors.Is(err, service.ErrArchived):

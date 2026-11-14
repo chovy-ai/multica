@@ -574,6 +574,43 @@ func TestV2QueueCommands(t *testing.T) {
 	}
 }
 
+func TestV2QueueReorder(t *testing.T) {
+	t.Parallel()
+	srv, _ := newV2Server(t)
+	h := v2Headers("user-1")
+	v2Do(t, srv, http.MethodPost, "/local/v2/sessions", map[string]any{"id": "reorder", "provider": "claude"}, h)
+	path := "/local/v2/sessions/reorder/commands"
+	for _, id := range []string{"a", "b", "c"} {
+		status, body := v2Do(t, srv, http.MethodPost, path, map[string]any{"type": "queue_enqueue", "item": json.RawMessage(fmt.Sprintf(`{"requestId":%q,"content":%q,"display":{"id":%q}}`, id, id, id)), "paused": true}, h)
+		if status != http.StatusOK {
+			t.Fatalf("enqueue = %d %v", status, body)
+		}
+	}
+	status, body := v2Do(t, srv, http.MethodPost, path, map[string]any{"type": "queue_reorder", "revision": 3, "request_ids": []string{"c", "a", "b"}}, h)
+	if status != http.StatusOK || body["paused"] != true || body["revision"] != float64(4) {
+		t.Fatalf("reorder = %d %v", status, body)
+	}
+	items := body["items"].([]any)
+	for i, id := range []string{"c", "a", "b"} {
+		if items[i].(map[string]any)["requestId"] != id {
+			t.Fatalf("reordered items = %v", items)
+		}
+	}
+	for _, malformed := range []map[string]any{
+		{"type": "queue_reorder", "request_ids": []string{"a", "b", "c"}},
+		{"type": "queue_reorder", "revision": 4, "request_ids": []string{"a", "a", "c"}},
+	} {
+		status, body = v2Do(t, srv, http.MethodPost, path, malformed, h)
+		if status != http.StatusBadRequest {
+			t.Fatalf("malformed reorder = %d %v", status, body)
+		}
+	}
+	status, body = v2Do(t, srv, http.MethodPost, path, map[string]any{"type": "queue_reorder", "revision": 3, "request_ids": []string{"b", "a", "c"}}, h)
+	if status != http.StatusConflict || body["error"].(map[string]any)["kind"] != "queue_changed" {
+		t.Fatalf("stale reorder = %d %v", status, body)
+	}
+}
+
 func TestV2HostRequestsReachTheConnectedDesktop(t *testing.T) {
 	t.Parallel()
 

@@ -213,6 +213,27 @@ afterEach(() => {
 });
 
 describe("local conversation parent service over v2", () => {
+  it("negotiates queue reordering and sends the revision and canonical order", async () => {
+    const using = transport();
+    using.capabilities = async () => ["queue-reorder-v1"];
+    const { service } = setup({}, undefined, using);
+    expect((await service.load()).queueReordering).toBe(true);
+    const item = { requestId: "b", content: "B", display: { id: "b", createdAtUnixMs: 1, content: [{ type: "text", text: "B" }] } };
+    routes.unshift((_method, path) => path === "/sessions/idle/commands" ? { revision: 5, paused: true, items: [item] } : undefined);
+    expect(await service.queue.reorder!({ sessionId: "idle", requestIds: ["b"], revision: 4 })).toMatchObject({ revision: 5, paused: true, items: [item] });
+    expect(requests.find((request) => request.body?.type === "queue_reorder")?.body).toEqual({ type: "queue_reorder", revision: 4, request_ids: ["b"] });
+    const older = setup();
+    expect((await older.service.load()).queueReordering).toBe(false);
+  });
+
+  it("rejects malformed reorder responses instead of clearing the queue", async () => {
+    const { service } = setup();
+    for (const raw of [{}, { revision: 5, paused: true }, { revision: 5, paused: true, items: [{ requestId: "a" }] }]) {
+      routes.unshift((_method, path) => path === "/sessions/idle/commands" ? raw : undefined);
+      await expect(service.queue.reorder!({ sessionId: "idle", revision: 4, requestIds: ["a"] })).rejects.toThrow("Invalid queue reorder response");
+    }
+  });
+
   it("loads member user IDs and avatars and sends a member mention without invoking an agent", async () => {
     mock.api.listMembers.mockResolvedValue([{ id: "membership-row", user_id: "alex-id", name: "Alex", avatar_url: "https://example.test/alex.png", role: "member" }]);
     const { service } = setup();

@@ -439,6 +439,10 @@ export function createMulticaAgentGuiRuntime(
     pendingStore: durableStorage ? undefined : pendingStore,
     locale: () => init.locale,
     enqueue: enqueueDesktop,
+    canReorder: () => workspace.queueReordering === true && Boolean(client.queue.reorder),
+    reorder: async (id, requestIds, revision) => client.queue.reorder!({
+      sessionId: await backendSessionId(id), requestIds, revision,
+    }),
     checkpoint: durableStorage
       ? async (input, display) => {
           const params = prepareDesktop(input);

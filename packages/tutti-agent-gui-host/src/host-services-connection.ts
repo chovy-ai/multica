@@ -1,4 +1,5 @@
 import type {
+AgentGuiCallOptions,
 AgentGuiHostErrorDetails,
 AgentGuiHostEvent,
 AgentGuiHostServices,
@@ -175,6 +176,10 @@ export function createHostServicesConnection(
   };
   const client: AgentGuiHostServices = {
     queue: {
+      ...(service.queue.reorder ? {
+        reorder: (params: AgentGuiOperations["queue.reorder"]["params"], options?: AgentGuiCallOptions) =>
+          invoke("queue.reorder", params, () => service.queue.reorder!(params, options), options)
+      } : {}),
       ...(service.queue.prepare?{prepare:(params:AgentGuiOperations["queue.prepare"]["params"])=>invoke("queue.prepare",params,()=>service.queue.prepare!(params))}:{}),
       enqueue: (params, options) =>
         invoke(

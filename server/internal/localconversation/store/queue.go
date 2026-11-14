@@ -40,6 +40,8 @@ type QueueChange struct {
 	Append *QueueItem
 	Front  string
 	Remove string
+	// Order replaces positions only, preserving the queued payloads and origins.
+	Order []string
 	// RemovedAt marks Remove as the user's doing, leaving a tombstone. A message
 	// leaving because it was sent has its receipt instead.
 	RemovedAt time.Time
@@ -108,6 +110,13 @@ func applyQueue(ctx context.Context, q *sqlitedb.Queries, conversationID string,
 		return q.SetPromptQueueItemPosition(ctx, sqlitedb.SetPromptQueueItemPositionParams{
 			Position: bounds.FirstPosition - 1, ConversationID: conversationID, RequestID: c.Front,
 		})
+	}
+	for position, id := range c.Order {
+		if err := q.SetPromptQueueItemPosition(ctx, sqlitedb.SetPromptQueueItemPositionParams{
+			Position: int64(position), ConversationID: conversationID, RequestID: id,
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
