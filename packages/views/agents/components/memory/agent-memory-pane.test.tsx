@@ -31,6 +31,48 @@ vi.mock("../../../editor/readonly-content", () => ({
     <div data-testid="readonly">{content}</div>
   ),
 }));
+// Browser tests cover Pierre's shadow DOM, virtual scrolling and keyboard behavior.
+// These pane tests exercise the adapter/editor wiring through file selections.
+vi.mock("./memory-file-tree", () => ({
+  MemoryFileTree: ({
+    tree,
+    selection,
+    onSelect,
+  }: {
+    tree: AgentMemoryTree;
+    selection: import("./memory-tree").MemorySelection;
+    onSelect: (selection: import("./memory-tree").MemorySelection) => void;
+  }) => (
+    <div role="tree" aria-label="Memory files">
+      <button
+        role="treeitem"
+        aria-selected={selection.type === "index"}
+        title="Generated · Read only"
+        onClick={() => onSelect({ type: "index" })}
+      >
+        MEMORY.md
+      </button>
+      {tree.entries.map((entry) => (
+        <button
+          key={entry.path}
+          role="treeitem"
+          onClick={() => onSelect({ type: "entry", path: entry.path })}
+        >
+          {entry.path}
+        </button>
+      ))}
+      {tree.trash.map((entry) => (
+        <button
+          key={entry.trashPath}
+          role="treeitem"
+          onClick={() => onSelect({ type: "trash", path: entry.trashPath })}
+        >
+          {entry.trashPath}
+        </button>
+      ))}
+    </div>
+  ),
+}));
 const first: AgentMemoryEntry = {
   path: "feedback/root-cause.md",
   title: "Root cause first",
@@ -150,11 +192,13 @@ describe("agent memory", () => {
   it("renders the generated index read-only and saves with the original version", async () => {
     const a = adapter();
     mount(a);
-    expect(await screen.findByText("Generated · Read only")).toBeVisible();
+    expect(
+      await screen.findByRole("treeitem", { name: "MEMORY.md" }),
+    ).toHaveAttribute("title", "Generated · Read only");
     expect(
       screen.queryByRole("textbox", { name: "Body" }),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Root cause first/ }));
+    fireEvent.click(screen.getByRole("treeitem", { name: first.path }));
     const title = await screen.findByRole("textbox", {
       name: "Title",
     });
@@ -179,9 +223,7 @@ describe("agent memory", () => {
       new AgentMemoryConflictError("conflict"),
     );
     mount(a);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Root cause first/ }),
-    );
+    fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
     const title = await screen.findByRole("textbox", {
       name: "Title",
     });
@@ -197,13 +239,11 @@ describe("agent memory", () => {
   it("asks before discarding edits when switching files", async () => {
     const a = adapter();
     mount(a);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Root cause first/ }),
-    );
+    fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), {
       target: { value: "Draft" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Plan first/ }));
+    fireEvent.click(screen.getByRole("treeitem", { name: second.path }));
     const dialog = await screen.findByRole("alertdialog");
     expect(
       within(dialog).getByText("Your unsaved changes will be lost."),
@@ -214,9 +254,7 @@ describe("agent memory", () => {
   it("deletes only after confirmation and restores from trash", async () => {
     const a = adapter();
     mount(a);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Root cause first/ }),
-    );
+    fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     expect(a.remove).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog");
@@ -228,10 +266,9 @@ describe("agent memory", () => {
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
     );
     fireEvent.click(
-      screen.getByText("Trash", { exact: false, selector: "summary" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Root cause first/ }),
+      await screen.findByRole("treeitem", {
+        name: "20261114T000000Z/" + first.path,
+      }),
     );
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(a.restore).toHaveBeenCalled());
@@ -242,9 +279,7 @@ describe("agent memory", () => {
   it("keeps members without edit access read-only", async () => {
     const a = adapter();
     mount(a, false);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Root cause first/ }),
-    );
+    fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
     expect(
       await screen.findByRole("textbox", { name: "Title" }),
     ).toHaveAttribute("readonly");
@@ -265,7 +300,7 @@ describe("agent memory", () => {
     ).toBeVisible();
     expect(a.search).toHaveBeenCalledWith("agent", "evidence");
     expect(
-      screen.queryByRole("button", { name: /Plan first/ }),
+      screen.queryByRole("treeitem", { name: second.path }),
     ).not.toBeInTheDocument();
   });
 });

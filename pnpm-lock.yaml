@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    '@pierre/trees':
+      specifier: 1.0.0-beta.6
+      version: 1.0.0-beta.6
     '@formatjs/intl-localematcher':
       specifier: ^0.8.4
       version: 0.8.4
@@ -304,7 +307,7 @@ importers:
         specifier: 1.6.4
         version: 1.6.4(@shikijs/themes@4.5.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@pierre/trees':
-        specifier: 1.0.0-beta.6
+        specifier: 'catalog:'
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.5.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@3.23.0)
       '@tanstack/react-query':
         specifier: 'catalog:'
@@ -1310,6 +1313,9 @@ importers:
       '@nextop-os/ui-system':
         specifier: 0.0.32
         version: 0.0.32(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@pierre/trees':
+        specifier: 'catalog:'
+        version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.5.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@3.23.0)
       '@tanstack/react-query':
         specifier: 'catalog:'
         version: 5.96.2(react@19.2.3)

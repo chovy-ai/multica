@@ -3,6 +3,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../../i18n";
 import type { AgentMemoryTree } from "./types";
+import { MemoryFileTree } from "./memory-file-tree";
 
 export type MemorySelection =
   | { type: "index" }
@@ -65,7 +66,7 @@ export function MemoryTree({
   };
   return (
     <aside
-      className="max-h-80 shrink-0 space-y-3 overflow-y-auto border-b p-3 md:max-h-none md:w-[280px] md:border-b-0 md:border-r"
+      className="flex h-80 shrink-0 flex-col gap-3 overflow-hidden border-b p-3 md:h-auto md:w-[280px] md:border-b-0 md:border-r"
       aria-label={t(($) => $.memory.tree)}
     >
       <Input
@@ -74,26 +75,8 @@ export function MemoryTree({
         value={search}
         onChange={(e) => onSearch(e.target.value)}
       />
-      <Button
-        variant="ghost"
-        size="sm"
-        className={cn(
-          "h-auto w-full justify-start py-2",
-          selection.type === "index" &&
-            "bg-surface-selected text-surface-selected-foreground hover:bg-surface-selected",
-        )}
-        aria-pressed={selection.type === "index"}
-        onClick={() => onSelect({ type: "index" })}
-      >
-        <span className="text-left">
-          <span className="block font-mono">{"MEMORY.md"}</span>
-          <span className="text-caption text-muted-foreground">
-            {t(($) => $.memory.generated)}
-          </span>
-        </span>
-      </Button>
       {search.trim() ? (
-        <div aria-live="polite">
+        <div className="min-h-0 overflow-y-auto" aria-live="polite">
           {searching ? (
             <p className="p-2 text-caption text-muted-foreground">
               {t(($) => $.memory.loading)}
@@ -116,57 +99,13 @@ export function MemoryTree({
           )}
         </div>
       ) : (
-        <>
-          {(["feedback", "project", "reference"] as const).map((kind) => {
-            const entries = tree.entries.filter((e) => e.kind === kind);
-            return (
-              <details key={kind} open>
-                <summary className="cursor-pointer py-1 text-caption font-medium">
-                  {kind}{" "}
-                  <span className="text-muted-foreground">
-                    {entries.length}
-                  </span>
-                </summary>
-                {kind === "project"
-                  ? [...new Set(entries.map((e) => e.projectDir))]
-                      .sort((a, b) =>
-                        a === "general"
-                          ? -1
-                          : b === "general"
-                            ? 1
-                            : a.localeCompare(b),
-                      )
-                      .map((dir) => (
-                        <details key={dir} open className="pl-3">
-                          <summary className="cursor-pointer truncate py-1 text-caption">
-                            {tree.projects.find((p) => p.dir === dir)?.title ||
-                              dir}{" "}
-                            <span className="text-muted-foreground">
-                              {
-                                entries.filter((e) => e.projectDir === dir)
-                                  .length
-                              }
-                            </span>
-                          </summary>
-                          {entries
-                            .filter((e) => e.projectDir === dir)
-                            .map((e) => item(e.path, e.title))}
-                        </details>
-                      ))
-                  : entries.map((e) => item(e.path, e.title))}
-              </details>
-            );
-          })}
-          <details>
-            <summary className="cursor-pointer py-1 text-caption font-medium">
-              {t(($) => $.memory.trash)}{" "}
-              <span className="text-muted-foreground">{tree.trash.length}</span>
-            </summary>
-            {tree.trash.map((entry) =>
-              item(entry.trashPath, entry.title, "trash"),
-            )}
-          </details>
-        </>
+        <div className="min-h-48 flex-1 overflow-hidden md:min-h-0">
+          <MemoryFileTree
+            tree={tree}
+            selection={selection}
+            onSelect={onSelect}
+          />
+        </div>
       )}
     </aside>
   );
