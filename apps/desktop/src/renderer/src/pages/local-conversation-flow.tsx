@@ -126,6 +126,10 @@ import {
   useProjectVisibilityStore
 } from "../stores/local-conversation-project-visibility";
 import {
+  projectExpansionScopeKey,
+  useProjectExpansionStore
+} from "../stores/local-conversation-project-expansion";
+import {
   SESSION_LIST_MIN_WIDTH,
   SESSION_LIST_MAX_WIDTH,
   useConversationLayoutStore
@@ -305,8 +309,20 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
   const sessionLinks = useRef(new Map<string, HTMLAnchorElement>());
   const renameErrorId = useId();
   const [contextSelection, setContextSelection] = useState("");
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
-    () => new Set()
+  const expansionScope = projectExpansionScopeKey(scope, device.id);
+  const collapsedProjects = useProjectExpansionStore(
+    (state) => state.collapsedByScope[expansionScope] ?? EMPTY_PROJECT_IDS
+  );
+  const setProjectCollapsed = useProjectExpansionStore(
+    (state) => state.setProjectCollapsed
+  );
+  const toggleProject = usePersistCallback((projectId: string) =>
+    setProjectCollapsed(
+      scope,
+      device.id,
+      projectId,
+      !collapsedProjects.includes(projectId)
+    )
   );
   const [focusSequence, setFocusSequence] = useState(0);
   const providers = useQuery({
@@ -452,11 +468,12 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
         return;
       setArchived(entry.archived);
       const project = projectForDirectory(folderProjects, entry.cwd);
-      setCollapsedProjects((previous) => {
-        const next = new Set(previous);
-        next.delete(project && !isDefaultFolderProject(project) ? project.id : "unassigned");
-        return next;
-      });
+      setProjectCollapsed(
+        scope,
+        device.id,
+        project && !isDefaultFolderProject(project) ? project.id : "unassigned",
+        false
+      );
       select(id, entry.provider);
       setLocateRequest({ sessionId: id, turnId, quote, sequence });
     };
@@ -678,11 +695,7 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
       if (currentIntent.current === startedIntent) {
         setArchived(false);
         setProjectHidden(scope, project.id, false);
-        setCollapsedProjects((previous) => {
-          const next = new Set(previous);
-          next.delete(project.id);
-          return next;
-        });
+        setProjectCollapsed(scope, device.id, project.id, false);
       }
     } catch (raw) {
       const error = localV2Error(raw);
@@ -697,11 +710,7 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
   const restoreProject = (projectId: string) => {
     setProjectHidden(scope, projectId, false);
     setArchived(false);
-    setCollapsedProjects((previous) => {
-      const next = new Set(previous);
-      next.delete(projectId);
-      return next;
-    });
+    setProjectCollapsed(scope, device.id, projectId, false);
   };
   const restoreProjectCallback = usePersistCallback(restoreProject);
   const removeProject = (projectId: string) => {
@@ -1116,7 +1125,7 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
               ) : groups.length ? (
                 groups.map((group) => {
                   const key = group.id ?? "unassigned";
-                  const expanded = !collapsedProjects.has(key);
+                  const expanded = !collapsedProjects.includes(key);
                   const title =
                     group.id === null
                       ? projectLabels.unassigned
@@ -1132,7 +1141,7 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
                           title={title}
                           group={group}
                           expanded={expanded}
-                          setCollapsedProjects={setCollapsedProjects}
+                          toggleProject={toggleProject}
                           bindingKey={key}
                         />
                         <div className="flex shrink-0 items-center">
@@ -2294,16 +2303,14 @@ const ButtonBinding21 = observer(function ButtonBinding21({
   title,
   group,
   expanded,
-  setCollapsedProjects,
+  toggleProject,
   bindingKey: key,
   ...slotProps
 }: {
   title: string;
   group: import("../platform/local-conversation-pages").ConversationPageGroup;
   expanded: boolean;
-  setCollapsedProjects: import("react").Dispatch<
-    import("react").SetStateAction<Set<string>>
-  >;
+  toggleProject: (projectId: string) => void;
   bindingKey: string;
 } & Omit<
   React.ComponentProps<typeof Slot.Root>,
@@ -2311,22 +2318,13 @@ const ButtonBinding21 = observer(function ButtonBinding21({
     title: string;
     group: import("../platform/local-conversation-pages").ConversationPageGroup;
     expanded: boolean;
-    setCollapsedProjects: import("react").Dispatch<
-      import("react").SetStateAction<Set<string>>
-    >;
+    toggleProject: (projectId: string) => void;
     bindingKey: string;
   }
 >) {
   const onClickProp25 = usePersistCallback<
     NonNullable<React.ComponentProps<typeof Button>["onClick"]>
-  >(() =>
-    setCollapsedProjects((previous) => {
-      const next = new Set(previous);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    })
-  );
+  >(() => toggleProject(key));
   return (
     <Slot.Root {...slotProps}>
       <Button
