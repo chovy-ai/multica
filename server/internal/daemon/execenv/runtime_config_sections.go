@@ -976,6 +976,9 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 
 	writeAlwaysUseCLI(&b)
 	writeOutput(&b, kind, ctx)
+	if ctx.MemorySection != "" {
+		b.WriteString("\n" + ctx.MemorySection)
+	}
 
 	return b.String()
 }

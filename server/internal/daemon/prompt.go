@@ -75,6 +75,9 @@ func perTurnContextBlocks(task Task, opts promptOpts) string {
 	b.WriteString(execenv.BuildConnectedAppsBlock(task.ConnectedApps))
 	b.WriteString(buildJoinedWakeupsBlock(task.WakeupJoined))
 	b.WriteString(buildProjectWorkflowBlock(task))
+	if opts.memoryReminder != "" {
+		b.WriteString(strings.TrimRight(opts.memoryReminder, "\n") + "\n\n")
+	}
 	return b.String()
 }
 
@@ -115,6 +118,7 @@ type promptOpts struct {
 	worktreeBranch          string
 	worktreeBase            string
 	computerUse             string
+	memoryReminder          string
 }
 
 // PromptOption tunes per-turn prompt copy with run-scoped context.
@@ -128,6 +132,10 @@ type PromptOption func(*promptOpts)
 // has to be told (issue #7344).
 // WithComputerUse appends Desktop's Computer Use brief for a run whose device
 // serves it. Whether it does varies per run, so it is run-scoped context.
+func WithMemoryReminder(text string) PromptOption {
+	return func(o *promptOpts) { o.memoryReminder = text }
+}
+
 func WithComputerUse(brief string) PromptOption {
 	return func(o *promptOpts) { o.computerUse = brief }
 }
