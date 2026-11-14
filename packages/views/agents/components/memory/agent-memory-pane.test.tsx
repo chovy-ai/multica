@@ -152,15 +152,14 @@ describe("agent memory", () => {
     mount(a);
     expect(await screen.findByText("Generated · Read only")).toBeVisible();
     expect(
-      screen.queryByRole("textbox", { name: "Body", exact: true }),
+      screen.queryByRole("textbox", { name: "Body" }),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Root cause first/ }));
     const title = await screen.findByRole("textbox", {
       name: "Title",
-      exact: true,
     });
     fireEvent.change(title, { target: { value: "Updated title" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(a.update).toHaveBeenCalledWith(
         "agent",
@@ -171,9 +170,7 @@ describe("agent memory", () => {
       ),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Save", exact: true }),
-      ).toBeDisabled(),
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled(),
     );
   });
   it("reloads the latest content after a version conflict", async () => {
@@ -187,7 +184,6 @@ describe("agent memory", () => {
     );
     const title = await screen.findByRole("textbox", {
       name: "Title",
-      exact: true,
     });
     fireEvent.change(title, { target: { value: "Local draft" } });
     vi.mocked(a.read).mockResolvedValueOnce({
@@ -195,7 +191,7 @@ describe("agent memory", () => {
       title: "Changed by agent",
       updatedAt: "2026-11-14T00:00:02Z",
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(title).toHaveValue("Changed by agent"));
   });
   it("asks before discarding edits when switching files", async () => {
@@ -204,21 +200,16 @@ describe("agent memory", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /Root cause first/ }),
     );
-    fireEvent.change(
-      await screen.findByRole("textbox", { name: "Title", exact: true }),
-      { target: { value: "Draft" } },
-    );
+    fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), {
+      target: { value: "Draft" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /Plan first/ }));
     const dialog = await screen.findByRole("alertdialog");
     expect(
       within(dialog).getByText("Your unsaved changes will be lost."),
     ).toBeVisible();
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Cancel", exact: true }),
-    );
-    expect(
-      screen.getByRole("textbox", { name: "Title", exact: true }),
-    ).toHaveValue("Draft");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Draft");
   });
   it("deletes only after confirmation and restores from trash", async () => {
     const a = adapter();
@@ -226,14 +217,10 @@ describe("agent memory", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /Root cause first/ }),
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Delete", exact: true }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     expect(a.remove).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog");
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Confirm", exact: true }),
-    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
     await waitFor(() =>
       expect(a.remove).toHaveBeenCalledWith("agent", first.path),
     );
@@ -246,13 +233,11 @@ describe("agent memory", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /Root cause first/ }),
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Restore", exact: true }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(a.restore).toHaveBeenCalled());
-    expect(
-      await screen.findByRole("textbox", { name: "Title", exact: true }),
-    ).toHaveValue(first.title);
+    expect(await screen.findByRole("textbox", { name: "Title" })).toHaveValue(
+      first.title,
+    );
   });
   it("keeps members without edit access read-only", async () => {
     const a = adapter();
@@ -261,12 +246,10 @@ describe("agent memory", () => {
       await screen.findByRole("button", { name: /Root cause first/ }),
     );
     expect(
-      await screen.findByRole("textbox", { name: "Title", exact: true }),
+      await screen.findByRole("textbox", { name: "Title" }),
     ).toHaveAttribute("readonly");
     for (const name of ["Save", "Delete", "Clear memory"])
-      expect(
-        screen.queryByRole("button", { name, exact: true }),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   });
   it("debounces searches and replaces folders with search results", async () => {
     const a = adapter();
@@ -274,7 +257,6 @@ describe("agent memory", () => {
     fireEvent.change(
       await screen.findByRole("textbox", {
         name: "Search memory",
-        exact: true,
       }),
       { target: { value: "evidence" } },
     );
