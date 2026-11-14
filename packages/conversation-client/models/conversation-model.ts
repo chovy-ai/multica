@@ -98,7 +98,7 @@ export class ConversationModel {
   replaceSnapshot(snapshot: LocalV2Snapshot, options: { authoritative?: boolean } = {}): boolean {
     const sameStore = snapshot.store_generation === this.storeGeneration;
     if (sameStore && !options.authoritative && snapshot.snapshot_seq < this.seq) {
-      this.queue.receive(snapshot.queue);
+      this.receiveQueue(snapshot.queue);
       return false;
     }
     if (!sameStore || options.authoritative) {
@@ -129,6 +129,7 @@ export class ConversationModel {
       for (const interaction of previous.interactions) if (ids.has(interaction.turnId)) this.setInteraction(interaction);
       this.sortTurns();
     } else this.navigationTurnIds.clear();
+    this.reconcileDispatching();
     return true;
   }
 
@@ -152,6 +153,7 @@ export class ConversationModel {
       }));
     }
     this.seq = snapshot.snapshot_seq;
+    this.reconcileDispatching();
   }
 
   /**
@@ -217,10 +219,29 @@ export class ConversationModel {
         value.request_id,
         mergeSubmission(this.submissions.get(value.request_id), value),
       );
+    this.reconcileDispatching();
   }
 
   receiveQueue(queue: LocalV2Queue): void {
     this.queue.receive(queue);
+    this.reconcileDispatching();
+  }
+
+  /** Queue reads can outlive turn events without changing the queue revision. */
+  private reconcileDispatching(): void {
+    const id = this.queue.dispatchingRequestId;
+    if (!id) return;
+    const submission = this.submissions.get(id);
+    if (submission?.state === "attached") {
+      this.queue.clearDispatching();
+      return;
+    }
+    // A retry belongs to its current attempt, not a previous turn of the request.
+    if (submission && (submission.state !== "starting" || !submission.attempt)) return;
+    const attempt = submission?.attempt;
+    const requestId = attempt?.request_id ?? id;
+    if (attempt?.turn_ids.length || [...this.turns.values()].some((turn) => turn.requestId === requestId))
+      this.queue.clearDispatching();
   }
 
   private addTurn(turn: LocalV2SnapshotTurn): void {
@@ -238,6 +259,7 @@ export class ConversationModel {
       }));
     }
     for (const event of turn.events) this.applyEvent(event);
+    this.reconcileDispatching();
   }
 
   private sortTurns(): void {
@@ -337,12 +359,12 @@ export class ConversationModel {
       }
       case "turn.started":
         if (!event.turn_id) return;
-        this.queue.clearDispatching();
         this.turns.set(event.turn_id, new TurnModel(this, {
           id: event.turn_id, requestId: text(payload.request_id), status: "running",
           index: typeof payload.turn_index === "number" ? payload.turn_index : this.nextTurnIndex(),
           startedAt: event.created_at, completedAt: null, error: null,
         }));
+        this.reconcileDispatching();
         return;
       case "turn.completed":
         if (event.turn_id) {

@@ -15,6 +15,7 @@ const scope = { userId: "side-user", workspaceId: "side-workspace" };
 let queryClient: QueryClient;
 let sessions: LocalConversation[];
 let request: ReturnType<typeof vi.fn<(scope: unknown, method: string, params: Record<string, unknown>) => Promise<unknown>>>;
+let transportRequest: ReturnType<typeof vi.fn<typeof daemon>>;
 const preview = { request: vi.fn(), subscribe: vi.fn(() => () => {}) };
 const changes = new Set<(scope: LocalConversationScope, id: string) => void>();
 const at = "2026-10-24T00:00:00Z";
@@ -97,7 +98,8 @@ beforeEach(() => {
   const messages = new Set<(scope: LocalConversationScope, message: unknown) => void>();
   // A change notice from a case makes the conversation's subscription read it again.
   changes.add((changed, id) => messages.forEach((listener) => listener(changed, { version: 2, type: "subscription.status", conversation_id: id, status: "snapshot_required" })));
-  const localV2 = { request: daemon, send: vi.fn(async () => {}), subscribe: (listener: (scope: LocalConversationScope, message: unknown) => void) => { messages.add(listener); return () => messages.delete(listener); },
+  transportRequest = vi.fn(daemon);
+  const localV2 = { request: transportRequest, send: vi.fn(async () => {}), subscribe: (listener: (scope: LocalConversationScope, message: unknown) => void) => { messages.add(listener); return () => messages.delete(listener); },
     onConnection: () => () => {}, fileUrl: (_scope: unknown, path: string) => `v2:${path}`, upload: vi.fn(),
     availability: () => ({ state: "connected" }), onAvailability: () => () => {},
     choose: async (scopeValue: LocalConversationScope, choice: { kind: string }) => request(scopeValue, "previewChoose", { kind: choice.kind }) };
@@ -147,6 +149,26 @@ it("shows a running Side before its first output and retains the result after re
   expect(await screen.findByText("工作摘要")).toBeVisible();
   view.unmount(); setup();
   expect(await screen.findByText("工作摘要")).toBeVisible();
+});
+it("settles the Side header and tab when a refreshed snapshot repeats its old dispatch flag", async () => {
+  const side: LocalConversation = { ...sessions[0]!, id: "late-queue-side", title: "Late queue", turns: [{ id: "request", status: "running", createdAt: at, events: [] }] };
+  sessions.push(side);
+  const original = transportRequest.getMockImplementation()!;
+  transportRequest.mockImplementation(async (...args) => {
+    const value = await original(...args);
+    return args[2].startsWith(`/sessions/${side.id}/snapshot`) ? { ...value as object, queue: { revision: 2, paused: false, items: [], dispatching_request_id: "request" } } : value;
+  });
+  const view = setup();
+  act(() => view.ref.current!.openSide(side.id));
+  expect(await screen.findByRole("tab", { name: "旁支 · Late queue · 运行中" })).toHaveAttribute("aria-busy", "true");
+  expect(await screen.findByText("正在等待首次输出...")).toBeVisible();
+  side.turns[0]!.status = "completed";
+  side.messages = [{ id: "answer", turnId: "request", role: "assistant", content: "已完成旁支请求。", createdAt: at }];
+  await act(async () => { changes.forEach((listener) => listener(scope, side.id)); });
+  expect(await screen.findByRole("tab", { name: "旁支 · Late queue · 已完成" })).toHaveAttribute("aria-busy", "false");
+  expect(screen.getByRole("status")).toHaveTextContent("已完成");
+  expect(within(screen.getByTestId("side-activity")).getByText("已完成旁支请求。", { selector: "summary span" })).toBeVisible();
+  expect(screen.queryByText("正在等待首次输出...")).not.toBeInTheDocument();
 });
 it("keeps each Side's activity separate across tab and main conversation switches", async () => {
   const a: LocalConversation = { ...sessions[0]!, id: "side-a", title: "A", turns: [{ id: "a", status: "running", events: [], createdAt: "2026-10-24" }] };
