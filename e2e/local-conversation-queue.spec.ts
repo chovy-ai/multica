@@ -4,13 +4,13 @@ import type { AgentGuiInitSnapshot } from "../packages/tutti-agent-gui-host/src/
 import type { AgentTask, ChatMessage, ChatSession } from "../packages/core/types";
 import type { LocalPromptQueue } from "../packages/core/local-conversation/protocol";
 
-async function mountQueueHarness(page: Page, snapshot: AgentGuiInitSnapshot, session: ChatSession, provider: "codex" | "claude", seed?: string) {
+async function mountQueueHarness(page: Page, snapshot: AgentGuiInitSnapshot, session: ChatSession, provider: "codex" | "claude", seed?: string, initialQueue?: LocalPromptQueue) {
   // All local submissions now enter the desktop-owned queue, including the first turn.
   snapshot = { ...snapshot, queueOwner: "desktop" };
   await page.route("**/__test/local-conversation-queue", (route) => route.fulfill({ contentType: "text/html", body: '<button id="complete">Complete next execution away from composer</button><iframe title="Queue test" style="display:block;width:100%;height:850px;border:0"></iframe>' }));
   await page.setViewportSize({ width: 1200, height: 950 });
   await page.goto("/__test/local-conversation-queue");
-  await page.evaluate(({ snapshot, session, provider, seed }) => {
+  await page.evaluate(({ snapshot, session, provider, seed, initialQueue }) => {
     const frame = document.querySelector("iframe")!;
     const previous = JSON.parse(localStorage.getItem("test-queue-backend") || "null") as { messages: ChatMessage[]; tasks: AgentTask[]; sends: { content: string; queued?: true }[]; queue?: LocalPromptQueue } | null;
     const messages = previous?.messages ?? (seed ? [
@@ -22,7 +22,7 @@ async function mountQueueHarness(page: Page, snapshot: AgentGuiInitSnapshot, ses
     // A stopped desktop marks interrupted local executions terminal and pauses its queue on reopen.
     const interrupted = tasks.some((task) => task.status === "running");
     for (const task of tasks) if (task.status === "running") { task.status = "failed"; task.completed_at = new Date(Date.parse(session.created_at) + tasks.length * 1000).toISOString(); session.updated_at = task.completed_at; }
-    const queue: LocalPromptQueue = previous?.queue ?? { revision: 0, paused: false, items: [] };
+    const queue: LocalPromptQueue = previous?.queue ?? initialQueue ?? { revision: 0, paused: false, items: [] };
     if (interrupted) { queue.paused = true; queue.revision++; }
     const save = () => localStorage.setItem("test-queue-backend", JSON.stringify({ messages, tasks, sends, queue }));
     document.body.dataset.sends = JSON.stringify(sends);
@@ -37,6 +37,7 @@ async function mountQueueHarness(page: Page, snapshot: AgentGuiInitSnapshot, ses
         document.body.dataset.failure = queue.error;
         return;
       }
+      delete queue.error;
       queue.items.shift();
       sends.push({ content: item.content, queued: true }); queue.revision++;
       const id = `turn-${sends.length}`;
@@ -71,7 +72,10 @@ async function mountQueueHarness(page: Page, snapshot: AgentGuiInitSnapshot, ses
           case "queue.enqueue": snapshot.activeSessionId = request.params.sessionId; queue.items.push(request.params.item); queue.paused = request.params.paused === true; queue.revision++; drainDesktop(); save(); result = queue; break;
           case "queue.update": {
             if (request.params.action === "remove") queue.items = queue.items.filter((item) => item.requestId !== request.params.requestId);
-            else queue.paused = request.params.action === "pause" || request.params.action === "stop";
+            else {
+              queue.paused = request.params.action === "pause" || request.params.action === "stop";
+              if (!queue.paused) delete queue.error;
+            }
             queue.revision++; drainDesktop(); save(); result = queue; break;
           }
           case "host.openSide": {
@@ -111,8 +115,60 @@ async function mountQueueHarness(page: Page, snapshot: AgentGuiInitSnapshot, ses
       frame.contentWindow!.postMessage({ type: "multica:agent-gui:connect", snapshot }, location.origin, [channel.port2]);
     });
     frame.src = "/tutti-agent-gui/index.html";
-  }, { snapshot, session, provider, seed });
+  }, { snapshot, session, provider, seed, initialQueue });
 }
+
+for (const theme of ["light", "dark"] as const) test(`restart notice joins the paused queue and recovers in ${theme}`, async ({ page }) => {
+  const at = "2026-11-14T13:00:00Z";
+  const session = { id: "restart-queue", workspace_id: "queue-workspace", creator_id: "queue-user", agent_id: "local:codex", title: "Restart queue", status: "active", created_at: at, updated_at: at, has_unread: false } as ChatSession;
+  const snapshot: AgentGuiInitSnapshot = { workspaceId: session.workspace_id, workspaceSlug: "test", userId: session.creator_id, locale: "en", theme, local: true, hostActive: true, hostVisible: true, agents: [], sessions: [session], activeSessionId: session.id, selectedAgentId: session.agent_id,
+    executionTargets: [{ id: session.agent_id, provider: "codex", name: "Codex", iconUrl: "", canInvoke: true, runtimeBound: true, runtimeOnline: true }] };
+  const message = "Multica restarted; resume the queue to send these messages";
+  await mountQueueHarness(page, snapshot, session, "codex", "Completed request", {
+    revision: 1, paused: true, error: message,
+    items: ["First queued request", "Second queued request", "Third queued request"].map((content, index) => ({
+      requestId: `restart-${index}`, content,
+      display: { id: `restart-${index}`, clientSubmitId: `restart-${index}`, createdAtUnixMs: Date.parse(at) + index, content: [{ type: "text", text: content }] },
+    })),
+  });
+  const gui = page.frameLocator("iframe");
+  const notice = gui.locator(".agent-gui-chrome__card--danger").filter({ hasText: message });
+  const queue = gui.getByTestId("agent-gui-composer-queued-prompts");
+  await expect(notice).toBeVisible();
+  await expect(queue).toContainText("Queue paused");
+  for (const width of [1200, 380]) {
+    await page.setViewportSize({ width, height: 950 });
+    const panel = queue.locator(".agent-gui-node__composer-queued-prompt-panel");
+    await expect.poll(() => notice.evaluate((element) => {
+      const notice = element.getBoundingClientRect();
+      const queue = document.querySelector(".agent-gui-node__composer-queued-prompt-panel")!.getBoundingClientRect();
+      return Math.max(Math.abs(queue.top - notice.bottom), Math.abs(queue.left - notice.left), Math.abs(queue.right - notice.right));
+    })).toBeLessThanOrEqual(1);
+    await expect(panel).toHaveCSS("border-top-left-radius", "0px");
+    await expect(panel).toHaveCSS("border-top-right-radius", "0px");
+    await page.screenshot({ path: `.tmp/chov-126/restart-${theme}-${width}.png` });
+  }
+  // Removing the queue leaves a complete, separate notice above the input.
+  for (let remaining = 3; remaining > 0; remaining--) {
+    await queue.getByRole("button", { name: "Delete", exact: true }).first().click();
+  }
+  await expect(queue).not.toBeVisible();
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveCSS("border-bottom-width", "1px");
+  await expect.poll(() => notice.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      rounded: style.borderBottomLeftRadius === style.borderTopLeftRadius && parseFloat(style.borderBottomLeftRadius) > 0,
+      separate: document.querySelector('[data-testid="agent-gui-composer-input-shell"]')!.getBoundingClientRect().top > element.getBoundingClientRect().bottom,
+    };
+  })).toEqual({ rounded: true, separate: true });
+  await page.screenshot({ path: `.tmp/chov-126/standalone-${theme}.png` });
+  await gui.getByTestId("agent-gui-composer-editor").fill("Resume after restart");
+  await gui.getByTestId("agent-gui-composer-send").click();
+  await expect(notice).not.toBeVisible();
+  await expect(gui.getByTestId("agent-gui-composer-stop-active-turn")).toBeVisible();
+  await expect(page.locator("body")).not.toHaveAttribute("data-failure");
+});
 
 for (const theme of ["light", "dark"] as const) test(`queue errors stay above the queue and growing input in ${theme}`, async ({ page }) => {
   const at = new Date().toISOString();
@@ -140,8 +196,10 @@ for (const theme of ["light", "dark"] as const) test(`queue errors stay above th
           const errorBox = (await error.boundingBox())!;
           const queueBox = (await panel.boundingBox())!;
           const inputBox = (await gui.getByTestId("agent-gui-composer-input-shell").boundingBox())!;
-          return { errorAboveQueue: errorBox.y + errorBox.height + 7 <= queueBox.y, queueAboveInput: queueBox.y + queueBox.height <= inputBox.y + 1 };
-        }).toEqual({ errorAboveQueue: true, queueAboveInput: true });
+          return { seam: queueBox.y - errorBox.y - errorBox.height, queueAboveInput: queueBox.y + queueBox.height <= inputBox.y + 1, left: queueBox.x - errorBox.x, right: queueBox.x + queueBox.width - errorBox.x - errorBox.width };
+        }).toEqual({ seam: 0, queueAboveInput: true, left: 0, right: 0 });
+        await expect(panel).toHaveCSS("border-top-left-radius", "0px");
+        await expect(panel).toHaveCSS("border-top-right-radius", "0px");
       }
     }
     await page.screenshot({ path: `.tmp/queue-error-layout/${theme}-${width}.png` });
