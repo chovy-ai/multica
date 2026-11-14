@@ -7,18 +7,19 @@ import (
 	"path/filepath"
 
 	"github.com/multica-ai/multica/server/internal/localconversation/filechanges"
+	"github.com/multica-ai/multica/server/internal/localconversation/provider"
 	"github.com/multica-ai/multica/server/internal/localconversation/store"
 )
 
 const ConversationResourcesCapability = "conversation-resources-v1"
 
-func codexFileCollection(c *filechanges.Capture, turn string, events []outputEvent) filechanges.Collection {
+func providerFileCollection(c *filechanges.Capture, turn string, events []outputEvent) filechanges.Collection {
 	collection := filechanges.Collection{Capture: c, TurnID: turn}
 	for _, e := range events {
-		if !e.Final || e.Payload["kind"] != "file_change" {
+		if !e.Final || (e.Payload["kind"] != "file_change" && e.Payload["kind"] != "command") {
 			continue
 		}
-		changes, _ := e.Payload["changes"].([]any)
+		changes := provider.FileChanges(e.Payload)
 		for i, raw := range changes {
 			entry, _ := raw.(map[string]any)
 			path, _ := entry["path"].(string)
