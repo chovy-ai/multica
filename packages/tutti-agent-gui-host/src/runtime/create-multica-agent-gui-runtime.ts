@@ -441,7 +441,7 @@ export function createMulticaAgentGuiRuntime(
     enqueue: enqueueDesktop,
     checkpoint: durableStorage
       ? async (input, display) => {
-          const params = prepareDesktop(input);
+          const params = await prepareDesktop(input);
           const frozen = (await client.queue.prepare?.(params)) ?? params;
           desktopAdmissions.set(input.clientSubmitId, frozen);
           const prepared = frozen.item;
@@ -466,8 +466,12 @@ export function createMulticaAgentGuiRuntime(
     checkpointActivation: durableStorage
       ? async (input) => {
           if (input.mode !== "new" || !input.clientSubmitId) return;
-          let prepared: StoredSubmission["prepared"];
-          if (input.initialContent?.length) {
+          const previous = desktopAdmissions.get(input.clientSubmitId);
+          let prepared: StoredSubmission["prepared"] = previous
+            ? persistedQueuedPromptSchema.parse(previous.item)
+            : undefined;
+          if (input.initialContent?.length && !prepared) {
+            await composer.selectionsSettled();
             const params: AgentGuiOperations["queue.enqueue"]["params"] = {
               sessionId: input.agentSessionId,
               queued: true,
@@ -487,7 +491,10 @@ export function createMulticaAgentGuiRuntime(
                   : {}),
                 reasoningEffort: input.settings?.reasoningEffort ?? null,
                 serviceTier: input.settings?.speed ?? null,
-                permissionMode: input.settings?.permissionModeId ?? "default",
+                permissionMode: composer.selectedPermission(
+                  input.agentTargetId,
+                  input.agentSessionId,
+                ),
               }),
             };
             const frozen = (await client.queue.prepare?.(params)) ?? params;
@@ -1161,12 +1168,13 @@ export function createMulticaAgentGuiRuntime(
     string,
     AgentGuiOperations["queue.enqueue"]["params"]
   >();
-  function prepareDesktop(
+  async function prepareDesktop(
     input: AgentSessionSubmitPromptInput,
     paused = false
   ) {
     const previous = desktopAdmissions.get(input.clientSubmitId);
     if (previous) return previous;
+    await composer.selectionsSettled();
     const sessionId =
       resolvedServerId(input.agentSessionId) ?? input.agentSessionId;
     const session =
@@ -1215,7 +1223,7 @@ export function createMulticaAgentGuiRuntime(
     input: AgentSessionSubmitPromptInput,
     paused = false,
   ) {
-    const params = prepareDesktop(input, paused);
+    const params = await prepareDesktop(input, paused);
     const id = await backendSessionId(input.agentSessionId);
     if (params.sessionId !== id) throw new Error("Submission target changed");
     const error = promptSubmissionError(input, init.locale);

@@ -16,11 +16,11 @@ Codex 的参数放在 `exec` 之前，使新会话和 `exec resume` 都能接受
 
 ## 数据流与作用范围
 
-`PermissionPicker → runtime.setPermissionSelection → storage.write → session.send.permissionMode → local conversation service → runLocalProvider → CLI arguments`
+`PermissionPicker → runtime.setPermissionSelection → storage.write → submission checkpoint → queue.enqueue.item.permissionMode → local conversation service → provider`
 
-- GUI 偏好使用已有账户、工作区隔离的存储通道，键为 `permission-preferences-v1`。每次选择都同时保存当前会话的权限和该运行器的新会话默认值；Codex 与 Claude Code 分开记忆，重启后恢复。
-- 创建会话或打开尚未执行的空会话时，继承该运行器最近保存的选择。已有会话的显式权限优先；没有权限记录的历史会话维持 CLI 默认。旁支、分叉保留来源权限，不因默认值变化而放宽。保存失败时，会话权限和默认选择都不更新。
-- 更新后若还没有运行器默认值，会沿用当前会话中用户明确保存过的选择；已保存的运行器默认值不会被旧会话覆盖。
+- GUI 偏好使用已有账户、工作区隔离的存储通道，键为 `global-execution-permission-v1`。同一作用域的 Codex、Claude Code 和各会话共用当前选择，重启后恢复；不再读取旧的 `permission-preferences-v1`。历史会话设置不会覆盖全局选择，偏好保存失败时保留原选择。
+- 每条新消息首次形成提交快照前，等待偏好加载及当前选择保存结束，再读取输入栏使用的全局权限。启用持久化提交时，新会话首条消息在创建会话前完成该步骤；快照保存失败则不创建会话、不发送消息。
+- 已接纳消息的权限随提交快照保存。切换全局选择只影响后续新消息；恢复和重试继续使用原快照，不重新读取当前权限，也不追溯修改旧消息。
 - 接受发送后，权限随 `LocalConversation` 持久化；未显式传值的客户端沿用会话权限，旧会话缺省为默认权限。服务端拒绝未知值，写入失败时回滚权限与消息。
 - 旁支继承来源权限；排队消息转旁支时记录转移时的权限选择。
 - `@` Multica 智能体继续使用自身运行配置，不接收本机会话权限覆盖。
