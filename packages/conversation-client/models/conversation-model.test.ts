@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { autorun } from "mobx";
 import { describe, expect, it } from "vitest";
-import { localV2SnapshotSchema } from "@multica/core/local-conversation/v2";
+import { localV2EventSchema, localV2SnapshotSchema } from "@multica/core/local-conversation/v2";
+import { localSubmissionSchema } from "@multica/core/local-conversation/submission";
 import { ConversationModel } from "./conversation-model";
 
 describe("paging and retained conversations", () => {
@@ -89,7 +90,7 @@ describe("paging and retained conversations", () => {
 
   it("clears the dispatching flag when the turn starts, since no other event does", () => {
     const conversation = ConversationModel.fromSnapshot(snapshot({ queue: { revision: 5, paused: false, dispatching_request_id: "r", items: [] } }));
-    conversation.applyEvents([{ seq: 101, turn_id: "t6", turn_seq: 1, item_id: null, type: "turn.started", final: false, created_at: at, payload: {} }] as never);
+    conversation.applyEvents([{ seq: 101, turn_id: "t6", turn_seq: 1, item_id: null, type: "turn.started", final: false, created_at: at, payload: { request_id: "r" } }] as never);
     expect(conversation.queue.dispatchingRequestId).toBeUndefined();
     expect(conversation.turns.get("t6")!.index).toBe(6);
   });
@@ -132,5 +133,88 @@ describe("paging and retained conversations", () => {
     conversation.applyEvents([event(103, "item.completed", { payload: { kind: "reasoning" } })] as never);
     expect(conversation.items.get("x")).toMatchObject({ text: "", state: { kind: "reasoning" } });
     expect(conversation.items.get("x")!.state).not.toHaveProperty("tool");
+  });
+});
+
+describe("dispatch state follows the current execution", () => {
+  const at = "2026-11-14T05:00:00Z";
+  const queue = (id = "request") => ({ revision: 2, paused: false, items: [], dispatching_request_id: id });
+  const turn = (status = "running", requestId = "request") => ({
+    id: `turn-${requestId}`, turn_index: 0, request_id: requestId, status, started_at: at, messages: [], events: [],
+  });
+  const snapshot = (fields: Record<string, unknown> = {}) => localV2SnapshotSchema.parse({
+    version: 2, store_generation: "g", snapshot_seq: 10, queue: queue(),
+    conversation: { conversation_id: "side", summary_seq: 1, provider: "claude", title: "Side", status: "idle", pinned: false, archived: false, updated_at: at },
+    turns: [], ...fields,
+  });
+  const started = (seq: number, requestId = "request") => localV2EventSchema.parse({
+    seq, type: "turn.started", turn_id: `turn-${requestId}`, final: false, created_at: at, payload: { request_id: requestId },
+  });
+  const submission = (state: "starting" | "attached", requestId = "request", revision = 1) => localSubmissionSchema.parse({
+    request_id: "request", revision, state,
+    attempt: { attempt_id: `attempt-${requestId}`, request_id: requestId, turn_ids: state === "attached" ? [`turn-${requestId}`] : [], delivery: "not_sent" },
+  });
+
+  it.each(["running", "completed"])("ignores a late queue read after a turn is %s", (status) => {
+    const model = ConversationModel.fromSnapshot(snapshot());
+    model.applyEvents([started(11)]);
+    if (status === "completed") model.applyEvents([localV2EventSchema.parse({
+      seq: 12, type: "turn.completed", turn_id: "turn-request", final: true, created_at: at, payload: { status },
+    })]);
+    model.receiveQueue(queue());
+    expect(model.queue.dispatchingRequestId).toBeUndefined();
+    expect(model.turns.get("turn-request")?.status).toBe(status);
+  });
+
+  it.each(["initial", "replacement", "stale"])("reconciles dispatching in an %s snapshot", (source) => {
+    const value = snapshot({ turns: [turn("completed")] });
+    const model = ConversationModel.fromSnapshot(source === "initial" ? value : snapshot({ turns: value.turns, snapshot_seq: source === "stale" ? 11 : 9 }));
+    if (source !== "initial") model.replaceSnapshot(value);
+    expect(model.queue.dispatchingRequestId).toBeUndefined();
+    expect(model.turns.get("turn-request")?.status).toBe("completed");
+  });
+
+  it("retains the next request's dispatching while another turn starts and completes", () => {
+    const model = ConversationModel.fromSnapshot(snapshot({ queue: queue("next") }));
+    model.applyEvents([started(11), localV2EventSchema.parse({
+      seq: 12, type: "turn.completed", turn_id: "turn-request", final: true, created_at: at, payload: { status: "completed" },
+    })]);
+    expect(model.queue.dispatchingRequestId).toBe("next");
+  });
+
+  it("uses a retry's current attempt instead of a previous turn of the same message", () => {
+    const model = ConversationModel.fromSnapshot(snapshot({ turns: [turn("failed")], submissions: [submission("starting", "retry")] }));
+    expect(model.queue.dispatchingRequestId).toBe("request");
+    model.mergeHistory({ store_generation: "g", has_older_turns: false, turns: [snapshot({ turns: [turn("failed")] }).turns[0]!] });
+    expect(model.queue.dispatchingRequestId).toBe("request");
+    model.applyEvents([started(11, "retry")]);
+    expect(model.queue.dispatchingRequestId).toBeUndefined();
+    model.receiveQueue(queue());
+    expect(model.queue.dispatchingRequestId).toBeUndefined();
+  });
+
+  it.each(["snapshot", "event", "read"])("clears an attached attempt from a %s even when its turn is not loaded", (source) => {
+    const attached = submission("attached");
+    const model = ConversationModel.fromSnapshot(snapshot({ submissions: source === "snapshot" ? [attached] : [] }));
+    if (source === "event") model.applyEvents([localV2EventSchema.parse({
+      seq: 11, type: "submission.updated", final: false, created_at: at, payload: { submission: attached, queue_revision: 2 },
+    })]);
+    if (source === "read") model.mergeSubmissions([attached]);
+    expect(model.turns.size).toBe(0);
+    expect(model.queue.dispatchingRequestId).toBeUndefined();
+  });
+
+  it("keeps a new retry dispatching when an older submission reply arrives", () => {
+    const model = ConversationModel.fromSnapshot(snapshot({ turns: [turn("failed")], submissions: [submission("attached")] }));
+    model.mergeSubmissions([submission("starting", "retry", 2)]);
+    model.receiveQueue(queue());
+    model.mergeSubmissions([submission("attached")]);
+    expect(model.queue.dispatchingRequestId).toBe("request");
+  });
+
+  it("forgets execution evidence when the store is replaced", () => {
+    const model = ConversationModel.fromSnapshot(snapshot({ turns: [turn("completed")], submissions: [submission("attached")] }));
+    model.replaceSnapshot(snapshot({ store_generation: "new-store" }));
+    expect(model.queue.dispatchingRequestId).toBe("request");
   });
 });
