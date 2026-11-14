@@ -55,6 +55,13 @@ let entries: AgentMemoryEntry[] = [
     body: "Use the developer log export and correlate request IDs.",
   },
 ];
+if (scenario === "empty") entries = [];
+if (scenario === "long")
+  entries[0]!.body = Array.from(
+    { length: 35 },
+    (_, i) =>
+      `## Step ${i + 1}\n\nRead the relevant code, reproduce the first bad state, then explain the change.`,
+  ).join("\n\n");
 let trash: AgentMemoryTree["trash"] = [];
 const removed = new Map<string, AgentMemoryEntry>();
 Object.defineProperty(window, "daemonAPI", {
@@ -68,18 +75,22 @@ Object.defineProperty(window, "daemonAPI", {
   },
 });
 const adapter: AgentMemoryAdapter = {
-  tree: async () => ({
-    exists: true,
-    root: "/verification/profiles/memory/agents/11111111-1111-4111-8111-111111111111/memory",
-    index:
-      "# Memory\n\n" +
-      entries
-        .map((e) => `- ${e.path} — ${e.title}: ${e.description}`)
-        .join("\n"),
-    entries,
-    projects: [{ dir: "general", title: "general" }],
-    trash,
-  }),
+  tree: async () => {
+    if (scenario === "failure") throw new Error("Fixture unavailable");
+    if (scenario === "loading") await new Promise(() => {});
+    return {
+      exists: true,
+      root: "/verification/profiles/memory/agents/11111111-1111-4111-8111-111111111111/memory",
+      index:
+        "# Memory\n\n" +
+        entries
+          .map((e) => `- ${e.path} — ${e.title}: ${e.description}`)
+          .join("\n"),
+      entries,
+      projects: [{ dir: "general", title: "general" }],
+      trash,
+    };
+  },
   read: async (_id, path) => {
     const entry = entries.find((e) => e.path === path);
     if (!entry) throw new Error("Memory entry not found");
@@ -95,6 +106,9 @@ const adapter: AgentMemoryAdapter = {
       )
       .map((e) => ({ path: e.path, title: e.title, snippet: e.description })),
   update: async (_id, input) => {
+    if (scenario === "save-failure") throw new Error("Fixture update failed");
+    if (scenario === "slow-save")
+      await new Promise((resolve) => setTimeout(resolve, 1200));
     const existing = entries.find((e) => e.path === input.path)!;
     if (scenario === "conflict") {
       existing.title = "Updated by another run";
@@ -137,7 +151,7 @@ const runtime = {
   daemon_id: "memory-fixture",
 } as AgentRuntime;
 createRoot(document.getElementById("root")!).render(
-  <I18nProvider locale="en" resources={RESOURCES}>
+  <I18nProvider locale={params.get("locale") ?? "en"} resources={RESOURCES}>
     <QueryClientProvider client={client}>
       <WorkspaceSlugProvider slug="memory">
         <ThemeProvider forcedTheme={params.get("theme") ?? "light"}>
@@ -145,12 +159,14 @@ createRoot(document.getElementById("root")!).render(
             <header className="border-b p-4 text-title-sm font-semibold">
               Agent memory · Verification
             </header>
-            <AgentMemoryPane
-              agentId="memory-agent"
-              runtime={runtime}
-              adapter={adapter}
-              canEdit={scenario !== "readonly"}
-            />
+            <div className="min-h-0 flex-1">
+              <AgentMemoryPane
+                agentId="memory-agent"
+                runtime={runtime}
+                adapter={adapter}
+                canEdit={scenario !== "readonly"}
+              />
+            </div>
           </main>
           <Toaster />
         </ThemeProvider>

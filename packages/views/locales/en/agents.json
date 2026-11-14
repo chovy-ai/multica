@@ -1104,6 +1104,22 @@
     "clear_hint": "All memory will move to the trash and be permanently deleted after 30 days.",
     "discard_hint": "Your unsaved changes will be lost.",
     "cancel": "Cancel",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "read_only": "Read only",
+    "title_limit": "Use 1–100 characters on a single line.",
+    "description_limit": "Use 1–200 characters on a single line.",
+    "body_required": "Enter a body before saving.",
+    "markdown_hint": "Markdown supported",
+    "unsaved": "Unsaved changes",
+    "saved": "Saved",
+    "saving": "Saving...",
+    "copied": "Copied",
+    "more_actions": "More actions",
+    "clear_search": "Clear search",
+    "kind_feedback": "Feedback",
+    "kind_project": "Project",
+    "kind_reference": "Reference",
+    "entry_count_one": "{{count}} entry",
+    "entry_count_other": "{{count}} entries"
   }
 }

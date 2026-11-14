@@ -1104,6 +1104,22 @@
     "clear_hint": "Toutes les mémoires seront déplacées dans la corbeille et supprimées définitivement après 30 jours.",
     "discard_hint": "Les modifications non enregistrées seront perdues.",
     "cancel": "Annuler",
-    "confirm": "Confirmer"
+    "confirm": "Confirmer",
+    "read_only": "Lecture seule",
+    "title_limit": "Saisissez 1 à 100 caractères sur une seule ligne.",
+    "description_limit": "Saisissez 1 à 200 caractères sur une seule ligne.",
+    "body_required": "Saisissez un contenu avant d’enregistrer.",
+    "markdown_hint": "Markdown pris en charge",
+    "unsaved": "Modifications non enregistrées",
+    "saved": "Enregistré",
+    "saving": "Enregistrement...",
+    "copied": "Copié",
+    "more_actions": "Autres actions",
+    "clear_search": "Effacer la recherche",
+    "kind_feedback": "Retours",
+    "kind_project": "Projet",
+    "kind_reference": "Référence",
+    "entry_count_one": "{{count}} entrée",
+    "entry_count_other": "{{count}} entrées"
   }
 }

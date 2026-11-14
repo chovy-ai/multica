@@ -1077,6 +1077,21 @@
     "clear_hint": "所有記憶將移到回收筒，30 天後永久刪除",
     "discard_hint": "未儲存的修改將遺失",
     "cancel": "取消",
-    "confirm": "確認"
+    "confirm": "確認",
+    "read_only": "唯讀",
+    "title_limit": "請輸入 1–100 個字元，保持單行。",
+    "description_limit": "請輸入 1–200 個字元，保持單行。",
+    "body_required": "請輸入內文後再儲存。",
+    "markdown_hint": "支援 Markdown",
+    "unsaved": "有未儲存的變更",
+    "saved": "已儲存",
+    "saving": "儲存中...",
+    "copied": "已複製",
+    "more_actions": "更多操作",
+    "clear_search": "清除搜尋",
+    "kind_feedback": "回饋",
+    "kind_project": "專案",
+    "kind_reference": "參考資料",
+    "entry_count_other": "{{count}} 條記憶"
   }
 }

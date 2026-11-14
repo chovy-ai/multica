@@ -1,5 +1,11 @@
 import { Button } from "@multica/ui/components/ui/button";
-import { Input } from "@multica/ui/components/ui/input";
+import { Search, X } from "lucide-react";
+import { IconButton } from "@multica/ui/components/common/icon-button";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@multica/ui/components/ui/input-group";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../../i18n";
 import type { AgentMemoryTree } from "./types";
@@ -66,15 +72,33 @@ export function MemoryTree({
   };
   return (
     <aside
-      className="flex h-80 shrink-0 flex-col gap-3 overflow-hidden border-b p-3 md:h-auto md:w-[280px] md:border-b-0 md:border-r"
+      className="flex h-56 shrink-0 flex-col gap-3 overflow-hidden border-b p-3 md:h-auto md:w-64 md:border-b-0 md:border-r lg:w-[280px]"
       aria-label={t(($) => $.memory.tree)}
     >
-      <Input
-        aria-label={t(($) => $.memory.search)}
-        placeholder={t(($) => $.memory.search)}
-        value={search}
-        onChange={(e) => onSearch(e.target.value)}
-      />
+      <InputGroup>
+        <InputGroupAddon>
+          <Search aria-hidden="true" />
+        </InputGroupAddon>
+        <InputGroupInput
+          name="memory-search"
+          autoComplete="off"
+          aria-label={t(($) => $.memory.search)}
+          placeholder={t(($) => $.memory.search)}
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+        />
+        {search && (
+          <InputGroupAddon align="inline-end">
+            <IconButton
+              label={t(($) => $.memory.clear_search)}
+              size="icon-xs"
+              onClick={() => onSearch("")}
+            >
+              <X />
+            </IconButton>
+          </InputGroupAddon>
+        )}
+      </InputGroup>
       {search.trim() ? (
         <div className="min-h-0 overflow-y-auto" aria-live="polite">
           {searching ? (
@@ -98,15 +122,10 @@ export function MemoryTree({
             </p>
           )}
         </div>
-      ) : (
-        <div className="min-h-48 flex-1 overflow-hidden md:min-h-0">
-          <MemoryFileTree
-            tree={tree}
-            selection={selection}
-            onSelect={onSelect}
-          />
-        </div>
-      )}
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden" hidden={!!search.trim()}>
+        <MemoryFileTree tree={tree} selection={selection} onSelect={onSelect} />
+      </div>
     </aside>
   );
 }

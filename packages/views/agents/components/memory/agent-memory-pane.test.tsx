@@ -258,7 +258,7 @@ describe("agent memory", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     expect(a.remove).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(a.remove).toHaveBeenCalledWith("agent", first.path),
     );
@@ -286,7 +286,70 @@ describe("agent memory", () => {
     for (const name of ["Save", "Delete", "Clear memory"])
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   });
-  it("debounces searches and replaces folders with search results", async () => {
+  it("explains invalid fields and prevents an invalid save", async () => {
+    const a = adapter();
+    mount(a);
+    fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
+    const title = await screen.findByRole("textbox", { name: "Title" });
+    fireEvent.change(title, { target: { value: "" } });
+    expect(title).toHaveAttribute("aria-invalid", "true");
+    expect(title).toHaveAccessibleDescription(
+      "Use 1–100 characters on a single line.",
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Body" }), {
+      target: { value: "界".repeat(2800) },
+    });
+    expect(
+      screen.getByRole("textbox", { name: "Body" }),
+    ).toHaveAccessibleDescription(/8KB or smaller/);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(a.update).not.toHaveBeenCalled();
+  });
+  it("preserves a failed draft and allows retry without duplicate saves", async () => {
+    const a = adapter();
+    let fail!: (error: Error) => void;
+    vi.mocked(a.update).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject;
+        }),
+    );
+    mount(a);
+    fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
+    const title = await screen.findByRole("textbox", { name: "Title" });
+    fireEvent.change(title, { target: { value: "Retry this draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      await screen.findByRole("button", { name: "Saving..." }),
+    ).toBeDisabled();
+    fail(new Error("unavailable"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not access memory",
+    );
+    expect(title).toHaveValue("Retry this draft");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved");
+    expect(a.update).toHaveBeenCalledTimes(2);
+  });
+  it("requires an explicit confirmation to clear all memory", async () => {
+    const a = adapter();
+    mount(a);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "More actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Clear memory" }),
+    );
+    expect(a.clear).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("30 days");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Clear memory" }),
+    );
+    await waitFor(() => expect(a.clear).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/No memory yet/)).toBeVisible();
+  });
+  it("debounces searches and hides folders without unmounting the tree", async () => {
     const a = adapter();
     mount(a);
     fireEvent.change(
@@ -300,7 +363,7 @@ describe("agent memory", () => {
     ).toBeVisible();
     expect(a.search).toHaveBeenCalledWith("agent", "evidence");
     expect(
-      screen.queryByRole("treeitem", { name: second.path }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("treeitem", { name: second.path, hidden: true }),
+    ).not.toBeVisible();
   });
 });

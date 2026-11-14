@@ -398,6 +398,7 @@ export function AgentOverviewPane({
         className={cn(
           "min-h-0 flex-1 overflow-y-auto",
           isSecondaryLayout && "md:overflow-hidden",
+          effectiveView === "memory" && "overflow-hidden",
         )}
       >
         {effectiveView === "overview" && (

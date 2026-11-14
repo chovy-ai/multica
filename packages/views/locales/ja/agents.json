@@ -1077,6 +1077,21 @@
     "clear_hint": "すべてのメモリをゴミ箱に移動し、30 日後に完全に削除します。",
     "discard_hint": "未保存の変更は失われます。",
     "cancel": "キャンセル",
-    "confirm": "確認"
+    "confirm": "確認",
+    "read_only": "読み取り専用",
+    "title_limit": "1～100 文字で、改行せずに入力してください。",
+    "description_limit": "1～200 文字で、改行せずに入力してください。",
+    "body_required": "保存する前に本文を入力してください。",
+    "markdown_hint": "Markdown 対応",
+    "unsaved": "未保存の変更",
+    "saved": "保存済み",
+    "saving": "保存中...",
+    "copied": "コピーしました",
+    "more_actions": "その他の操作",
+    "clear_search": "検索をクリア",
+    "kind_feedback": "フィードバック",
+    "kind_project": "プロジェクト",
+    "kind_reference": "参考資料",
+    "entry_count_other": "{{count}} 件"
   }
 }

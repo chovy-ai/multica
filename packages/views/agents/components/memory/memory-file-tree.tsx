@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   FileTree,
   useFileTree,
@@ -132,6 +132,17 @@ export function MemoryFileTree({
     unsafeCSS: treeCSS,
   });
   const selected = useFileTreeSelection(model);
+  const treeLabel = t(($) => $.memory.tree);
+  useEffect(() => {
+    // The SDK applies host attributes outside its shadow DOM accessibility tree.
+    const frame = requestAnimationFrame(() => {
+      model
+        .getFileTreeContainer()
+        ?.shadowRoot?.querySelector('[role="tree"]')
+        ?.setAttribute("aria-label", treeLabel);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [model, treeLabel]);
   const previousPaths = useRef<readonly string[] | null>(null);
   useLayoutEffect(() => {
     synchronizing.current = true;
