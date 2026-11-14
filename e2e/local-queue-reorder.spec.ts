@@ -1,6 +1,53 @@
 import { expect, test } from "@playwright/test";
 import "./env";
 
+for (const theme of ["light", "dark"] as const) {
+  for (const position of ["before", "after"] as const) {
+    test(`queue insertion indicator is visible ${position} the row in ${theme} theme`, async ({ page }) => {
+      await page.setViewportSize({ width: 1500, height: 900 });
+      await page.goto("/tutti-agent-gui/direct.html?queueReorder");
+      await page.locator("#toggle").click();
+      if (theme === "dark") await page.locator("#theme").click();
+      const panel = page.locator('[data-instance="main-conversation"]').getByTestId("agent-gui-composer-queued-prompts");
+      await panel.locator(".agent-gui-node__composer-queued-prompt-header").click();
+      const rows = panel.locator("[data-prompt-id][data-reorderable]");
+      const source = position === "before" ? 2 : 0;
+      const target = rows.nth(position === "before" ? 0 : 2);
+      const handle = panel.getByRole("button", { name: "Reorder queued message" }).nth(source);
+      await handle.hover();
+      const bounds = await target.boundingBox();
+      expect(bounds).not.toBeNull();
+      await page.mouse.down();
+      try {
+        const dropPosition = { x: bounds!.width / 2, y: position === "before" ? bounds!.height / 4 : bounds!.height * 3 / 4 };
+        // Chromium needs a second move at the target to dispatch native dragover.
+        await target.hover({ position: dropPosition });
+        await target.hover({ position: dropPosition });
+        await expect(target).toHaveAttribute("data-drop-position", position);
+        await page.screenshot({ path: `.tmp/chov123/${theme}-drop-${position}.png` });
+        await expect(target).toHaveCSS("box-shadow", /inset/);
+        const { shadow, brand, background } = await target.evaluate((row) => {
+          const probe = document.createElement("span");
+          probe.style.color = "var(--brand)";
+          row.append(probe);
+          const brand = getComputedStyle(probe).color;
+          probe.remove();
+          const style = getComputedStyle(row);
+          return { shadow: style.boxShadow, brand, background: style.backgroundColor };
+        });
+        expect(brand).not.toBe(background);
+        expect(shadow).toBe(`${brand} 0px ${position === "before" ? 2 : -2}px 0px 0px inset`);
+      } finally {
+        await page.mouse.up();
+      }
+      await expect(panel.locator("[data-drop-position]")).toHaveCount(0);
+      await expect(rows).toHaveText(position === "before"
+        ? [/Third queued message/, /First queued message/, /Second queued message/]
+        : [/Second queued message/, /Third queued message/, /First queued message/]);
+    });
+  }
+}
+
 test("drag handles reorder the authoritative queue in main and Side", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
