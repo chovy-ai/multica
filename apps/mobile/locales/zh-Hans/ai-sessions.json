@@ -184,5 +184,7 @@
     "relay_limited": "当前中继连接无法传输此文件，请重试或移除。",
     "upload_too_large": "电脑端拒绝了过大的文件，请移除并选择较小的文件。",
     "stalled": "上传已停止，请重试或移除文件。"
-  }
+  },
+  "session_running": "执行中",
+  "session_background": "后台运行中"
 }

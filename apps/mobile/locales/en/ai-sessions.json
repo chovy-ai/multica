@@ -186,5 +186,7 @@
     "relay_limited": "This connection cannot transfer this file through the relay. Retry or remove it.",
     "upload_too_large": "The computer rejected this file as too large. Remove it and choose a smaller one.",
     "stalled": "Upload stopped progressing. Retry or remove the file."
-  }
+  },
+  "session_running": "Running",
+  "session_background": "Running in background"
 }
