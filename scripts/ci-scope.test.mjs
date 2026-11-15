@@ -227,8 +227,8 @@ test("the CLI writes real Actions outputs and exits nonzero on a failed gate", (
 // backend-tests and the broken test lands on main. The scan is heuristic: it
 // follows the shapes the suite uses (filepath.Join from "..", "../" literals,
 // package string constants, a repo-root constant joined with a path literal)
-// and keeps only paths that exist, which drops traversal fixtures like
-// "../../etc/passwd".
+// and keeps only tracked paths that exist, which drops traversal fixtures like
+// "../../etc/passwd" and generated build outputs.
 function goTokens(source) {
   const tokens = [];
   for (const [text] of source.matchAll(/\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:[^"\\\n]|\\.)*"|`[^`]*`|'(?:[^'\\\n]|\\.)*'|\w+|\S/g)) {
@@ -313,9 +313,14 @@ function evaluate(tokens, constants) {
 
 function goTestRepoReads(root) {
   const reads = new Map();
-  const goFiles = readdirSync(join(root, "server"), { recursive: true })
-    .map((file) => posix.join("server", file.split(sep).join("/")))
-    .filter((file) => file.endsWith(".go"));
+  const tracked = spawnSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" });
+  assert.equal(tracked.status, 0, tracked.stderr);
+  const repositoryFiles = new Set(tracked.stdout.split("\0").filter(Boolean));
+  const repositoryDirectories = new Set(["."]);
+  for (const file of repositoryFiles) {
+    for (let dir = posix.dirname(file); dir !== "."; dir = posix.dirname(dir)) repositoryDirectories.add(dir);
+  }
+  const goFiles = [...repositoryFiles].filter((file) => file.startsWith("server/") && file.endsWith(".go"));
   for (const [dir, files] of Map.groupBy(goFiles, posix.dirname)) {
     const sources = new Map(files.map((file) => [file, goTokens(readFileSync(join(root, file), "utf8"))]));
     const constants = new Map();
@@ -325,6 +330,7 @@ function goTestRepoReads(root) {
       const bases = new Set();
       const resolve = (path, { directories = true } = {}) => {
         if (path === ".." || path.startsWith("../") || path === "server" || path.startsWith("server/")) return;
+        if (!repositoryFiles.has(path) && !repositoryDirectories.has(path)) return;
         const stat = statSync(join(root, path), { throwIfNoEntry: false });
         if (!stat || (stat.isDirectory() && !directories)) return;
         if (stat.isDirectory()) bases.add(path);
@@ -373,7 +379,7 @@ test("every repository file a Go test reads outside server/ selects backend-test
   assert.deepEqual(missing.map(([path]) => path), [], missingFilterMessage(missing));
 });
 
-test("the Go test scan follows relative paths, constants and repo-root helpers", (t) => {
+test("the Go test scan follows tracked dependencies and excludes generated outputs", (t) => {
   const root = mkdtempSync(join(tmpdir(), "ci-scope-go-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const files = {
@@ -386,6 +392,7 @@ test("the Go test scan follows relative paths, constants and repo-root helpers",
       '\treadRepoFile(".env.example")',
       '\tos.ReadFile(filepath.Join("..", "..", "..", filepath.FromSlash(ConfigPath)))',
       '\tos.ReadFile("../../../scripts/check.sh")',
+      '\tos.ReadFile("../../../apps/desktop/out/main/claude-host.js")',
       '\tos.ReadDir(filepath.Join("..", "..", "..", "examples", "plugins", entry.Name()))',
       '\tos.ReadFile("../../migrations/1.up.sql")',
       '\tstore.Get("../../../etc/passwd")',
@@ -403,6 +410,13 @@ test("the Go test scan follows relative paths, constants and repo-root helpers",
     mkdirSync(dirname(join(root, file)), { recursive: true });
     writeFileSync(join(root, file), body);
   }
+  for (const args of [["init", "--quiet"], ["add", "."]]) {
+    const git = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    assert.equal(git.status, 0, git.stderr);
+  }
+  const generated = join(root, "apps/desktop/out/main/claude-host.js");
+  mkdirSync(dirname(generated), { recursive: true });
+  writeFileSync(generated, "");
   const reads = goTestRepoReads(root);
   assert.deepEqual([...reads.keys()].sort(),
     [".env.example", ".multica/environments.toml", "examples/plugins", "scripts/check.sh"]);
