@@ -147,6 +147,7 @@ import { deviceName, useLinkedDevices } from "../platform/linked-devices";
 import { issueConversationDraftKey, useIssueConversationStore } from "../stores/issue-conversation-store";
 import { pickRemoteFolder, RemoteFolderPicker } from "./remote-folder-picker";
 import { LocalConversationSessionRow } from "./local-conversation-session-row";
+import { LocalConversationSortableList } from "./local-conversation-sortable-list";
 import { useDocumentTitle } from "../hooks/use-document-title";
 import { useConversationFocus } from "../platform/use-conversation-focus";
 export const LocalConversationFlowPage = observer(
@@ -406,8 +407,10 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
     hiddenProjectIds,
     archived,
     "",
-    !!workspace && !!userId
+    !!workspace && !!userId,
+    device.id
   );
+  const reorderSessionsCallback = usePersistCallback(sessions.reorder);
   // The list already knows every conversation; only an ID it lacks needs its snapshot read here.
   const selectedSummary = selectedId ? v2.list.summary(selectedId) : undefined;
   const selectedQuery = useQuery({
@@ -1176,9 +1179,14 @@ const LocalConversationFlow = observer(function LocalConversationFlow() {
                       {expanded && (
                         <>
                           {group.sessions.length ? (
-                            <div className="flex flex-col gap-1">
-                              {group.sessions.map(renderSession)}
-                            </div>
+                            <LocalConversationSortableList
+                              key={`${sessions.orderScope}:${key}:${archived}`}
+                              groupId={group.id}
+                              sessions={group.sessions}
+                              reorder={reorderSessionsCallback}
+                              renderSession={renderSession}
+                              chinese={chinese}
+                            />
                           ) : (
                             <p className="px-3 py-2 text-caption text-muted-foreground">
                               {projectLabels.empty}
