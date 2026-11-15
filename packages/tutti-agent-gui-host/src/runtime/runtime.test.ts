@@ -9,7 +9,8 @@ ChatSession,
 PendingChatTaskItem
 } from "@multica/core/types";
 import { createRichTextMentionMarkdown } from "@tutti-os/ui-rich-text/core";
-import type { LocalPromptQueue } from "@multica/core/local-conversation/protocol";
+import type { LocalPermissionMode, LocalPromptQueue } from "@multica/core/local-conversation/protocol";
+import type { StoredSubmission } from "@multica/core/local-conversation/submission-storage";
 import { reaction, runInAction } from "mobx";
 import { ConversationRowsModel } from "../../../../vendor/tutti/packages/agent/gui/state/ConversationRowsModel";
 import { ConversationModel } from "@multica/conversation-client/models";
@@ -3124,4 +3125,186 @@ it("leaves the composer-owned input unsent when reliable storage fails", async (
   expect(await result.ready).toBe(false);
   expect(wasEnqueued(data.request)).toBe(false);
   expect(handle.runtime.prompts.pending(session.id)).toHaveLength(0);
+});
+
+describe("durable permission snapshots", () => {
+  function fixture(provider: "claude" | "codex", permission: LocalPermissionMode) {
+    const data = backend(new Map([
+      ["global-execution-permission-v1", JSON.stringify(permission)],
+    ]));
+    const localInit = {
+      ...init,
+      agents: init.agents.map((entry) => ({ ...entry, provider })),
+    };
+    const original = data.request.getMockImplementation()!;
+    data.request.mockImplementation(async (method, params) => {
+      if (method === "host.showMessage") return;
+      const result = await original(method, params);
+      return method === "workspace.load"
+        ? { ...result, agents: localInit.agents }
+        : result;
+    });
+    const records = new Map<string, StoredSubmission>();
+    const source = localSourceFromClient(data.client);
+    source.submissionStorage = {
+      read: async () => [...records.values()],
+      put: vi.fn(async (record) => {
+        records.set(record.requestId, structuredClone(record));
+        return record;
+      }),
+      confirm: async () => {},
+      remove: async (id) => { records.delete(id); },
+    };
+    source.submissionContext = async () => ({ generation: "test", lifecycle: true });
+    const prepare = vi.fn(async (params: AgentGuiOperations["queue.enqueue"]["params"]) => structuredClone(params));
+    data.client.queue.prepare = prepare;
+    const handle = createRuntime(data.client, localInit, source);
+    handles.push(handle);
+    const activation = {
+      mode: "new" as const,
+      agentTargetId: agent.id,
+      agentSessionId: "permission-draft",
+      requestId: "permission-activation",
+      clientSubmitId: "permission-submit",
+      initialContent: [{ type: "text" as const, text: "Use selected permission" }],
+    };
+    return { ...data, source, records, prepare, handle, activation };
+  }
+
+  describe.each(["claude", "codex"] as const)("%s", (provider) => {
+    it.each(["default", "auto", "full-access"] as const)(
+      "persists and sends the global %s permission for the first message",
+      async (permission) => {
+        const data = fixture(provider, permission);
+        await data.handle.initialize();
+        data.handle.runtime.activations.request(data.activation);
+        expect(await data.handle.runtime.activations.saved?.(data.activation.requestId)).toBe(true);
+        expect(data.records.get("permission-submit")?.prepared?.permissionMode).toBe(permission);
+        await vi.waitFor(() => expect(enqueuedItem(data.request)).toMatchObject({ permissionMode: permission }));
+        expect(data.prepare.mock.calls[0]?.[0].item.permissionMode).toBe(permission);
+      },
+    );
+
+    it("waits for permission hydration before taking the first snapshot", async () => {
+      const data = fixture(provider, "full-access");
+      // Recreate the runtime so its initial permission read can be held open.
+      data.handle.dispose();
+      let release!: (value: string) => void;
+      data.client.storage.read = async ({ key }) => key === "global-execution-permission-v1"
+        ? new Promise<string>((resolve) => { release = resolve; })
+        : data.storage.get(key) ?? null;
+      const handle = createRuntime(data.client, { ...init, agents: init.agents.map((entry) => ({ ...entry, provider })) }, data.source);
+      handles.push(handle);
+      const initializing = handle.initialize();
+      handle.runtime.activations.request(data.activation);
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      expect(data.prepare).not.toHaveBeenCalled();
+      expect(data.source.submissionStorage!.put).not.toHaveBeenCalled();
+      release(JSON.stringify("full-access"));
+      await initializing;
+      expect(await handle.runtime.activations.saved?.(data.activation.requestId)).toBe(true);
+      await vi.waitFor(() => expect(enqueuedItem(data.request)).toMatchObject({ permissionMode: "full-access" }));
+    });
+
+    it("uses a new permission for later messages without changing the first snapshot", async () => {
+      const data = fixture(provider, "auto");
+      await data.handle.initialize();
+      data.handle.runtime.activations.request(data.activation);
+      await vi.waitFor(() => expect(enqueuedItem(data.request)).toMatchObject({ permissionMode: "auto" }));
+      await data.handle.setPermissionSelection(agent.id, null, "default");
+      const next = data.handle.runtime.prompts.submitPrompt({
+        agentSessionId: "permission-draft",
+        clientSubmitId: "second-message",
+        content: [{ type: "text", text: "Use default permissions" }],
+      });
+      expect(await next.ready).toBe(true);
+      await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "queue.enqueue")).toHaveLength(2));
+      const sends = data.request.mock.calls.filter(([method]) => method === "queue.enqueue");
+      expect(sends.map(([, params]) => params.item.permissionMode)).toEqual(["auto", "default"]);
+      expect(data.records.get("permission-submit")?.prepared?.permissionMode).toBe("auto");
+      expect(data.records.get("second-message")?.prepared?.permissionMode).toBe("default");
+    });
+
+    it.each(["new", "existing"] as const)(
+      "waits for a pending permission downgrade before admitting a %s session message",
+      async (kind) => {
+        const data = fixture(provider, "full-access");
+        if (kind === "existing") data.sessions.push(session);
+        await data.handle.initialize();
+        if (kind === "existing")
+          await data.handle.runtime.conversations.load(init.workspaceId, session.id);
+        let release!: () => void;
+        const write = data.client.storage.write;
+        data.client.storage.write = async (params) => {
+          if (params.key === "global-execution-permission-v1")
+            await new Promise<void>((resolve) => { release = resolve; });
+          return write(params);
+        };
+        const saving = data.handle.setPermissionSelection(agent.id, null, "default");
+        await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+        if (kind === "new") data.handle.runtime.activations.request(data.activation);
+        else data.handle.runtime.prompts.submitPrompt({
+          agentSessionId: session.id,
+          clientSubmitId: "permission-submit",
+          content: data.activation.initialContent,
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(data.prepare).not.toHaveBeenCalled();
+        expect(data.source.submissionStorage!.put).not.toHaveBeenCalled();
+        release();
+        await saving;
+        await vi.waitFor(() => expect(enqueuedItem(data.request)).toMatchObject({ permissionMode: "default" }));
+        expect(data.records.get("permission-submit")?.prepared?.permissionMode).toBe("default");
+      },
+    );
+
+    it("preserves an activation's saved permission across restart and retry", async () => {
+      const data = fixture(provider, "full-access");
+      data.records.set("permission-submit", {
+        version: 1,
+        requestId: "permission-submit",
+        sessionId: "permission-draft",
+        sequence: 0,
+        createdAt: Date.now(),
+        kind: "activation",
+        stage: "unconfirmed",
+        generation: "test",
+        lifecycle: true,
+        input: data.activation,
+        prepared: {
+          requestId: "permission-submit",
+          content: "Use selected permission",
+          permissionMode: "auto",
+          display: {
+            id: "permission-submit",
+            createdAtUnixMs: Date.now(),
+            content: data.activation.initialContent,
+          },
+        },
+      });
+      data.rejectSend(new Error("connection lost"));
+      await data.handle.initialize();
+      await vi.waitFor(() => expect(enqueuedItem(data.request)).toMatchObject({ permissionMode: "auto" }));
+      await data.handle.setPermissionSelection(agent.id, null, "default");
+      await vi.waitFor(() => expect(data.handle.runtime.prompts.error("permission-draft")).toBeDefined());
+      data.rejectSend(undefined);
+      data.handle.runtime.prompts.update("permission-draft", "sendNow", "permission-submit");
+      await vi.waitFor(() => expect(data.request.mock.calls.filter(([method]) => method === "queue.enqueue")).toHaveLength(2));
+      const sends = data.request.mock.calls.filter(([method]) => method === "queue.enqueue");
+      expect(sends).toHaveLength(2);
+      expect(sends.map(([, params]) => params.item.permissionMode)).toEqual(["auto", "auto"]);
+      expect(data.records.get("permission-submit")?.prepared?.permissionMode).toBe("auto");
+    });
+
+    it("does not create or send a conversation when the activation snapshot cannot be saved", async () => {
+      const data = fixture(provider, "full-access");
+      data.source.submissionStorage!.put = vi.fn(async () => { throw new Error("disk full"); });
+      await data.handle.initialize();
+      data.handle.runtime.activations.request(data.activation);
+      expect(await data.handle.runtime.activations.saved?.(data.activation.requestId)).toBe(false);
+      expect(data.request.mock.calls.some(([method]) => method === "session.create")).toBe(false);
+      expect(wasEnqueued(data.request)).toBe(false);
+      expect(data.records.size).toBe(0);
+    });
+  });
 });
