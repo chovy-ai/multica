@@ -13,9 +13,8 @@ import { RESOURCES } from "@multica/views/locales";
 const WORKSPACES = [{ id: "ws-1", slug: "acme" }];
 
 // The shell is the only thing under test here, so everything it mounts around
-// the rail is stubbed out. What survives is the pair that has to agree:
-// `WindowToolbar`'s own trigger, and the `hasExternalTrigger` the provider
-// publishes to every page header inside the canvas.
+// the rail is stubbed out. The toolbar and sidebar provider remain real so
+// the navigation clearance and page-header fallback contract are exercised.
 vi.mock("@/hooks/use-tab-history", () => ({
   useTabHistory: () => ({
     canGoBack: false,
@@ -78,8 +77,6 @@ vi.mock("@multica/views/layout", () => ({
   SearchButton: () => null,
   ShellRouteDataPrefetch: ({ children }: { children: ReactNode }) => <>{children}</>,
   SpacePanel: () => null,
-  // In a panel space the shell's toggleNav is the sidebar toggle.
-  useAppShell: () => ({ toggleNav: useSidebar().toggleSidebar }),
   useTabPresentation: () => ({ visual: { kind: "icon", icon: "Inbox" }, title: "" }),
   ResourceLeadingVisual: () => null,
 }));
@@ -149,33 +146,27 @@ beforeEach(() => {
 });
 
 describe("DesktopShell sidebar trigger", () => {
-  // The window toolbar parks a trigger beside the traffic lights that never
-  // scrolls away, so nothing inside the canvas may add a second one. Desktop
-  // windows often sit in the band where `PageHeader`'s fallback trigger
-  // renders, so every page used to stack an identical icon 50px under
-  // this one — and a third when a list/detail surface brought its own header
-  // along (MUL-6218).
-  it("keeps exactly one trigger and tells page headers not to add another", () => {
-    const { container, getByTestId, queryByRole } = renderShell();
+  it("removes the window trigger and allows page headers to provide recovery", () => {
+    const { container, getByTestId, getByRole, queryByRole } = renderShell();
 
-    expect(container.querySelectorAll("[data-slot='sidebar-trigger']")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-slot='sidebar-trigger']")).toHaveLength(0);
     expect(getByTestId("page-content")).toHaveAttribute(
       "data-external-trigger",
-      "true",
+      "false",
     );
     // The toolbar floats over the 56px rail; the tabs start past the rest
     // of it whether or not the panel inside the card is open.
     const mainTopBar = container.querySelector('[data-slot="main-top-bar"]');
-    expect(mainTopBar).toHaveStyle({ paddingLeft: "144px" });
+    expect(mainTopBar).toHaveStyle({ paddingLeft: "108px" });
 
     fireEvent.click(
-      container.querySelector('[data-slot="sidebar-trigger"]')!,
+      getByRole("button", { name: "Collapse sidebar" }),
     );
     expect(getByTestId("page-content")).toHaveAttribute(
       "data-sidebar-state",
       "collapsed",
     );
-    expect(mainTopBar).toHaveStyle({ paddingLeft: "144px" });
+    expect(mainTopBar).toHaveStyle({ paddingLeft: "108px" });
     expect(queryByRole("status", { name: /loading workspace/i })).toBeNull();
   });
 
@@ -193,20 +184,20 @@ describe("DesktopShell sidebar trigger", () => {
       "data-sidebar-state",
       "expanded",
     );
-    expect(mainTopBar).toHaveStyle({ paddingLeft: "200px" });
+    expect(mainTopBar).toHaveStyle({ paddingLeft: "164px" });
 
     fireEvent.click(getByRole("button", { name: "Collapse sidebar" }));
     expect(getByTestId("page-content")).toHaveAttribute(
       "data-sidebar-state",
       "collapsed",
     );
-    expect(mainTopBar).toHaveStyle({ paddingLeft: "200px" });
+    expect(mainTopBar).toHaveStyle({ paddingLeft: "164px" });
 
     fireEvent.click(getByRole("button", { name: "Expand sidebar" }));
     expect(getByTestId("page-content")).toHaveAttribute(
       "data-sidebar-state",
       "expanded",
     );
-    expect(mainTopBar).toHaveStyle({ paddingLeft: "200px" });
+    expect(mainTopBar).toHaveStyle({ paddingLeft: "164px" });
   });
 });

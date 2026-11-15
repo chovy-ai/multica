@@ -75,7 +75,7 @@ function useNativeNavigationGestures() {
 
 
 // The main area's top bar doubles as a window drag region. The window
-// toolbar (traffic lights, history, panel toggle) floats over the rail and
+// toolbar (traffic lights and history) floats over the rail and
 // the start of this bar, so the tabs start past whatever the rail leaves of
 // its width. New issue and search hold the far end; the tabs give way to
 // them.
@@ -279,14 +279,9 @@ export function DesktopShell() {
               inset half of both. Anything that has to paint an opaque layer
               over this wrapper (the tab flares) reads the variable rather than
               re-deriving which of the two is in play. */}
-          {/* hasExternalTrigger: WindowToolbar below parks a SidebarTrigger
-              beside the traffic lights, where it is always reachable. Page
-              headers inside the canvas must not add their own fallback one on
-              top of it — desktop windows often sit in the band where that
-              fallback renders, so every page showed a second identical icon
-              50px under this one (MUL-6218). */}
+          {/* Page headers retain their existing compact/collapsed navigation
+              recovery now that the window toolbar only contains history. */}
           <SidebarProvider
-            hasExternalTrigger
             className="flex-1 bg-app-shell [--sidebar-wrapper-fill:var(--app-shell)]"
           >
             <AppShellProvider renderedPathname={renderedPathname}>
