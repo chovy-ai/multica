@@ -74,7 +74,8 @@
     "zod": "catalog:",
     "mobx-react": "catalog:",
     "radix-ui": "catalog:",
-    "zustand": "catalog:"
+    "zustand": "catalog:",
+    "@base-ui/react": "catalog:"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",

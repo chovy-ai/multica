@@ -65,10 +65,6 @@ vi.mock("./updater-preferences", () => ({
   saveUpdaterPreferences: vi.fn(),
 }));
 
-vi.mock("./cli-bootstrap", () => ({
-  managedCliPath: () => "/review-only/managed-cli",
-  ensureManagedCli: vi.fn(async () => "/review-only/managed-cli"),
-}));
 
 vi.mock("fs", () => ({
   existsSync: () => true,

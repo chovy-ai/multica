@@ -144,6 +144,10 @@
     "turbo": "^2.5.4",
     "typescript": "catalog:",
     "@multica/eslint-config": "workspace:*",
-    "eslint": "catalog:"
+    "eslint": "catalog:",
+    "@multica/ui": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "@tanstack/react-query": "catalog:"
   }
 }

@@ -129,9 +129,6 @@ catalogs:
     katex:
       specifier: ^0.16.45
       version: 0.16.45
-    lucide-react:
-      specifier: ^1.0.1
-      version: 1.0.1
     mdast-util-from-markdown:
       specifier: ^2.0.3
       version: 2.0.3
@@ -358,12 +355,18 @@ importers:
       '@multica/tutti-agent-gui-host':
         specifier: workspace:*
         version: link:packages/tutti-agent-gui-host
+      '@multica/ui':
+        specifier: workspace:*
+        version: link:packages/ui
       '@playwright/test':
         specifier: ^1.58.2
         version: 1.58.2
       '@tailwindcss/postcss':
         specifier: 'catalog:'
         version: 4.2.2
+      '@tanstack/react-query':
+        specifier: 'catalog:'
+        version: 5.96.2(react@19.2.3)
       '@types/node':
         specifier: 'catalog:'
         version: 25.5.0
@@ -382,6 +385,12 @@ importers:
       postcss:
         specifier: 8.5.26
         version: 8.5.26
+      react:
+        specifier: 'catalog:'
+        version: 19.2.3
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.2.3(react@19.2.3)
       turbo:
         specifier: ^2.5.4
         version: 2.9.5
@@ -394,6 +403,9 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.310
         version: 0.3.310(@anthropic-ai/sdk@1.3.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(zod@4.3.6)
+      '@base-ui/react':
+        specifier: 'catalog:'
+        version: 1.3.0(@types/react@19.2.14)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@dnd-kit/core':
         specifier: 'catalog:'
         version: 6.3.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -1206,9 +1218,6 @@ importers:
       d3:
         specifier: 7.9.0
         version: 7.9.0
-      lucide-react:
-        specifier: 'catalog:'
-        version: 1.0.1(react@19.2.3)
       mobx:
         specifier: 'catalog:'
         version: 6.16.1
@@ -1227,6 +1236,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.3(react@19.2.3)
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
       zustand:
         specifier: 'catalog:'
         version: 5.0.12(@types/react@19.2.14)(immer@11.1.4)(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
@@ -11320,11 +11332,6 @@ packages:
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
-  lucide-react@1.0.1:
-    resolution: {integrity: sha512-lih7tKEczCYOQjVEzpFuxEuNzlwf+1yhvlMlEkGWJM3va8Pugv8bYXc/pRtcjPncaP7k84X0Pt/71ufxvqEPtQ==}
-    peerDependencies:
-      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
-
   lucide-react@1.63.0:
     resolution: {integrity: sha512-GkBfQG+FUJ41x6y3/lNXiOziVU0Rcqqq0TCzhHS8avsFXHZmOdmfBqsVTvHSaVmbI+wbdGkxHRmhYWhD3N4/yA==}
     peerDependencies:
@@ -14591,9 +14598,6 @@ packages:
 
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
-
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
@@ -22438,8 +22442,8 @@ snapshots:
       '@babel/parser': 7.29.2
       eslint: 9.39.4(jiti@1.21.7)
       hermes-parser: 0.25.1
-      zod: 4.4.3
-      zod-validation-error: 4.0.2(zod@4.4.3)
+      zod: 4.6.7
+      zod-validation-error: 4.0.2(zod@4.6.7)
     transitivePeerDependencies:
       - supports-color
 
@@ -24270,7 +24274,7 @@ snapshots:
       tinyglobby: 0.2.17
       unbash: 4.0.10
       yaml: 2.9.0
-      zod: 4.4.3
+      zod: 4.6.7
 
   lan-network@0.2.1: {}
 
@@ -24472,10 +24476,6 @@ snapshots:
   lru_map@0.4.1: {}
 
   lucide-react@0.511.0(react@19.2.3):
-    dependencies:
-      react: 19.2.3
-
-  lucide-react@1.0.1(react@19.2.3):
     dependencies:
       react: 19.2.3
 
@@ -29031,15 +29031,13 @@ snapshots:
     dependencies:
       zod: 4.3.6
 
-  zod-validation-error@4.0.2(zod@4.4.3):
+  zod-validation-error@4.0.2(zod@4.6.7):
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.7
 
   zod@3.25.76: {}
 
   zod@4.3.6: {}
-
-  zod@4.4.3: {}
 
   zod@4.6.7: {}
 

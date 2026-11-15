@@ -42,7 +42,6 @@ vi.mock("fs/promises", async (original) => ({
   }),
   writeFile: vi.fn(), mkdir: vi.fn(),
 }));
-vi.mock("./cli-bootstrap", () => ({ ensureManagedCli: context.install, managedCliPath: () => "/test/managed/multica" }));
 vi.mock("./desktop-runtime-instance", () => ({
   desktopRuntimeProfile: () => "desktop-runtime",
   desktopRuntimeRegistry: () => ({

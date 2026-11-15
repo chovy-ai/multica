@@ -59,14 +59,14 @@
     "@tutti-os/workbench-surface": "workspace:*",
     "chart.js": "4.6.1",
     "d3": "7.9.0",
-    "lucide-react": "catalog:",
     "mobx": "catalog:",
     "mobx-react": "catalog:",
     "mobx-react-lite": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "zustand": "catalog:",
-    "radix-ui": "catalog:"
+    "radix-ui": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "catalog:",
