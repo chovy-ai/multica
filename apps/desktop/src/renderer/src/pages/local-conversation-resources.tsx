@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react-lite";
-import { ChevronRight, File, FileDiff, SlidersHorizontal, X } from "lucide-react";
+import { ChevronRight, File, FileDiff, SlidersHorizontal, X } from "@multica/ui/icons";
 import type { ConversationResourcesService } from "@multica/conversation-client/services";
 import type { ConversationFileResource, ConversationResourceAttachment } from "@multica/core/local-conversation/resources";
 import { useT } from "@multica/views/i18n";

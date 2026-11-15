@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { FileText, BookOpen } from "lucide-react";
+import { FileText, BookOpen } from "@multica/ui/icons";
 import { useLocale } from "../../../i18n";
 
 export function MemoryFileHeader({

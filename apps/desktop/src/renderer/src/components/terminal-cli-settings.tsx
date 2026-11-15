@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Loader2, RefreshCw } from "lucide-react";
+import { Download, Loader2, RefreshCw } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { SettingsCard, SettingsRow, SettingsSection } from "@multica/views/settings";
 import { useT } from "@multica/views/i18n";

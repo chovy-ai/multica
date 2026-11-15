@@ -3,7 +3,7 @@ import { basename, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
-import { app, clipboard, dialog, ipcMain, shell, type BrowserWindow } from "electron";
+import { app, clipboard, dialog, ipcMain, shell, type BrowserWindow, type WebContents } from "electron";
 import { z } from "zod";
 import { localResourceTarget } from "@multica/tutti-agent-gui-host/message-resource-links";
 import { showLocalFileContextMenu } from "./context-menu";
@@ -15,7 +15,7 @@ const inputSchema = z.object({
 });
 
 export function setupLocalFileContextMenu(options: {
-  getWindow(): BrowserWindow | null;
+  getWindow(sender: WebContents): BrowserWindow | null;
   currentUser(): string | null | undefined;
   /** A GET to the local v2 API of this device ("local") or another one. */
   request(scope: z.infer<typeof scopeSchema>, path: string, deviceId: string): Promise<unknown>;
@@ -29,7 +29,7 @@ export function setupLocalFileContextMenu(options: {
     const input = inputSchema.parse(rawInput);
     const deviceId = rawDevice === undefined ? "local" : z.string().min(1).max(200).parse(rawDevice);
     const assertCurrent = () => {
-      const window = options.getWindow();
+      const window = options.getWindow(event.sender);
       if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("File actions require the active main window");
       if (scope.userId !== options.currentUser()) throw new Error("This account is no longer active");
       return window;

@@ -1,4 +1,4 @@
-import { MessageSquare, Monitor } from "lucide-react";
+import { MessageSquare, Monitor } from "@multica/ui/icons";
 import { toast } from "sonner";
 import type { Issue } from "@multica/core/types";
 import { api } from "@multica/core/api";

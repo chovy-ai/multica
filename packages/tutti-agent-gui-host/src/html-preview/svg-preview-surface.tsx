@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject
 } from "react";
-import { X } from "lucide-react";
+import { X } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { observer } from "mobx-react-lite";
 export const SvgPreviewSurface = observer(SvgPreviewSurfaceRender);

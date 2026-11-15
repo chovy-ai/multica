@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, Download, ImagePlus } from "lucide-react";
+import { Bot, Download, ImagePlus } from "@multica/ui/icons";
 import { toast } from "sonner";
 import type { Agent } from "@multica/core/types";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";

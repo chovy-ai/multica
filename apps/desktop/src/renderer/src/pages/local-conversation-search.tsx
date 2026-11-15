@@ -1,5 +1,5 @@
 import { useRef, useState, type CSSProperties } from "react";
-import { MessageSquare, Search } from "lucide-react";
+import { MessageSquare, Search } from "@multica/ui/icons";
 import type { LocalFolderProject, LocalProviderId } from "@multica/core/local-conversation/protocol";
 import { Button } from "@multica/ui/components/ui/button";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@multica/ui/components/ui/command";

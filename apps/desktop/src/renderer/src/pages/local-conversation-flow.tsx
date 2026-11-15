@@ -35,7 +35,7 @@ import {
   PinOff,
   Plus,
   Square
-} from "lucide-react";
+} from "@multica/ui/icons";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
@@ -116,7 +116,7 @@ import {
   LocalSideWorkspace,
   type SideWorkspaceHandle
 } from "./local-side-workspace";
-import { PanelRightOpen } from "lucide-react";
+import { PanelRightOpen } from "@multica/ui/icons";
 import type { ComponentProps } from "react";
 type RestoreDraftRequest = NonNullable<
   ComponentProps<typeof TuttiAgentGuiPanel>["restoreDraftRequest"]
@@ -3044,7 +3044,6 @@ const TuttiAgentGuiPanelBinding33 = observer(
       newAgent: () => string;
       newAgentManual: () => string;
       newAgentDone: (agentId: string) => string;
-      newAgentAi: () => string;
       newAgentAiSession: (sessionId: string) => string;
       agentDetail: (id: string) => string;
       agentConversationStarters: (id: string) => string;
@@ -3293,7 +3292,6 @@ const LocalSideWorkspaceBinding3 = observer(
       newAgent: () => string;
       newAgentManual: () => string;
       newAgentDone: (agentId: string) => string;
-      newAgentAi: () => string;
       newAgentAiSession: (sessionId: string) => string;
       agentDetail: (id: string) => string;
       agentConversationStarters: (id: string) => string;

@@ -8,7 +8,7 @@ import {
   CircleStop,
   Loader2,
   MessagesSquare
-} from "lucide-react";
+} from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "@multica/views/i18n";
 import type { LocalV2Scope } from "@multica/core/local-conversation/v2";

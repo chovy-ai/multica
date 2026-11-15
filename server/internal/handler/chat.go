@@ -90,6 +90,9 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
+	if !h.requireChatProjectVisible(w, r, workspaceID, projectID, agent.ID) {
+		return
+	}
 
 	// Create inside a tx that first takes a FOR KEY SHARE lock on the workspace
 	// row: it conflicts with DeleteWorkspace's FOR UPDATE, so a session cannot be
@@ -411,6 +414,9 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 			}
 			projectID, ok = parseUUIDOrBadRequest(w, rawProjectID, "project_id")
 			if !ok {
+				return
+			}
+			if !h.requireChatProjectVisible(w, r, workspaceID, projectID, session.AgentID) {
 				return
 			}
 		}
@@ -759,6 +765,10 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	// draft-restore protocol: FinalizeDeferredCancelledChat takes the same
 	// chat_session lock before inserting a restore, so it cannot slip one past
 	// this sweep (see LockChatSessionForTask in chat.sql).
+	if err := qtx.DeleteChatSubmissionReceiptsBySession(r.Context(), session.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete chat submission receipts")
+		return
+	}
 	if err := qtx.DeleteChatDraftRestoresBySession(r.Context(), session.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete chat session draft restores")
 		return
@@ -812,6 +822,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 // Chat Messages
 
 type SendChatMessageRequest struct {
+	SubmissionID  *string         `json:"submission_id"`
 	Content       string          `json:"content"`
 	AttachmentIDs []string        `json:"attachment_ids"`
 	Model         json.RawMessage `json:"model,omitempty"`
@@ -870,7 +881,7 @@ func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invoke
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Content == "" {
+	if req.Content == "" && req.SubmissionID == nil {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
@@ -882,6 +893,10 @@ func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invoke
 
 	var targetIDs []pgtype.UUID
 	if invokedAgents {
+		if req.SubmissionID != nil {
+			writeError(w, http.StatusBadRequest, "submission_id is not supported for agent-messages")
+			return
+		}
 		if len(req.AgentIDs) < 1 || len(req.AgentIDs) > 5 || model != nil {
 			writeError(w, http.StatusBadRequest, "select one to five agents and use their configured models")
 			return
@@ -910,6 +925,14 @@ func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invoke
 		return
 	}
 
+	var submissionID pgtype.UUID
+	if req.SubmissionID != nil {
+		submissionID, ok = parseUUIDOrBadRequest(w, *req.SubmissionID, "submission_id")
+		if !ok {
+			return
+		}
+	}
+
 	// Load chat session and re-check the private-agent gate on every send.
 	// The session's creator passed the gate at create time, but their
 	// workspace role (or the agent's owner) may have changed since — keep
@@ -919,6 +942,33 @@ func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invoke
 	if !ok {
 		return
 	}
+	if submissionID.Valid {
+		agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load chat agent")
+			return
+		}
+		actorType, actorID := h.resolveActor(r, userID, workspaceID)
+		if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
+			h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
+			return
+		}
+		response, err := h.TaskService.LookupDirectChatSubmission(r.Context(), session, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), submissionID, service.DirectChatSendOptions{Model: model})
+		if err != nil {
+			h.writeChatSubmissionError(w, err)
+			return
+		}
+		if response != nil {
+			writeJSON(w, http.StatusCreated, response)
+			return
+		}
+	}
+
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+
 	// Archived sessions are read-only: refuse to enqueue new agent work for
 	// them (see SetChatSessionArchived). The frontend disables the composer
 	// for status='archived' and only offers unarchive/delete there. Legacy
@@ -940,8 +990,14 @@ func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invoke
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	for _, id := range targetIDs {
-		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: id, WorkspaceID: session.WorkspaceID})
-		if err != nil {
+		var agent db.Agent
+		if invokedAgents {
+			agent, err = h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: id, WorkspaceID: session.WorkspaceID})
+		} else {
+			// The authorized session can use a system carrier, including Agent Builder.
+			agent, err = h.Queries.GetAgent(r.Context(), session.AgentID)
+		}
+		if err != nil || agent.WorkspaceID != session.WorkspaceID {
 			writeError(w, http.StatusNotFound, "agent not found")
 			return
 		}
@@ -1004,9 +1060,22 @@ func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invoke
 	// creator-only), so they are the task initiator and the run's originator —
 	// surfaced to the agent under `## On Behalf Of`. actorType/actorID were
 	// resolved above for the invoke gate.
-	sentResults, err := h.TaskService.SendDirectChatMessages(r.Context(), session, agents, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), service.DirectChatSendOptions{Model: model, InvokedAgents: invokedAgents})
+	var sentResults []service.DirectChatSendResult
+	if submissionID.Valid {
+		var keyed *service.DirectChatSendResult
+		keyed, err = h.TaskService.SendDirectChatMessageWithSubmission(r.Context(), session, agents[0], parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), submissionID, service.DirectChatSendOptions{Model: model})
+		if err == nil {
+			sentResults = []service.DirectChatSendResult{*keyed}
+		}
+	} else {
+		sentResults, err = h.TaskService.SendDirectChatMessages(r.Context(), session, agents, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), service.DirectChatSendOptions{Model: model, InvokedAgents: invokedAgents})
+	}
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrChatSubmissionConflict):
+			h.writeChatSubmissionError(w, err)
+		case submissionID.Valid && errors.Is(err, service.ErrChatSessionNotFound):
+			writeError(w, http.StatusNotFound, "chat session not found")
 		case errors.Is(err, service.ErrChatInvocationDenied):
 			h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		case errors.Is(err, service.ErrChatModelOverride):
@@ -1024,6 +1093,10 @@ func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invoke
 		return
 	}
 	sent := &sentResults[0]
+	if sent.Replayed {
+		writeJSON(w, http.StatusCreated, sent.Acceptance)
+		return
+	}
 	msg := sent.Message
 	task := sent.Task
 	currentTitle := session.Title
@@ -1918,6 +1991,12 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		// A run on a private project is listed as restricted to members
+		// outside the project (MUL-8472); its id alone must not let them
+		// stop it.
+		if !h.requireTaskVisible(w, r, workspaceID, task, http.StatusNotFound, "task not found") {
+			return
+		}
 		// Issue / autopilot / quick_create tasks are all visible on the
 		// agent Activity tab + workspace snapshot, which gate private
 		// agents. Mirror that gate here.

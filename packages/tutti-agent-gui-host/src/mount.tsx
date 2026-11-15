@@ -1,8 +1,8 @@
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import "@fontsource-variable/geist-mono";
-import "@fontsource-variable/inter";
+import "@fontsource-variable/inter/index.css";
 import "@fontsource-variable/inter/wght-italic.css";
-import "@fontsource-variable/source-serif-4";
+import "@fontsource-variable/source-serif-4/index.css";
 import "@fontsource-variable/source-serif-4/wght-italic.css";
 import { Button } from "@tutti-os/ui-system/components";
 import {

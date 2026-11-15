@@ -2,7 +2,7 @@ import { Slot } from "radix-ui";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, Folder, Loader2 } from "lucide-react";
+import { ArrowUp, Folder, Loader2 } from "@multica/ui/icons";
 import { z } from "zod";
 import { parseWithFallback } from "@multica/core/api/schema";
 import type {
@@ -118,7 +118,7 @@ function RemoteFolderPickerRender({ chinese }: { chinese: boolean }) {
   >(() => finish(current));
   return (
     <Dialog open={open} onOpenChange={onOpenChangeProp1}>
-      <DialogContent className="flex max-h-[80vh] flex-col">
+      <DialogContent className="flex max-h-[80%] flex-col">
         <DialogHeader>
           <DialogTitle>
             {chinese

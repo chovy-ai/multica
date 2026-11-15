@@ -59,6 +59,8 @@ import {
   isAuthStatusError,
   type AuthProbeResult,
 } from "./daemon-auth-probe";
+import { daemonSpawnEnv } from "./daemon-spawn-env";
+import { focusEnvironmentAt, type FocusEnvironmentResult } from "./environment-focus";
 
 const POLL_INTERVAL_MS = 5_000;
 const PREFS_PATH = join(homedir(), ".multica", "desktop_prefs.json");
@@ -91,8 +93,10 @@ interface ActiveProfile {
 
 let statusPollTimer: ReturnType<typeof setInterval> | null = null;
 let logTailWatcher: { path: string; listener: StatsListener } | null = null;
+let logTailOwner: Electron.WebContents | null = null;
 let currentState: DaemonStatus["state"] = "installing_cli";
 let getMainWindow: () => BrowserWindow | null = () => null;
+let getStatusWindows: () => readonly BrowserWindow[] = () => [];
 let statusPollInProgress = false;
 let cachedCliBinary: string | null | undefined = undefined;
 let cliResolvePromise: Promise<string | null> | null = null;
@@ -180,8 +184,10 @@ function urlsMatch(a: string, b: string): boolean {
 }
 
 function sendStatus(status: DaemonStatus): void {
-  const win = getMainWindow();
-  win?.webContents.send("daemon:status", status);
+  // One daemon serves every main window, and each shows its status.
+  for (const win of getStatusWindows()) {
+    if (!win.isDestroyed()) win.webContents.send("daemon:status", status);
+  }
 }
 
 interface HealthPayload {
@@ -231,6 +237,21 @@ async function fetchProfileHealth(
   return probeProfileHealth(active.name, (port) =>
     fetchHealthAtPort(port, timeoutMs),
   );
+}
+
+/** Brings forward a desktop app this profile's daemon detected. */
+async function focusEnvironment(key: unknown): Promise<FocusEnvironmentResult> {
+  if (typeof key !== "string" || key === "" || key.length > 128) {
+    return { ok: false, reason: "failed", error: "invalid environment key" };
+  }
+  const active = await ensureActiveProfile();
+  if (!active) return { ok: false, reason: "unavailable" };
+  const health = await probeProfileHealth(active.name, async (port) => {
+    const payload = await fetchHealthAtPort(port);
+    return payload ? { ...payload, port } : null;
+  });
+  if (!health || health.status !== "running") return { ok: false, reason: "unavailable" };
+  return focusEnvironmentAt(health.port, key);
 }
 
 /**
@@ -925,7 +946,7 @@ async function probeLocalRuntimes(): Promise<LocalRuntimeProbe> {
 // snapshot process.env at import time, before that block runs.
 function desktopSpawnEnv(): NodeJS.ProcessEnv {
   return {
-    ...process.env,
+    ...daemonSpawnEnv(process.env),
     ...p2pServerEnv(process.env, buildP2PServerUrl()),
     MULTICA_LAUNCHED_BY: "desktop",
     MULTICA_DESKTOP_OWNER_ID: desktopRuntimeRegistry().ownerId,
@@ -1312,6 +1333,7 @@ async function readLogRange(
 }
 
 function sendLines(win: BrowserWindow, text: string): void {
+  if (win.isDestroyed()) return;
   const lines = text.split("\n").filter((line) => line.length > 0);
   for (const line of lines) {
     win.webContents.send("daemon:log-line", line);
@@ -1347,6 +1369,7 @@ function startLogTail(win: BrowserWindow, retryCount = 0): void {
       const startAt = initialStats.size - windowBytes;
       if (windowBytes > 0) {
         const text = await readLogRange(logPath, startAt, windowBytes);
+        if (win.isDestroyed()) return;
         const lines = text
           .split("\n")
           .filter((line) => line.length > 0)
@@ -1362,8 +1385,10 @@ function startLogTail(win: BrowserWindow, retryCount = 0): void {
     }
 
     const listener: StatsListener = (curr) => {
-      const target = getMainWindow();
-      if (!target) return;
+      if (win.isDestroyed()) {
+        stopLogTail();
+        return;
+      }
       // File rotated/truncated — restart from the new beginning.
       if (curr.size < position) position = 0;
       if (curr.size === position) return;
@@ -1371,7 +1396,7 @@ function startLogTail(win: BrowserWindow, retryCount = 0): void {
       const length = curr.size - from;
       position = curr.size;
       readLogRange(logPath, from, length)
-        .then((text) => sendLines(target, text))
+        .then((text) => sendLines(win, text))
         .catch((err) => {
           console.warn("[daemon] log tail read failed:", err);
         });
@@ -1429,11 +1454,20 @@ export function resumeDaemonAfterAbortedUpdateInstall(): void {
   startPolling();
 }
 
+/**
+ * `windowGetter` is the main window that hosts dialogs and progress;
+ * `statusWindowsGetter` lists every main window that shows daemon status.
+ */
 export function setupDaemonManager(
   windowGetter: () => BrowserWindow | null,
+  statusWindowsGetter: () => readonly BrowserWindow[] = () => {
+    const window = windowGetter();
+    return window ? [window] : [];
+  },
   options: { quiesceLocalConversations?: () => Promise<boolean> } = {},
 ): void {
   getMainWindow = windowGetter;
+  getStatusWindows = statusWindowsGetter;
   if (options.quiesceLocalConversations) quiesceLocalConversations = options.quiesceLocalConversations;
 
   ipcMain.handle("daemon:set-target-api-url", async (_e, url: string) => {
@@ -1468,6 +1502,7 @@ export function setupDaemonManager(
   });
   ipcMain.handle("daemon:get-status", () => fetchHealth());
   ipcMain.handle("daemon:probe-runtimes", () => probeLocalRuntimes());
+  ipcMain.handle("daemon:focus-environment", (_e, key: unknown) => focusEnvironment(key));
   // The host's OS name, available regardless of daemon state. The Runtimes
   // page uses it as a fallback identity for "this machine" when no
   // app-managed daemon is reporting a device name (e.g. the daemon runs
@@ -1544,12 +1579,18 @@ export function setupDaemonManager(
     });
   });
 
-  ipcMain.on("daemon:start-log-stream", () => {
-    const win = getMainWindow();
-    if (win) startLogTail(win);
+  // One tail at a time, streamed to the window that opened the log view
+  // last; a window closing its view does not stop another window's stream.
+  ipcMain.on("daemon:start-log-stream", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    logTailOwner = event.sender;
+    startLogTail(win);
   });
 
-  ipcMain.on("daemon:stop-log-stream", () => {
+  ipcMain.on("daemon:stop-log-stream", (event) => {
+    if (logTailOwner && logTailOwner !== event.sender) return;
+    logTailOwner = null;
     stopLogTail();
   });
 

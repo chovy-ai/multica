@@ -29,6 +29,7 @@ export default defineConfig(({ command }) => {
       lib: {
         entry: {
           index: resolve("src/main/index.ts"),
+          "voice-worker": resolve("src/main/voice/worker.ts"),
           // Standalone stdio MCP that Codex runs with ELECTRON_RUN_AS_NODE=1.
           "developer-logs-mcp": resolve("src/main/developer-logs-mcp.ts"),
           // One-conversation Claude Agent SDK adapter the daemon runs with ELECTRON_RUN_AS_NODE=1.

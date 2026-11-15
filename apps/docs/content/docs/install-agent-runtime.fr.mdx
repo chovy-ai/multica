@@ -36,6 +36,7 @@ Multica détecte actuellement ces commandes :
 | Kiro CLI | `kiro-cli` | [Installer Kiro CLI](https://kiro.dev/docs/cli/installation/) |
 | MiniMax Code | `mcode` | [Installer MiniMax Code CLI](https://www.npmjs.com/package/@minimax-ai/code) |
 | Muse Code | `muse` | [Installer Muse Code](https://dev.meta.ai/docs/muse-code) |
+| ZCode | `zcode` / ZCode Desktop | [ZCode](https://zcode.z.ai/) |
 | Devin CLI | `devin` | [Installer Devin CLI](https://docs.devin.ai/cli/quickstart) (3000.3.22+). ACP local ; exécuter d'abord `devin auth login` |
 | OpenClaw | `openclaw` | [Installer OpenClaw](https://docs.openclaw.ai/install) |
 | OpenCode | `opencode` | [Démarrage rapide d'OpenCode](https://opencode.ai/en/docs) |
@@ -45,6 +46,8 @@ Multica détecte actuellement ces commandes :
 | Qoder CN CLI | `qoderclicn` | [Démarrage rapide de Qoder CN CLI](https://help.aliyun.com/en/lingma/qodercli-cn/user-guide/qoder-cli-cn-get-started-quickly) |
 | Qwen Code | `qwen` | [Qwen Code](https://github.com/QwenLM/qwen-code) |
 | QwenPaw | `qwenpaw` | [QwenPaw](https://github.com/agentscope-ai/QwenPaw) |
+| Amp | `amp` | [Amp CLI](https://ampcode.com/docs/cli) |
+| Factory Droid | `droid` | [Factory Droid](https://docs.factory.com/droid-exec/overview) |
 | Reasonix | `reasonix` | [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) |
 | TRAE CLI | `traecli` | [Site officiel de TRAE](https://www.trae.cn/) |
 | Dim | `dim` | [DimCode](https://dimagent.cn/en/docs/cli) |
@@ -71,10 +74,14 @@ En dessous de la version minimale, le daemon n'enregistre pas le runtime corresp
 | Copilot | 1.0.0 |
 | Grok | 0.2.89 |
 | Qwen Code | 0.20.0 |
+| Factory Droid | 1.8.0 |
 | MiniMax Code | 0.1.2 |
+| Muse Code | 1.4.10 |
 | OpenCode | 1.1.54 |
 | Dim | 0.3.10 |
+| Devin CLI | 3000.3.22 |
 | ZeroClaw | 0.8.0 |
+| ZCode | 0.16.0 |
 
 Quelques outils demandent une configuration en plus de la connexion :
 
@@ -89,6 +96,8 @@ Vérifiez le chemin non interactif avec `codearts run --model provider/model "Re
 Installez Node.js 20+ et exécutez `npm install -g @deepseek-ai/dsh`, puis fournissez-lui le profil de runtime Multica : le bundle qui implémente le protocole `--stdio` piloté par Multica, et la raison pour laquelle un `dsh` nu n'est pas utilisable seul. Définissez `DEEPSEEK_API_KEY` (ou enregistrez-la dans les paramètres propres de dsh) avant de démarrer le daemon.
 
 **Installer le profil.** Définissez `MULTICA_DSH_PROFILE_BUNDLE` sur le bundle à installer et le daemon l'ajoute pour vous, ou ajoutez-le vous-même avec `dsh plugin --profile multica add <bundle>`. `<bundle>` peut être tout ce que `dsh plugin` accepte (un nom de paquet npm, un répertoire ou une archive tarball empaquetée), et le pont de Multica se trouve dans [multica-ai/dsh-multica-runtime](https://github.com/multica-ai/dsh-multica-runtime). Il n'est pas encore publié sur un registre npm public ([multica#6936](https://github.com/multica-ai/multica/issues/6936)) : aujourd'hui, une équipe auto-hébergée le compile donc depuis ce dépôt et fait pointer la variable vers le répertoire de build, ou vers la tarball produite par `npm pack` si la machine qui exécute le daemon n'est pas celle qui l'a compilé. Un nom de paquet deviendra l'option la plus simple une fois le pont publié.
+
+**Migrer un profil existant.** Sauvegardez le profil et suivez le README du dépôt du pont pour compiler un bundle compatible avec votre version de DSH. Installez manuellement ce répertoire ou cette tarball, puis vérifiez que `dsh.profile.bundles` charge `@multica-ai/dsh-runtime` : remplacez `dsh-profile-multica` s'il est présent, ou supprimez-le si les deux ponts sont listés. Une entrée dans les dépendances ne suffit pas à charger le runtime. `MULTICA_DSH_PROFILE_BUNDLE` ne migre pas une configuration de pont existante. Vérifiez le résultat avec `dsh --profile multica --probe`.
 
 <Callout type="warning">
 Privilégiez un bundle que votre propre équipe publie ou compile : cette valeur est installée dans le répertoire personnel DSH de chaque hôte du daemon sans autre confirmation, si bien qu'un paquet tiers non vérifié relève d'une décision de chaîne d'approvisionnement.
@@ -207,3 +216,5 @@ Si l'outil apparaît en ligne mais que les exécutions échouent toujours, ouvre
 - [Créer et configurer un agent](/agents-create) — sélectionner le runtime que vous venez de connecter.
 - [Daemon et runtimes](/daemon-runtimes) — statut en ligne, parallélisme et runtimes personnalisés.
 - [Comparatif des outils de codage IA](/providers) — comparer ce que chaque outil peut faire dans Multica.
+
+Sur macOS, ZCode Desktop est détecté depuis son bundle d'application et nécessite Node.js. Sur Linux, le daemon détecte ZCode Desktop via `zcode` dans le PATH ou `/opt/ZCode/zcode` et exécute son CLI intégré sans ouvrir de fenêtre. Sur Linux, aucune installation séparée de Node.js ni configuration manuelle de variables d'environnement n'est nécessaire. Activez une connexion API fonctionnelle dans l'application. Les choix de modèle et de raisonnement viennent de ZCode ; voir [la comparaison des outils](/providers#zcode).

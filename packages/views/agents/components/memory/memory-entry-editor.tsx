@@ -7,7 +7,7 @@ import {
   Trash2,
   TriangleAlert,
   X,
-} from "lucide-react";
+} from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Badge } from "@multica/ui/components/ui/badge";

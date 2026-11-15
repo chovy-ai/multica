@@ -14,13 +14,19 @@
   "include": ["files", "dependencies", "unlisted"],
 
   // Go, and a workspace with its own Expo toolchain, lint pipeline, and React
-  // version (see apps/mobile/CLAUDE.md). Neither is covered by this config.
-  "ignoreWorkspaces": ["apps/mobile"],
+  // version (see apps/mobile/CLAUDE.md). The isolated Tutti GUI retains its
+  // independent toolchain; the Multica host integration remains checked.
+  "ignoreWorkspaces": ["apps/mobile", "vendor/tutti/packages/*/*"],
 
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.mjs"],
-      "project": ["scripts/*.mjs"]
+      "entry": ["scripts/*.mjs", "scripts/brand/*.mjs"],
+      "project": ["scripts/*.mjs", "scripts/brand/*.mjs"],
+      // scripts/theme-preview.mjs drives Tailwind through the PostCSS API; the
+      // root has no Tailwind stylesheets for the plugin to read.
+      // Vendored GUI imports resolve this host at the root to avoid a workspace cycle.
+      "ignoreDependencies": ["@multica/tutti-agent-gui-host"],
+      "tailwind": false
     },
 
     "apps/web": {
@@ -34,13 +40,36 @@
     "apps/desktop": {
       // window-state.node-test.mjs is run by hand (`node --test`, see its
       // header) rather than by a package script, so nothing imports it.
-      "entry": ["eslint.config.mjs", "src/main/*.node-test.mjs"],
+      // bundle-cli.node-test.mjs is run the same way. test/electron-guard.ts
+      // is the `electron` alias target in vitest.config.ts, a path string
+      // knip does not follow.
+      "entry": [
+        "eslint.config.mjs",
+        "src/main/*.node-test.mjs",
+        "scripts/*.node-test.mjs",
+        "test/electron-guard.ts",
+        "src/main/index.ts",
+        "src/main/developer-logs-mcp.ts",
+        "src/main/voice/worker.ts",
+        "src/claude-host/entry.ts",
+        "src/computer-host/entry.ts",
+        "src/computer-native/entry.ts",
+        "src/main/verification-dev/index.ts",
+        "src/preload/verification-dev/index.ts",
+        "src/renderer/src/platform/verification-dev/index.ts",
+        "resources/local-conversation-host/*.cjs",
+        "scripts/*-smoke.cjs"
+      ],
       // Consumed by `extends` in tsconfig.node.json / tsconfig.web.json.
       // knip follows `extends` from the default tsconfig.json only.
       "ignoreDependencies": ["@multica/tsconfig"]
     },
 
     "apps/docs": {},
+
+    "apps/storybook": {
+      "entry": ["eslint.config.mjs"]
+    },
 
     // The three shared packages export raw .ts/.tsx compiled by their
     // consumers (CLAUDE.md "Project Shape"), so `entry` names only the config
@@ -61,11 +90,20 @@
     // export and knip picks that directory back up; the script reads the same
     // manifest, so the two stay in step without overlapping.
     "packages/ui": {
-      "entry": ["eslint.config.mjs"],
+      // shimmer-text-bundle.mjs is imported by e2e/shimmer-text.spec.ts, which
+      // sits outside every workspace, and hands the fixture to esbuild as an
+      // entry-point path.
+      "entry": [
+        "eslint.config.mjs",
+        "test/shimmer-text-bundle.mjs",
+        "test/shimmer-text-fixture.tsx"
+      ],
       "project": ["**/*.{ts,tsx}"]
     },
     "packages/views": {
-      "entry": ["eslint.config.mjs"],
+      // Passed to vitest as `--reporter=./test/timing-reporter.ts` when
+      // refreshing shard timings (packages/views/test/README.md).
+      "entry": ["test/timing-reporter.ts"],
       "project": ["**/*.{ts,tsx}"]
     },
     "packages/core": {
@@ -73,7 +111,22 @@
       "project": ["**/*.{ts,tsx}"]
     },
 
+    "packages/computer-use": {
+      "entry": ["contract/update-lock.mjs"]
+    },
+    "packages/tutti-agent-gui-host": {
+      "entry": ["e2e-harness/*.tsx", "src/*.css"]
+    },
+    "packages/verification": {
+      "entry": ["src/index.ts", "src/daemon/main.ts", "src/desktop.acceptance.ts"],
+      // Provisioning resolves the installer from the target checkout's Desktop package.
+      "ignoreDependencies": ["electron"]
+    },
+    "packages/plugin-sdk": {
+      "entry": ["eslint.config.mjs"]
+    },
     "packages/eslint-config": {},
-    "packages/tsconfig": {}
+    "packages/tsconfig": {},
+    "packages/vitest-setup": {}
   }
 }

@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { useId, useRef, useState } from "react";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowLeft, FileInput, FolderKanban, Loader2, MoreHorizontal } from "lucide-react";
+import { Archive, ArrowLeft, FileInput, FolderKanban, Loader2, MoreHorizontal } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";

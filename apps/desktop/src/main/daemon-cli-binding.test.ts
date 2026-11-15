@@ -4,7 +4,6 @@ const mocks = vi.hoisted(() => ({ packaged: false, exists: false, version: "0.7.
 vi.mock("electron", () => ({ app: { get isPackaged() { return mocks.packaged; }, getAppPath: () => "/test-owned/dev/apps/desktop" }, ipcMain: {}, BrowserWindow: class {}, shell: {} }));
 vi.mock("fs", async (original) => ({ ...await original<typeof import("node:fs")>(), existsSync: (path: string) => mocks.exists && path === "/test-owned/dev/apps/desktop/resources/bin/multica" }));
 vi.mock("child_process", () => ({ execFile: mocks.exec }));
-vi.mock("./cli-bootstrap", () => ({ ensureManagedCli: mocks.managed, managedCliPath: () => "/test-owned/managed/multica" }));
 vi.mock("./bundled-cli", () => ({ bundledCliPath: () => "/test-owned/dev/apps/desktop/resources/bin/multica" }));
 
 beforeEach(() => {

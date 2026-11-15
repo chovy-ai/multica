@@ -42,8 +42,9 @@ type pendingCall struct {
 }
 
 type callResult struct {
-	result json.RawMessage
-	err    error
+	processExited bool
+	result        json.RawMessage
+	err           error
 }
 
 // NewConn returns a Conn that writes frames to w.
@@ -86,10 +87,16 @@ func (c *Conn) Request(ctx context.Context, method string, params any) (json.Raw
 
 	select {
 	case res := <-call.ch:
+		if res.processExited && ctx.Err() != nil {
+			return nil, c.contextError(ctx)
+		}
 		return res.result, res.err
 	case <-c.done:
 		select {
 		case res := <-call.ch:
+			if res.processExited && ctx.Err() != nil {
+				return nil, c.contextError(ctx)
+			}
 			return res.result, res.err
 		default:
 		}
@@ -168,7 +175,7 @@ func (c *Conn) Close(err error) {
 		close(c.done)
 	}
 	for id, call := range c.pending {
-		call.ch <- callResult{err: err}
+		call.ch <- callResult{err: err, processExited: true}
 		delete(c.pending, id)
 	}
 }
