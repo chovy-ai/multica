@@ -1,18 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClientProvider } from "@tanstack/react-query";
+import { createQueryClient } from "@multica/core/query-client";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { AgentRuntime } from "@multica/core/types";
 import enAgents from "../../../locales/en/agents.json";
 import enCommon from "../../../locales/en/common.json";
 import { formatMemoryDocument, parseMemoryDocument } from "./memory-document";
 import { AgentMemoryPane } from "./agent-memory-pane";
+import { memoryKeys } from "./queries";
 import {
   AgentMemoryConflictError,
   type AgentMemoryAdapter,
@@ -165,10 +168,9 @@ function mount(
   a: AgentMemoryAdapter | undefined,
   canEdit = true,
   runtimeId = "local",
+  client = createQueryClient(),
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  client.setQueryDefaults(memoryKeys.all("workspace", "agent"), { retry: false });
   return render(
     <I18nProvider
       locale="en"
@@ -196,7 +198,112 @@ beforeEach(() => {
   daemon.daemonId = "local";
   daemon.running = true;
 });
+afterEach(() => {
+  vi.useRealTimers();
+  focusManager.setFocused(undefined);
+});
 describe("agent memory", () => {
+  it("refreshes an empty cached tree when revisiting after an agent writes memory", async () => {
+    const a = adapter();
+    const client = createQueryClient();
+    client.setQueryData(memoryKeys.tree("workspace", "agent"), {
+      exists: false,
+      root: "/profile/agents/id/memory",
+      index: "",
+      entries: [],
+      projects: [],
+      trash: [],
+    });
+    mount(a, true, "local", client);
+    expect(
+      await screen.findByRole("treeitem", { name: first.path }),
+    ).toBeVisible();
+    expect(a.tree).toHaveBeenCalledTimes(1);
+  });
+  it("discovers a background memory write while the empty page stays open", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const a = adapter();
+    const populated = await a.tree("agent");
+    vi.mocked(a.tree)
+      .mockClear()
+      .mockResolvedValueOnce({ ...populated, entries: [], index: "" });
+    mount(a);
+    expect(await screen.findByText(/No memory yet/)).toBeVisible();
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(
+      await screen.findByRole("treeitem", { name: first.path }),
+    ).toBeVisible();
+  });
+  it("refreshes immediately when the app returns to the foreground", async () => {
+    const a = adapter();
+    const populated = await a.tree("agent");
+    vi.mocked(a.tree)
+      .mockClear()
+      .mockResolvedValueOnce({ ...populated, entries: [], index: "" });
+    mount(a);
+    expect(await screen.findByText(/No memory yet/)).toBeVisible();
+    await act(async () => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    expect(
+      await screen.findByRole("treeitem", { name: first.path }),
+    ).toBeVisible();
+  });
+  it("refreshes an active search after an agent changes memory", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const a = adapter();
+    mount(a);
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "Search memory" }),
+      { target: { value: "evidence" } },
+    );
+    expect(await screen.findByRole("button", { name: /Search hit/ })).toBeVisible();
+    vi.mocked(a.search).mockResolvedValue([
+      {
+        path: first.path,
+        title: "New agent result",
+        snippet: "Updated evidence",
+      },
+    ]);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(
+      await screen.findByRole("button", { name: /New agent result/ }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Search hit/ }),
+    ).not.toBeInTheDocument();
+  });
+  it("refreshes the selected document but keeps an unsaved draft during background writes", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const a = adapter();
+    mount(a);
+    fireEvent.click(await screen.findByRole("treeitem", { name: first.path }));
+    const document = await screen.findByRole("textbox", {
+      name: "Markdown document",
+    });
+    const changed = {
+      ...first,
+      body: "Why: changed by the agent",
+      updatedAt: "2026-11-14T00:00:02Z",
+    };
+    vi.mocked(a.read).mockResolvedValue(changed);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() =>
+      expect(document).toHaveValue(formatMemoryDocument(changed)),
+    );
+    const draft = formatMemoryDocument({ ...changed, body: "My unsaved work" });
+    fireEvent.change(document, { target: { value: draft } });
+    const reads = vi.mocked(a.read).mock.calls.length;
+    vi.mocked(a.read).mockResolvedValue({
+      ...changed,
+      body: "Another background write",
+    });
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(document).toHaveValue(draft);
+    expect(a.read).toHaveBeenCalledTimes(reads);
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
   it("explains desktop-only availability without querying", () => {
     mount(undefined);
     expect(screen.getByText(/View memory in the desktop app/)).toBeVisible();

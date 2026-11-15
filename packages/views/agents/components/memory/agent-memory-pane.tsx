@@ -52,7 +52,12 @@ import {
   AgentMemoryRestoreTargetError,
   type AgentMemoryAdapter,
 } from "./types";
-import { memoryKeys, memoryTreeOptions, useMemoryMutation } from "./queries";
+import {
+  memoryKeys,
+  memoryRefreshOptions,
+  memoryTreeOptions,
+  useMemoryMutation,
+} from "./queries";
 import { MemoryTree, type MemorySelection } from "./memory-tree";
 import { MemoryEntryEditor } from "./memory-entry-editor";
 import { MemoryFileHeader, MemoryTimestamp } from "./memory-file-header";
@@ -192,12 +197,14 @@ function LocalMemoryPane({
     return () => clearTimeout(timer);
   }, [search]);
   const hits = useQuery({
+    ...memoryRefreshOptions,
     queryKey: memoryKeys.search(wsId, agentId, query),
     queryFn: () => adapter.search(agentId, query),
     enabled: !!query,
   });
   const path = selection.type === "index" ? "" : selection.path;
   const entry = useQuery({
+    ...memoryRefreshOptions,
     queryKey: memoryKeys.entry(
       wsId,
       agentId,
@@ -207,7 +214,7 @@ function LocalMemoryPane({
       selection.type === "trash"
         ? adapter.readTrash(agentId, path)
         : adapter.read(agentId, path),
-    enabled: selection.type !== "index",
+    enabled: selection.type !== "index" && !dirty,
   });
   const remove = useMemoryMutation(wsId, agentId, (path: string) =>
     adapter.remove(agentId, path),
