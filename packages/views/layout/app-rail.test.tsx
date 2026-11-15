@@ -151,6 +151,7 @@ describe("AppRail order", () => {
   it("lists the spaces in the default order", () => {
     renderRail();
     expect(railOrder()).toEqual(["inbox", "work", "team", "chat", "autopilots"]);
+    expect(screen.queryByRole("button", { name: "AI Sessions" })).toBeNull();
   });
 
   it("follows the saved order", () => {
@@ -158,6 +159,17 @@ describe("AppRail order", () => {
     useRailOrderStore.getState().setOrder(order);
     renderRail();
     expect(railOrder()).toEqual(order);
+  });
+
+  it("keeps AI Sessions directly above Chat in the desktop order", () => {
+    useRailOrderStore.getState().setOrder(["chat", "inbox", "work", "team", "autopilots"]);
+    renderRail(undefined, <AppRail globalActions={false} conversationFlowDevices={[]} />);
+
+    const chat = screen.getByRole("link", { name: "Chat" });
+    const sessions = screen.getByRole("button", { name: "AI Sessions" });
+    expect(within(sessions).getByText("AI Sessions")).toBeVisible();
+    expect(sessions.compareDocumentPosition(chat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sessions.closest("[data-rail-item]")).toBe(chat.closest("[data-rail-item]"));
   });
 
   // dnd-kit stops the release's click at the document without cancelling

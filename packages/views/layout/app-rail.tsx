@@ -13,7 +13,7 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Monitor, Smartphone, CheckCheck, ExternalLink, Link2, RotateCcw, Settings, Users, type IconComponent } from "@multica/ui/icons";
+import { CheckCheck, ExternalLink, Link2, Monitor, RotateCcw, Settings, Users, type IconComponent } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { useChatStore } from "@multica/core/chat";
 import { chatSessionsOptions } from "@multica/core/chat/queries";
@@ -171,6 +171,10 @@ function usePeekHandlers(space: AppSpaceId, peekable: boolean) {
   };
 }
 
+const RAIL_SPACE_CONTROL_CLASS =
+  "relative flex size-12 flex-col items-center justify-center gap-1 rounded-rail-item text-rail-item transition-colors outline-none hover:bg-rail-item-hover hover:text-rail-item-active-foreground focus-visible:outline-2 focus-visible:outline-ring";
+const RAIL_SPACE_LABEL_CLASS = "max-w-full truncate px-0.5 text-micro leading-[14px]";
+
 function RailSpaceLink({
   space,
   href,
@@ -201,10 +205,10 @@ function RailSpaceLink({
       aria-current={active ? "page" : undefined}
       onContextMenu={openInNewTab ? rowMenu.openAtPointer : undefined}
       {...peekHandlers}
-      className="group relative flex size-12 flex-col items-center justify-center gap-1 rounded-rail-item text-rail-item transition-colors outline-none hover:bg-rail-item-hover hover:text-rail-item-active-foreground focus-visible:outline-2 focus-visible:outline-ring aria-[current=page]:bg-rail-item-active aria-[current=page]:font-medium aria-[current=page]:text-rail-item-active-foreground"
+      className={cn(RAIL_SPACE_CONTROL_CLASS, "group aria-[current=page]:bg-rail-item-active aria-[current=page]:font-medium aria-[current=page]:text-rail-item-active-foreground")}
     >
       <Icon className="size-5" />
-      <span className="max-w-full truncate px-0.5 text-micro leading-[14px]">{label}</span>
+      <span className={RAIL_SPACE_LABEL_CLASS}>{label}</span>
       {badge && <RailBadgeMark badge={badge} />}
     </AppLink>
   );
@@ -304,11 +308,45 @@ function SortableRailItem({ id, children }: { id: RailSpaceId; children: React.R
       ref={setNodeRef}
       data-rail-item={id}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      className={cn("relative rounded-xl", isDragging && "z-10 bg-app-shell shadow-[var(--menu-shadow)]")}
+      className={cn("relative flex flex-col items-center gap-0.5 rounded-xl", isDragging && "z-10 bg-app-shell shadow-[var(--menu-shadow)]")}
       {...listeners}
     >
       {children}
     </li>
+  );
+}
+
+function ConversationFlowMenu({ devices }: { devices: { peerId: string; name: string }[] }) {
+  const { t } = useT("layout");
+  const p = useWorkspacePaths();
+  const label = t(($) => $.nav.conversation_flow);
+  const localHref = p.conversationFlow();
+  const Icon = routeIconForPath(localHref);
+
+  return (
+    <span className="contents" onPointerDown={(event) => event.stopPropagation()}>
+      <DropdownMenu>
+        <TooltipHint label={label} side="right">
+          <DropdownMenuTrigger
+            aria-label={label}
+            className={cn(RAIL_SPACE_CONTROL_CLASS, "shrink-0 cursor-pointer data-popup-open:bg-rail-item-active data-popup-open:text-rail-item-active-foreground")}
+          >
+            <Icon className="size-5" />
+            <span className={RAIL_SPACE_LABEL_CLASS}>{label}</span>
+          </DropdownMenuTrigger>
+        </TooltipHint>
+        <DropdownMenuContent side="right" align="start">
+          <DropdownMenuItem render={<AppLink href={localHref} target="_blank" />}>
+            <Monitor />{t(($) => $.nav.conversation_flow_local)}
+          </DropdownMenuItem>
+          {devices.map((device) => (
+            <DropdownMenuItem key={device.peerId} render={<AppLink href={p.conversationFlowDevice(device.peerId)} target="_blank" />}>
+              <Monitor />{device.name}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </span>
   );
 }
 
@@ -427,6 +465,7 @@ export function AppRail({
           <ul className="flex flex-col items-center gap-0.5">
             {order.map((id) => (
               <SortableRailItem key={id} id={id}>
+                {id === "chat" && conversationFlowDevices && <ConversationFlowMenu devices={conversationFlowDevices} />}
                 <RailSpaceLink
                   space={id}
                   {...items[id]}
@@ -439,25 +478,6 @@ export function AppRail({
           </ul>
         </SortableContext>
       </DndContext>
-      {conversationFlowDevices && (
-        <DropdownMenu>
-          <TooltipHint label={t(($) => $.nav.conversation_flow)} side="right">
-            <DropdownMenuTrigger aria-label={t(($) => $.nav.conversation_flow)} className={RAIL_ICON_BUTTON_CLASS}>
-              <Smartphone />
-            </DropdownMenuTrigger>
-          </TooltipHint>
-          <DropdownMenuContent side="right" align="start">
-            <DropdownMenuItem render={<AppLink href={p.conversationFlow()} target="_blank" />}>
-              <Monitor />{t(($) => $.nav.conversation_flow_local)}
-            </DropdownMenuItem>
-            {conversationFlowDevices.map((device) => (
-              <DropdownMenuItem key={device.peerId} render={<AppLink href={p.conversationFlowDevice(device.peerId)} target="_blank" />}>
-                <Monitor />{device.name}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
       <div className="mt-auto flex flex-col items-center gap-1 pt-2">
         <HelpLauncher />
         <TooltipHint label={t(($) => $.nav.settings)} side="right">
