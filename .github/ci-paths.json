@@ -18,6 +18,8 @@
   ],
   "backend": [
     "server/**",
+    "packages/computer-use/contract/computer.json",
+    "packages/core/local-conversation/testdata/codex-models-response.json",
     "packages/core/runtimes/cli-version.ts",
     ".multica/environments.toml",
     "examples/plugins/**",

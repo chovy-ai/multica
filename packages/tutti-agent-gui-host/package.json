@@ -40,18 +40,18 @@
     "build:e2e-harness": "node scripts/build-e2e-harness.mjs"
   },
   "dependencies": {
-    "@fontsource-variable/geist-mono": "^5.3.0",
-    "@fontsource-variable/inter": "^5.2.5",
-    "@fontsource-variable/source-serif-4": "^5.2.9",
+    "@fontsource-variable/geist-mono": "catalog:",
+    "@fontsource-variable/inter": "catalog:",
+    "@fontsource-variable/source-serif-4": "catalog:",
     "@multica/conversation-client": "workspace:*",
     "@multica/core": "workspace:*",
     "@multica/ui": "workspace:*",
-    "@tiptap/core": "3.23.6",
-    "@tiptap/pm": "3.23.6",
-    "@tiptap/react": "3.23.6",
-    "@tiptap/starter-kit": "3.23.6",
-    "@tiptap/static-renderer": "3.23.6",
-    "@tiptap/suggestion": "3.23.6",
+    "@tiptap/core": "catalog:tutti",
+    "@tiptap/pm": "catalog:tutti",
+    "@tiptap/react": "catalog:tutti",
+    "@tiptap/starter-kit": "catalog:tutti",
+    "@tiptap/static-renderer": "catalog:tutti",
+    "@tiptap/suggestion": "catalog:tutti",
     "@tutti-os/agent-activity-core": "workspace:*",
     "@tutti-os/agent-gui": "workspace:*",
     "@tutti-os/ui-rich-text": "workspace:*",
@@ -78,7 +78,7 @@
     "postcss": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
-    "vite": "^8.0.0",
+    "vite": "catalog:",
     "vitest": "catalog:"
   }
 }

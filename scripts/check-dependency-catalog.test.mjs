@@ -126,3 +126,41 @@ test("still checks when run through a symlinked path", (t) => {
   const direct = run("repo");
   assert.deepEqual([linked.status, linked.stdout, linked.stderr], [direct.status, direct.stdout, direct.stderr]);
 });
+
+
+test("checks nested workspace globs", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "dependency-catalog-nested-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, "scripts"), { recursive: true });
+  copyFileSync(
+    fileURLToPath(new URL("./check-dependency-catalog.mjs", import.meta.url)),
+    join(root, "scripts", "check-dependency-catalog.mjs"),
+  );
+  writeFileSync(join(root, "pnpm-workspace.yaml"), "packages:\n  - modules/*/*\n");
+  writeFileSync(join(root, "package.json"), "{}");
+  for (const dir of ["agent/gui", "browser/node"]) {
+    const workspaceRoot = join(root, "modules", dir);
+    mkdirSync(workspaceRoot, { recursive: true });
+    writeFileSync(join(workspaceRoot, "package.json"), JSON.stringify({ dependencies: { sonner: "^2.0.7" } }));
+  }
+  const result = spawnSync(process.execPath, [join(root, "scripts/check-dependency-catalog.mjs")], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /sonner: declared by 2 workspaces/);
+  assert.doesNotMatch(result.stderr, /ENOENT/);
+});
+
+
+test("keeps the isolated vendored GUI pins outside the host catalog policy", () => {
+  assert.deepEqual(catalogViolations({
+    catalog: new Map([["react", "19.2.3"]]),
+    workspaces: [
+      workspace("apps/desktop", { dependencies: { react: "catalog:" } }),
+      workspace("vendor/tutti/packages/agent/gui", { dependencies: { react: "19.2.6" } }),
+      workspace("vendor/tutti/packages/ui/system", { dependencies: { react: "19.2.6" } }),
+    ],
+  }), []);
+  assert.equal(catalogViolations({
+    catalog: new Map([["react", "19.2.3"]]),
+    workspaces: [workspace("vendor/other", { dependencies: { react: "19.2.6" } })],
+  }).length, 1);
+});

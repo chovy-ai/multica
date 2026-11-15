@@ -144,6 +144,6 @@
     "turbo": "^2.5.4",
     "typescript": "catalog:",
     "@multica/eslint-config": "workspace:*",
-    "eslint": "^9.0.0"
+    "eslint": "catalog:"
   }
 }

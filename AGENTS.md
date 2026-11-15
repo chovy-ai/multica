@@ -27,7 +27,7 @@ Multica is a task management platform where people and agents collaborate on iss
 - Dependency direction is `views -> core + ui`; core and ui remain independent. Shared packages export raw TypeScript compiled by consuming apps.
 - Extract logic used by both web and desktop into the appropriate shared package. Keep framework/Electron APIs in the app layer; inject platform-specific UI through props/slots.
 - Wire shared features into both web routes and the desktop router or overlay. Reuse existing guards/providers such as `DashboardGuard` in `packages/views/layout/`.
-- Each workspace declares its directly imported external dependencies. A dependency declared by two or more workspaces, or already in the `pnpm-workspace.yaml` catalog, uses `catalog:`; CI runs `scripts/check-dependency-catalog.mjs`, whose allowlist records known drift awaiting an upgrade. Mobile is exempt and pins Expo/React Native-aligned versions in its own manifest.
+- Each workspace declares its directly imported external dependencies. A dependency declared by two or more workspaces, or already in the `pnpm-workspace.yaml` catalog, uses `catalog:`; CI runs `scripts/check-dependency-catalog.mjs`, whose allowlist records known drift awaiting an upgrade. Mobile is exempt and pins Expo/React Native-aligned versions in its own manifest. The isolated `vendor/tutti/` manifests retain their source dependency pins; host dependencies on its editor use `catalog:tutti` rather than the default editor catalog.
 - This section is the source for the package-boundary table in `apps/docs/content/docs/developers/conventions*.mdx` (every locale); change them together.
 
 ## Development and Verification

@@ -66,7 +66,8 @@ const isWorkspaceSpec = (spec) => spec.startsWith("workspace:");
 export function catalogViolations({ catalog, workspaces, allowlist: allowed = new Map() }) {
   const declarations = new Map();
   for (const { dir, manifest } of workspaces) {
-    if (exemptWorkspaces.has(dir)) continue;
+    // The isolated Tutti GUI retains the exact dependency graph in its source metadata.
+    if (exemptWorkspaces.has(dir) || dir.startsWith("vendor/tutti/")) continue;
     for (const field of checkedFields) {
       for (const [name, spec] of Object.entries(manifest[field] ?? {})) {
         if (isWorkspaceSpec(spec)) continue;
@@ -105,18 +106,25 @@ export function catalogViolations({ catalog, workspaces, allowlist: allowed = ne
 }
 
 function workspaceDirs(patterns) {
-  const dirs = [""];
+  const dirs = new Set([""]);
   for (const pattern of patterns) {
-    if (!pattern.endsWith("/*")) {
-      dirs.push(pattern);
-      continue;
+    let matches = [""];
+    for (const segment of pattern.split("/")) {
+      if (segment !== "*") {
+        matches = matches.map((dir) => join(dir, segment));
+        continue;
+      }
+      matches = matches.flatMap((dir) => {
+        const parent = join(repoRoot, dir);
+        if (!existsSync(parent)) return [];
+        return readdirSync(parent, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => join(dir, entry.name));
+      });
     }
-    const parent = pattern.slice(0, -2);
-    for (const entry of readdirSync(join(repoRoot, parent), { withFileTypes: true })) {
-      if (entry.isDirectory()) dirs.push(`${parent}/${entry.name}`);
-    }
+    for (const dir of matches) dirs.add(dir);
   }
-  return dirs.filter((dir) => existsSync(join(repoRoot, dir, "package.json")));
+  return [...dirs].filter((dir) => existsSync(join(repoRoot, dir, "package.json")));
 }
 
 function main() {
