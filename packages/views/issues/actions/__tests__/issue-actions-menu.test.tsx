@@ -259,9 +259,9 @@ describe("IssueActionsDropdown", () => {
     const action = await screen.findByTestId("conversation-action");
     expect(action).toHaveTextContent(mockIssue.id);
     const copy = screen.getByText("Copy local workdir path");
-    const child = screen.getByText("Create sub-issue");
+    const relations = screen.getByText("Relations");
     expect(copy.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(action.compareDocumentPosition(child) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(action.compareDocumentPosition(relations) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     view.unmount();
     render(wrap(
       <IssueConversationActionProvider action={Action}>

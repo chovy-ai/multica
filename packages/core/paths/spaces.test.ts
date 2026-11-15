@@ -27,6 +27,8 @@ describe("spaceForPath", () => {
     [ws.skills(), "team"],
     [ws.usage(), "team"],
     [ws.chatSession("c-1"), "chat"],
+    [ws.conversationFlow(), "conversations"],
+    [ws.conversationFlowDevice("device-1"), "conversations"],
     [ws.autopilotDetail("ap-1"), "autopilots"],
     [`${ws.settings()}?tab=members`, "settings"],
   ])("maps %s to %s", (path, space) => {

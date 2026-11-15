@@ -135,5 +135,11 @@
     "unknown": "Este servidor no ha confirmado sus ajustes de conexión. Pide a tu administrador que actualice el servidor.",
     "incomplete": "Los ajustes de conexión están incompletos. Pide a tu administrador que configure las URL públicas de este servidor."
   },
-  "more_actions": "Más acciones"
+  "more_actions": "Más acciones",
+  "avatar_preview": {
+    "open": "Ver avatar",
+    "title": "Avatar",
+    "save": "Guardar avatar",
+    "save_failed": "No se pudo guardar el avatar"
+  }
 }

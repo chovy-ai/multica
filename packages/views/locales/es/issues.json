@@ -967,7 +967,12 @@
     "copy_identifier": "Copiar identificador",
     "identifier_copied": "{{identifier}} copiado",
     "stop_agent_run": "Detener la ejecución de {{name}}",
-    "open_in_new_window": "Abrir en una ventana nueva"
+    "open_in_new_window": "Abrir en una ventana nueva",
+    "open_ai_conversation": "Ir a la conversación con IA",
+    "conversation_local_device": "Local",
+    "conversation_unavailable": "No hay ningún agente disponible en este dispositivo.",
+    "conversation_create_failed": "No se pudo crear la conversación: {{message}}",
+    "conversation_devices_failed": "No se pudieron cargar los dispositivos. Vuelve a abrir el menú para reintentarlo."
   },
   "pickers": {
     "custom_property": {

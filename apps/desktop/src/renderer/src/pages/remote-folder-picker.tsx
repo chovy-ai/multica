@@ -118,7 +118,7 @@ function RemoteFolderPickerRender({ chinese }: { chinese: boolean }) {
   >(() => finish(current));
   return (
     <Dialog open={open} onOpenChange={onOpenChangeProp1}>
-      <DialogContent className="flex max-h-[80vh] flex-col">
+      <DialogContent className="flex max-h-[80%] flex-col">
         <DialogHeader>
           <DialogTitle>
             {chinese

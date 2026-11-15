@@ -29,7 +29,7 @@ import { VoiceEngine } from "./engine";
 import { MAX_HISTORY_AUDIO_BYTES, VoiceHistoryStore } from "./history-store";
 import { ModelStore } from "./model-store";
 import { hotwordList, type LoadSpec } from "./worker-protocol";
-import workerPath from "./worker?modulePath";
+const workerPath = join(__dirname, "voice-worker.js");
 
 const HISTORY_STATUSES = new Set<VoiceHistoryStatus>(["transcribing", "done", "failed", "interrupted"]);
 

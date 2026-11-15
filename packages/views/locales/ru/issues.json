@@ -1150,7 +1150,12 @@
     "mark_duplicate": "Отметить как дубликат...",
     "locate_in_sidebar": "Показать на боковой панели",
     "restore_to_inbox": "Вернуть во входящие",
-    "open_in_new_window": "Открыть в новом окне"
+    "open_in_new_window": "Открыть в новом окне",
+    "open_ai_conversation": "Перейти к диалогу с ИИ",
+    "conversation_local_device": "Локально",
+    "conversation_unavailable": "На этом устройстве нет доступных агентов.",
+    "conversation_create_failed": "Не удалось создать диалог: {{message}}",
+    "conversation_devices_failed": "Не удалось загрузить устройства. Откройте меню заново, чтобы повторить попытку."
   },
   "pickers": {
     "custom_property": {

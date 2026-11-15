@@ -12,7 +12,10 @@
     "runtimes": "Runtimes",
     "skills": "Skills",
     "settings": "Ajustes",
-    "views": "Vistas"
+    "views": "Vistas",
+    "conversation_flow": "Sesiones de IA",
+    "conversation_flow_local": "Local",
+    "conversation_flow_device": "Sesiones de IA ({{device}})"
   },
   "tab": {
     "issue": "Tarea",

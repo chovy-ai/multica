@@ -11,11 +11,12 @@ export type AppSpaceId =
   | "work"
   | "team"
   | "chat"
+  | "conversations"
   | "autopilots"
   | "settings";
 
-/** Settings lives in the rail footer rather than the space list. */
-export type RailSpaceId = Exclude<AppSpaceId, "settings">;
+/** Settings uses the footer; local conversations use the desktop device menu. */
+export type RailSpaceId = Exclude<AppSpaceId, "settings" | "conversations">;
 
 /** Spaces in rail order. */
 export const RAIL_SPACES: readonly RailSpaceId[] = [
@@ -39,6 +40,7 @@ const SPACE_BY_SEGMENT: Record<string, AppSpaceId> = {
   runtimes: "team",
   usage: "team",
   chat: "chat",
+  conversations: "conversations",
   autopilots: "autopilots",
   settings: "settings",
 };

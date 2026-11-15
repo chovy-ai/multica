@@ -990,8 +990,14 @@ func (h *Handler) sendChatMessage(w http.ResponseWriter, r *http.Request, invoke
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	for _, id := range targetIDs {
-		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: id, WorkspaceID: session.WorkspaceID})
-		if err != nil {
+		var agent db.Agent
+		if invokedAgents {
+			agent, err = h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: id, WorkspaceID: session.WorkspaceID})
+		} else {
+			// The authorized session can use a system carrier, including Agent Builder.
+			agent, err = h.Queries.GetAgent(r.Context(), session.AgentID)
+		}
+		if err != nil || agent.WorkspaceID != session.WorkspaceID {
 			writeError(w, http.StatusNotFound, "agent not found")
 			return
 		}
