@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ChevronRight, File, Folder, Loader2 } from "lucide-react";
+import { ChevronRight, File, Folder, Loader2 } from "@multica/ui/icons";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { parsePatchFiles, type CodeViewDiffItem } from "@pierre/diffs";
 import { CodeView, WorkerPoolContextProvider, type CodeViewHandle } from "@pierre/diffs/react";

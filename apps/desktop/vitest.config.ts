@@ -9,9 +9,10 @@ export default defineConfig({
     load(id) { if (id.startsWith("\0verification-test-")) return "export const verificationDev = undefined; export const verificationPreload = undefined; export const verificationRenderer = undefined;"; return null; },
   }],
   resolve: {
-    alias: {
-      "@": resolve(__dirname, "src/renderer/src"),
-    },
+    alias: [
+      { find: "@", replacement: resolve(__dirname, "src/renderer/src") },
+      { find: /^electron$/, replacement: resolve(__dirname, "test/electron-guard.ts") },
+    ],
   },
   test: {
     globals: true,

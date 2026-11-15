@@ -1,7 +1,7 @@
 import { useId, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { observer } from "mobx-react-lite";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
-import { Bot, Check, Command, Search } from "lucide-react";
+import { Bot, Check, Command, Search } from "@multica/ui/icons";
 import { activateModelPickerShortcut } from "./model-picker-shortcut";
 import { Button } from "@multica/ui/components/ui/button";
 import type {

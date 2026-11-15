@@ -1,6 +1,6 @@
 import { observer } from "mobx-react-lite";
 import type { JSX, RefObject } from "react";
-import { CircleAlert, CircleHelp, Clock3, Loader2, MonitorSmartphone, MoreHorizontal, Pin } from "lucide-react";
+import { CircleAlert, CircleHelp, Clock3, Loader2, MonitorSmartphone, MoreHorizontal, Pin } from "@multica/ui/icons";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Spinner } from "@multica/ui/components/ui/spinner";

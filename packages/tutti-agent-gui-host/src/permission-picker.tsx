@@ -13,7 +13,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger
 } from "@multica/ui/components/ui/dropdown-menu";
-import { ChevronDown, ShieldCheck } from "lucide-react";
+import { ChevronDown, ShieldCheck } from "@multica/ui/icons";
 import { useId, useState, useSyncExternalStore } from "react";
 import type { AgentGuiHostServices } from "./protocol";
 import type { createMulticaAgentGuiRuntime } from "./runtime";

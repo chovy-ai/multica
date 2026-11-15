@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Button } from "@multica/ui/components/ui/button";
-import { Search, X, LockKeyhole } from "lucide-react";
+import { Search, X, LockKeyhole } from "@multica/ui/icons";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import {
   InputGroup,

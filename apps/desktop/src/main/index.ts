@@ -4,7 +4,16 @@ import { SideWorkspaceControl, parseSideWorkspaceResponse } from "./side-workspa
 import { LocalTimingLog } from "./local-timing-log";
 import { WebDiagnosticLog, snapshotDaemonLog } from "./developer-runtime-logs";
 import { DeveloperLogExporter } from "./developer-log-export";
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, screen } from "electron";
+import {
+  app,
+  autoUpdater as nativeAutoUpdater,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  Notification,
+  screen,
+} from "electron";
 import { homedir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -38,6 +47,10 @@ import { handleAppShortcut } from "./keyboard-shortcuts";
 import { installNavigationGestures } from "./navigation-gestures";
 import { installNavigationGuard } from "./navigation-guard";
 import { installHtmlPreviewNavigationGuard } from "./html-preview-navigation";
+import { setupThemeFolder } from "./theme-folder";
+import { setupVoiceInput } from "./voice";
+import { devToolbarPreferencesPath, installDevToolbarToggle } from "./dev-toolbar-toggle";
+import { installWindowForegroundEvents, windowForeground } from "./window-foreground";
 import { createRendererWebPreferences } from "./renderer-web-preferences";
 import { getAppVersion } from "./app-version";
 import { DEVELOPER_LOGS_MCP_NAME, writeDeveloperLogsManifest } from "./developer-logs-mcp-server";
@@ -58,6 +71,7 @@ import {
   type RendererRecoveryWindow,
 } from "./renderer-recovery";
 import { createBestEffortDevLog } from "./dev-log";
+import { ignoreBrokenStdio } from "./stdio-guard";
 import { appendMissingPathDirs } from "./path-fallback";
 import {
   writeFreezeBreadcrumb,
@@ -66,11 +80,12 @@ import {
   clearFreezeBreadcrumb,
 } from "./freeze-breadcrumb";
 import {
-  loadWindowState,
+  loadWindowSession,
   resolveWindowOptions,
-  saveWindowStateToFile,
+  saveWindowSessionToFile,
   snapshotWindowState,
   windowStateFilePath,
+  type WindowState,
 } from "./window-state";
 import {
   encodeIssueWindowArgument,
@@ -78,17 +93,29 @@ import {
   type IssueWindowContext,
 } from "../shared/issue-window";
 import {
+  encodeWorkspaceWindowArgument,
+  FOCUS_WORKSPACE_WINDOW_CHANNEL,
+  OPEN_WORKSPACE_WINDOW_CHANNEL,
+  OTHER_WINDOW_WORKSPACES_CHANNEL,
+  parseWorkspaceSlug,
+  parseWorkspaceWindowPath,
+  WINDOW_WORKSPACE_REPORT_CHANNEL,
+} from "../shared/workspace-window";
+import {
   AUTH_SESSION_STATE_CHANNEL,
   parseAuthSessionUserId,
 } from "../shared/auth-session";
 import {
   MAIN_RENDERER_CHANNEL_STATE_CHANNEL,
   MainRendererMessageQueue,
+  NEW_WINDOW_SHORTCUT_CHANNEL,
   parseMainRendererChannelState,
   TAB_SELECTION_SHORTCUT_CHANNEL,
+  WORKSPACE_OPEN_PATH_CHANNEL,
   type MainRendererMessageChannel,
 } from "../shared/main-renderer-messages";
 import { AuthSessionCoordinator } from "./auth-session-coordinator";
+import { MainWindowRegistry } from "./main-window-registry";
 import {
   NotificationGate,
   parseNativeNotificationPayload,
@@ -97,7 +124,7 @@ import {
 configureLinuxFileDialogs(app.commandLine);
 
 // Guards against registering the will-download handler more than once on the
-// same session. window.webContents.session is shared, and createWindow() can
+// same session. window.webContents.session is shared, and createMainWindow() can
 // be called again on macOS (app "activate" after all windows are closed).
 const downloadDialogSessions = new WeakSet<Electron.Session>();
 
@@ -117,7 +144,7 @@ function installDownloadSaveDialogHandler(window: BrowserWindow): void {
 // but Linux production needs an explicit BrowserWindow `icon` — AppImage
 // direct-launch doesn't register the .desktop entry, so GNOME has no path
 // from the running window to the hicolor icon and falls back to the
-// theme default. Consumed in createWindow() (all platforms in dev, Linux
+// theme default. Consumed in createMainWindow() (all platforms in dev, Linux
 // in prod) and the macOS dev dock branch.
 //
 // `asarUnpack: resources/**` in electron-builder.yml extracts the icon to
@@ -137,7 +164,7 @@ const BUNDLED_ICON_PATH = join(__dirname, "../../resources/icon.png").replace(
 // Run the user's login shell once to recover the real PATH so the bundled
 // multica CLI can find agent binaries like claude/codex/opencode. Must run
 // before any child_process.spawn / execFile call in the main process —
-// ES module imports are hoisted, so this block executes before createWindow
+// ES module imports are hoisted, so this block executes before createMainWindow
 // or any daemon-manager spawn.
 if (process.platform !== "win32" && process.env.MULTICA_DEV_ISOLATED !== "1") {
   fixPath();
@@ -154,6 +181,9 @@ if (process.platform !== "win32" && process.env.MULTICA_DEV_ISOLATED !== "1") {
   ]);
 }
 
+// Before anything can log: release builds write to stdout/stderr too.
+ignoreBrokenStdio();
+
 const PROTOCOL = "multica";
 const devLog = is.dev ? createBestEffortDevLog() : undefined;
 
@@ -167,8 +197,11 @@ function freezeBreadcrumbPath(): string {
 let mainWindow: BrowserWindow | null = null;
 let localV2: LocalV2Client | null = null;
 let localV2Host: ReturnType<typeof localV2HostHandler> | null = null;
+const localScopeWindows = new Map<string, BrowserWindow>();
+const scopeKey = (scope: LocalConversationScope) => JSON.stringify([scope.userId, scope.workspaceId]);
 let localTimingLog: LocalTimingLog | undefined;
 let developerLogs: DeveloperLogExporter | undefined;
+const mainWindows = new MainWindowRegistry<BrowserWindow>();
 const issueWindows = new Set<BrowserWindow>();
 const authSessionCoordinator = new AuthSessionCoordinator<BrowserWindow>(
   (window) => {
@@ -177,7 +210,13 @@ const authSessionCoordinator = new AuthSessionCoordinator<BrowserWindow>(
   },
 );
 const notificationGate = new NotificationGate();
-const mainRendererMessages = new MainRendererMessageQueue();
+const mainRendererMessages = new MainRendererMessageQueue<BrowserWindow>(
+  (window, channel, payload) => {
+    if (!window.isDestroyed()) window.webContents.send(channel, payload);
+  },
+  (window) => !window.isDestroyed() && mainWindows.has(window),
+);
+const unreadBadgeCounts = new Map<BrowserWindow, number>();
 let desktopInitialized = false;
 let authSessionGeneration = 0;
 let computerDesktop: ReturnType<typeof createComputerDesktop> | undefined;
@@ -204,17 +243,9 @@ let runtimeConfigResult: RuntimeConfigResult = {
 
 // --- Deep link helpers ---------------------------------------------------
 
-function sendMainRendererMessage(
-  channel: MainRendererMessageChannel,
-  payload: unknown,
-): void {
-  const window = mainWindow;
-  if (!window || window.isDestroyed()) return;
-  window.webContents.send(channel, payload);
-}
-
-function focusMainWindow(window: BrowserWindow): void {
+function focusWindow(window: BrowserWindow): void {
   if (window.isMinimized()) window.restore();
+  if (verificationDev?.enabled) { window.showInactive(); return; }
   window.show();
   window.focus();
 }
@@ -226,19 +257,118 @@ function revealWindow(window: BrowserWindow): void {
   else window.show();
 }
 
-function ensureMainWindow(): BrowserWindow | null {
-  if (!desktopInitialized || !app.isReady()) return null;
-  if (!mainWindow || mainWindow.isDestroyed()) return createWindow();
-  return mainWindow;
+function windowStateFile(): string {
+  return windowStateFilePath(app.getPath("userData"));
 }
 
+/** The main window that app-level requests land in, created on demand. */
+function ensureMainWindow(): BrowserWindow | null {
+  if (!desktopInitialized || !app.isReady()) return null;
+  return (
+    mainWindows.mostRecent() ??
+    createMainWindow(loadWindowSession(windowStateFile())[0])
+  );
+}
+
+/**
+ * Deliver to `target` when given (a window that shows a specific workspace,
+ * or the window a shortcut came from), else to the most recently focused
+ * main window — creating one when none is open.
+ */
 function dispatchToMainRenderer(
   channel: MainRendererMessageChannel,
   payload: unknown,
+  target: BrowserWindow | null = null,
 ): void {
-  mainRendererMessages.enqueue(channel, payload, sendMainRendererMessage);
-  const window = ensureMainWindow();
-  if (window && !verificationDev?.enabled) focusMainWindow(window);
+  const window =
+    target && !target.isDestroyed() && mainWindows.has(target)
+      ? target
+      : ensureMainWindow();
+  mainRendererMessages.enqueue(window, channel, payload);
+  if (window) focusWindow(window);
+}
+
+/** Shortcuts from a dedicated issue window go to the most recent main window. */
+function mainWindowFor(window: BrowserWindow): BrowserWindow | null {
+  return mainWindows.has(window) ? window : null;
+}
+
+/**
+ * Give a workspace request from `source` to the other main window showing
+ * that workspace: open `path` there when the request has one, else focus it.
+ * Returns false when no other window shows the workspace.
+ */
+function handOffToWorkspaceWindow(
+  source: BrowserWindow | null,
+  request: unknown,
+): boolean {
+  if (!source || !mainWindows.has(source)) return false;
+  if (!request || typeof request !== "object") return false;
+  const { workspaceSlug: rawSlug, path: rawPath, navigate } = request as Record<
+    string,
+    unknown
+  >;
+  const workspaceSlug = parseWorkspaceSlug(rawSlug);
+  if (!workspaceSlug) return false;
+  const path =
+    rawPath === undefined ? null : parseWorkspaceWindowPath(workspaceSlug, rawPath);
+  if (rawPath !== undefined && !path) return false;
+  const target = mainWindows.findByWorkspace(workspaceSlug, source);
+  if (!target || target.isDestroyed()) return false;
+  if (path) {
+    dispatchToMainRenderer(
+      WORKSPACE_OPEN_PATH_CHANNEL,
+      { path, navigate: navigate === true },
+      target,
+    );
+  } else {
+    focusWindow(target);
+  }
+  return true;
+}
+
+// --- Main-window session --------------------------------------------------
+
+// Every main window's geometry and workspace, restored on the next launch.
+// Frozen once a real quit starts: windows close one by one on the way out,
+// and saving after each close would leave only the last one in the file.
+let windowSessionFrozen = false;
+let windowSessionTimer: ReturnType<typeof setTimeout> | null = null;
+
+function saveWindowSession(): void {
+  if (windowSessionTimer) {
+    clearTimeout(windowSessionTimer);
+    windowSessionTimer = null;
+  }
+  if (windowSessionFrozen || mainWindows.size === 0) return;
+  const windows: WindowState[] = [];
+  for (const window of mainWindows.all()) {
+    const snapshot = snapshotWindowState(window);
+    if (!snapshot) continue;
+    const workspaceSlug = mainWindows.workspaceOf(window);
+    windows.push(workspaceSlug ? { ...snapshot, workspaceSlug } : snapshot);
+  }
+  if (windows.length > 0) saveWindowSessionToFile(windowStateFile(), windows);
+}
+
+function scheduleWindowSessionSave(): void {
+  if (windowSessionTimer) clearTimeout(windowSessionTimer);
+  windowSessionTimer = setTimeout(saveWindowSession, 400);
+}
+
+function freezeWindowSession(): void {
+  saveWindowSession();
+  windowSessionFrozen = true;
+}
+
+function applyUnreadBadge(): void {
+  let count = 0;
+  for (const value of unreadBadgeCounts.values()) count += value;
+  if (process.platform === "darwin") {
+    app.dock?.setBadge(count === 0 ? "" : count > 99 ? "99+" : String(count));
+  } else {
+    app.setBadgeCount(count);
+  }
 }
 
 function handleDeepLink(url: string): void {
@@ -262,6 +392,12 @@ function handleDeepLink(url: string): void {
       if (id) dispatchToMainRenderer("invite:open", decodeURIComponent(id));
       return;
     }
+
+    if (parsed.hostname === "open" && parsed.pathname === "/issue") {
+      // Keep the source instance in the payload. The authenticated renderer
+      // validates it against runtime config before opening a workspace tab.
+      dispatchToMainRenderer("issue:open", url);
+    }
   } catch {
     // Ignore malformed URLs
   }
@@ -281,6 +417,7 @@ function getSystemLocale(): string {
 }
 
 function loadRenderer(window: BrowserWindow): void {
+  installWindowForegroundEvents(window);
   const rendererEntry = join(__dirname, "../renderer/index.html");
   const rendererURL =
     is.dev && process.env["ELECTRON_RENDERER_URL"]
@@ -324,23 +461,39 @@ function installWindowShortcutHandler(window: BrowserWindow): void {
       window.webContents.send("tab:close-active");
     } else if (result === "open-settings") {
       event.preventDefault();
-      // Settings is a tab, so it can only live in the tabbed main window.
+      // Settings is a tab, so it can only live in a tabbed main window.
       // Routing through the queue means the chord also works from a
-      // dedicated issue window — and from one that outlived the main window,
-      // which is recreated and only then handed the request.
-      dispatchToMainRenderer("settings:open", null);
+      // dedicated issue window — and from one that outlived every main
+      // window, which is recreated and only then handed the request.
+      dispatchToMainRenderer("settings:open", null, mainWindowFor(window));
     } else if (typeof result === "object" && result.action === "select-tab") {
       event.preventDefault();
-      // Product tabs only exist in the main window. Route there even when the
+      // Product tabs only exist in main windows. Route there even when the
       // chord came from a dedicated issue window, matching Settings behavior.
-      dispatchToMainRenderer(TAB_SELECTION_SHORTCUT_CHANNEL, result.key);
+      dispatchToMainRenderer(
+        TAB_SELECTION_SHORTCUT_CHANNEL,
+        result.key,
+        mainWindowFor(window),
+      );
+    } else if (result === "new-window") {
+      event.preventDefault();
+      dispatchToMainRenderer(
+        NEW_WINDOW_SHORTCUT_CHANNEL,
+        null,
+        mainWindowFor(window),
+      );
     } else if (result) {
       event.preventDefault();
     }
   });
 }
 
-function createWindow(): BrowserWindow {
+/**
+ * A tabbed main window. `saved.workspaceSlug` pins the workspace it opens on;
+ * without one (first launch, or a pre-multi-window state file) the renderer
+ * falls back to its persisted active workspace.
+ */
+function createMainWindow(saved: WindowState = {}): BrowserWindow {
   // Pass the OS-preferred language to the renderer via additionalArguments
   // instead of a sync IPC call. process.argv is available to the preload
   // script before the first network request, so the renderer's i18next
@@ -348,19 +501,16 @@ function createWindow(): BrowserWindow {
   const systemLocale = getSystemLocale();
   lastKnownSystemLocale = systemLocale;
 
-  mainRendererMessages.resetReady();
-
   // Restore prior size/position/maximized/fullscreen (#5244), constraining
   // bounds to the work area of the display the window will land on.
-  const stateFile = windowStateFilePath(app.getPath("userData"));
-  const savedWindowState = loadWindowState(stateFile);
   const windowOpts = resolveWindowOptions(
-    savedWindowState,
+    saved,
     screen.getAllDisplays().map((d) => d.workArea),
     screen.getPrimaryDisplay().workArea,
   );
+  const workspaceSlug = saved.workspaceSlug ?? null;
 
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: windowOpts.width,
     height: windowOpts.height,
     ...(windowOpts.x != null && windowOpts.y != null
@@ -384,34 +534,32 @@ function createWindow(): BrowserWindow {
     webPreferences: createRendererWebPreferences(
       join(__dirname, "../preload/index.js"),
       systemLocale,
+      workspaceSlug ? [encodeWorkspaceWindowArgument(workspaceSlug)] : [],
     ),
   });
-  const window = mainWindow;
+  mainWindows.add(window, workspaceSlug);
+  mainWindow ??= window;
+  authSessionCoordinator.registerMainWindow(window);
 
-  // Persist bounds on resize/move (debounced) and on close so the next
-  // launch restores size/position and max/fullscreen flags. getNormalBounds
-  // is used so maximized/fullscreen still saves the restore size.
-  let persistTimer: ReturnType<typeof setTimeout> | null = null;
-  const persistWindowState = () => {
-    const snap = snapshotWindowState(window);
-    if (snap) saveWindowStateToFile(stateFile, snap);
-  };
-  const schedulePersistWindowState = () => {
-    if (persistTimer) clearTimeout(persistTimer);
-    persistTimer = setTimeout(persistWindowState, 400);
-  };
-  window.on("resize", schedulePersistWindowState);
-  window.on("move", schedulePersistWindowState);
+  // Persist bounds on resize/move (debounced) so the next launch restores
+  // size/position and max/fullscreen flags. getNormalBounds is used so
+  // maximized/fullscreen still saves the restore size.
+  window.on("focus", () => { mainWindows.focus(window); mainWindow = window; computerDesktop?.refresh(); });
+  window.on("resize", scheduleWindowSessionSave);
+  window.on("move", scheduleWindowSessionSave);
   window.on("close", () => {
-    if (persistTimer) clearTimeout(persistTimer);
-    persistWindowState();
+    // Closing the last window keeps it in the file, so the next launch (or a
+    // macOS Dock click) reopens it; closing any other window forgets it.
+    if (mainWindows.size === 1) saveWindowSession();
   });
 
   window.on("closed", () => {
-    if (mainWindow === window) {
-      mainWindow = null;
-      mainRendererMessages.resetReady();
-    }
+    mainWindows.remove(window);
+    if (mainWindow === window) mainWindow = mainWindows.mostRecent();
+    authSessionCoordinator.unregisterMainWindow(window);
+    mainRendererMessages.release(window, mainWindows.mostRecent());
+    if (unreadBadgeCounts.delete(window)) applyUnreadBadge();
+    if (mainWindows.size > 0) saveWindowSession();
   });
 
   // Strip Origin header from WebSocket upgrade requests so the server's
@@ -527,6 +675,8 @@ function createIssueWindow(context: IssueWindowContext): void {
     minHeight: 520,
     title: context.title,
     titleBarStyle: "hiddenInset",
+    // Center the native controls in the issue page's 48px header, which is
+    // this window's title bar.
     trafficLightPosition: { x: 16, y: 17 },
     show: false,
     autoHideMenuBar: true,
@@ -659,7 +809,7 @@ if (!gotTheLock) {
   // Windows/Linux: second instance passes deep link via argv
   app.on("second-instance", (_event, argv) => {
     const window = ensureMainWindow();
-    if (window) focusMainWindow(window);
+    if (window) focusWindow(window);
 
     // On Windows the deep link URL is the last argv entry
     const deepLinkUrl = argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
@@ -674,11 +824,21 @@ if (!gotTheLock) {
   );
   if (coldStartDeepLink) handleDeepLink(coldStartDeepLink);
 
+  // scripts/dev-env.sh starts a managed dev Desktop signed in by handing it
+  // the token a browser login would deliver. An environment variable rather
+  // than argv keeps the token out of other users' `ps`; it is removed before
+  // any child process (the daemon, agent CLIs) can inherit it. Packaged builds
+  // never read it.
+  const devAuthToken = is.dev ? process.env.MULTICA_DEV_AUTH_TOKEN : undefined;
+  delete process.env.MULTICA_DEV_AUTH_TOKEN;
+  if (devAuthToken) dispatchToMainRenderer("auth:token", devAuthToken);
+
   app.whenReady().then(async () => {
     const viteEnv = import.meta.env as ImportMetaEnv & {
       readonly VITE_API_URL?: string;
       readonly VITE_WS_URL?: string;
       readonly VITE_APP_URL?: string;
+      readonly VITE_DEV_TOOLBAR?: string;
     };
 
     runtimeConfigResult = await loadRuntimeConfig({
@@ -712,7 +872,12 @@ if (!gotTheLock) {
       mainWindow?.once("closed", () => computerDesktop?.revoke());
       localV2Host = localV2HostHandler({
         currentUser: () => settingsUserId,
-        side: (request, signal) => sideWorkspaceControl.handle(request, signal),
+        side: (request, signal) => {
+          const scope = (request as { scope: LocalConversationScope }).scope;
+          const window = localScopeWindows.get(scopeKey(scope));
+          if (!window || window.isDestroyed()) throw new Error("Side workspace disconnected");
+          return getSideWorkspaceControl(window).handle(request, signal);
+        },
         confirm: (request, apply, signal) => settingsHost.confirmAndApply!(request, apply, signal),
         settingsHost: (request, signal) => settingsHost.host!(request, signal),
         developerLogs: (scope, query, signal) => {
@@ -783,40 +948,61 @@ if (!gotTheLock) {
       return computerUseApprovals(event)?.remove(appId) ?? noComputerUse;
     });
     ipcMain.handle("computer-use:approvals:clear", (event) => computerUseApprovals(event)?.clear() ?? noComputerUse);
-    let resourcePreview: ResourceWebPreview | undefined;
-    const getResourcePreview = () => {
-      if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable");
-      if (!localV2 || !runtimeConfigResult.ok) throw new Error("Local runtime is unavailable");
-      return resourcePreview ??= new ResourceWebPreview(mainWindow, { createSource: () => createMacosChromeCookieImportAdapter({ isEnabled: () => true }) }, new RemotePreviewNetwork(localV2, runtimeConfigResult.config.apiUrl, () => settingsUserId));
+    const resourcePreviews = new Map<BrowserWindow, ResourceWebPreview>();
+    const sideWorkspaceControls = new Map<BrowserWindow, SideWorkspaceControl>();
+    const requireMainFrame = (event: Electron.IpcMainInvokeEvent) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window || !mainWindows.has(window) || event.senderFrame !== event.sender.mainFrame) throw new Error("Local conversations require a main window");
+      return window;
     };
-    const sideWorkspaceControl = new SideWorkspaceControl({
-      currentUser: () => settingsUserId,
-      snapshot: async (scope, conversationId, deviceId) => {
-        return parseSideWorkspaceResponse(await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(conversationId)}/side-workspace`, undefined, deviceId));
-      },
-      assertTurn: async (scope, id, turnId, deviceId) => {
-        const snapshot = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(id)}/snapshot`, undefined, deviceId) as { turns: { id: string; status: string }[] };
-        if (!snapshot.turns.some((turn) => turn.id === turnId && turn.status === "running")) throw new Error("The controlling Side execution has ended");
-      },
-      preview: getResourcePreview,
-      send: (command) => { if (!mainWindow || mainWindow.isDestroyed()) throw new Error("Main window is unavailable"); mainWindow.webContents.send("side-workspace:command", command); },
-      activity: (tabId, conversationId, turnId, active) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("side-workspace:activity", { tabId, conversationId, turnId, active }); },
-    });
-    mainWindow?.once("closed", () => sideWorkspaceControl.dispose());
+    const getResourcePreview = (window: BrowserWindow) => {
+      if (window.isDestroyed()) throw new Error("Main window is unavailable");
+      if (!localV2 || !runtimeConfigResult.ok) throw new Error("Local runtime is unavailable");
+      let preview = resourcePreviews.get(window);
+      if (!preview) {
+        preview = new ResourceWebPreview(window, { createSource: () => createMacosChromeCookieImportAdapter({ isEnabled: () => true }) }, new RemotePreviewNetwork(localV2, runtimeConfigResult.config.apiUrl, () => settingsUserId));
+        resourcePreviews.set(window, preview);
+        window.once("closed", () => { preview?.dispose(); resourcePreviews.delete(window); });
+      }
+      return preview;
+    };
+    const getSideWorkspaceControl = (window: BrowserWindow) => {
+      let control = sideWorkspaceControls.get(window);
+      if (control) return control;
+      control = new SideWorkspaceControl({
+        currentUser: () => settingsUserId,
+        snapshot: async (scope, conversationId, deviceId) => parseSideWorkspaceResponse(await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(conversationId)}/side-workspace`, undefined, deviceId)),
+        assertTurn: async (scope, id, turnId, deviceId) => {
+          const snapshot = await localV2!.request(scope, "GET", `/sessions/${encodeURIComponent(id)}/snapshot`, undefined, deviceId) as { turns: { id: string; status: string }[] };
+          if (!snapshot.turns.some((turn) => turn.id === turnId && turn.status === "running")) throw new Error("The controlling Side execution has ended");
+        },
+        preview: () => getResourcePreview(window),
+        send: (command) => { if (window.isDestroyed()) throw new Error("Main window is unavailable"); window.webContents.send("side-workspace:command", command); },
+        activity: (tabId, conversationId, turnId, active) => { if (!window.isDestroyed()) window.webContents.send("side-workspace:activity", { tabId, conversationId, turnId, active }); },
+      });
+      sideWorkspaceControls.set(window, control);
+      window.once("closed", () => {
+        control?.dispose(); sideWorkspaceControls.delete(window);
+        for (const [key, owner] of localScopeWindows) if (owner === window) localScopeWindows.delete(key);
+      });
+      return control;
+    };
     // After the renderer records a layout in the daemon, the browser tabs follow
     // what the daemon accepted, read back with main's own credential.
     ipcMain.handle("side-workspace:reconcile", async (event, scope: LocalConversationScope, conversationId: string, deviceId: string) => {
-      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || scope?.userId !== settingsUserId) throw new Error("Side workspace requires the active main window");
-      await sideWorkspaceControl.reconcileFrom(scope, conversationId, typeof deviceId === "string" && deviceId ? deviceId : "local");
+      const window = requireMainFrame(event);
+      if (scope?.userId !== settingsUserId) throw new Error("This account is no longer active");
+      localScopeWindows.set(scopeKey(scope), window);
+      await getSideWorkspaceControl(window).reconcileFrom(scope, conversationId, typeof deviceId === "string" && deviceId ? deviceId : "local");
     });
     ipcMain.handle("side-workspace:ack", (event, reply) => {
-      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error("Side acknowledgement requires the main window");
-      sideWorkspaceControl.ack(reply);
+      getSideWorkspaceControl(requireMainFrame(event)).ack(reply);
     });
     const previewFor = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
-      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame || !localV2) throw new Error("Preview requires the active main window");
+      const window = requireMainFrame(event);
+      if (!localV2) throw new Error("Local runtime is unavailable");
       if (scope.userId !== settingsUserId) throw new Error("This account is no longer active");
-      return { preview: getResourcePreview(), owner: JSON.stringify([scope.userId, scope.workspaceId]) };
+      return { preview: getResourcePreview(window), owner: JSON.stringify([scope.userId, scope.workspaceId]) };
     };
     ipcMain.handle("resource-preview:request", (event, scope: LocalConversationScope, command: import("../shared/resource-preview").WebPreviewCommand) => {
       const { preview, owner } = previewFor(event, scope);
@@ -831,7 +1017,7 @@ if (!gotTheLock) {
       const { preview, owner } = previewFor(event, scope);
       return preview.chromeProfiles.cancel(owner, requestId);
     });
-    setupLocalFileContextMenu({ getWindow: () => mainWindow, currentUser: () => settingsUserId, request: (scope, path, deviceId) => {
+    setupLocalFileContextMenu({ getWindow: (sender) => { const window = BrowserWindow.fromWebContents(sender); return window && mainWindows.has(window) ? window : null; }, currentUser: () => settingsUserId, request: (scope, path, deviceId) => {
       if (!localV2) throw new Error("Local conversations require the active main window");
       return localV2.request(scope, "GET", path, undefined, deviceId);
     }, download: (scope, path, deviceId) => {
@@ -839,8 +1025,10 @@ if (!gotTheLock) {
       return localV2.file(scope, path, deviceId);
     } });
     const mainFrame = (event: Electron.IpcMainInvokeEvent, scope: LocalConversationScope) => {
-      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localV2) throw new Error("Local conversations require the active main window");
+      const window = requireMainFrame(event);
+      if (!localV2) throw new Error("Local runtime is unavailable");
       if (scope?.userId !== settingsUserId || !scope.workspaceId) throw new Error("This account is no longer active");
+      localScopeWindows.set(scopeKey(scope), window);
       return localV2;
     };
     // Structured kinds survive IPC only inside the message.
@@ -850,7 +1038,8 @@ if (!gotTheLock) {
     };
     // The renderer reaches the daemon directly with credentials derived from the profile token.
     ipcMain.handle("local-v2:endpoint", (event) => {
-      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || !localV2) throw new Error("Local conversations require the active main window");
+      requireMainFrame(event);
+      if (!localV2) throw new Error("Local runtime is unavailable");
       return localV2.rendererEndpoint().catch(ipcError);
     });
     // Host requests arrive on the renderer's WebSocket; main performs the native part.
@@ -868,9 +1057,9 @@ if (!gotTheLock) {
     });
     ipcMain.handle("local-v2:choose", async (event, scope: LocalConversationScope, request: LocalV2ChooseRequest) => {
       const proxy = mainFrame(event, scope);
-      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      const window = requireMainFrame(event);
       const file = request?.purpose === "preview" && request.kind === "file";
-      const result = await dialog.showOpenDialog(mainWindow, {
+      const result = await dialog.showOpenDialog(window, {
         ...("defaultPath" in request && typeof request.defaultPath === "string" ? { defaultPath: request.defaultPath } : {}),
         properties: file ? ["openFile"] : ["openDirectory", "createDirectory"],
       });
@@ -981,6 +1170,11 @@ if (!gotTheLock) {
       event.returnValue = runtimeConfigResult;
     });
 
+    installDevToolbarToggle({
+      enabled: is.dev && Boolean(viteEnv.VITE_DEV_TOOLBAR),
+      preferencesPath: devToolbarPreferencesPath(app.getPath("userData")),
+    });
+
     ipcMain.on(RENDERER_ROUTE_CONTEXT_CHANNEL, (event, context: unknown) => {
       if (!BrowserWindow.fromWebContents(event.sender)) return;
       const sanitized = sanitizeRendererRouteContext(context);
@@ -988,40 +1182,98 @@ if (!gotTheLock) {
       rendererRouteContexts.set(event.sender, sanitized);
     });
 
-    // Preload announces each listener only after it has been installed by the
+    // Preload announces each listener only after it has been installed by a
     // main renderer. Ignore issue-window senders so they can never drain a
-    // payload intended for the tabbed application window.
+    // payload intended for a tabbed application window.
     ipcMain.on(
       MAIN_RENDERER_CHANNEL_STATE_CHANNEL,
       (event, state: unknown) => {
-        if (!mainWindow || event.sender !== mainWindow.webContents) return;
+        const window = BrowserWindow.fromWebContents(event.sender);
+        if (!window || !mainWindows.has(window)) return;
         const parsed = parseMainRendererChannelState(state);
         if (!parsed) return;
-        mainRendererMessages.setReady(
-          parsed.channel,
-          parsed.ready,
-          sendMainRendererMessage,
-        );
+        mainRendererMessages.setReady(window, parsed.channel, parsed.ready);
       },
     );
 
+    // Each main window reports the workspace it shows, so routing by
+    // workspace and the restored session follow in-window switches.
+    ipcMain.on(WINDOW_WORKSPACE_REPORT_CHANNEL, (event, value: unknown) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window || !mainWindows.has(window)) return;
+      const workspaceSlug = value === null ? null : parseWorkspaceSlug(value);
+      if (value !== null && !workspaceSlug) return;
+      if (mainWindows.setWorkspace(window, workspaceSlug)) {
+        scheduleWindowSessionSave();
+      }
+    });
+
+    // Sync IPC: the renderer reads this while deciding where a workspace
+    // link goes, inside a click handler, so it must answer synchronously.
+    ipcMain.on(OTHER_WINDOW_WORKSPACES_CHANNEL, (event) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      event.returnValue =
+        window && mainWindows.has(window)
+          ? mainWindows.otherWorkspaces(window)
+          : [];
+    });
+
+    // Sync IPC: returns whether another main window took the request, so
+    // the caller only falls back to switching its own workspace when not.
+    // Assigning returnValue sends the reply, so it is assigned exactly once.
+    ipcMain.on(FOCUS_WORKSPACE_WINDOW_CHANNEL, (event, request: unknown) => {
+      event.returnValue = handOffToWorkspaceWindow(
+        BrowserWindow.fromWebContents(event.sender),
+        request,
+      );
+    });
+
+    // A workspace lives in at most one window: focus the window that already
+    // shows it, else open a new one cascaded from the requesting window.
+    ipcMain.handle(OPEN_WORKSPACE_WINDOW_CHANNEL, (event, value: unknown) => {
+      const source = BrowserWindow.fromWebContents(event.sender);
+      const workspaceSlug = parseWorkspaceSlug(value);
+      if (!source || !mainWindows.has(source) || !workspaceSlug) {
+        return { ok: false } as const;
+      }
+      const existing = mainWindows.findByWorkspace(workspaceSlug);
+      if (existing) {
+        focusWindow(existing);
+        return { ok: true } as const;
+      }
+      const bounds = source.getNormalBounds();
+      createMainWindow({
+        x: bounds.x + 28,
+        y: bounds.y + 28,
+        width: bounds.width,
+        height: bounds.height,
+        workspaceSlug,
+      });
+      return { ok: true } as const;
+    });
+
     // Account identity is the only cross-renderer auth signal. Main remains
-    // authoritative and closes issue windows instead of copying credentials.
+    // authoritative and closes windows instead of copying credentials.
     ipcMain.on(AUTH_SESSION_STATE_CHANNEL, (event, value: unknown) => {
       const sourceWindow = BrowserWindow.fromWebContents(event.sender);
       const userId = parseAuthSessionUserId(value);
       if (!sourceWindow || userId === undefined) return;
 
-      if (sourceWindow === mainWindow) {
+      if (mainWindows.has(sourceWindow)) {
         settingsUserId = userId;
         computerDesktop?.refresh();
         publishDeveloperLogsManifest?.();
-        const accountInvalidated = authSessionCoordinator.reportMain(userId);
+        const accountInvalidated = authSessionCoordinator.reportMain(
+          sourceWindow,
+          userId,
+        );
         if (accountInvalidated) {
           computerDesktop?.revoke();
-          sideWorkspaceControl.dispose();
-          resourcePreview?.dispose();
-          resourcePreview = undefined;
+          for (const control of sideWorkspaceControls.values()) control.dispose();
+          sideWorkspaceControls.clear();
+          for (const preview of resourcePreviews.values()) preview.dispose();
+          resourcePreviews.clear();
+          localScopeWindows.clear();
           authSessionGeneration += 1;
           mainRendererMessages.clear("inbox:open");
         }
@@ -1042,14 +1294,18 @@ if (!gotTheLock) {
       );
     });
 
+    ipcMain.handle("window:foreground", (event) =>
+      windowForeground(BrowserWindow.fromWebContents(event.sender)),
+    );
+
     // Main owns foreground detection and item-level dedupe. Every renderer
     // has its own WebSocket and `document.hasFocus()` only describes that one
     // window, so renderer-only gating can emit N duplicate system banners.
     ipcMain.on("notification:show", (event, value: unknown) => {
       const sourceWindow = BrowserWindow.fromWebContents(event.sender);
       if (!sourceWindow) return;
-      if (sourceWindow === mainWindow) {
-        if (!authSessionCoordinator.hasActiveMainSession()) return;
+      if (mainWindows.has(sourceWindow)) {
+        if (!authSessionCoordinator.hasActiveMainSession(sourceWindow)) return;
       } else if (
         !issueWindows.has(sourceWindow) ||
         !authSessionCoordinator.isCurrentIssueSession(sourceWindow)
@@ -1059,9 +1315,7 @@ if (!gotTheLock) {
 
       const payload = parseNativeNotificationPayload(value);
       if (!payload || !Notification.isSupported()) return;
-      const anyWindowFocused = BrowserWindow.getAllWindows().some(
-        (window) => !window.isDestroyed() && window.isFocused(),
-      );
+      const anyWindowFocused = BrowserWindow.getAllWindows().some(windowForeground);
       if (!notificationGate.shouldShow(payload.itemId, anyWindowFocused)) {
         return;
       }
@@ -1075,14 +1329,25 @@ if (!gotTheLock) {
         // A banner emitted for user A must not navigate after the main window
         // logs out or switches to user B.
         if (notificationSessionGeneration !== authSessionGeneration) return;
-        // Recreate the main window when an issue-only window outlived it, then
-        // wait for the inbox listener before delivering the navigation.
-        dispatchToMainRenderer("inbox:open", {
-          slug: payload.slug,
-          itemId: payload.itemId,
-          issueKey: payload.issueKey,
-        });
+        // Prefer the window that shows the item's workspace. Recreate a main
+        // window when an issue-only window outlived them all, then wait for
+        // the inbox listener before delivering the navigation.
+        dispatchToMainRenderer(
+          "inbox:open",
+          {
+            slug: payload.slug,
+            itemId: payload.itemId,
+            ...(payload.chatSessionId
+              ? { chatSessionId: payload.chatSessionId }
+              : { issueKey: payload.issueKey }),
+          },
+          mainWindows.findByWorkspace(payload.slug),
+        );
       });
+      notification.on("failed", (_event, error) => {
+        console.warn("Native notification delivery failed:", error);
+      });
+      notification.on("show", () => console.info("Native notification displayed"));
       notification.show();
     });
 
@@ -1090,31 +1355,37 @@ if (!gotTheLock) {
     // "99+". macOS is the primary target (user-visible dock badge); Linux
     // Unity launchers also respect `setBadgeCount`. Windows' taskbar overlay
     // needs a pre-rendered PNG and is deferred — the OS notification + the
-    // in-app inbox sidebar cover the core UX there for now.
-    ipcMain.on("badge:set", (_event, rawCount: number) => {
-      const count = Math.max(0, Math.floor(rawCount));
-      if (process.platform === "darwin") {
-        const label = count === 0 ? "" : count > 99 ? "99+" : String(count);
-        app.dock?.setBadge(label);
-      } else {
-        app.setBadgeCount(count);
-      }
+    // in-app inbox sidebar cover the core UX there for now. Each main window
+    // counts its own workspace's unread items; the badge shows the total.
+    ipcMain.on("badge:set", (event, rawCount: unknown) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window || !mainWindows.has(window)) return;
+      const count =
+        typeof rawCount === "number" && Number.isFinite(rawCount)
+          ? Math.max(0, Math.floor(rawCount))
+          : 0;
+      unreadBadgeCounts.set(window, count);
+      applyUnreadBadge();
     });
 
     desktopInitialized = true;
-    createWindow();
+    for (const saved of loadWindowSession(windowStateFile())) {
+      createMainWindow(saved);
+    }
 
-    if (!verificationDev?.enabled) setupAutoUpdater(() => mainWindow, {
+    // Register first so the update quit gate can block daemon autoStop.
+    if (!verificationDev?.enabled) setupAutoUpdater(() => mainWindows.all(), {
       // Windows only (the updater ignores it elsewhere): stop the bundled
       // daemon before the installer runs so multica.exe is replaced. #8823
       daemonGate: {
         prepare: prepareDaemonForUpdateInstall,
         resumeAfterAbortedInstall: resumeDaemonAfterAbortedUpdateInstall,
-        confirmInstallWhileBusy: createElectronBusyInstallPrompt((options) =>
-          mainWindow && !mainWindow.isDestroyed()
-            ? dialog.showMessageBox(mainWindow, options)
-            : dialog.showMessageBox(options),
-        ),
+        confirmInstallWhileBusy: createElectronBusyInstallPrompt((options) => {
+          const parent = mainWindows.mostRecent();
+          return parent && !parent.isDestroyed()
+            ? dialog.showMessageBox(parent, options)
+            : dialog.showMessageBox(options);
+        }),
       },
       // Provider processes run this app's executable: stop them before the
       // installer replaces the app, after asking when that would interrupt a turn.
@@ -1135,7 +1406,7 @@ if (!gotTheLock) {
         return true;
       },
     });
-    setupDaemonManager(() => mainWindow, {
+    setupDaemonManager(() => mainWindows.mostRecent(), () => mainWindows.all(), {
       quiesceLocalConversations: async () => {
         if (!localV2) return true;
         const busy = await localV2.drain().catch(() => 0);
@@ -1167,10 +1438,24 @@ if (!gotTheLock) {
       backendToken: async () => (await readDesktopProfileCredentials(desktopRuntimeProfile()))?.token ?? null,
       deliverToken: (token) => dispatchToMainRenderer("auth:token", token),
     });
+    setupThemeFolder();
+    setupVoiceInput();
+
+    // Registered after the updater and daemon gates, so a quit they hold
+    // (busy daemon, pending install) leaves the session writable; only the
+    // quit that actually proceeds freezes it.
+    app.on("before-quit", (event) => {
+      if (event.defaultPrevented) return;
+      freezeWindowSession();
+    });
+    // macOS quitAndInstall closes every window before before-quit fires.
+    if (process.platform === "darwin") {
+      nativeAutoUpdater.on("before-quit-for-update", freezeWindowSession);
+    }
 
     app.on("activate", () => {
       const window = ensureMainWindow();
-      if (window) focusMainWindow(window);
+      if (window) focusWindow(window);
     });
   });
 }

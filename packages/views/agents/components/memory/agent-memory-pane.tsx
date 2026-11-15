@@ -11,7 +11,7 @@ import {
   Monitor,
   RotateCcw,
   Trash2,
-} from "lucide-react";
+} from "@multica/ui/icons";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { AgentRuntime } from "@multica/core/types";

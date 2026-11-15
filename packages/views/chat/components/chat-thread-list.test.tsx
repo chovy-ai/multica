@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { VirtuosoMockContext } from "react-virtuoso";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent, ChatSession } from "@multica/core/types";
 import enChat from "../../locales/en/chat.json";
@@ -54,6 +55,7 @@ vi.mock("@multica/core/chat/mutations", () => ({
   useDeleteChatSession: () => ({ mutate: deleteMutate, isPending: false }),
   useSetChatSessionPinned: () => ({ mutate: vi.fn(), isPending: false }),
   useSetChatSessionArchived: () => ({ mutate: archiveMutate, isPending: false }),
+  useUpdateChatSession: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => {
@@ -99,7 +101,7 @@ const sessions: ChatSession[] = [
 function renderList(
   activeSessionId: string | null,
   {
-    onArchive = vi.fn(),
+    onArchive = vi.fn<(session: ChatSession) => void>(),
     onSelectSession = vi.fn(),
     renderedSessions = sessions,
     renderedAgents = [agent],
@@ -117,7 +119,8 @@ function renderList(
   } = {},
 ) {
   const content = (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <VirtuosoMockContext.Provider value={{ viewportHeight: 560, itemHeight: 56 }}>
+<I18nProvider locale="en" resources={TEST_RESOURCES}>
       <ChatThreadList
         sessions={renderedSessions}
         agents={renderedAgents}
@@ -127,7 +130,7 @@ function renderList(
         onDeletedSession={onDeletedSession}
         getSessionHref={getSessionHref}
       />
-    </I18nProvider>
+    </I18nProvider></VirtuosoMockContext.Provider>
   );
   render(navigation ? <NavigationProvider value={navigation}>{content}</NavigationProvider> : content);
   return { onArchive, onSelectSession };
@@ -142,10 +145,10 @@ describe("conversation search", () => {
       makeSession({ id: "archive", title: "Saved report", status: "archived", last_message: { role: "assistant", content: "Ready for acceptance", created_at: "2026-07-08T00:00:00Z" } }),
     ];
     const onSelect = vi.fn();
-    const content = (searchQuery: string) => <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    const content = (searchQuery: string) => <VirtuosoMockContext.Provider value={{ viewportHeight: 560, itemHeight: 56 }}><I18nProvider locale="en" resources={TEST_RESOURCES}>
       <ChatThreadList sessions={chats} agents={[agent]} activeSessionId="current" onArchive={vi.fn()} onSelectSession={onSelect}
         searchQuery={searchQuery} emptyContent={<p>No matches</p>} />
-    </I18nProvider>;
+    </I18nProvider></VirtuosoMockContext.Provider>;
     const view = render(content("design"));
     expect(screen.getByText("Design review")).toBeVisible();
     view.rerender(content("ALPHA"));
@@ -160,6 +163,30 @@ describe("conversation search", () => {
     expect(screen.queryByText("Design review")).toBeNull();
     expect(onSelect).not.toHaveBeenCalled();
     view.unmount();
+  });
+});
+
+describe("ChatThreadList windowing", () => {
+  it("mounts only a window of a long history without an archive footer", () => {
+    renderList(null, {
+      renderedSessions: Array.from({ length: 200 }, (_, i) => makeSession({ id: `history-${i}` })),
+    });
+    expect(screen.getByText("Chat history-0")).toBeInTheDocument();
+    expect(screen.getAllByTestId("avatar-agent-1").length).toBeLessThan(30);
+    expect(screen.queryByText("Chat history-199")).not.toBeInTheDocument();
+  });
+
+  it("keeps the archive entry reachable and windows archived sessions", () => {
+    renderList(null, {
+      renderedSessions: [
+        ...sessions,
+        ...Array.from({ length: 200 }, (_, i) => makeSession({ id: `archived-${i}`, status: "archived" })),
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Archived.*200/ }));
+    expect(screen.getByText("Chat archived-0")).toBeInTheDocument();
+    expect(screen.getAllByTestId("avatar-agent-1").length).toBeLessThan(30);
+    expect(screen.queryByText("Chat archived-199")).not.toBeInTheDocument();
   });
 });
 
@@ -305,17 +332,7 @@ describe("ChatThreadList no_response preview (MUL-4351)", () => {
         message_kind: "no_response",
       },
     });
-    render(
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
-        <ChatThreadList
-          sessions={[session]}
-          agents={[agent]}
-          activeSessionId={null}
-          onSelectSession={vi.fn()}
-          onArchive={vi.fn()}
-        />
-      </I18nProvider>,
-    );
+    renderList(null, { renderedSessions: [session] });
     expect(screen.getByText(enChat.list.no_response_preview)).toBeInTheDocument();
     // The stored English fallback body must not leak into the preview.
     expect(
@@ -443,6 +460,27 @@ describe("ChatThreadList row keyboard semantics", () => {
       { key: "Enter" },
     );
 
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatThreadList right-click menu", () => {
+  beforeEach(() => {
+    archiveMutate.mockClear();
+  });
+
+  it("opens the row's actions at the cursor and acts on that row", async () => {
+    const { onArchive, onSelectSession } = renderList("s1");
+
+    fireEvent.contextMenu(screen.getByText("Chat s2"), { clientX: 30, clientY: 90 });
+    const menu = await screen.findByRole("menu");
+    expect(
+      Array.from(menu.querySelectorAll('[role="menuitem"]'), (el) => el.textContent?.trim()),
+    ).toEqual([enChat.list.pin, ARCHIVE_LABEL, enChat.header.rename]);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: ARCHIVE_LABEL }));
+    expect(onArchive).toHaveBeenCalledTimes(1);
+    expect(onArchive).toHaveBeenCalledWith(expect.objectContaining({ id: "s2" }));
     expect(onSelectSession).not.toHaveBeenCalled();
   });
 });

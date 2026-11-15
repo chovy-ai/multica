@@ -123,6 +123,19 @@ WHERE status = 'active'
   AND assignee_id = @squad_id
 RETURNING *;
 
+-- name: PauseAutopilotsByArchivedProject :many
+-- An archived project accepts no new issues, so an automation filing into it
+-- would fail every run. Pause it, keeping the configuration; restoring the
+-- project leaves it paused for an explicit resume.
+UPDATE autopilot
+SET status = 'paused',
+    pause_reason = 'project_archived',
+    updated_at = now()
+WHERE status = 'active'
+  AND workspace_id = @workspace_id
+  AND project_id = @project_id
+RETURNING *;
+
 -- name: UpdateAutopilotLastRunAt :exec
 UPDATE autopilot SET last_run_at = now(), updated_at = now()
 WHERE id = $1;
@@ -441,23 +454,6 @@ SET status = 'running', task_id = $2
 WHERE id = $1
 RETURNING *;
 
--- name: UpdateAutopilotRunCompleted :one
--- Quota safety: only use for a run known to have no reservation. Normal
--- terminal paths must call UpdateAutopilotRunTerminalWithQuota instead.
-UPDATE autopilot_run
-SET status = 'completed', completed_at = now(), result = sqlc.narg('result')
-WHERE id = $1
-RETURNING *;
-
--- name: UpdateAutopilotRunFailed :one
--- Quota safety: only use for a run known to have no reservation. Normal
--- terminal paths must call UpdateAutopilotRunTerminalWithQuota instead.
-UPDATE autopilot_run
-SET status = 'failed', completed_at = now(), failure_reason = $2,
-    reason_code = sqlc.narg('reason_code')
-WHERE id = $1
-RETURNING *;
-
 -- name: UpdateAutopilotRunSkipped :one
 -- Quota safety: this is only for pre-admission skipped rows, which never have
 -- reservations. Post-admission skips use UpdateAutopilotRunTerminalWithQuota.
@@ -531,17 +527,6 @@ WITH updated_run AS (
     RETURNING p.workspace_id
 )
 SELECT * FROM updated_run;
-
--- name: UpdateAutopilotRunSkippedWithResult :one
--- Quota safety: legacy no-reservation helper. New terminal paths must call
--- UpdateAutopilotRunTerminalWithQuota instead.
-UPDATE autopilot_run
-SET status = 'skipped',
-    completed_at = now(),
-    failure_reason = $2,
-    result = sqlc.narg('result')
-WHERE id = $1
-RETURNING *;
 
 -- =====================
 -- Scheduler Queries

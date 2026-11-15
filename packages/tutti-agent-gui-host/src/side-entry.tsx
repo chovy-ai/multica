@@ -4,7 +4,7 @@ import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { Button } from "@multica/ui/components/ui/button";
 import { DropdownMenuItem } from "@tutti-os/ui-system";
 import { QueuedPromptMenuActionContext } from "@tutti-os/agent-gui/queued-prompt-menu";
-import { Copy, MessagesSquare, PanelRightOpen, TextQuote } from "lucide-react";
+import { Copy, MessagesSquare, PanelRightOpen, TextQuote } from "@multica/ui/icons";
 import {
   createContext,
   useContext,

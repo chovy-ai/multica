@@ -7,7 +7,7 @@ const { conf, language } = markdown as {
   conf: languages.LanguageConfiguration;
   language: languages.IMonarchLanguage;
 };
-import "monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution";
+import "monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution.js";
 
 // Bundle the editor worker locally; memory content never leaves the device.
 if (!globalThis.MonacoEnvironment) {

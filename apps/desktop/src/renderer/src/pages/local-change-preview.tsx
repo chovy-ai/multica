@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react-lite";
-import { ArrowLeft, FileDiff, Loader2, PanelLeft, WrapText, X } from "lucide-react";
+import { ArrowLeft, FileDiff, Loader2, PanelLeft, WrapText, X } from "@multica/ui/icons";
 import type { ConversationResourcesService } from "@multica/conversation-client/services";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { Button } from "@multica/ui/components/ui/button";

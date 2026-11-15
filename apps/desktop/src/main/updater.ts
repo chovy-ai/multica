@@ -156,10 +156,14 @@ export function updateInstallsOnQuit(): boolean {
 }
 
 export function setupAutoUpdater(
-  getMainWindow: () => BrowserWindow | null,
+  getMainWindows: () => readonly BrowserWindow[],
   options: SetupAutoUpdaterOptions = {},
 ): void {
   updateDownloaded = false;
+  // Every main window mounts the update banner, so each one hears progress.
+  const broadcast = (channel: RendererChannel, payload: unknown) => {
+    for (const win of getMainWindows()) sendToLiveRenderer(win, channel, payload);
+  };
   const platform = options.platform ?? process.platform;
   // Only Windows locks a running executable against replacement; macOS and
   // Linux keep their existing update path untouched.
@@ -288,14 +292,14 @@ export function setupAutoUpdater(
   autoUpdater.on("update-available", (info) => {
     // Forwarded for renderer-side state tracking only; the notification UI
     // does not render an "available" affordance with autoDownload=true.
-    sendToLiveRenderer(getMainWindow(), "updater:update-available", {
+    broadcast("updater:update-available", {
       version: info.version,
       releaseNotes: info.releaseNotes,
     });
   });
 
   autoUpdater.on("download-progress", (progress) => {
-    sendToLiveRenderer(getMainWindow(), "updater:download-progress", {
+    broadcast("updater:download-progress", {
       percent: progress.percent,
     });
   });
@@ -303,7 +307,7 @@ export function setupAutoUpdater(
   autoUpdater.on("update-downloaded", (info: UpdateDownloadedEvent) => {
     updateDownloaded = true;
     updateReadyToInstall = true;
-    sendToLiveRenderer(getMainWindow(), "updater:update-downloaded", {
+    broadcast("updater:update-downloaded", {
       version: info.version,
       releaseNotes: info.releaseNotes,
     });
