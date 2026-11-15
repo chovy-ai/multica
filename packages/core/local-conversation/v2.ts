@@ -15,6 +15,11 @@ export const LOCAL_V2_VERSION = 2;
 const nullableString = z.string().nullable().optional().transform((value) => value ?? null);
 const payload = z.record(z.string(), z.unknown());
 
+/** Reported per-call changes; verification of cumulative disk state is separate. */
+export const localV2ReportedFileChangeSchema = z.object({
+  path: z.string().min(1), kind: z.string(), diff: z.string().optional(), move_path: z.string().optional(),
+});
+
 export const localV2EventSchema = z.object({
   seq: z.number().int().positive(),
   turn_id: nullableString,

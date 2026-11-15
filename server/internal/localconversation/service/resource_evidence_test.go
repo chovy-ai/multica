@@ -150,3 +150,34 @@ func TestForkAndSideKeepIndependentResourceLedgers(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeBashReportedPatchUsesTheCommonVerifiedCollector(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.md")
+	if err := os.WriteFile(path, []byte("old\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := newRunnerFixture(t, NewLimiter(MaxRunningTurns), nil)
+	f.runner.session.Fields["cwd"] = root
+	defer f.runner.Close(ctx)
+	if err := f.runner.Send(ctx, SendRequest{TurnID: "t1", RequestID: "bash", MessageID: "message", Text: "edit notes"}); err != nil {
+		t.Fatal(err)
+	}
+	f.adapter(0).emit(t, `{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"bash-call","name":"Bash","input":{"command":"fixture"}}]}}`)
+	if err := os.WriteFile(path, []byte("new\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.adapter(0).emit(t,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bash-call","content":"ok"}]},"tool_use_result":{"bashEditDiff":{"files":[{"filePath":"notes.md","hunks":[{"oldStart":1,"oldLines":1,"newStart":1,"newLines":1,"lines":["-old","+new"]}]}],"changedFiles":["notes.md"],"moreFiles":0}}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"done"}`)
+	f.turnEvents(t, "t1")
+	page, err := f.store.ResourcePage(ctx, "conv-1", "")
+	if err != nil || len(page.Files) != 1 {
+		t.Fatalf("resources: %+v %v", page, err)
+	}
+	detail, err := f.store.ChangeDetail(ctx, "conv-1", page.Files[0].ID, page.Revision)
+	if err != nil || detail.Before != "old\n" || detail.After != "new\n" || detail.File.Reason != "" {
+		t.Fatalf("verified detail: %+v %v", detail, err)
+	}
+}
