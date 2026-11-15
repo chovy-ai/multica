@@ -34,6 +34,7 @@ for (const theme of ["light", "dark"]) {
     const project = page.getByRole("region", { name: "Project", exact: true });
     const rows = project.locator("[data-sortable-session]");
     const order = () => rows.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-sortable-session")));
+    const settled = () => expect.poll(() => rows.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).transform))).toEqual(["none", "none", "none", "none"]);
     const handle = (name: string) => project.getByRole("button", { name: `Reorder conversation: ${name}`, exact: true });
     await expect(rows).toHaveCount(4);
     await drag(page, handle("Third"), rows.nth(1), async () => {
@@ -49,6 +50,7 @@ for (const theme of ["light", "dark"]) {
     await expect.poll(order).toEqual(["Pinned", "Third", "First", "Second"]);
     await drag(page, handle("Third"), page.getByRole("region", { name: "No project" }).locator("[data-sortable-session]").last());
     await expect.poll(order).toEqual(["Pinned", "Third", "First", "Second"]);
+    await settled();
     await handle("Third").focus();
     await page.keyboard.press("Space");
     await expect(project.locator('[data-dragging="true"]')).toHaveCount(1);
@@ -59,6 +61,8 @@ for (const theme of ["light", "dark"]) {
     await page.keyboard.press("Escape");
     await expect(project.locator('[data-dragging="true"]')).toHaveCount(0);
     await expect.poll(order).toEqual(["Pinned", "Third", "First", "Second"]);
+    // A cancelled sort animates rows back; start the next gesture after layout settles.
+    await settled();
     await handle("Third").focus();
     await page.keyboard.press("Space");
     await expect(project.locator('[data-dragging="true"]')).toHaveCount(1);
