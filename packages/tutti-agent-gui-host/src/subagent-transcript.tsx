@@ -1,3 +1,4 @@
+import { ToolResultEvidenceContent } from "./tool-result-evidence";
 import { useMemo } from "react";
 import { AgentMessageMarkdown } from "../../../vendor/tutti/packages/agent/gui/shared/AgentMessageMarkdown";
 import { AgentUserImageGrid } from "../../../vendor/tutti/packages/agent/gui/shared/agentConversation/components/AgentMessageImages";
@@ -14,6 +15,7 @@ function SubagentTranscriptRender({
   const transcript = message.sourceTimelineItems
     ?.map((item) => record(item.payload?.subagentTranscript))
     .find(Boolean);
+  const resultOutput = useMemo(() => record(transcript?.result) && Object.keys(record(transcript?.result)!).length > 0 ? { providerResult: transcript?.result } : null, [transcript?.result]);
   if (!transcript) return null;
   const chinese = transcript.locale === "zh-CN";
   const items = Array.isArray(transcript.items)
@@ -38,6 +40,7 @@ function SubagentTranscriptRender({
       <summary className="cursor-pointer select-none text-body font-medium text-foreground">
         {chinese ? "子对话" : "Subagent conversation"}
       </summary>
+      {resultOutput ? <ToolResultEvidenceContent chinese={chinese} output={resultOutput} /> : null}
       <ol
         aria-label={chinese ? "子对话消息" : "Subagent messages"}
         className="mt-3 space-y-3 border-l border-border pl-3"
@@ -108,6 +111,7 @@ function SubagentTranscriptRender({
                     </pre>
                   </>
                 ) : null}
+                <ToolResultEvidenceContent chinese={chinese} output={record(item.result)} />
               </details>
             </li>
           );

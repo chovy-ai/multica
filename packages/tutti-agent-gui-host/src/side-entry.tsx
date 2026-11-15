@@ -1,3 +1,4 @@
+import { ToolResultEvidenceContent } from "./tool-result-evidence";
 import { Slot } from "radix-ui";
 import { useMemo } from "react";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
@@ -59,6 +60,11 @@ export const FileChangeAction = observer(function FileChangeAction({ call }: { c
   });
   if (!entry?.enabled || call.statusKind !== "completed" || !["edit", "write"].includes(call.rendererKind)) return null;
   return <Button size="xs" variant="link" onClick={click}>{entry.chinese ? "查看变更" : "View changes"}</Button>;
+});
+
+export const ToolResultEvidence = observer(function ToolResultEvidence({ call }: { call: { output: Record<string, unknown> | null } }) {
+  const entry = useContext(SideEntryContext);
+  return <ToolResultEvidenceContent output={call.output} chinese={entry?.chinese === true} />;
 });
 
 function SideEntryProviderRender({

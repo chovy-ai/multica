@@ -108,10 +108,10 @@ func TestCodexNormalizerToolCallsImagesAndQuestions(t *testing.T) {
 		note{"item/completed", `{"item":{"id":"g2","type":"imageGeneration","status":"failed","result":""}}`},
 	)
 	assertEvents(t, got,
-		"item.started m1 kind=tool_call tool=mcp__multica__search_issues",
-		`item.completed m1 final kind=tool_call status=completed output={"content":[{"text":"3 issues","type":"text"}]} tool=mcp__multica__search_issues`,
+		"item.started m1 kind=tool_call tool=search_issues",
+		`item.completed m1 final kind=tool_call status=completed output={"content":[{"text":"3 issues","type":"text"}]} tool=search_issues`,
 		"item.completed output-image:m1:0 final kind=image status=completed",
-		`item.completed m2 final kind=tool_call status=failed output={"message":"timeout"} tool=mcp__github__get_pr`,
+		`item.completed m2 final kind=tool_call status=failed output={"message":"timeout"} tool=get_pr`,
 		"item.completed g1 final kind=image status=completed",
 	)
 	if got[2].Image == nil || got[4].Image == nil || got[4].Image.MimeType != "image/png" {
@@ -145,7 +145,6 @@ func TestCodexNormalizerIgnoresUnrelatedNotifications(t *testing.T) {
 		note{"turn/started", `{"turn":{"id":"t"}}`},
 		note{"thread/tokenUsage/updated", `{"turnId":"t"}`},
 		note{"item/completed", `{"item":{"type":"agentMessage","text":"no id"}}`},
-		note{"item/completed", `{"item":{"id":"x","type":"webSearch"}}`},
 	)
 	if len(got) != 0 {
 		t.Fatalf("events = %s", summary(got))

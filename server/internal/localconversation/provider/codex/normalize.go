@@ -6,25 +6,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/localconversation/provider"
 )
 
-// Event is one normalized conversation event without sequence numbers or
-// turn. Types and payloads follow the v2 schema (local-v2.schema.json).
-type Event struct {
-	ItemID  string
-	Type    string
-	Final   bool
-	Payload map[string]any
-	// Image is set on an image item.completed whose bytes the service stores
-	// as an attachment before committing.
-	Image *InlineImage
-}
-
-// InlineImage is an image produced by a tool or image generation.
-type InlineImage struct {
-	MimeType string
-	Data     string
-}
+// Event and inline images use the common live/history contract.
+type Event = provider.Event
+type InlineImage = provider.InlineImage
 
 type openItem struct {
 	kind  string
@@ -66,6 +54,13 @@ func (n *Normalizer) Accept(method string, params json.RawMessage) []Event {
 		return nil
 	}
 	switch method {
+	case "item/commandExecution/outputDelta":
+		item := n.open[p.ItemID]
+		if item == nil || item.kind != "command" || p.Delta == "" {
+			return nil
+		}
+		item.text.WriteString(p.Delta)
+		return []Event{{ItemID: p.ItemID, Type: "item.delta", Payload: map[string]any{"kind": "command", "field": "output", "text": p.Delta}}}
 	case "item/agentMessage/delta":
 		return n.agentDelta(p.ItemID, p.Delta)
 	case "item/reasoning/summaryPartAdded":
@@ -112,7 +107,7 @@ func (n *Normalizer) Close(status string) []Event {
 			}
 			switch item.kind {
 			case "command":
-				state["output"], state["exit_code"] = "", nil
+				state["output"], state["exit_code"] = item.text.String(), nil
 			case "file_change":
 				if _, ok := state["changes"]; !ok {
 					state["changes"] = []any{}
@@ -180,9 +175,11 @@ func (n *Normalizer) started(id string, item map[string]any) []Event {
 	case "fileChange":
 		start = map[string]any{"kind": "file_change", "changes": changes(item["changes"])}
 	case "mcpToolCall":
-		start = map[string]any{"kind": "tool_call", "tool": mcpToolName(item), "server": str(item, "server"), "input": item["arguments"]}
+		start = map[string]any{"kind": "tool_call", "tool": str(item, "tool"), "server": str(item, "server"), "input": item["arguments"]}
 	case "dynamicToolCall":
 		start = map[string]any{"kind": "tool_call", "tool": str(item, "tool"), "input": item["arguments"]}
+	case "webSearch":
+		start = map[string]any{"kind": "tool_call", "tool": "WebSearch", "input": map[string]any{"query": str(item, "query"), "action": item["action"]}}
 	case "reasoning":
 		start = map[string]any{"kind": "reasoning"}
 	default:
@@ -219,6 +216,11 @@ func (n *Normalizer) complete(id string, item map[string]any) []Event {
 		return []Event{n.final(id, map[string]any{"kind": "reasoning", "status": "completed", "text": text})}
 	case "commandExecution":
 		state := map[string]any{"kind": "command", "status": status, "command": str(item, "command"), "output": str(item, "aggregatedOutput"), "exit_code": nil}
+		if _, present := item["aggregatedOutput"].(string); !present {
+			if open := n.open[id]; open != nil {
+				state["output"] = open.text.String()
+			}
+		}
 		if cwd := str(item, "cwd"); cwd != "" {
 			state["cwd"] = cwd
 		}
@@ -232,7 +234,7 @@ func (n *Normalizer) complete(id string, item map[string]any) []Event {
 	case "fileChange":
 		return []Event{n.final(id, map[string]any{"kind": "file_change", "status": status, "changes": changes(item["changes"])})}
 	case "mcpToolCall":
-		state := map[string]any{"kind": "tool_call", "status": status, "tool": mcpToolName(item), "server": str(item, "server"), "input": item["arguments"]}
+		state := map[string]any{"kind": "tool_call", "status": status, "tool": str(item, "tool"), "server": str(item, "server"), "input": item["arguments"]}
 		var images []InlineImage
 		if errValue, failed := item["error"]; failed && errValue != nil {
 			state["status"] = "failed"
@@ -250,9 +252,12 @@ func (n *Normalizer) complete(id string, item map[string]any) []Event {
 				copied["content"] = content
 				result = copied
 			}
+			state["result"] = orEmpty(result)
 			state["output"] = jsonString(orEmpty(result))
 		}
 		return append([]Event{n.final(id, state)}, imageEvents(id, images)...)
+	case "webSearch":
+		return []Event{n.final(id, map[string]any{"kind": "tool_call", "status": status, "tool": "WebSearch", "input": map[string]any{"query": str(item, "query"), "action": item["action"]}, "result": item, "output": jsonString(item)})}
 	case "dynamicToolCall":
 		raw := item["contentItems"]
 		if raw == nil {
@@ -301,10 +306,6 @@ func itemStatus(s string) string {
 		return "cancelled"
 	}
 	return "completed"
-}
-
-func mcpToolName(item map[string]any) string {
-	return "mcp__" + str(item, "server") + "__" + str(item, "tool")
 }
 
 // changes keeps the v2 file_change fields: path, kind and optional

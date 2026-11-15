@@ -1,6 +1,7 @@
 import type { Options, Query, SDKUserMessage, SpareProcess } from "@anthropic-ai/claude-agent-sdk";
 import { AdapterError, CLAUDE_ADAPTER_PROTOCOL_VERSION, type AdapterMessage, type DaemonMessage, type DaemonRequest } from "./protocol";
 
+import { enrichHistory } from "./history";
 import { FileCapture } from "./file-capture";
 
 type Sdk = typeof import("@anthropic-ai/claude-agent-sdk");
@@ -88,7 +89,7 @@ export class ClaudeAdapter {
       case "get_session_info":
         return (await (await this.sdk()).getSessionInfo(message.session_id, { ...(message.dir ? { dir: message.dir } : {}) })) ?? null;
       case "get_session_messages":
-        return (await this.sdk()).getSessionMessages(message.session_id, { ...(message.dir ? { dir: message.dir } : {}), ...(message.limit ? { limit: message.limit } : {}), ...(message.offset ? { offset: message.offset } : {}) });
+        return enrichHistory(message.session_id, await (await this.sdk()).getSessionMessages(message.session_id, { ...(message.dir ? { dir: message.dir } : {}), ...(message.limit ? { limit: message.limit } : {}), ...(message.offset ? { offset: message.offset } : {}) }));
       case "supported_models": return this.supportedModels(message);
     }
   }

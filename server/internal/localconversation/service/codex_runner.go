@@ -1096,7 +1096,7 @@ func (r *CodexRunner) appendOutput(turn *codexTurn, events []outputEvent) {
 		}
 	}
 	if files := turn.files.Load(); files != nil {
-		collection := codexFileCollection(files, turn.id, events)
+		collection := providerFileCollection(files, turn.id, events)
 		if len(collection.Native) > 0 {
 			batch.FileCollections = []filechanges.Collection{collection}
 		}

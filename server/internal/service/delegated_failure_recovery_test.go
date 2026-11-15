@@ -1314,25 +1314,47 @@ func TestPendingDelegatedFailureSweepSkipsTriageSourceIssue(t *testing.T) {
 		t.Fatalf("ensure recovery comment = target %v created %v err %v", target != nil, created, err)
 	}
 
+	// CI packages share a database. Another workspace's eligible signal must
+	// not change assertions about the triage source's selection or dispatch.
+	other, otherSvc := seedDelegatedFailureFixture(t)
+	otherFailedID := other.insertWorkerTask(t, "failed", "comment", 1, 2)
+	if target, created, err := otherSvc.ensureDelegatedFailureRecoveryComment(ctx, otherFailedID); err != nil || target == nil || !created {
+		t.Fatalf("ensure other recovery comment = target %v created %v err %v", target != nil, created, err)
+	}
+
 	if _, err := f.pool.Exec(ctx, `UPDATE issue SET triage_state = 'pending' WHERE id = $1`, f.issueID); err != nil {
 		t.Fatalf("move source issue into triage: %v", err)
 	}
 	if f.pending(t, svc, target.comment.ID) {
 		t.Fatal("triage-source recovery selected by the outbox scan")
 	}
+	if err := svc.DispatchDelegatedFailureRecoveryComment(ctx, target.comment, pgtype.UUID{}); err != nil {
+		t.Fatalf("direct triage-source recovery dispatch: %v", err)
+	}
+	if n := f.recoveryTasks(t, failedID); n != 0 {
+		t.Fatalf("direct recovery tasks = %d, want none while the source issue is in Triage", n)
+	}
 	sweepDelegatedFailureRecoveries(t, svc)
 	if n := f.recoveryTasks(t, failedID); n != 0 {
 		t.Fatalf("recovery tasks = %d, want none while the source issue is in Triage", n)
 	}
+	if n := other.recoveryTasks(t, otherFailedID); n != 1 {
+		t.Fatalf("other workspace recovery tasks = %d, want one while triage remains parked", n)
+	}
 
 	// Accept clears the marker and the same pending comment wakes the
-	// coordinator — which is what makes the zero above the column's doing and
-	// not an inert fixture. The status never moved: only triage_state did.
+	// coordinator. The status never moved: only triage_state did.
 	if _, err := f.pool.Exec(ctx, `UPDATE issue SET triage_state = NULL WHERE id = $1`, f.issueID); err != nil {
 		t.Fatalf("accept source issue: %v", err)
 	}
 	sweepDelegatedFailureRecoveries(t, svc)
 	if n := f.recoveryTasks(t, failedID); n != 1 {
 		t.Fatalf("recovery tasks after accept = %d, want 1", n)
+	}
+	sweepDelegatedFailureRecoveries(t, svc)
+	for _, sourceID := range []pgtype.UUID{failedID, otherFailedID} {
+		if n := f.recoveryTasks(t, sourceID); n != 1 {
+			t.Fatalf("repeat sweep: source %s has %d recovery tasks, want 1", util.UUIDToString(sourceID), n)
+		}
 	}
 }
