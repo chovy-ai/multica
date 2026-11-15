@@ -7,7 +7,6 @@ import {
   type PointerEventHandler,
 } from "react";
 import { ArrowLeft, ArrowRight } from "@multica/ui/icons";
-import { SidebarTrigger } from "@multica/ui/components/ui/sidebar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,7 +22,6 @@ import {
 import { TruncatedTooltip } from "@multica/ui/components/common/truncated-tooltip";
 import {
   ResourceLeadingVisual,
-  useAppShell,
   useTabPresentation,
 } from "@multica/views/layout";
 import { ActionShortcutKeycaps } from "@multica/views/common/shortcut-keycaps";
@@ -33,11 +31,11 @@ import { browsingHistoryKeyForUrl } from "@/stores/tab-store";
 
 // Controls sit left-aligned just past the macOS traffic lights, which end
 // around x=76 with trafficLightPosition { x: 16 }. The clearance covers that
-// inset plus Back, Forward and the panel toggle (3 × 28px, 2 × 8px gaps) and
+// inset plus Back and Forward (2 × 28px, one 8px gap) and
 // a 12px trailing pad. It spans the rail and the start of the tab bar, which
 // pads itself past it.
 export const TRAFFIC_LIGHT_CLEARANCE = 88;
-export const WINDOW_TOOLBAR_CLEARANCE = 200;
+export const WINDOW_TOOLBAR_CLEARANCE = 164;
 const LONG_PRESS_DURATION_MS = 500;
 const LONG_PRESS_MOVE_TOLERANCE_PX = 8;
 const MAX_HISTORY_MENU_ITEMS = 30;
@@ -177,7 +175,6 @@ function HistoryMenuItem({
 
 export function WindowToolbar() {
   const { t } = useT("layout");
-  const shell = useAppShell();
   const {
     canGoBack,
     canGoForward,
@@ -358,19 +355,6 @@ export function WindowToolbar() {
             <span className="text-muted-foreground">{t(($) => $.window.hold_for_history)}</span>
           </TooltipContent>
         </Tooltip>
-        <SidebarTrigger
-          className="size-7 text-faint-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          shortcut={<ActionShortcutKeycaps action="toggleSidebar" />}
-          onClick={
-            shell
-              ? (event) => {
-                  event.preventDefault();
-                  shell.toggleNav();
-                }
-              : undefined
-          }
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-        />
       </div>
 
       <DropdownMenu

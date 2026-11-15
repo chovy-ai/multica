@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -19,10 +19,6 @@ const historyState = vi.hoisted(() => ({
   goToHistoryIndex: vi.fn(),
 }));
 
-const shellState = vi.hoisted(() => ({
-  current: { toggleNav: () => {} } as { toggleNav: () => void } | null,
-}));
-
 vi.mock("@/hooks/use-tab-history", () => ({
   useTabHistory: () => historyState,
 }));
@@ -33,13 +29,6 @@ vi.mock("@multica/views/layout", () => ({
     title: fallbackTitle ?? `Title ${url}`,
   }),
   ResourceLeadingVisual: () => <span aria-hidden />,
-  useAppShell: () => shellState.current,
-}));
-
-vi.mock("@multica/ui/components/ui/sidebar", () => ({
-  SidebarTrigger: (props: ComponentProps<"button">) => (
-    <button type="button" aria-label="Toggle sidebar" {...props} />
-  ),
 }));
 
 const { WINDOW_TOOLBAR_CLEARANCE, WindowToolbar, historyIndicesForMenu } =
@@ -70,7 +59,6 @@ beforeEach(() => {
   historyState.goBack.mockReset();
   historyState.goForward.mockReset();
   historyState.goToHistoryIndex.mockReset();
-  shellState.current = { toggleNav: vi.fn() };
   vi.useFakeTimers();
 });
 
@@ -99,38 +87,17 @@ describe("WindowToolbar history controls", () => {
     render(<WindowToolbar />, { wrapper: I18nWrapper });
 
     const toolbar = document.querySelector('[data-slot="window-toolbar"]');
-    expect(WINDOW_TOOLBAR_CLEARANCE).toBe(200);
+    expect(WINDOW_TOOLBAR_CLEARANCE).toBe(164);
     expect(toolbar).not.toHaveClass("justify-end");
-    expect(toolbar).toHaveStyle({ paddingLeft: "88px", width: "200px" });
+    expect(toolbar).toHaveStyle({ paddingLeft: "88px", width: "164px" });
   });
 
-  it("keeps the controls clear of the traffic lights after toggling the panel", () => {
-    render(<WindowToolbar />, { wrapper: I18nWrapper });
-    fireEvent.click(screen.getByRole("button", { name: "Toggle sidebar" }));
-
-    const toolbar = document.querySelector('[data-slot="window-toolbar"]');
-    expect(toolbar).toHaveStyle({ paddingLeft: "88px", width: "200px" });
-  });
-
-  // Inside the shell the toggle routes through toggleNav, which collapses the
-  // space panel or, in Inbox, Chat and Settings, the page's own list column.
-  it("routes the panel toggle through the shell", () => {
-    const toggleNav = vi.fn();
-    shellState.current = { toggleNav };
-    render(<WindowToolbar />, { wrapper: I18nWrapper });
-
-    const toggle = screen.getByRole("button", { name: "Toggle sidebar" });
-    expect(toggle).toBeEnabled();
-    fireEvent.click(toggle);
-    expect(toggleNav).toHaveBeenCalledOnce();
-  });
-
-  it("orders Back, Forward, then the sidebar toggle with no separate History button", () => {
+  it("keeps only Back and Forward with no sidebar focus or click target", () => {
     render(<WindowToolbar />, { wrapper: I18nWrapper });
 
     expect(
       screen.getAllByRole("button").map((button) => button.getAttribute("aria-label")),
-    ).toEqual(["Go back", "Go forward", "Toggle sidebar"]);
+    ).toEqual(["Go back", "Go forward"]);
     expect(screen.queryByRole("button", { name: "History" })).toBeNull();
   });
 
