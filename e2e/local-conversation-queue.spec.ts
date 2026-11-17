@@ -114,7 +114,7 @@ async function mountQueueHarness(page: Page, snapshot: AgentGuiInitSnapshot, ses
   }, { snapshot, session, provider, seed });
 }
 
-for (const theme of ["light", "dark"] as const) test(`queue errors stay above the queue and growing input in ${theme}`, async ({ page }) => {
+for (const theme of ["light", "dark"] as const) test(`queue errors sit flush above the queue and growing input in ${theme}`, async ({ page }) => {
   const at = new Date().toISOString();
   const session = { id: "queue-error", workspace_id: "queue-workspace", creator_id: "queue-user", agent_id: "local:claude", title: "Queue error", status: "active", created_at: at, updated_at: at, has_unread: false } as ChatSession;
   const snapshot: AgentGuiInitSnapshot = { workspaceId: session.workspace_id, workspaceSlug: "test", userId: session.creator_id, locale: "en", theme, local: true, hostActive: true, hostVisible: true, agents: [], sessions: [session], activeSessionId: session.id, selectedAgentId: session.agent_id,
@@ -128,24 +128,29 @@ for (const theme of ["light", "dark"] as const) test(`queue errors stay above th
   await page.getByRole("button", { name: "Complete next execution away from composer" }).click();
   const error = gui.getByRole("alert").filter({ hasText: "Queue send failed" });
   const queue = gui.getByTestId("agent-gui-composer-queued-prompts");
+  const panel = queue.locator(".agent-gui-node__composer-queued-prompt-panel");
   await expect(error).toBeVisible(); await expect(queue).toContainText("Queue failure fixture");
   for (const width of [1200, 380]) {
     await page.setViewportSize({ width, height: 950 });
     for (const draft of ["", "A multi-line draft\nSecond line\nThird line\nFourth line"]) {
       await editor.fill(draft);
       for (const expanded of [false, true]) {
-        const panel = queue.locator(".agent-gui-node__composer-queued-prompt-panel");
         if ((await panel.getAttribute("data-expanded")) !== String(expanded)) await panel.locator(".agent-gui-node__composer-queued-prompt-header").click();
         await expect.poll(async () => {
           const errorBox = (await error.boundingBox())!;
           const queueBox = (await panel.boundingBox())!;
           const inputBox = (await gui.getByTestId("agent-gui-composer-input-shell").boundingBox())!;
-          return { errorAboveQueue: errorBox.y + errorBox.height + 7 <= queueBox.y, queueAboveInput: queueBox.y + queueBox.height <= inputBox.y + 1 };
-        }).toEqual({ errorAboveQueue: true, queueAboveInput: true });
+          return {
+            errorToQueueGap: Math.round(queueBox.y - (errorBox.y + errorBox.height)),
+            queueAboveInput: queueBox.y + queueBox.height <= inputBox.y + 1,
+          };
+        }).toEqual({ errorToQueueGap: 0, queueAboveInput: true });
       }
     }
     await page.screenshot({ path: `.tmp/queue-error-layout/${theme}-${width}.png` });
   }
+  await expect(panel).toHaveCSS("border-top-left-radius", "0px");
+  await expect(panel).toHaveCSS("border-top-right-radius", "0px");
   await expect(page.locator("body")).toHaveAttribute("data-failure", "Queue send failed. Check the connection and retry the queued message.");
 });
 
