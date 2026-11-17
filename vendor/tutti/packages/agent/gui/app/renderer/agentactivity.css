@@ -9194,6 +9194,10 @@ html[data-theme="light"] [data-message-center-item-id].agent-gui-edge-glow {
   opacity: 0.58;
 }
 
+.agent-gui-node__composer-queued-prompt-row[data-dragging="true"] {
+  opacity: 0.55;
+}
+
 .agent-gui-node__queued-prompt-drag-handle {
   cursor: grab;
 }
