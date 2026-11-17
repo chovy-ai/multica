@@ -370,21 +370,27 @@ function AgentQueuedPromptPanelViewRender({
   const HostQueueAction = useContext(QueuedPromptMenuActionContext);
   const [isExpanded, setIsExpanded] = useState(false);
   const dragRef = useRef<{ id: string; order: string[] } | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; after: boolean } | null>(null);
   const resetDrag = usePersistCallback(() => {
     dragRef.current = null;
+    setDraggedId(null);
     setDropTarget(null);
   });
   const onDragStart = usePersistCallback((event: DragEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     const id = event.currentTarget.dataset.promptId;
-    if (!id || !onReorderQueuedPrompts || reorderDisabled || !isExpanded) {
+    const row = event.currentTarget.closest<HTMLElement>(`.${styles.composerQueuedPromptRow}`);
+    if (!id || !row || !onReorderQueuedPrompts || reorderDisabled || !isExpanded) {
       event.preventDefault();
       return;
     }
     dragRef.current = { id, order: queuedPrompts.map((prompt) => prompt.id) };
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("application/x-multica-queued-prompt", id);
+    const bounds = row.getBoundingClientRect();
+    event.dataTransfer.setDragImage(row, event.clientX - bounds.left, event.clientY - bounds.top);
+    setDraggedId(id);
   });
   const validDrag = () => {
     const drag = dragRef.current;
@@ -400,6 +406,12 @@ function AgentQueuedPromptPanelViewRender({
     const bounds = event.currentTarget.getBoundingClientRect();
     const after = event.clientY > bounds.top + bounds.height / 2;
     setDropTarget((current) => current?.id === id && current.after === after ? current : { id, after });
+  });
+  const onDragLeave = usePersistCallback((event: DragEvent<HTMLDivElement>) => {
+    const { currentTarget, relatedTarget } = event;
+    if (relatedTarget instanceof Node && currentTarget.contains(relatedTarget)) return;
+    const id = currentTarget.dataset.promptId;
+    setDropTarget((current) => current?.id === id ? null : current);
   });
   const onDrop = usePersistCallback((event: DragEvent<HTMLDivElement>) => {
     const drag = validDrag();
@@ -604,10 +616,12 @@ function AgentQueuedPromptPanelViewRender({
               className={styles.composerQueuedPromptRow}
               data-testid={`agent-gui-composer-queued-prompt-${queuedPrompt.id}`}
               data-draining={isDraining ? "true" : "false"}
+              data-dragging={draggedId === queuedPrompt.id ? "true" : undefined}
               data-prompt-id={queuedPrompt.id}
               data-reorderable={Boolean(onReorderQueuedPrompts && isExpanded)}
               data-drop-position={dropTarget?.id === queuedPrompt.id ? (dropTarget.after ? "after" : "before") : undefined}
               onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
               onDrop={onDrop}
             >
               {onReorderQueuedPrompts && isExpanded ? (

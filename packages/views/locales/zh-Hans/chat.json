@@ -39,6 +39,8 @@
       "partial": "仅包含 {{time}} 起记录的变更，部分写入无法确认来源。",
       "missing": "无法比较此会话的变更，缺少修改前内容。",
       "empty": "暂无变更",
+      "empty_resources": "暂无会话资源",
+      "no_recorded_resources": "暂无资源记录",
       "loading": "正在读取变更...",
       "failed": "无法读取变更",
       "stale": "更新失败，显示上次成功快照。",

@@ -110,19 +110,20 @@ function setup() {
   const view = render(element(sessions[0]));
   return { ...view, ref, onSelectSource, onShowMessage, select: (source: LocalConversation | null) => view.rerender(element(source ?? undefined)), selectId: (id: string) => view.rerender(element(undefined, id)) };
 }
-it("creates a Side without replacing the main draft, retains its draft when closed, and returns to its source", async () => {
-  const { ref, onSelectSource } = setup(); const main = screen.getByRole("textbox", { name: "Main draft" });
+it("creates a Side without a source banner and preserves both drafts", async () => {
+  const { ref } = setup(); const main = screen.getByRole("textbox", { name: "Main draft" });
   fireEvent.change(main, { target: { value: "Keep main text" } });
-  ref.current!.toggle();
+  act(() => ref.current!.toggle());
   fireEvent.click(await screen.findByRole("button", { name: "新建旁支" }));
   const side = await screen.findByRole("textbox", { name: "Side draft new-side" });
   expect(request).toHaveBeenCalledWith(scope, "sideCreate", expect.objectContaining({ id: "main" }));
   expect(screen.getByRole("textbox", { name: "Main draft" })).toBe(main); expect(main).toHaveValue("Keep main text");
   fireEvent.change(side, { target: { value: "Keep side text" } });
-  fireEvent.click(screen.getByRole("button", { name: "定位来源" })); expect(onSelectSource).toHaveBeenCalledWith("main", undefined, undefined);
+  expect(screen.queryByText(/来自主对话/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "定位来源" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "关闭右侧面板" }));
   await waitFor(() => expect(side).toHaveAttribute("data-active", "false"));
-  ref.current!.toggle();
+  act(() => ref.current!.toggle());
   expect(await screen.findByRole("textbox", { name: "Side draft new-side" })).toBe(side); expect(side).toHaveValue("Keep side text");
 });
 it("shows a running Side before its first output and retains the result after reopening", async () => {

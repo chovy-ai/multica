@@ -11,9 +11,10 @@ for (const theme of ["light", "dark"] as const) {
       const panel = page.locator('[data-instance="main-conversation"]').getByTestId("agent-gui-composer-queued-prompts");
       await panel.locator(".agent-gui-node__composer-queued-prompt-header").click();
       const rows = panel.locator("[data-prompt-id][data-reorderable]");
-      const source = position === "before" ? 2 : 0;
+      const sourceIndex = position === "before" ? 2 : 0;
+      const source = rows.nth(sourceIndex);
       const target = rows.nth(position === "before" ? 0 : 2);
-      const handle = panel.getByRole("button", { name: "Reorder queued message" }).nth(source);
+      const handle = panel.getByRole("button", { name: "Reorder queued message" }).nth(sourceIndex);
       await handle.hover();
       const bounds = await target.boundingBox();
       expect(bounds).not.toBeNull();
@@ -24,6 +25,9 @@ for (const theme of ["light", "dark"] as const) {
         await target.hover({ position: dropPosition });
         await target.hover({ position: dropPosition });
         await expect(target).toHaveAttribute("data-drop-position", position);
+        await expect(source).toHaveAttribute("data-dragging", "true");
+        await expect(source).toHaveCSS("opacity", "0.55");
+        await expect(rows).toHaveText([/First queued message/, /Second queued message/, /Third queued message/]);
         await page.screenshot({ path: `.tmp/chov123/${theme}-drop-${position}.png` });
         await expect(target).toHaveCSS("box-shadow", /inset/);
         const { shadow, brand, background } = await target.evaluate((row) => {
@@ -41,6 +45,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.mouse.up();
       }
       await expect(panel.locator("[data-drop-position]")).toHaveCount(0);
+      await expect(panel.locator("[data-dragging]")).toHaveCount(0);
       await expect(rows).toHaveText(position === "before"
         ? [/Third queued message/, /First queued message/, /Second queued message/]
         : [/Second queued message/, /Third queued message/, /First queued message/]);

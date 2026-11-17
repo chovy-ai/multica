@@ -310,6 +310,8 @@
       "partial": "Solo se incluyen cambios registrados desde {{time}}. Algunas escrituras no se pueden atribuir.",
       "missing": "Esta conversación no tiene una base de comparación.",
       "empty": "Sin cambios",
+      "empty_resources": "No hay recursos en esta conversación",
+      "no_recorded_resources": "No se han registrado recursos",
       "loading": "Cargando cambios...",
       "failed": "No se pudieron leer los cambios",
       "stale": "La actualización falló. Se muestra la última instantánea correcta.",

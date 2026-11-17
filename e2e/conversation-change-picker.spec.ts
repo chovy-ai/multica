@@ -8,8 +8,21 @@ async function openChanges(page: Page, theme: string, width: number) {
   const returnToChat = page.getByRole("button", { name: "Return to main chat", exact: true });
   await expect(page.getByRole("tab", { name: "README.md", exact: true })).toBeVisible();
   if (await returnToChat.isVisible()) await returnToChat.click();
-  await page.getByRole("button", { name: "View changes", exact: true }).click();
-  await expect(page.getByTestId("conversation-change-preview")).toBeVisible();
+  await page.getByRole("button", { name: "Open conversation resources", exact: true }).click();
+  const resources = page.getByRole("dialog", { name: "Conversation resources" });
+  await resources.getByRole("button", { name: /src\/auth\/redirect\.ts/ }).click();
+  const preview = page.getByTestId("conversation-change-preview");
+  await expect(preview).toBeVisible();
+  const panel = (await preview.boundingBox())!;
+  if (panel.width >= 640) {
+    const handle = (await page.getByRole("separator", { name: "Resize right workspace" }).boundingBox())!;
+    const x = handle.x + handle.width / 2;
+    const y = handle.y + handle.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + panel.width - 550, y, { steps: 5 });
+    await page.mouse.up();
+  }
 }
 
 async function resourceState(page: Page, state: "loading" | "empty" | "failed" | "unsupported" | "many" | "ready") {
@@ -28,6 +41,9 @@ for (const theme of ["light", "dark"]) for (const width of [1440, 390]) {
     await choose.click();
     await expect(picker).toBeVisible();
     await expect(picker.getByRole("treeitem", { name: "redirect.ts", exact: true })).toHaveAttribute("aria-selected", "true");
+    await picker.evaluate(async element => {
+      await Promise.all(element.getAnimations().map(animation => animation.finished));
+    });
     const panel = (await preview.boundingBox())!;
     const popup = (await picker.boundingBox())!;
     expect(panel.width).toBeLessThan(640);

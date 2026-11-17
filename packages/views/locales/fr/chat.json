@@ -39,6 +39,8 @@
       "partial": "Seules les modifications depuis {{time}} sont incluses. Certaines écritures ne peuvent pas être attribuées.",
       "missing": "Le contenu initial manque pour comparer cette conversation.",
       "empty": "Aucune modification",
+      "empty_resources": "Aucune ressource dans cette conversation",
+      "no_recorded_resources": "Aucune ressource enregistrée",
       "loading": "Chargement des modifications...",
       "failed": "Impossible de lire les modifications",
       "stale": "Échec de la mise à jour. Dernier instantané affiché.",

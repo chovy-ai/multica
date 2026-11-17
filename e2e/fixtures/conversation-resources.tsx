@@ -58,6 +58,19 @@ const transport = createFakeTransport(scope, async (_method, path, body) => {
   if (url.pathname.endsWith("/resources")) {
     if (unavailable) throw new Error("transport_offline: fixture unavailable");
     if (scenario === "paged") return { ...basePage, files: url.searchParams.has("cursor") ? resourceFiles.slice(200) : resourceFiles.slice(0, 200), attachments: [], next_cursor: url.searchParams.has("cursor") ? null : "second-page" };
+    if (scenario === "partial") return { ...basePage, coverage: "partial", reason: "scan_limit" };
+    if (scenario === "unrecorded") return { ...basePage, coverage: "partial", reason: "scan_limit", files: [], attachments: [] };
+    if (scenario === "partial-empty") return {
+      ...basePage, coverage: "partial", reason: "scan_limit", files: [],
+      attachments: [{ id: "image", name: "output.png", media_type: "image/png", size: 70, source: "output" }],
+    };
+    if (scenario === "many-outputs") return {
+      ...basePage,
+      attachments: Array.from({ length: 9 }, (_, index) => {
+        const id = "output-" + (index + 1);
+        return { id, name: id + ".png", media_type: "image/png", size: 70, source: "output" };
+      }),
+    };
     return { ...basePage, coverage: scenario === "history" ? "missing_baseline" : basePage.coverage, files: resourceFiles, attachments };
   }
   if (url.pathname.includes("/changes/")) { const id = url.pathname.split("/").at(-1)!; return proof ? conversationChangeDetailSchema.parse(proof.details[id]) : { revision: basePage.revision, file: resourceFiles.find(file => file.id === id), ...contents[id] }; }
@@ -103,7 +116,7 @@ createRoot(document.getElementById("root")!).render(<I18nProvider locale="en" re
     <aside className="hidden w-44 shrink-0 flex-col gap-4 border-r p-4 xl:flex"><b>Multica</b><span>Inbox</span><span>Tasks</span><span className="rounded-md bg-surface-selected p-2">Conversations</span><span>Agents</span></aside>
     <aside className="hidden w-52 shrink-0 border-r p-3 lg:block"><h2 className="mb-6 text-body font-medium">Conversations</h2><div className="rounded-md bg-surface-selected p-3 text-label">Repair login redirect<p className="mt-2 text-caption text-muted-foreground">Codex · Just now</p></div></aside>
     <main className="min-h-0 min-w-0 flex-1"><LocalSideWorkspace ref={ref} scope={scope} slug="fixture" sessionId="source" provider={proofName === "claude" ? "claude" : "codex"} sessions={[]} chinese={false} active onSelectSource={() => {}} onReference={() => {}} onOpenTask={() => {}} onShowMessage={message => { document.body.dataset.error = message; }}>
-      {(_visible, resources) => <div className="flex h-full flex-col"><header className="flex h-12 items-center gap-2 border-b px-3 text-body font-medium"><span className="min-w-0 flex-1 truncate">Repair login redirect</span>{resources}<button onClick={() => ref.current?.toggle()} aria-label="Toggle original workspace"><PanelRightOpen className="size-4" /></button></header><div className="flex-1 p-5 text-body"><p className="rounded-xl bg-surface-hover p-3">Keep the original destination after login, and add tests.</p><h3 className="mb-3 mt-6 font-medium">Codex</h3><p>I updated redirect validation and added tests.</p><button className="mt-3 text-brand" onClick={() => ref.current?.openChanges("redirect")}>View changes</button></div><textarea aria-label="Main draft" className="m-4 min-h-24 rounded-xl border bg-surface p-3 text-body" placeholder="Continue the conversation..." /></div>}
+      {(_visible, resources) => <div className="flex h-full flex-col"><header className="flex h-12 items-center gap-2 border-b px-3 text-body font-medium"><span className="min-w-0 flex-1 truncate">Repair login redirect</span>{resources}<button onClick={() => ref.current?.toggle()} aria-label="Toggle original workspace"><PanelRightOpen className="size-4" /></button></header><div className="flex-1 p-5 text-body"><p className="rounded-xl bg-surface-hover p-3">Keep the original destination after login, and add tests.</p><h3 className="mb-3 mt-6 font-medium">Codex</h3><p>I updated redirect validation and added tests.</p></div><textarea aria-label="Main draft" className="m-4 min-h-24 rounded-xl border bg-surface p-3 text-body" placeholder="Continue the conversation..." /></div>}
     </LocalSideWorkspace></main>
   </div>
 </LocalDeviceProvider></QueryClientProvider></ThemeProvider></I18nProvider>);

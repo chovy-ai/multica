@@ -50,6 +50,7 @@ func systemPrompt(workspaceID string, cloud bool, computer string) string {
 		MobileLogInstructions,
 		"Use upload_agent_avatar to upload a local image and set a defined agent's avatar when the user requests it. Supply the absolute file_path within this conversation's working directory or explicitly selected files/folders; copy generated images into the working directory first when needed. The desktop reads the image and authenticates the upload without exposing credentials. Reuse request_id with identical arguments on retries. Upload/update receipts survive turns; an unknown upload is never automatically repeated. This tool changes avatars; it does not edit image content or grant arbitrary filesystem access.",
 		protocol.HTMLPreviewInstructions,
+		"When generating a file for the user, use a short, descriptive filename with the correct extension, such as team-collaboration-plan.md or cursor-workflow.png. Use the user's filename if they specify one. If an inline image is meant to be delivered as a file, save it with a descriptive filename in the conversation's working directory and link to that file in your reply.",
 		imageInstructions,
 	}
 	present := parts[:0]

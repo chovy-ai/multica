@@ -38,7 +38,7 @@ type NewAttachment struct {
 	ConversationID string
 	// Name is the file name under FilesDir.
 	Name string
-	// FileName is the name the user gave the file, for uploads.
+	// FileName is the name shown to the user.
 	FileName  string
 	Size      int64
 	MediaType string
@@ -65,7 +65,7 @@ func (s *Store) WriteAttachmentFile(scopeID int64, conversationID, mediaType str
 	if err != nil {
 		return NewAttachment{}, err
 	}
-	return NewAttachment{ID: id, ScopeID: scopeID, ConversationID: conversationID, Name: name, Size: size, MediaType: mediaType, CreatedAt: now}, nil
+	return NewAttachment{ID: id, ScopeID: scopeID, ConversationID: conversationID, Name: name, FileName: name, Size: size, MediaType: mediaType, CreatedAt: now}, nil
 }
 
 // MaxUploadBytes bounds one file a user attaches to a message.

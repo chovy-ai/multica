@@ -44,12 +44,11 @@ for (const provider of ["codex", "claude"]) {
   });
 }
 
-test("failed add without a write remains zero in the production popover", async ({ page }) => {
+test("shows the conversation resource empty state after a failed add without a write", async ({ page }) => {
   await openFixture(page, "proof=no-write"); await openResources(page);
-  await expect(page.getByText("Changes · 0", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("conversation-resources").getByRole("status")).toHaveText("No conversation resources");
   await expect(page.getByText("never-created.ts", { exact: false })).toHaveCount(0);
-  await expect(page.getByTestId("conversation-resources")).toContainText("No changes");
-  await settleScreenshot(page, "failed-add-zero");
+  await settleScreenshot(page, "failed-add-empty");
 });
 
 test("full workspace retains all 20 tabs and reuses Changes after one tab closes", async ({ page }) => {
@@ -83,6 +82,34 @@ test("initial error retries, and refresh errors retain the last resource snapsho
   await settleScreenshot(page, "refresh-error-retains-snapshot");
 });
 
+test("omits the partial coverage notice from the resources popover", async ({ page }) => {
+  await openFixture(page, "scenario=partial");
+  await openResources(page);
+  const resources = page.getByTestId("conversation-resources");
+  await expect(resources.getByRole("heading", { name: "Outputs" })).toBeVisible();
+  await expect(resources).not.toContainText(/only changes recorded since|capture budget exceeded/i);
+  await expect(resources.getByText("Current conversation total")).toHaveCount(0);
+  await resources.getByRole("button", { name: /src\/auth\/redirect\.ts/ }).click();
+  await expect(page.getByTestId("conversation-change-preview")).toContainText("Capture budget exceeded");
+});
+
+test("keeps the change count unknown when partial coverage found no files", async ({ page }) => {
+  await openFixture(page, "scenario=partial-empty");
+  await openResources(page);
+  const resources = page.getByTestId("conversation-resources");
+  await expect(resources.getByRole("button", { name: "output.png" })).toBeVisible();
+  await expect(resources.getByText("Changes · —", { exact: true })).toBeVisible();
+  await expect(resources.getByText("Current conversation total")).toHaveCount(0);
+  await expect(resources.getByText("No changes", { exact: true })).toHaveCount(0);
+});
+
+test("shows an empty state when incomplete capture recorded no resources", async ({ page }) => {
+  await openFixture(page, "scenario=unrecorded"); await openResources(page);
+  const resources = page.getByTestId("conversation-resources");
+  await expect(resources.getByRole("status")).toHaveText("No resources recorded");
+  await expect(resources.getByText("Changes · —", { exact: true })).toHaveCount(0);
+});
+
 for (const scenario of ["empty", "history", "unsupported", "limit", "long"]) {
   test(`resource state remains usable: ${scenario}`, async ({ page }) => {
     await openFixture(page, `scenario=${scenario}`); await openResources(page);
@@ -101,6 +128,8 @@ for (const scenario of ["empty", "history", "unsupported", "limit", "long"]) {
 
 test("output and same-name attachments use their own existing previews", async ({ page }) => {
   await openFixture(page, "scenario=attachments"); await openResources(page);
+  const outputs = page.getByTestId("conversation-resources").getByRole("region", { name: "Outputs" });
+  expect(await outputs.evaluate(element => element.scrollHeight)).toBe(await outputs.evaluate(element => element.clientHeight));
   await page.getByTestId("conversation-resources").getByRole("button", { name: "reference.md", exact: true }).nth(0).click();
   await expect(page.getByRole("heading", { name: "First attachment" })).toBeVisible();
   await openResources(page); await page.getByTestId("conversation-resources").getByRole("button", { name: "reference.md", exact: true }).nth(1).click();
@@ -111,6 +140,56 @@ test("output and same-name attachments use their own existing previews", async (
   await openResources(page); await page.getByRole("button", { name: "output.png", exact: true }).click();
   await expect(page.getByRole("img", { name: "output.png", exact: true })).toBeVisible();
   await expect(page.getByRole("img", { name: "output.png", exact: true })).toHaveJSProperty("naturalWidth", 1);
+});
+
+for (const width of [1440, 390]) test(`opens an output image at a larger size and restores focus on close: ${width}`, async ({ page }) => {
+  await openFixture(page, "scenario=attachments");
+  await page.route(url => url.pathname === "/__resources/content" && url.searchParams.get("path") === "/attachments/image", route =>
+    route.fulfill({ path: resolve("apps/desktop/resources/icon.png"), contentType: "image/png" }));
+  await openResources(page);
+  await page.getByRole("button", { name: "output.png", exact: true }).click();
+  await page.setViewportSize({ width, height: width === 390 ? 720 : 960 });
+  const trigger = page.getByRole("button", { name: "Enlarge image output.png" });
+  const inlineImage = trigger.getByRole("img", { name: "output.png" });
+  await expect(inlineImage).toHaveJSProperty("naturalWidth", 1024);
+  const inlineWidth = (await inlineImage.boundingBox())!.width;
+  const imageUrl = (await inlineImage.getAttribute("src"))!;
+
+  await inlineImage.click();
+  const dialog = page.getByRole("dialog", { name: "output.png" });
+  const enlargedImage = dialog.getByRole("img", { name: "output.png" });
+  await expect(enlargedImage).toHaveJSProperty("naturalWidth", 1024);
+  await expect(enlargedImage).toHaveAttribute("src", imageUrl);
+  expect((await enlargedImage.boundingBox())!.width).toBeGreaterThan(inlineWidth);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Close image preview" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("tab", { name: "output.png" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("scrolls long output lists inside the resources popover", async ({ page }) => {
+  await openFixture(page, "scenario=many-outputs"); await openResources(page);
+  const resources = page.getByTestId("conversation-resources");
+  const outputs = resources.getByRole("region", { name: "Outputs" });
+  const lastOutput = outputs.getByRole("button", { name: "output-9.png" });
+  await expect(outputs.getByRole("button")).toHaveCount(10);
+  expect(await outputs.evaluate(element => element.clientHeight)).toBe(200);
+  await expect(lastOutput).not.toBeInViewport();
+
+  await outputs.hover();
+  await page.mouse.wheel(0, 640);
+  await expect(lastOutput).toBeInViewport();
+  expect(await resources.evaluate(element => element.scrollTop)).toBe(0);
+  await expect(resources.getByRole("heading", { name: "Outputs" })).toBeInViewport();
+
+  await lastOutput.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("tab", { name: "output-9.png" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("early changes remain available with only five recent turns and multiple resource pages", async ({ page }) => {

@@ -15,10 +15,19 @@ import {
   Folder,
   Globe,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  X
 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger
+} from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Markdown } from "@multica/ui/markdown/Markdown";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -265,14 +274,7 @@ function LocalFilePreviewRender({
         file && (
           <>
             {file.url && file.mimeType.startsWith("image/") ? (
-              <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-                <img
-                  draggable={false}
-                  alt={file.name}
-                  className="max-h-full max-w-full object-contain"
-                  src={file.url}
-                />
-              </div>
+              <ResourceImagePreview key={previewKey} src={file.url} name={file.name} chinese={chinese} />
             ) : file.url && file.mimeType === "application/pdf" ? (
               <iframe
                 className="min-h-0 w-full flex-1 border-0"
@@ -337,6 +339,36 @@ function LocalFilePreviewRender({
         )
       )}
     </div>
+  );
+}
+
+function ResourceImagePreview({ src, name, chinese }: { src: string; name: string; chinese: boolean }) {
+  return (
+    <Dialog>
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] place-items-center p-4">
+        <DialogTrigger
+          aria-label={chinese ? `放大图片 ${name}` : `Enlarge image ${name}`}
+          render={<Button variant="ghost" className="grid h-auto min-w-0 max-h-full max-w-full cursor-zoom-in grid-rows-[minmax(0,1fr)] place-items-center p-0 hover:bg-transparent dark:hover:bg-transparent" />}
+        >
+          <img draggable={false} alt={name} className="max-h-full max-w-full object-contain" src={src} />
+        </DialogTrigger>
+      </div>
+      <DialogContent
+        aria-describedby={undefined}
+        showCloseButton={false}
+        className="flex h-full max-h-full max-w-full flex-col gap-2 overflow-hidden rounded-none p-0 sm:h-[calc(100%-2rem)] sm:max-h-[calc(100%-2rem)] sm:max-w-[calc(100%-2rem)] sm:rounded-dialog"
+      >
+        <DialogHeader className="min-w-0 shrink-0 flex-row items-center justify-between px-4 pt-4">
+          <DialogTitle className="min-w-0 truncate" title={name}>{name}</DialogTitle>
+          <DialogClose render={<IconButton className="shrink-0" label={chinese ? "关闭图片预览" : "Close image preview"} />}>
+            <X />
+          </DialogClose>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 items-center justify-center pb-4 sm:px-4">
+          <img draggable={false} alt={name} className="max-h-full max-w-full object-contain" src={src} />
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

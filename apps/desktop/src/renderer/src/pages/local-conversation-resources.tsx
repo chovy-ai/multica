@@ -6,6 +6,7 @@ import type { ConversationFileResource, ConversationResourceAttachment } from "@
 import { useT } from "@multica/views/i18n";
 import { usePersistCallback } from "@multica/ui/hooks/use-persist-callback";
 import { Button } from "@multica/ui/components/ui/button";
+import { Empty, EmptyMedia, EmptyTitle } from "@multica/ui/components/ui/empty";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@multica/ui/components/ui/popover";
 
@@ -20,6 +21,8 @@ export function useResourceLabels() { const { t } = useT("chat"); return {
     partial: t($ => $.desktop.resources.partial, { time: "{{time}}" }),
     missing: t($ => $.desktop.resources.missing),
     empty: t($ => $.desktop.resources.empty),
+    emptyResources: t($ => $.desktop.resources.empty_resources),
+    noRecordedResources: t($ => $.desktop.resources.no_recorded_resources),
     loading: t($ => $.desktop.resources.loading),
     failed: t($ => $.desktop.resources.failed),
     stale: t($ => $.desktop.resources.stale),
@@ -51,14 +54,20 @@ export const ResourceCounts = ({ file }: { file: ConversationFileResource }) => 
   <span className="flex shrink-0 gap-1 text-caption tabular-nums"><span className="text-success">+{file.added}</span><span className="text-destructive">−{file.deleted}</span></span>
 );
 
-export const ConversationResourceStatus = observer(function ConversationResourceStatus({ service }: { service: ConversationResourcesService }) {
+export const ConversationResourceStatus = observer(function ConversationResourceStatus({
+  service,
+  showPartialCoverage = true,
+}: {
+  service: ConversationResourcesService;
+  showPartialCoverage?: boolean;
+}) {
   const labels = useResourceLabels(); const model = service.model;
   const retry = usePersistCallback(() => { void service.refresh(); });
   return <>
     {model.supported === false ? <p role="status" className="p-3 text-body text-muted-foreground">{labels.unsupported}</p> : model.error ?
       <div role="alert" className="flex items-center justify-between gap-2 p-3 text-caption text-muted-foreground"><span>{model.data ? labels.stale : labels.failed}</span><Button size="xs" variant="outline" onClick={retry}>{labels.retry}</Button></div> :
       model.loading ? <p role="status" className="p-3 text-caption text-muted-foreground">{labels.loading}</p> : null}
-    {model.data?.coverage === "missing_baseline" ? <p className="px-3 py-2 text-caption text-muted-foreground">{labels.missing}</p> : model.data?.coverage === "partial" ?
+    {model.data?.coverage === "missing_baseline" ? <p className="px-3 py-2 text-caption text-muted-foreground">{labels.missing}</p> : showPartialCoverage && model.data?.coverage === "partial" ?
       <p className="px-3 py-2 text-caption text-muted-foreground">{labels.partial.replace("{{time}}", model.data.recorded_from)} {model.data.reason && resourceReason(labels, model.data.reason)}</p> : null}
   </>;
 });
@@ -82,23 +91,49 @@ export const ConversationResourcesButton = observer(function ConversationResourc
   const select = usePersistCallback((id: string) => { props.onChange(id); setOpen(false); });
   const preview = usePersistCallback((file: ConversationFileResource) => { props.onPreview(file); setOpen(false); });
   const attachment = usePersistCallback((file: ConversationResourceAttachment) => { props.onAttachment(file); setOpen(false); });
-  const data = props.service.model.data;
+  const { model } = props.service;
+  const data = model.data;
   const files = data?.files ?? [];
+  const hasResources = files.length > 0 || (data?.attachments.length ?? 0) > 0;
   const outputs = files.filter(file => file.kind === "added" && !file.reason && /\.(?:md|markdown|html?|svg|png|jpe?g|webp)$/i.test(file.path));
   const inputs = data?.attachments.filter(file => file.source === "input") ?? [];
   const outputAttachments = data?.attachments.filter(file => file.source !== "input") ?? [];
   const valid = files.filter(file => file.added !== null && file.deleted !== null);
+  const complete = data?.coverage === "complete";
+  const showFileCount = complete || files.length > 0;
+  const showLineCounts = valid.length > 0 || (complete && files.length === 0);
+  const statisticsLabel = valid.length !== files.length ? labels.text_stats : complete ? labels.cumulative : null;
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger render={<IconButton label={open ? labels.close : labels.open} aria-expanded={open} style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties} />}><SlidersHorizontal /></PopoverTrigger>
     <PopoverContent role="dialog" aria-label={labels.title} align="end" sideOffset={8} className="max-h-[min(80dvh,44rem)] w-96 max-w-[calc(100vw-1rem)] gap-0 overflow-y-auto rounded-xl p-0 shadow-[var(--floating-shadow)]" data-testid="conversation-resources">
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-3"><PopoverTitle>{labels.title}</PopoverTitle><IconButton label={labels.close} onClick={close}><X /></IconButton></div>
-      <ConversationResourceStatus service={props.service} />
-      {data && <>
-        <div className="flex items-center justify-between gap-2 px-4 pt-4 text-label"><span>{labels.changes} · {files.length}</span><span className="flex gap-2 text-caption">{valid.length || (!files.length && data.coverage === "complete") ? <><span className="text-success">+{valid.reduce((n,file)=>n+(file.added??0),0)}</span><span className="text-destructive">−{valid.reduce((n,file)=>n+(file.deleted??0),0)}</span></> : <span className="text-muted-foreground">—</span>}</span></div>
-        <p className="px-4 py-2 text-caption text-muted-foreground">{valid.length !== files.length ? labels.text_stats : labels.cumulative}</p>
-        {!files.length && data.coverage === "complete" && <p className="px-4 pb-4 text-body text-muted-foreground">{labels.empty}</p>}
+      <ConversationResourceStatus service={props.service} showPartialCoverage={false} />
+      {data && !hasResources && !model.loading && !model.error && model.supported !== false && (
+        <Empty role="status" className="gap-2 px-4 py-6">
+          <EmptyMedia variant="icon" className="mb-0 text-muted-foreground"><File aria-hidden="true" /></EmptyMedia>
+          <EmptyTitle>{complete ? labels.emptyResources : labels.noRecordedResources}</EmptyTitle>
+        </Empty>
+      )}
+      {data && hasResources && <>
+        <div className="flex items-center justify-between gap-2 px-4 pt-4 text-label">
+          <span>{labels.changes} · {showFileCount ? files.length : "—"}</span>
+          {showFileCount && <span className="flex gap-2 text-caption">
+            {showLineCounts ? <>
+              <span className="text-success">+{valid.reduce((n, file) => n + (file.added ?? 0), 0)}</span>
+              <span className="text-destructive">−{valid.reduce((n, file) => n + (file.deleted ?? 0), 0)}</span>
+            </> : <span className="text-muted-foreground">—</span>}
+          </span>}
+        </div>
+        {statisticsLabel && <p className="px-4 py-2 text-caption text-muted-foreground">{statisticsLabel}</p>}
+        {!files.length && complete && <p className="px-4 pb-4 text-body text-muted-foreground">{labels.empty}</p>}
         <div className="px-2 pb-3" aria-label={labels.changes}>{files.map(file => <ResourceFileRow key={file.id} file={file} onSelect={select} />)}</div>
-        {(outputs.length > 0 || outputAttachments.length > 0) && <div className="border-t px-2 py-3"><h3 className="px-2 pb-2 text-label font-medium">{labels.outputs}</h3>{outputs.map(file => <ResourcePreviewRow key={file.id} file={file} onPreview={preview} />)}{outputAttachments.map(file => <ResourceAttachmentRow key={file.id} file={file} onSelect={attachment} />)}</div>}
+        {(outputs.length > 0 || outputAttachments.length > 0) && <div className="border-t px-2 py-3">
+          <h3 className="px-2 pb-2 text-label font-medium">{labels.outputs}</h3>
+          <section aria-label={labels.outputs} className="max-h-50 overflow-y-auto overscroll-y-contain">
+            {outputs.map(file => <ResourcePreviewRow key={file.id} file={file} onPreview={preview} />)}
+            {outputAttachments.map(file => <ResourceAttachmentRow key={file.id} file={file} onSelect={attachment} />)}
+          </section>
+        </div>}
         {inputs.length > 0 && <div className="border-t px-2 py-3"><h3 className="px-2 pb-2 text-label font-medium">{labels.related}</h3>{inputs.map(file => <ResourceAttachmentRow key={file.id} file={file} onSelect={attachment} />)}</div>}
       </>}
     </PopoverContent>

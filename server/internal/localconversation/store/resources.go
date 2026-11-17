@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -119,6 +120,14 @@ func (s *Store) ResourcePage(ctx context.Context, id, cursor string) (ResourcePa
 			var a ResourceAttachment
 			if err := json.Unmarshal([]byte(row.Metadata), &a); err != nil {
 				return page, err
+			}
+			if strings.TrimSpace(a.Name) == "" {
+				// Older generated attachments stored only the on-disk name.
+				stored, err := q.GetAttachment(ctx, a.ID)
+				if err != nil {
+					return page, err
+				}
+				a.Name = filepath.Base(stored.Path)
 			}
 			page.Attachments = append(page.Attachments, a)
 			continue

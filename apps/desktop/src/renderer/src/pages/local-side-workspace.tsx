@@ -544,15 +544,6 @@ export const LocalSideWorkspace = observer(
             currentKey.current === owner &&
             epoch.current === started;
           const operation = (async () => {
-            if (value.startsWith("multica:changes?")) {
-              const service=conversationService(transport, latest.current.scope).resources(sessionId);
-              await service.refresh();
-              if (service.model.supported===false) throw new Error(resourceLabels.unsupported);
-              const path=new URL(value).searchParams.get("path") ?? "";
-              const file=service.model.data?.files.find(file=>file.path===path || `${file.cwd}/${file.path}`===path);
-              addTo(owner,{id:`changes:${sessionId}`,kind:"changes",sessionId,...(file ? {fileId:file.id} : {})});
-              return;
-            }
             if (/^https?:\/\//i.test(value)) {
               const url = new URL(value);
               if (url.username || url.password)
@@ -618,7 +609,7 @@ export const LocalSideWorkspace = observer(
             .catch(() => {});
           return operation;
         },
-        [addTo, updateLayout, transport, resourceLabels.unsupported]
+        [addTo, updateLayout, transport]
       );
       const openResourceForCallback = usePersistCallback(openResourceFor);
       const openResource = useCallback(
@@ -1164,24 +1155,11 @@ function SideConversationRender(
   return (
     <div className="flex h-full min-h-0 flex-col">
       <LocalRuntimeNotice scope={props.scope} chinese={props.chinese} />
-      {session?.side && (
-        <div className="shrink-0 border-b px-3 py-3 text-caption text-muted-foreground">
-          <div className="flex items-center justify-between gap-2">
-            <span className="min-w-0 truncate">
-              {props.chinese ? "来自主对话" : "From main chat"} ·{" "}
-              {
-                props.sessions.find(
-                  (entry) => entry.id === session.side!.sourceId
-                )?.title
-              }
-            </span>
-            <ButtonBinding11 props={props} session={session} />
-          </div>
-          {session.side.quote && (
-            <blockquote className="mt-2 max-h-28 overflow-auto border-l-2 pl-3 text-body text-foreground">
-              {session.side.quote}
-            </blockquote>
-          )}
+      {session?.side?.quote && (
+        <div className="shrink-0 border-b px-3 py-3">
+          <blockquote className="max-h-28 overflow-auto border-l-2 pl-3 text-body text-foreground">
+            {session.side.quote}
+          </blockquote>
         </div>
       )}
       <SideActivitySummary activity={activity} />
@@ -1698,49 +1676,6 @@ const PreviewFolderBinding10 = observer(function PreviewFolderBinding10({
       chinese={props.chinese}
       onSelect={onSelectProp24}
     />
-  );
-});
-
-const ButtonBinding11 = observer(function ButtonBinding11({
-  props,
-  session,
-  ...slotProps
-}: {
-  props: Props & {
-    sessionId: string;
-    onSide(id: string): void;
-    onResource(id: string, url: string): Promise<void>;
-    visible: boolean;
-  };
-  session: LocalSessionEntry;
-} & Omit<
-  React.ComponentProps<typeof Slot.Root>,
-  keyof {
-    props: Props & {
-      sessionId: string;
-      onSide(id: string): void;
-      onResource(id: string, url: string): Promise<void>;
-      visible: boolean;
-    };
-    session: LocalSessionEntry;
-  }
->) {
-  const onClickProp25 = usePersistCallback<
-    NonNullable<React.ComponentProps<typeof Button>["onClick"]>
-  >(() =>
-    props.onSelectSource(
-      session.side!.sourceId,
-      session.side!.turnId,
-      session.side!.quote
-    )
-  );
-  return (
-    <Slot.Root {...slotProps}>
-      <Button variant="link" size="xs" onClick={onClickProp25}>
-        <ArrowLeft className="size-3.5" />
-        {props.chinese ? "定位来源" : "Locate source"}
-      </Button>
-    </Slot.Root>
   );
 });
 
