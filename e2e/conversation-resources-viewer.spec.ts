@@ -8,15 +8,21 @@ for (const theme of ["light", "dark"]) {
     const draft = page.getByRole("textbox", { name: "Main draft" });
     await draft.fill("Keep this draft");
     const input = await draft.elementHandle();
-    await page.getByRole("button", { name: "View changes", exact: true }).click();
+    await page.getByRole("button", { name: "Open conversation resources", exact: true }).click();
+    const resources = page.getByRole("dialog", { name: "Conversation resources" });
+    await resources.getByRole("button", { name: /src\/auth\/redirect\.ts/ }).click();
     const viewer = page.locator(".conversation-change-code-view");
     const container = await viewer.elementHandle();
     const diff = page.getByRole("region", { name: "View changes" }).locator("diffs-container");
     await expect(diff).toContainText("fixture-line-");
-    const heights = await diff.evaluate(element => ({
-      actual: element.shadowRoot!.querySelector("[data-line]")!.getBoundingClientRect().height,
-      role: parseFloat(getComputedStyle(element).getPropertyValue("--text-label--line-height")),
-    }));
+    const heights = await diff.evaluate(element => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "position:absolute;visibility:hidden;line-height:var(--text-label--line-height)";
+      element.parentElement!.append(probe);
+      const role = parseFloat(getComputedStyle(probe).lineHeight);
+      probe.remove();
+      return { actual: element.shadowRoot!.querySelector("[data-line]")!.getBoundingClientRect().height, role };
+    });
     expect(heights.actual).toBe(heights.role);
     await expect.poll(() => page.workers().filter(worker => worker.url().includes("diffs")).length).toBe(1);
     const worker = page.workers().find(worker => worker.url().includes("diffs"));

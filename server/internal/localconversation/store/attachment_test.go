@@ -45,12 +45,44 @@ func TestAttachmentFileIsCommittedWithItsBatchAndScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if row.FileName != a.Name {
+		t.Fatalf("generated attachment name = %q, want %q", row.FileName, a.Name)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(data, pngBytes) || row.MediaType != "image/png" || row.Size != int64(len(pngBytes)) {
 		t.Fatalf("attachment %+v at %s = %q, %v", row, path, data, err)
 	}
 	if _, _, err := s.Attachment(ctx, scopeID+1, a.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("attachment read from another scope = %v", err)
+	}
+}
+
+func TestResourcePageNamesLegacyOutputAttachment(t *testing.T) {
+	t.Parallel()
+
+	s, _ := openTestStore(t)
+	scopeID := createConversation(t, s, "conv-1")
+	ctx := context.Background()
+	a, err := s.WriteAttachmentFile(scopeID, "conv-1", "image/png", pngBytes, testTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.FileName = ""
+
+	w := s.NewWriter(WriterOptions{})
+	defer w.Close()
+	if _, err := w.Submit(ctx, Batch{ConversationID: "conv-1", Attachments: []NewAttachment{a},
+		Events: []NewEvent{event("", "img-1", "item.completed", true, `{"kind":"image","attachment_id":"`+a.ID+`"}`)}}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := s.ResourcePage(ctx, "conv-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ResourceAttachment{ID: a.ID, Name: a.Name, MediaType: a.MediaType, Size: a.Size, Source: "output"}
+	if len(page.Attachments) != 1 || page.Attachments[0] != want {
+		t.Fatalf("resource attachments = %#v, want [%#v]", page.Attachments, want)
 	}
 }
 

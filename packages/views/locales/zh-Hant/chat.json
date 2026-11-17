@@ -305,6 +305,8 @@
       "partial": "僅包含 {{time}} 起記錄的變更，部分寫入無法確認來源。",
       "missing": "無法比較此對話的變更，缺少修改前內容。",
       "empty": "暫無變更",
+      "empty_resources": "暫無對話資源",
+      "no_recorded_resources": "暫無資源紀錄",
       "loading": "正在讀取變更...",
       "failed": "無法讀取變更",
       "stale": "更新失敗，顯示上次成功快照。",

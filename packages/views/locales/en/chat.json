@@ -39,6 +39,8 @@
       "partial": "Only changes recorded since {{time}} are included. Some writes cannot be attributed.",
       "missing": "This conversation has no comparison baseline.",
       "empty": "No changes",
+      "empty_resources": "No conversation resources",
+      "no_recorded_resources": "No resources recorded",
       "loading": "Loading changes...",
       "failed": "Could not read changes",
       "stale": "Update failed. Showing the last successful snapshot.",

@@ -951,6 +951,8 @@ describe("Side conversations in the main session list", () => {
     expect(list.getByRole("button", { name: "未分配项目" }).textContent).toBe("未分配项目");
     expect(screen.getByRole("tab", { name: /旁支 · Side exploration ·/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Quoted source text")).toBeVisible();
+    expect(screen.queryByText(/来自主对话/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "定位来源" })).not.toBeInTheDocument();
     fireEvent.click(list.getByRole("button", { name: "搜索会话" }));
     fireEvent.change(await screen.findByRole("combobox", { name: "搜索会话" }), { target: { value: "Side" } });
     expect(await screen.findByText("没有匹配的会话")).toBeVisible();
@@ -961,10 +963,6 @@ describe("Side conversations in the main session list", () => {
     expect(await list.findByRole("link", { name: /Archived main/ })).toBeVisible();
     expect(list.queryAllByRole("link", { name: /Side/ })).toHaveLength(0);
     expect(listedIds()).not.toContain("side");
-    fireEvent.click(screen.getByRole("button", { name: "定位来源" }));
-    expect(mock.replace).toHaveBeenCalledWith("/test/conversations?provider=codex&session=source");
-    expect(await list.findByRole("link", { name: /Original/ })).toBeVisible();
-    expect(list.queryAllByRole("link", { name: /Side/ })).toHaveLength(0);
   });
 });
 
