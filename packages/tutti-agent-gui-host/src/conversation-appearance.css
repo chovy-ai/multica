@@ -168,6 +168,27 @@ html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node
   margin-bottom: 8px;
 }
 
+/* A danger notice is complete on its own and joins the queue when present. */
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__bottom-dock > .agent-gui-chrome__session-chrome .agent-gui-chrome__card--danger {
+  border: 1px solid color-mix(in srgb, var(--destructive) 28%, transparent);
+  border-radius: var(--radius-lg);
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__bottom-dock > .agent-gui-chrome__session-chrome:has(.agent-gui-chrome__card--danger):has(+ :is(.agent-gui-node__composer, [data-agent-composer-slot]) .agent-gui-node__composer-queued-prompt-panel) {
+  margin-bottom: 0;
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__bottom-dock > .agent-gui-chrome__session-chrome:has(+ :is(.agent-gui-node__composer, [data-agent-composer-slot]) .agent-gui-node__composer-queued-prompt-panel) .agent-gui-chrome__card--danger {
+  border-bottom-width: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__bottom-dock > .agent-gui-chrome__session-chrome:has(.agent-gui-chrome__card--danger) + :is(.agent-gui-node__composer, [data-agent-composer-slot]) .agent-gui-node__composer-queued-prompt-panel {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
 html.multica-agent-gui[data-multica-presentation="conversation"] .agent-gui-node__composer[data-layout="dock"] .agent-gui-node__composer-input-shell {
   grid-template-rows: calc(56px + var(--agent-gui-composer-input-overflow, 0px)) auto;
 }
