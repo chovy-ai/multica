@@ -49,6 +49,7 @@ import { observer } from "mobx-react-lite";
 export const PreviewFolder = observer(PreviewFolderRender);
 export const LocalFilePreview = observer(LocalFilePreviewRender);
 export const WebResourcePreview = observer(WebResourcePreviewRender);
+const ResourceImagePreview = observer(ResourceImagePreviewRender);
 
 function servicePreviewError(value: string | undefined, chinese: boolean) {
   const messages: Record<string, [string, string]> = {
@@ -342,7 +343,7 @@ function LocalFilePreviewRender({
   );
 }
 
-function ResourceImagePreview({ src, name, chinese }: { src: string; name: string; chinese: boolean }) {
+function ResourceImagePreviewRender({ src, name, chinese }: { src: string; name: string; chinese: boolean }) {
   return (
     <Dialog>
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] place-items-center p-4">
