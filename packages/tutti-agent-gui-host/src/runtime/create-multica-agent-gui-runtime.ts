@@ -491,7 +491,11 @@ export function createMulticaAgentGuiRuntime(
                   : {}),
                 reasoningEffort: input.settings?.reasoningEffort ?? null,
                 serviceTier: input.settings?.speed ?? null,
-                permissionMode: input.settings?.permissionModeId ?? "default",
+                // Activation settings never carry a permission; the first message follows the global choice like every later one.
+                permissionMode: composer.selectedPermission(
+                  input.agentTargetId,
+                  input.agentSessionId
+                ),
               }),
             };
             const frozen = (await client.queue.prepare?.(params)) ?? params;

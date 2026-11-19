@@ -3096,6 +3096,37 @@ it("saves a complete desktop submission before calling its transport and keeps n
   });
 });
 
+it("sends the first message of a new durable conversation with the global permission", async () => {
+  const data = backend(new Map([["global-execution-permission-v1", JSON.stringify("full-access")]]));
+  const source = localSourceFromClient(data.client);
+  const records = new Map<
+    string,
+    import("@multica/core/local-conversation/submission-storage").StoredSubmission
+  >();
+  source.submissionStorage = {
+    read: async () => [...records.values()],
+    put: async (record) => {
+      records.set(record.requestId, record);
+      return record;
+    },
+    confirm: async () => {},
+    remove: async (id) => {
+      records.delete(id);
+    },
+  };
+  source.submissionContext = async () => ({ generation: "test", lifecycle: true });
+  const handle = createRuntime(data.client, init, source);
+  handles.push(handle);
+  await handle.initialize();
+  handle.runtime.activations.request({
+    mode: "new", agentSessionId: "durable-permission-draft", agentTargetId: agent.id,
+    requestId: "durable-permission-activation", clientSubmitId: "durable-permission-submit",
+    initialContent: [{ type: "text", text: "Use full access" }],
+  });
+  await vi.waitFor(() => expect(enqueuedItem(data.request)).toMatchObject({ permissionMode: "full-access" }));
+  expect(records.get("durable-permission-submit")?.prepared).toMatchObject({ permissionMode: "full-access" });
+});
+
 it("leaves the composer-owned input unsent when reliable storage fails", async () => {
   const data = backend();
   data.sessions.push(session);
